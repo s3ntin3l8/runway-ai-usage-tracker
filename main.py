@@ -514,18 +514,79 @@ async def get_kimi(client: httpx.AsyncClient):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. CHATGPT (via Antigravity extension)  — placeholder
+# 8. CHATGPT CODEX  — ~/.codex/sessions/**/*.jsonl
 # ─────────────────────────────────────────────────────────────────────────────
 async def get_chatgpt():
-    return {
-        "service": "ChatGPT Plus",
-        "icon": "💬",
-        "remaining": "—",
-        "unit": "Via Antigravity ext",
-        "reset": "—",
-        "health": "unknown",
-        "detail": "No local data · check chatgpt.com/settings",
-    }
+    codex_dir = os.path.expanduser("~/.codex/sessions")
+    try:
+        # Find all rollout files across years/months/days
+        files = glob.glob(f"{codex_dir}/**/*.jsonl", recursive=True)
+        if not files:
+            raise FileNotFoundError("No Codex session files found")
+
+        # Sort by mtime to find the most recent one
+        files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        
+        latest_usage = None
+        # Check top 5 most recent files for a token_count bit
+        for fpath in files[:5]:
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    # Read from bottom of file as token_counts aren't frequent
+                    lines = f.readlines()
+                    for line in reversed(lines):
+                        if '"type":"token_count"' in line:
+                            data = json.loads(line)
+                            latest_usage = data.get("payload", {}).get("rate_limits", {}).get("primary")
+                            if latest_usage:
+                                break
+                if latest_usage:
+                    break
+            except Exception:
+                continue
+
+        if not latest_usage:
+            return {
+                "service": "ChatGPT Codex",
+                "icon": "💬",
+                "remaining": "??",
+                "unit": "No recent logs",
+                "reset": "—",
+                "health": "unknown",
+                "detail": "Run a command in Codex CLI first",
+            }
+
+        used_pct = latest_usage.get("used_percent", 0.0)
+        resets_at_raw = latest_usage.get("resets_at")
+        
+        remaining_pct = 100.0 - used_pct
+        health = "good" if used_pct < 80 else "warning" if used_pct < 95 else "critical"
+        
+        reset_str = "—"
+        if resets_at_raw:
+            reset_at = datetime.fromtimestamp(resets_at_raw, tz=timezone.utc)
+            reset_str = _human_delta(reset_at)
+
+        return {
+            "service": "ChatGPT Codex",
+            "icon": "💬",
+            "remaining": f"{remaining_pct:.1f}%",
+            "unit": "remaining",
+            "reset": reset_str,
+            "health": health,
+            "detail": f"{used_pct:.1f}% of 10080m (7d) window used",
+        }
+
+    except Exception as e:
+        return {
+            "service": "ChatGPT Codex",
+            "icon": "💬",
+            "remaining": "ERR",
+            "unit": "—",
+            "reset": "—",
+            "health": "unknown",
+            "detail": str(e),
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
