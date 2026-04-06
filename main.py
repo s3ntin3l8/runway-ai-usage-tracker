@@ -403,14 +403,14 @@ async def get_github(client: httpx.AsyncClient):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. zAI GLM  — https://api.z.ai/api/subscriptions/usage
+# 6. zAI GLM  — https://api.z.ai/api/monitor/usage/quota/limit
 # ─────────────────────────────────────────────────────────────────────────────
 async def get_zai(client: httpx.AsyncClient):
-    api_key = os.getenv("ZAI_API_KEY", "")
-
+    # Uses the official Z.ai monitor API endpoints discovered by the VS Code extension community
+    api_key = os.getenv("ZAI_API_KEY")
     if not api_key or api_key.startswith("sk-zai-..."):
         return {
-            "service": "zAI (GLM)",
+            "service": "zAI (GLM Coding)",
             "icon": "🌐",
             "remaining": "—",
             "unit": "No key set",
@@ -419,45 +419,46 @@ async def get_zai(client: httpx.AsyncClient):
             "detail": "Set ZAI_API_KEY in .env",
         }
 
+    url = "https://api.z.ai/api/monitor/usage/quota/limit"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
     try:
-        resp = await client.get(
-            "https://api.z.ai/api/subscriptions/usage",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=8,
-        )
+        resp = await client.get(url, headers=headers, timeout=8)
+        resp.raise_for_status()
         data = resp.json()
 
-        # The API wraps data; try multiple structures
-        token_data = (
-            data.get("data", {}).get("TOKENS_LIMIT")
-            or data.get("TOKENS_LIMIT")
-            or {}
-        )
-        remaining = token_data.get("remaining", 0)
-        percentage_used = token_data.get("percentage", 0)
-        health = "good" if percentage_used < 70 else "warning" if percentage_used < 90 else "critical"
+        # The monitor API returns raw token usage and percentage for the 5-hour window
+        remaining = data.get("remainingTokens", 0)
+        percentage_used = data.get("percentage", 0)
 
-        remaining_disp = (
-            f"{remaining / 1_000_000:.1f}M" if remaining >= 1_000_000 else f"{remaining:,}"
-        )
+        # Health indicator: GLM Coding plans warn at 80% used
+        health = "good" if percentage_used < 80 else "critical"
+
+        # Format numbers cleanly (e.g., 14,600 -> 14.6K)
+        if remaining >= 1000000:
+            remaining_display = f"{(remaining / 1000000):.1f}M"
+        elif remaining >= 1000:
+            remaining_display = f"{(remaining / 1000):.1f}K"
+        else:
+            remaining_display = str(remaining)
 
         return {
-            "service": "zAI (GLM)",
+            "service": "zAI (GLM Coding)",
             "icon": "🌐",
-            "remaining": remaining_disp,
-            "unit": "tokens",
+            "remaining": remaining_display,
+            "unit": "Tokens (5h)",
             "reset": "Rolling",
             "health": health,
-            "detail": f"{percentage_used:.0f}% used",
+            "detail": f"{percentage_used:.1f}% used",
         }
     except Exception as e:
         return {
-            "service": "zAI (GLM)",
+            "service": "zAI (GLM Coding)",
             "icon": "🌐",
             "remaining": "ERR",
-            "unit": "—",
+            "unit": "API Error",
             "reset": "—",
-            "health": "unknown",
+            "health": "critical",
             "detail": str(e),
         }
 
