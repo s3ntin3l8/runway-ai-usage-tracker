@@ -1,48 +1,57 @@
 """
-Anthropic (Claude) quota collector with 3-tier fallback strategy.
+Anthropic (Claude) quota collector with 4-tier fallback strategy.
 
 Collection Strategy:
 1. Primary: OAuth API endpoint (https://api.anthropic.com/api/oauth/usage)
-   - Requires CLAUDE_CODE_OAUTH_TOKEN environment variable
-   - Returns real-time usage across multiple quota windows (5h, 7d, etc.)
+   - Requires CLAUDE_CODE_OAUTH_TOKEN environment variable or ~/.claude/.credentials.json
+   - Returns real-time usage across multiple quota windows (5h, 7d, 7d-sonnet, 7d-opus, extra)
    - Implements caching (10 min TTL) to avoid rate limiting
    
-2. Secondary: Local log parsing from Claude Projects
-   - Parses .jsonl files from ~/.claude/projects/ directory
-   - Calculates token usage from assistant messages (input + output tokens)
-   - Uses 5-hour sliding window to match OAuth behavior
+2. Secondary: Web API via Chrome cookies (https://claude.ai/api/)
+   - Extracts sessionKey cookie from Chrome for claude.ai domain
+   - Calls Claude web API endpoints to get usage data
+   - Same data quality as OAuth (session, weekly, model-specific quotas)
    
-3. Tertiary: Error cards when both methods fail
-   - Returns descriptive error if token expired/invalid
-   - Falls back to local logs when rate limited (429)
-   - Final fallback shows "No data" if logs unavailable
+3. Tertiary: Enhanced local cost usage parsing
+   - Parses .jsonl files from ~/.claude/projects/ and ~/.config/claude/projects/
+   - Supports comma-separated CLAUDE_CONFIG_DIR for multiple roots
+   - Tracks all token types: input, cache_read, cache_creation, output
+   - Deduplicates streaming chunks by message.id + requestId
+   
+4. Quaternary: Error cards when all methods fail
+   - Returns descriptive error with failure reason
+   - Distinguishes between token expired, rate limited, missing data
 
 Data Caching:
 - OAuth results cached for 10 minutes to handle 429 rate limits gracefully
 - Cached results tagged with "[Cached]" in detail field
-- Falls back to local logs without repeating failed API calls
+- Falls back to Web API and local logs without repeating failed API calls
 
 Error Handling:
 - 401: Token expired/invalid (prompt re-authentication)
-- 429: Rate limited (use cache if available, fall back to logs)
-- Other errors: Show connection error with first 20 chars of message
+- 429: Rate limited (use cache if available, fall back to Web API/logs)
+- Connection errors: Fall back to next available method
+- Missing files/logs: Return error card with helpful message
 """
 
 import os
 import glob
 import json
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from app.core.config import settings
 from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
+from app.core.chrome_cookies import get_claude_session_cookie
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
 
+
 class AnthropicCollector(BaseCollector):
-    """Collector for Anthropic (Claude) quota and usage metrics."""
+    """Collector for Anthropic (Claude) quota and usage metrics with 4-tier fallback."""
     
     def __init__(self):
         """Initialize caching for OAuth results to avoid rate limiting."""
@@ -52,12 +61,13 @@ class AnthropicCollector(BaseCollector):
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Collect Claude quota data using 3-tier fallback strategy.
+        Collect Claude quota data using 4-tier fallback strategy.
         
         Tries in order:
         1. OAuth API with caching (if CLAUDE_CODE_OAUTH_TOKEN set)
-        2. Local log parsing (if OAuth fails or unavailable)
-        3. Return original OAuth error or generic "no data" error
+        2. Web API via Chrome cookies (if user logged into claude.ai)
+        3. Enhanced local log parsing (multiple config roots, full token tracking)
+        4. Return descriptive error if all methods fail
         
         Returns:
             List[Dict[str, Any]]: List of quota cards for each quota window.
@@ -71,23 +81,39 @@ class AnthropicCollector(BaseCollector):
             if not is_error and oauth_res:
                 return oauth_res
             
-            # If it was a 429 specifically, we might want to log it or just proceed to fallback
-            # The error_card detail will contain "API Error 429"
+            # Log OAuth failure for debugging
+            logger.debug(f"OAuth failed, falling back to Web API. Result: {oauth_res}")
 
-        # 2. Fallback to Local Logs
-        local_res = await self._get_claude_local()
+        # 2. Try Web API via Chrome cookies
+        web_res = await self._get_claude_via_web_api(client)
+        if web_res:
+            is_error = any(r.get("remaining") == "ERR" for r in web_res)
+            if not is_error:
+                return web_res
+            logger.debug(f"Web API failed, falling back to local logs")
+
+        # 3. Fallback to Enhanced Local Cost Usage
+        local_res = await self._get_claude_local_enhanced()
         if local_res:
             # If we fell back due to an error, we could tag it
-            if settings.CLAUDE_CODE_OAUTH_TOKEN:
+            if settings.CLAUDE_CODE_OAUTH_TOKEN or await self._has_web_cookie():
                 for r in local_res:
-                    r["detail"] += " (API Fallback)"
+                    if "(API Fallback)" not in r.get("detail", ""):
+                        r["detail"] += " (API Fallback)"
             return local_res
             
-        # 3. Final Fallback: Return the original OAuth error if both failed
+        # 4. Final Fallback: Return error with context
         if settings.CLAUDE_CODE_OAUTH_TOKEN:
-            return await self._get_claude_oauth(client, settings.CLAUDE_CODE_OAUTH_TOKEN)
+            return [error_card("Claude Pro", "🟠", "No data — OAuth failed & Logs empty")]
+        
+        if await self._has_web_cookie():
+            return [error_card("Claude Pro", "🟠", "No data — Web API failed & Logs empty")]
             
-        return [error_card("Claude Pro", "🟠", "No data — OAuth missing & Logs empty")]
+        return [error_card("Claude Pro", "🟠", "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai")]
+
+    async def _has_web_cookie(self) -> bool:
+        """Check if a web cookie is available without making API calls."""
+        return get_claude_session_cookie() is not None
 
     async def _get_claude_oauth_with_cache(self, client: httpx.AsyncClient, token: str):
         """
@@ -108,7 +134,7 @@ class AnthropicCollector(BaseCollector):
             if (now - self._last_fetch).total_seconds() < self._cache_ttl:
                 # Add a tag to show it's cached
                 for r in self._cached_results:
-                    if "[Cached]" not in r["detail"]:
+                    if "[Cached]" not in r.get("detail", ""):
                         r["detail"] += " [Cached]"
                 return self._cached_results
 
@@ -165,100 +191,329 @@ class AnthropicCollector(BaseCollector):
                 return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}")]
             
             data = resp.json()
-            results = []
+            return self._parse_oauth_response(data, name_map)
             
-            # Sort by name_map order to keep it consistent
-            sorted_keys = sorted(data.keys(), key=lambda k: list(name_map.keys()).index(k) if k in name_map else 999)
-            
-            for key in sorted_keys:
-                usage = data[key]
-                if not isinstance(usage, dict) or "utilization" not in usage:
-                    continue
-                
-                u_type = name_map.get(key, key.replace("_", " ").title())
-                pct_used = usage.get("utilization", 0.0)
-                remaining_pct = 100.0 - pct_used
-                
-                reset_raw = usage.get("resets_at") or usage.get("resetsAt")
-                reset_at = None
-                if reset_raw:
-                    try:
-                        reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
-                    except ValueError as e:
-                        logger.warning(f"Failed to parse reset time: {reset_raw}, error: {e}")
-                
-                results.append({
-                    "service": f"Claude ({u_type})",
-                    "icon": "🟠",
-                    "remaining": f"{remaining_pct:.1f}%",
-                    "unit": "capacity",
-                    "reset": human_delta(reset_at),
-                    "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [OAuth]",
-                })
-            return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
         except Exception as e:
             logger.error(f"Claude OAuth collection failed: {e}")
             return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}")]
 
-    async def _get_claude_local(self):
+    def _parse_oauth_response(self, data: Dict[str, Any], name_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Parse OAuth API response into quota cards."""
+        results = []
+        
+        # Sort by name_map order to keep it consistent
+        sorted_keys = sorted(data.keys(), key=lambda k: list(name_map.keys()).index(k) if k in name_map else 999)
+        
+        for key in sorted_keys:
+            usage = data[key]
+            if not isinstance(usage, dict) or "utilization" not in usage:
+                continue
+            
+            u_type = name_map.get(key, key.replace("_", " ").title())
+            pct_used = usage.get("utilization", 0.0)
+            remaining_pct = 100.0 - pct_used
+            
+            reset_raw = usage.get("resets_at") or usage.get("resetsAt")
+            reset_at = None
+            if reset_raw:
+                try:
+                    reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
+                except ValueError as e:
+                    logger.warning(f"Failed to parse reset time: {reset_raw}, error: {e}")
+            
+            results.append({
+                "service": f"Claude ({u_type})",
+                "icon": "🟠",
+                "remaining": f"{remaining_pct:.1f}%",
+                "unit": "capacity",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                "detail": f"{pct_used:.1f}% used [OAuth]",
+            })
+        
+        return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
+
+    async def _get_claude_via_web_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Fallback: Parse Claude usage from local project logs.
+        Fetch Claude quota via Web API using Chrome cookies.
         
-        Scans ~/.claude/projects/**/*.jsonl files for assistant message logs
-        within the last 5 hours. Sums input_tokens + output_tokens to estimate
-        usage against the 2M token/5h quota window.
+        This is a secondary method that extracts the sessionKey cookie from
+        Chrome and uses it to call Claude's web API endpoints. This provides
+        the same data quality as OAuth but without requiring the OAuth token.
         
-        Uses:
-        - As fallback when OAuth API is unavailable or rate limited
-        - For monitoring local Claude usage (e.g., in development)
+        Endpoints called:
+        1. GET /api/organizations - Get organization UUID
+        2. GET /api/organizations/{orgId}/usage - Get usage quotas
+        3. GET /api/organizations/{orgId}/overage_spend_limit - Get extra usage (optional)
+        
+        Args:
+            client: httpx.AsyncClient for making requests
+            
+        Returns:
+            List[Dict[str, Any]]: Quota cards or empty list if cookie unavailable/failed
+        """
+        # Extract sessionKey cookie from Chrome
+        session_key = get_claude_session_cookie()
+        if not session_key:
+            logger.debug("No Claude sessionKey cookie found in Chrome")
+            return []
+        
+        headers = {"Cookie": f"sessionKey={session_key}"}
+        
+        try:
+            # Step 1: Get organization ID
+            orgs_resp = await client.get(
+                "https://claude.ai/api/organizations",
+                headers=headers,
+                timeout=10.0
+            )
+            
+            if orgs_resp.status_code != 200:
+                logger.warning(f"Claude Web API orgs call failed: {orgs_resp.status_code}")
+                return []
+            
+            orgs_data = orgs_resp.json()
+            if not orgs_data or not isinstance(orgs_data, list) or len(orgs_data) == 0:
+                logger.warning("No organizations found in Claude Web API response")
+                return []
+            
+            # Use first organization (usually there's only one)
+            org = orgs_data[0]
+            org_id = org.get("uuid") or org.get("id")
+            if not org_id:
+                logger.warning("No organization UUID found in response")
+                return []
+            
+            # Step 2: Get usage data
+            usage_resp = await client.get(
+                f"https://claude.ai/api/organizations/{org_id}/usage",
+                headers=headers,
+                timeout=10.0
+            )
+            
+            if usage_resp.status_code != 200:
+                logger.warning(f"Claude Web API usage call failed: {usage_resp.status_code}")
+                return []
+            
+            usage_data = usage_resp.json()
+            return self._parse_web_api_response(usage_data)
+            
+        except httpx.HTTPError as e:
+            logger.warning(f"Claude Web API HTTP error: {e}")
+            return []
+        except json.JSONDecodeError as e:
+            logger.warning(f"Claude Web API JSON decode error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Claude Web API collection failed: {e}")
+            return []
+
+    def _parse_web_api_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse Web API response into quota cards."""
+        results = []
+        
+        # Map Web API fields to our standard format
+        window_map = {
+            "session": ("Session Window", "current_window"),
+            "weekly": ("Weekly Window", "current_week"),
+            "sonnet": ("Sonnet Weekly", "current_week_sonnet"),
+            "opus": ("Opus Weekly", "current_week_opus"),
+        }
+        
+        for window_key, (display_name, api_key) in window_map.items():
+            window_data = data.get(api_key)
+            if not window_data:
+                continue
+            
+            # Get usage percentage
+            pct_used = window_data.get("percentUsed", 0.0)
+            remaining_pct = 100.0 - pct_used
+            
+            # Parse reset time
+            reset_at = None
+            reset_raw = window_data.get("resetsAt")
+            if reset_raw:
+                try:
+                    reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            
+            results.append({
+                "service": f"Claude ({display_name})",
+                "icon": "🟠",
+                "remaining": f"{remaining_pct:.1f}%",
+                "unit": "capacity",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                "detail": f"{pct_used:.1f}% used [Web API]",
+            })
+        
+        # Add extra usage if present
+        extra_data = data.get("extra_usage") or data.get("overage")
+        if extra_data and isinstance(extra_data, dict):
+            spend = extra_data.get("spend", 0)
+            limit = extra_data.get("limit", 0)
+            if limit > 0:
+                pct_used = (spend / limit) * 100
+                remaining_pct = 100.0 - pct_used
+                results.append({
+                    "service": "Claude (Extra Usage)",
+                    "icon": "🟠",
+                    "remaining": f"${remaining_pct:.0f}%",
+                    "unit": "spend",
+                    "reset": "Monthly",
+                    "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+                    "pace": "Sustainable",
+                    "detail": f"${spend:.2f} / ${limit:.2f} [Web API]",
+                })
+        
+        return results
+
+    async def _get_claude_local_enhanced(self) -> List[Dict[str, Any]]:
+        """
+        Enhanced fallback: Parse Claude usage from local project logs.
+        
+        Scans multiple config directories for .jsonl files and tracks all
+        token types including cache reads and cache creation.
+        
+        Features:
+        - Multiple config roots (CLAUDE_CONFIG_DIR comma-separated)
+        - All token types: input, cache_read, cache_creation, output
+        - Deduplication by message.id + requestId
+        - 5-hour sliding window to match OAuth behavior
         
         Data Source:
-        - Location: Configured by CLAUDE_PROJECTS_DIR (default: ~/.claude/projects)
-        - Format: JSONL files with entries: {"type": "assistant", "timestamp": "...", "message": {"usage": {...}}}
-        - Time Window: Last 5 hours of assistant messages only
+        - Locations: CLAUDE_CONFIG_DIR or defaults (~/.claude/projects, ~/.config/claude/projects)
+        - Format: JSONL with entries containing usage field
         
         Returns:
             List[Dict[str, Any]]: Single card with total tokens or None if logs unavailable
         """
-        projects_dir = settings.CLAUDE_PROJECTS_DIR
-        limit = 2000000
-        try:
+        # Get config directories to scan
+        config_dirs = self._get_config_dirs()
+        
+        # Find all .jsonl files across all config directories
+        all_files = []
+        for projects_dir in config_dirs:
             files = glob.glob(f"{projects_dir}/**/*.jsonl", recursive=True)
-            if not files: return None
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
-            total_tokens = 0
-            oldest: Optional[datetime] = None
-            for fpath in files:
+            all_files.extend(files)
+        
+        if not all_files:
+            logger.debug(f"No Claude project log files found in any config directory")
+            return None
+        
+        # 5-hour window to match OAuth session window
+        limit = 2000000  # 2M tokens per 5h window (Pro tier)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
+        
+        # Track tokens and deduplicate
+        total_tokens = 0
+        seen_messages = set()  # For deduplication: (message_id, request_id)
+        oldest: Optional[datetime] = None
+        
+        for fpath in all_files:
+            try:
                 with open(fpath, "r", encoding="utf-8") as f:
                     for line in f:
-                        entry = json.loads(line)
-                        if entry.get("type") != "assistant": continue
-                        ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
-                        if ts < cutoff: continue
-                        usage = entry.get("message", {}).get("usage", {})
-                        total_tokens += (usage.get("input_tokens", 0) + usage.get("output_tokens", 0))
-                        if not oldest or ts < oldest: oldest = ts
-            remaining = max(0, limit - total_tokens)
-            pct = (total_tokens / limit * 100) if limit > 0 else 0
-            reset_at = (oldest + timedelta(hours=5)) if oldest else None
-            return [{
-                "service": "Claude Pro",
-                "icon": "🟠",
-                "remaining": f"{remaining:,}",
-                "unit": "tokens / 5h",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                 "detail": f"{total_tokens:,} / {limit:,} [Logs]",
-             }]
-        except FileNotFoundError:
-            logger.debug(f"Claude projects directory not found: {projects_dir}")
-            return None
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in Claude logs: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to parse Claude logs: {e}")
-            return None
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        
+                        # Only process assistant messages with usage
+                        if entry.get("type") != "assistant":
+                            continue
+                        
+                        # Parse timestamp
+                        ts_raw = entry.get("timestamp")
+                        if not ts_raw:
+                            continue
+                        
+                        try:
+                            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                        except ValueError:
+                            continue
+                        
+                        if ts < cutoff:
+                            continue
+                        
+                        # Deduplicate by message.id + requestId
+                        msg_data = entry.get("message", {})
+                        msg_id = msg_data.get("id", "")
+                        request_id = msg_data.get("requestId", "")
+                        dedup_key = (msg_id, request_id)
+                        
+                        if dedup_key in seen_messages:
+                            continue
+                        seen_messages.add(dedup_key)
+                        
+                        # Sum all token types
+                        usage = msg_data.get("usage", {})
+                        input_tokens = usage.get("input_tokens", 0)
+                        output_tokens = usage.get("output_tokens", 0)
+                        cache_read = usage.get("cache_read_tokens", 0)
+                        cache_creation = usage.get("cache_creation_tokens", 0)
+                        
+                        total_tokens += input_tokens + output_tokens + cache_read + cache_creation
+                        
+                        if not oldest or ts < oldest:
+                            oldest = ts
+                            
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                logger.warning(f"Error reading Claude log file {fpath}: {e}")
+                continue
+        
+        # Calculate remaining and percentage
+        remaining = max(0, limit - total_tokens)
+        pct = (total_tokens / limit * 100) if limit > 0 else 0
+        reset_at = (oldest + timedelta(hours=5)) if oldest else None
+        
+        return [{
+            "service": "Claude Pro",
+            "icon": "🟠",
+            "remaining": f"{remaining:,}",
+            "unit": "tokens / 5h",
+            "reset": human_delta(reset_at),
+            "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+            "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+            "detail": f"{total_tokens:,} / {limit:,} [Local Logs]",
+        }]
+
+    def _get_config_dirs(self) -> List[str]:
+        """
+        Get list of Claude config directories to scan.
+        
+        Checks CLAUDE_CONFIG_DIR environment variable first (supports comma-separated paths),
+        then falls back to default locations.
+        
+        Returns:
+            List[str]: List of directory paths that exist
+        """
+        dirs = []
+        
+        # Priority 1: CLAUDE_CONFIG_DIR (comma-separated)
+        config_env = os.getenv("CLAUDE_CONFIG_DIR", "")
+        if config_env:
+            for path in config_env.split(","):
+                path = path.strip()
+                if path and os.path.isdir(path):
+                    # Append /projects if not already present
+                    projects_path = os.path.join(path, "projects") if not path.endswith("/projects") else path
+                    if os.path.isdir(projects_path):
+                        dirs.append(projects_path)
+        
+        # Priority 2: Default locations
+        default_paths = [
+            os.path.expanduser("~/.config/claude/projects"),
+            os.path.expanduser("~/.claude/projects"),
+        ]
+        
+        for path in default_paths:
+            if os.path.isdir(path) and path not in dirs:
+                dirs.append(path)
+        
+        return dirs

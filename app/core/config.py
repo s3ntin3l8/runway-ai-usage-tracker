@@ -1,21 +1,25 @@
 import os
 import json
 import logging
+import platform
+import subprocess
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+
 class Settings:
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
-    
+
     @property
     def CLAUDE_CODE_OAUTH_TOKEN(self) -> str:
         # Priority 1: Env var
         token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-        if token: return token
-        
+        if token:
+            return token
+
         # Priority 2: ~/.claude/.credentials.json (Claude Code)
         cred_path = os.path.expanduser("~/.claude/.credentials.json")
         if os.path.exists(cred_path):
@@ -23,13 +27,42 @@ class Settings:
                 with open(cred_path, "r") as f:
                     data = json.load(f)
                     val = data.get("claudeAiOauth", {}).get("accessToken")
-                    if val: return val
+                    if val:
+                        return val
             except FileNotFoundError:
                 logger.debug(f"Credentials file not found: {cred_path}")
             except json.JSONDecodeError:
                 logger.warning(f"Invalid JSON in credentials file: {cred_path}")
             except Exception as e:
                 logger.warning(f"Error reading credentials file: {e}")
+
+        # Priority 3: macOS Keychain (for sidecar scenarios)
+        if platform.system() == "Darwin":
+            try:
+                result = subprocess.run(
+                    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    keychain_data = result.stdout.strip()
+                    # Keychain stores the entire credentials JSON
+                    try:
+                        data = json.loads(keychain_data)
+                        val = data.get("claudeAiOauth", {}).get("accessToken")
+                        if val:
+                            logger.debug("Found Claude OAuth token in macOS Keychain")
+                            return val
+                    except json.JSONDecodeError:
+                        # Might be stored as raw token string
+                        if keychain_data.startswith("sk-"):
+                            return keychain_data
+            except subprocess.TimeoutExpired:
+                logger.debug("Keychain access timed out")
+            except Exception as e:
+                logger.debug(f"Could not read from macOS Keychain: {e}")
+
         return ""
 
     OPENCODE_GO_API_KEY: str = os.getenv("OPENCODE_GO_API_KEY", "")

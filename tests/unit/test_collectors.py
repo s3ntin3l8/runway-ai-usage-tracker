@@ -32,43 +32,45 @@ class TestAnthropicCollector:
         """Test successful OAuth API collection."""
         collector = AnthropicCollector()
         
-        # Mock successful OAuth response
+        # Mock successful OAuth response using request() (called by http_request_with_retry)
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.json.return_value = mock_anthropic_oauth_response
-        mock_http_client.get.return_value = mock_response
+        mock_http_client.request.return_value = mock_response
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "test_token"
             mock_settings.CLAUDE_PROJECTS_DIR = "/home/user/.claude/projects"
             
-            result = await collector.collect(mock_http_client)
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                result = await collector.collect(mock_http_client)
         
         # Should return cards for each quota window
         assert isinstance(result, list)
         assert len(result) >= 1
         assert all('service' in card for card in result)
-        assert any('five_hour' in str(card.get('service', '')) or 'Session' in str(card.get('service', '')) for card in result)
+        assert any('Session' in str(card.get('service', '')) for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_oauth_401_fallback(self, mock_http_client):
         """Test fallback to local logs when OAuth token is invalid (401)."""
         collector = AnthropicCollector()
         
-        # Mock 401 response
+        # Mock 401 response using request()
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 401
-        mock_http_client.get.return_value = mock_response
+        mock_http_client.request.return_value = mock_response
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
             with patch('app.services.collectors.anthropic.glob.glob', return_value=[]):
-                result = await collector.collect(mock_http_client)
+                with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                    result = await collector.collect(mock_http_client)
         
-        # Should return error card for invalid token
-        assert any('401' in str(card) or 'Invalid' in str(card) for card in result)
+        # Should return error card for invalid token (no logs fallback)
+        assert any('ERR' in str(card.get('remaining', '')) for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_caching(self, mock_http_client, mock_anthropic_oauth_response):
@@ -78,21 +80,237 @@ class TestAnthropicCollector:
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.json.return_value = mock_anthropic_oauth_response
-        mock_http_client.get.return_value = mock_response
+        mock_http_client.request.return_value = mock_response
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "test_token"
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
-            # First call - should hit API
-            result1 = await collector.collect(mock_http_client)
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                # First call - should hit API
+                result1 = await collector.collect(mock_http_client)
+                
+                # Second call immediately - should use cache
+                result2 = await collector.collect(mock_http_client)
+                
+                # API should only be called once (cached on second call)
+                assert mock_http_client.request.call_count == 1
+                assert "[Cached]" in str(result2)
+
+    @pytest.mark.asyncio
+    async def test_collect_web_api_fallback(self, mock_http_client, mock_claude_web_api_orgs_response, mock_claude_web_api_usage_response):
+        """Test fallback to Web API when OAuth fails."""
+        collector = AnthropicCollector()
+        
+        # Mock OAuth failure (401) - using request() for OAuth
+        oauth_response = MagicMock(spec=httpx.Response)
+        oauth_response.status_code = 401
+        
+        # Mock Web API success - using get() for Web API
+        orgs_response = MagicMock(spec=httpx.Response)
+        orgs_response.status_code = 200
+        orgs_response.json.return_value = mock_claude_web_api_orgs_response
+        
+        usage_response = MagicMock(spec=httpx.Response)
+        usage_response.status_code = 200
+        usage_response.json.return_value = mock_claude_web_api_usage_response
+        
+        # Mock request for OAuth (first call)
+        mock_http_client.request.return_value = oauth_response
+        # Mock get for Web API calls
+        mock_http_client.get.side_effect = [orgs_response, usage_response]
+        
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
-            # Second call immediately - should use cache
-            result2 = await collector.collect(mock_http_client)
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="sk-ant-session123"):
+                result = await collector.collect(mock_http_client)
+        
+        # Should return Web API results
+        assert isinstance(result, list)
+        assert len(result) >= 1
+        assert any('Web API' in str(card.get('detail', '')) for card in result)
+        assert any('Session' in str(card.get('service', '')) for card in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_enhanced_local_fallback(self, mock_http_client):
+        """Test fallback to enhanced local logs when both OAuth and Web API fail."""
+        collector = AnthropicCollector()
+        
+        # Mock OAuth failure
+        oauth_response = MagicMock(spec=httpx.Response)
+        oauth_response.status_code = 401
+        mock_http_client.get.return_value = oauth_response
+        
+        # Mock no web cookie
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
             
-            # API should only be called once (cached on second call)
-            assert mock_http_client.get.call_count == 1
-            assert "[Cached]" in str(result2)
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                # Mock local log data with all token types
+                log_data = [
+                    json.dumps({
+                        "type": "assistant",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "message": {
+                            "id": "msg_1",
+                            "requestId": "req_1",
+                            "usage": {
+                                "input_tokens": 1000,
+                                "output_tokens": 500,
+                                "cache_read_tokens": 2000,
+                                "cache_creation_tokens": 100
+                            }
+                        }
+                    }) + "\n",
+                    json.dumps({
+                        "type": "assistant",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "message": {
+                            "id": "msg_2",  # Different message, should be counted
+                            "requestId": "req_2",
+                            "usage": {
+                                "input_tokens": 500,
+                                "output_tokens": 200,
+                                "cache_read_tokens": 0,
+                                "cache_creation_tokens": 0
+                            }
+                        }
+                    }) + "\n"
+                ]
+                
+                with patch('builtins.open', mock_open(read_data=''.join(log_data))):
+                    with patch('app.services.collectors.anthropic.glob.glob', return_value=["/fake/path/test.jsonl"]):
+                        with patch('os.path.isdir', return_value=True):
+                            result = await collector.collect(mock_http_client)
+        
+        # Should return local log results
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert 'Claude Pro' in str(result[0].get('service', ''))
+        assert 'Local Logs' in str(result[0].get('detail', ''))
+        # Should sum all token types: (1000+500+2000+100) + (500+200+0+0) = 4300
+        assert '4,300' in str(result[0].get('detail', '')) or '4300' in str(result[0].get('detail', ''))
+
+    @pytest.mark.asyncio
+    async def test_collect_local_dedup(self, mock_http_client):
+        """Test deduplication of streaming chunks in local logs."""
+        collector = AnthropicCollector()
+        
+        # Mock OAuth failure
+        oauth_response = MagicMock(spec=httpx.Response)
+        oauth_response.status_code = 401
+        mock_http_client.get.return_value = oauth_response
+        
+        # Mock local log data with duplicate messages (streaming chunks)
+        log_data = [
+            json.dumps({
+                "type": "assistant",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": {
+                    "id": "msg_dup",
+                    "requestId": "req_dup",
+                    "usage": {
+                        "input_tokens": 1000,
+                        "output_tokens": 500,
+                        "cache_read_tokens": 0,
+                        "cache_creation_tokens": 0
+                    }
+                }
+            }) + "\n",
+            json.dumps({
+                "type": "assistant",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": {
+                    "id": "msg_dup",  # Same ID - should be deduplicated
+                    "requestId": "req_dup",  # Same requestId
+                    "usage": {
+                        "input_tokens": 1000,
+                        "output_tokens": 500,
+                        "cache_read_tokens": 0,
+                        "cache_creation_tokens": 0
+                    }
+                }
+            }) + "\n"
+        ]
+        
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                with patch('builtins.open', mock_open(read_data=''.join(log_data))):
+                    with patch('app.services.collectors.anthropic.glob.glob', return_value=["/fake/path/test.jsonl"]):
+                        with patch('os.path.isdir', return_value=True):
+                            result = await collector.collect(mock_http_client)
+        
+        # Should deduplicate - only count once
+        assert isinstance(result, list)
+        assert len(result) == 1
+        # Should only show 1500 tokens (not 3000 from duplicate)
+        detail = str(result[0].get('detail', ''))
+        assert '1,500' in detail or '1500' in detail
+
+    @pytest.mark.asyncio
+    async def test_collect_multi_config_dirs(self, mock_http_client):
+        """Test scanning multiple config directories via CLAUDE_CONFIG_DIR."""
+        collector = AnthropicCollector()
+        
+        # Mock OAuth failure
+        oauth_response = MagicMock(spec=httpx.Response)
+        oauth_response.status_code = 401
+        mock_http_client.get.return_value = oauth_response
+        
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': '/path1,/path2'}):
+                    with patch('os.path.isdir', return_value=True):
+                        with patch('app.services.collectors.anthropic.glob.glob') as mock_glob:
+                            # Return files from both paths
+                            def glob_side_effect(pattern, **kwargs):
+                                if '/path1' in pattern:
+                                    return ['/path1/projects/file1.jsonl']
+                                elif '/path2' in pattern:
+                                    return ['/path2/projects/file2.jsonl']
+                                return []
+                            
+                            mock_glob.side_effect = glob_side_effect
+                            
+                            # Mock file contents
+                            log_data_1 = json.dumps({
+                                "type": "assistant",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "message": {
+                                    "id": "msg_1",
+                                    "requestId": "req_1",
+                                    "usage": {"input_tokens": 1000, "output_tokens": 500}
+                                }
+                            }) + "\n"
+                            
+                            log_data_2 = json.dumps({
+                                "type": "assistant",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "message": {
+                                    "id": "msg_2",
+                                    "requestId": "req_2",
+                                    "usage": {"input_tokens": 500, "output_tokens": 200}
+                                }
+                            }) + "\n"
+                            
+                            def open_side_effect(path, **kwargs):
+                                if 'file1' in path:
+                                    return mock_open(read_data=log_data_1)()
+                                else:
+                                    return mock_open(read_data=log_data_2)()
+                            
+                            with patch('builtins.open', side_effect=open_side_effect):
+                                result = await collector.collect(mock_http_client)
+        
+        # Should aggregate from both directories
+        assert isinstance(result, list)
+        assert len(result) == 1
 
 
 class TestGeminiCollector:

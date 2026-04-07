@@ -228,3 +228,85 @@ def get_opencode_session_cookie() -> Optional[str]:
         return None
     except Exception:
         return None
+
+
+def get_claude_session_cookie() -> Optional[str]:
+    """
+    Extract the sessionKey cookie for claude.ai from Chrome's cookie store.
+    
+    This cookie is used to authenticate with Claude's web API when OAuth
+    credentials are not available. The cookie value starts with 'sk-ant-'.
+    
+    Returns:
+        The decrypted sessionKey cookie value (e.g., 'sk-ant-...'), or None
+        if not found or decryption failed.
+    """
+    cookies_path = get_chrome_cookies_path()
+    if not cookies_path:
+        return None
+    
+    try:
+        # Connect to Chrome's SQLite cookie database
+        conn = sqlite3.connect(str(cookies_path))
+        cursor = conn.cursor()
+        
+        # Query for claude.ai sessionKey cookie
+        # The cookie is scoped to claude.ai domain
+        cursor.execute(
+            "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND name = 'sessionKey'"
+        )
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            encrypted_value = row[0]
+            
+            # Try to decrypt
+            decrypted = decrypt_cookie(encrypted_value)
+            if decrypted:
+                return decrypted
+            
+            # If decryption failed, try treating as plaintext (some configs)
+            try:
+                return encrypted_value.decode('utf-8')
+            except UnicodeDecodeError:
+                pass
+        
+        return None
+    except Exception:
+        return None
+
+
+def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
+    """
+    Extract a token from macOS Keychain.
+    
+    Used by sidecar to get OAuth tokens when file-based credentials
+    are not available. Queries the 'generic password' type.
+    
+    Args:
+        service: The service name (e.g., "Claude Code-credentials")
+        account: The account name (e.g., "credentials")
+    
+    Returns:
+        The token/password value, or None if not found or not on macOS.
+    """
+    if platform.system() != "Darwin":
+        return None
+    
+    try:
+        import subprocess
+        
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            return result.stdout.strip()
+        
+        return None
+    except Exception:
+        return None

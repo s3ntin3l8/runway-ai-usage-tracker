@@ -51,8 +51,36 @@ def http_get(url, headers=None):
 
 class AnthropicCollector:
     @staticmethod
+    def get_keychain_token():
+        """Extract Claude OAuth token from macOS Keychain."""
+        if sys.platform != "darwin":
+            return None
+        try:
+            result = subprocess.run(
+                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                keychain_data = result.stdout.strip()
+                # Keychain stores JSON credentials
+                try:
+                    data = json.loads(keychain_data)
+                    return data.get("claudeAiOauth", {}).get("accessToken")
+                except json.JSONDecodeError:
+                    # Might be stored as raw token
+                    if keychain_data.startswith("sk-"):
+                        return keychain_data
+        except:
+            pass
+        return None
+
+    @staticmethod
     def collect():
         token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
+
+        # Priority 2: Credentials file
         if not token:
             cred_path = Path.home() / ".claude" / ".credentials.json"
             if cred_path.exists():
@@ -61,7 +89,11 @@ class AnthropicCollector:
                         data = json.load(f)
                         token = data.get("claudeAiOauth", {}).get("accessToken")
                 except: pass
-        
+
+        # Priority 3: macOS Keychain (for sidecar scenarios)
+        if not token:
+            token = AnthropicCollector.get_keychain_token()
+
         if not token: return []
         
         url = "https://api.anthropic.com/api/oauth/usage"

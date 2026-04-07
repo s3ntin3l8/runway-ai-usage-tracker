@@ -186,17 +186,30 @@ Implement optional scraping of `https://chatgpt.com/codex/settings/usage` to get
 
 ### Medium Priority
 
-#### 4. Multi-Browser Cookie Support (OpenCode)
-**File**: `app/services/collectors/opencode.py`  
+#### 4. Multi-Browser Cookie Support (All Collectors)
+**Files**: `app/core/chrome_cookies.py`, `app/services/collectors/*.py`  
 **Severity**: Medium  
-**Effort**: 3-4 hours
+**Effort**: 4-6 hours
 
-Currently only Chrome is supported for automatic cookie extraction. Add support for:
-- Firefox (cookies.sqlite database)
-- Safari (binary plist format)
-- Edge (Chromium-based, similar to Chrome)
+Currently only Chrome is supported for automatic cookie extraction across all collectors (Claude, OpenCode). Add support for:
 
-Priority: Low (Chrome covers 80%+ of users)
+**Firefox** (`~/.mozilla/firefox/*/cookies.sqlite`):
+- SQLite database format
+- May be encrypted (requires NSS library on some platforms)
+
+**Safari** (`~/Library/Cookies/Cookies.binarycookies`):
+- Binary plist format
+- Different encryption than Chrome
+- macOS only
+
+**Edge** (Chromium-based):
+- Similar to Chrome, different profile paths
+- `~/.config/microsoft-edge/Default/Cookies` on Linux
+- `~/Library/Application Support/Microsoft Edge/Default/Cookies` on macOS
+
+**Priority**: Low (Chrome covers 80%+ of users)
+
+**Related**: See `docs/collectors/claude.md` and `docs/collectors/opencode.md` for current Chrome-only implementations.
 
 ---
 

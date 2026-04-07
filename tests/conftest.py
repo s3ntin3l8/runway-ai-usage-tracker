@@ -74,6 +74,37 @@ def mock_anthropic_oauth_response():
 
 
 @pytest.fixture
+def mock_claude_web_api_orgs_response():
+    """Mock response from Claude Web API organizations endpoint."""
+    return [
+        {
+            "uuid": "org_test_123",
+            "id": "org_test_123",
+            "name": "Test Org"
+        }
+    ]
+
+
+@pytest.fixture
+def mock_claude_web_api_usage_response():
+    """Mock response from Claude Web API usage endpoint."""
+    return {
+        "current_window": {
+            "percentUsed": 45.5,
+            "resetsAt": "2025-04-07T12:00:00Z"
+        },
+        "current_week": {
+            "percentUsed": 62.3,
+            "resetsAt": "2025-04-14T00:00:00Z"
+        },
+        "current_week_sonnet": {
+            "percentUsed": 30.1,
+            "resetsAt": "2025-04-14T00:00:00Z"
+        }
+    }
+
+
+@pytest.fixture
 def mock_gemini_quota_response():
     """Mock response from Gemini quota API."""
     return {
