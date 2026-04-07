@@ -29,7 +29,7 @@ Currently monitoring **13 data sources** across the following providers:
 *   **Claude (Anthropic)**: Primary OAuth monitoring (supports 5h and 7d windows) + Fallback log parsing for `~/.claude`.
 *   **Gemini (Google)**: Multi-model telemetry from terminal-based usage logs.
 *   **GitHub Copilot**: Live rate limit tracking for Copilot Chat and Indent.
-*   **OpenCode**: Local line-change metrics from `opencode.db` and live cloud usage via API.
+*   **OpenCode**: Local line-change metrics from `opencode.db` and live cloud usage via API. Supports multi-host aggregation via sidecar.
 *   **Chinese AI Ecosystem**: Prepaid balance tracking for **zAI (GLM)** and **Kimi K2.5**.
 *   **ChatGPT Codex**: Session log parsing for local Codex activity.
 *   **Antigravity IDE**: Multi-model telemetry (`gemini-3.1-pro`, `claude-3-5-sonnet`, `o3-mini`).
@@ -59,6 +59,50 @@ curl -X POST http://localhost:8765/api/ingest \
     ]
   }'
 ```
+
+## 🖥️ Multi-Host Setup
+
+Runway supports aggregating usage data from multiple computers (e.g., laptop, desktop, server) using the **sidecar pattern**:
+
+### Architecture
+- **Primary host**: Runs the Runway dashboard (Docker or bare metal)
+- **Secondary hosts**: Run lightweight sidecar scripts that push local metrics to the primary
+
+### OpenCode Multi-Host Aggregation
+
+For OpenCode usage tracking across multiple machines:
+
+1. **On each secondary host**, run the sidecar script:
+   ```bash
+   python3 scripts/sidecar.py --provider opencode \
+     --api-url http://runway-primary:8765 \
+     --api-key sidecar-default-secret
+   ```
+
+2. **Install as a background task** (runs every 30 minutes):
+   ```bash
+   python3 scripts/sidecar.py --provider opencode \
+     --api-url http://runway-primary:8765 \
+     --api-key sidecar-default-secret \
+     --install
+   ```
+
+3. **Dashboard displays aggregated cards**:
+   - `OpenCode (5h Combined)` - Aggregated 5-hour window from all hosts
+   - `OpenCode (7d Combined)` - Aggregated 7-day window from all hosts  
+   - `OpenCode (30d Combined)` - Aggregated 30-day window from all hosts
+
+The aggregation automatically sums usage across all reporting hosts and shows the combined remaining budget against OpenCode Go limits ($12/5h, $30/week, $60/month).
+
+### Docker Deployment Note
+
+When running Runway in Docker (where local files are not accessible), disable the local OpenCode collector:
+
+```bash
+docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false -p 8765:8765 runway
+```
+
+Only sidecar data will be displayed in this mode.
 
 ## 📦 Setup
 
