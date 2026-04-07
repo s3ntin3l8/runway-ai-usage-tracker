@@ -100,31 +100,53 @@ class TestGeminiCollector:
 
     @pytest.mark.asyncio
     async def test_collect_api_success(self, mock_http_client, mock_gemini_quota_response):
-        """Test successful Gemini API collection."""
+        """Test successful Gemini API collection with project discovery."""
         collector = GeminiCollector()
         
-        # Mock responses for both quota and tier endpoints
+        # Mock responses - tier request comes FIRST (to get project ID)
+        tier_response = MagicMock(spec=httpx.Response)
+        tier_response.status_code = 200
+        tier_response.json.return_value = {
+            "currentTier": {"id": "standard-tier", "name": "Gemini Code Assist"},
+            "cloudaicompanionProject": "test-project-123"
+        }
+        
         quota_response = MagicMock(spec=httpx.Response)
         quota_response.status_code = 200
         quota_response.json.return_value = mock_gemini_quota_response
         
-        tier_response = MagicMock(spec=httpx.Response)
-        tier_response.status_code = 200
-        tier_response.json.return_value = {"tier": "free-tier"}
+        # Create async mock that returns responses in order
+        call_count = [0]
+        async def mock_post(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return tier_response  # First call: loadCodeAssist
+            else:
+                return quota_response  # Second call: retrieveUserQuota
         
-        mock_http_client.post.side_effect = [quota_response, tier_response]
+        mock_http_client.post = mock_post
         
         with patch('app.services.collectors.gemini.settings') as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
             mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
             
             with patch('builtins.open', mock_open(read_data=json.dumps({"access_token": "token", "expiry_date": 9999999999999}))):
-                with patch('app.services.collectors.gemini.time.time', return_value=1000):
-                    result = await collector.collect(mock_http_client)
+                with patch('app.services.collectors.gemini.os.path.exists', return_value=True):
+                    with patch('app.services.collectors.gemini.time.time', return_value=1000):
+                        result = await collector.collect(mock_http_client)
         
         assert isinstance(result, list)
         assert len(result) >= 1
-        assert "Gemini" in str(result[0].get('service', ''))
+        # Should return one card per model bucket
+        assert len(result) == len(mock_gemini_quota_response["buckets"])
+        # Check that service name contains model identifier (either display name or raw model ID)
+        assert any(name in str(result[0].get('service', '')) for name in ['Gemini', 'gemini'])
+        # Verify health field exists
+        assert 'health' in result[0]
+        # Verify unit is "used" (not "quota")
+        assert result[0].get('unit') == 'used'
+        # Verify project was used in quota call
+        assert call_count[0] == 2  # Should make 2 API calls
 
     @pytest.mark.asyncio
     async def test_collect_missing_credentials(self, mock_http_client):

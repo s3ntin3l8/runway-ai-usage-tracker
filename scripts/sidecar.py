@@ -141,6 +141,17 @@ class GeminiCollector:
         import os
         return os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
 
+    # Model display name mapping
+    MODEL_DISPLAY_NAMES = {
+        "gemini-2.5-flash": "Gemini 2.5 Flash",
+        "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
+        "gemini-2.5-pro": "Gemini 2.5 Pro",
+        "gemini-3-flash-preview": "Gemini 3 Flash (Preview)",
+        "gemini-3-pro-preview": "Gemini 3 Pro (Preview)",
+        "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite (Preview)",
+        "gemini-3.1-pro-preview": "Gemini 3.1 Pro (Preview)",
+    }
+
     @staticmethod
     def collect():
         results = []
@@ -164,35 +175,61 @@ class GeminiCollector:
                     token = creds.get("access_token")
                     headers = {"Authorization": f"Bearer {token}"}
                     
-                    # Fetch Quota
-                    quota_url = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
-                    q_data, q_code = http_post(quota_url, {"project": ""}, headers)
-                    
-                    # Fetch Tier
+                    # Fetch Tier and Project first (needed for gemini-3 models)
                     tier_url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
                     t_data, t_code = http_post(tier_url, {"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}}, headers)
+                    
+                    # Get project and tier info
+                    project_id = t_data.get("cloudaicompanionProject", "") if t_code == 200 else ""
+                    current_tier = t_data.get("currentTier", {}) if t_code == 200 else {}
+                    tier_name = current_tier.get("name", "Unknown Tier")
+                    
+                    # Fetch Quota with discovered project (required for gemini-3 models)
+                    quota_url = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
+                    q_data, q_code = http_post(quota_url, {"project": project_id}, headers)
                     
                     if q_code == 200:
                         buckets = q_data.get("buckets", [])
                         if buckets:
-                            main_bucket = min(buckets, key=lambda x: x.get("remainingFraction", 1.0))
-                            percent = int(main_bucket.get("remainingFraction", 1.0) * 100)
-                            tier = t_data.get("tier", "unknown").replace("-tier", "").capitalize() if t_code == 200 else "Unknown"
+                            # Create one card per model bucket
+                            for bucket in buckets:
+                                model_id = bucket.get("modelId", "Unknown")
+                                display_name = GeminiCollector.MODEL_DISPLAY_NAMES.get(model_id, model_id)
+                                
+                                # remainingFraction: 1.0 = 100% remaining = 0% used
+                                remaining_fraction = bucket.get("remainingFraction", 1.0)
+                                percent_remaining = int(remaining_fraction * 100)
+                                percent_used = 100 - percent_remaining
+                                
+                                # Format reset time
+                                reset_str = "Resetting..."
+                                if "resetTime" in bucket:
+                                    try:
+                                        reset_str = f"Resets {bucket['resetTime'].split('T')[-1][:5]}"
+                                    except:
+                                        reset_str = f"Resets {bucket['resetTime']}"
+                                
+                                # Determine health based on % used
+                                if percent_used < 50:
+                                    health = "good"
+                                elif percent_used < 80:
+                                    health = "warning"
+                                else:
+                                    health = "critical"
+                                
+                                results.append({
+                                    "service": display_name,
+                                    "icon": "🔵",
+                                    "remaining": f"{percent_used}%",
+                                    "unit": "used",
+                                    "reset": reset_str,
+                                    "health": health,
+                                    "pace": tier_name,
+                                    "detail": f"{percent_remaining}% remaining | Model: {model_id} [Sidecar]"
+                                })
                             
-                            reset_str = "Resetting..."
-                            if "resetTime" in main_bucket:
-                                reset_str = f"Resets {main_bucket['resetTime'].split('T')[-1][:5]}"
-                            
-                            results.append({
-                                "service": "Gemini CLI",
-                                "icon": "🔵",
-                                "remaining": f"{percent}%",
-                                "unit": "quota",
-                                "reset": reset_str,
-                                "health": "good" if percent > 20 else "warn",
-                                "pace": tier,
-                                "detail": f"Model: {main_bucket.get('modelId', 'Global')} [Sidecar]"
-                            })
+                            # Sort by usage (highest % used first)
+                            results.sort(key=lambda x: int(x["remaining"].rstrip("%")), reverse=True)
             except: pass
 
         # 2. Fallback to Logs

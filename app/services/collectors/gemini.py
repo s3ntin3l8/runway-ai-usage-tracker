@@ -5,8 +5,9 @@ Collection Strategy:
 1. Primary: Gemini API endpoints via OAuth
    - Requires GEMINI_OAUTH_PATH credentials file (OAuth refresh flow)
    - Calls cloudcode-pa.googleapis.com to retrieve user quota and tier
-   - Tracks multiple quota buckets (Standard/Flash models)
+   - Discovers project via loadCodeAssist for complete model list (including gemini-3)
    - Auto-refreshes expired tokens and saves back to credentials file
+   - Returns one card per model quota bucket
    
 2. Secondary: Local log parsing from Gemini sessions
    - Parses .jsonl files from GEMINI_SESSIONS_DIR
@@ -26,9 +27,15 @@ Token Management:
 - Uses oauth2.googleapis.com/token endpoint for refresh
 
 Quota Buckets:
-- Gemini API can have multiple quota buckets (e.g., Standard vs Flash)
-- Collector uses most constrained bucket (lowest remainingFraction)
-- Displays model ID and tier information in detail field
+- Gemini API returns quota buckets per model (2.5-flash, 2.5-pro, 3-flash-preview, etc.)
+- Project parameter required to get gemini-3 models (discovered via loadCodeAssist)
+- Each bucket shows remainingFraction (1.0 = 100% remaining = 0% used)
+- All models displayed individually with their own quota status
+
+Tier Detection:
+- Loads current tier from loadCodeAssist (standard-tier, g1-pro-tier, etc.)
+- Displays tier name in cards for context
+- Shows paid tier availability if different from current tier
 """
 
 import glob
@@ -36,12 +43,24 @@ import json
 import os
 import time
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
+
+# Model display name mapping
+MODEL_DISPLAY_NAMES = {
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
+    "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
+    "gemini-2.5-pro": "Gemini 2.5 Pro",
+    "gemini-3-flash-preview": "Gemini 3 Flash (Preview)",
+    "gemini-3-pro-preview": "Gemini 3 Pro (Preview)",
+    "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite (Preview)",
+    "gemini-3.1-pro-preview": "Gemini 3.1 Pro (Preview)",
+}
+
 
 class GeminiCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
@@ -49,7 +68,7 @@ class GeminiCollector(BaseCollector):
         Collect Gemini quota using API first, fallback to local logs.
         
         Returns:
-            List[Dict[str, Any]]: Quota card or empty list if unavailable
+            List[Dict[str, Any]]: List of quota cards (one per model) or empty list if unavailable
         """
         # Try API first
         api_data = await self._collect_via_api(client)
@@ -66,14 +85,14 @@ class GeminiCollector(BaseCollector):
         Steps:
         1. Load OAuth credentials from GEMINI_OAUTH_PATH
         2. Refresh token if expired (saves updated credentials back to file)
-        3. Call retrieveUserQuota to get quota buckets
-        4. Call loadCodeAssist to determine user tier
-        5. Return card for most constrained bucket
+        3. Call loadCodeAssist to discover project and get tier info
+        4. Call retrieveUserQuota with discovered project to get all model quotas (including gemini-3)
+        5. Return one card per model bucket
         
         Returns empty list on any error to allow fallback to logs.
         
         Returns:
-            List[Dict[str, Any]]: Single quota card or empty list
+            List[Dict[str, Any]]: List of quota cards, one per model, or empty list
         """
         creds_path = settings.GEMINI_OAUTH_PATH
         if not os.path.exists(creds_path):
@@ -87,7 +106,8 @@ class GeminiCollector(BaseCollector):
             # Check expiry (expiry_date is in ms)
             if creds.get("expiry_date", 0) < (time.time() * 1000):
                 creds = await self._refresh_token(client, creds)
-                if not creds: return []
+                if not creds: 
+                    return []
                 # Save refreshed creds back
                 with open(creds_path, "w") as f:
                     json.dump(creds, f, indent=2)
@@ -95,48 +115,76 @@ class GeminiCollector(BaseCollector):
             token = creds.get("access_token")
             headers = {"Authorization": f"Bearer {token}"}
 
-            # 1. Retrieve Quota
-            quota_resp = await client.post(
-                "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
-                json={"project": ""}, # Use default/empty project
-                headers=headers
-            )
-            quota_data = quota_resp.json()
-
-            # 2. Tier Detection
+            # 1. Load Code Assist - get project and tier info
             tier_resp = await client.post(
                 "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
                 json={"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
                 headers=headers
             )
             tier_info = tier_resp.json()
-            tier = tier_info.get("tier", "unknown").replace("-tier", "").capitalize()
-
-            # Process quota buckets
-            # CodexBar logic: lowest remainingFraction wins for standard/flash
-            buckets = quota_data.get("buckets", [])
-            if not buckets: return []
-
-            # We'll just take the most constrained bucket for the summary
-            main_bucket = min(buckets, key=lambda x: x.get("remainingFraction", 1.0))
-            percent = int(main_bucket.get("remainingFraction", 1.0) * 100)
             
-            # Format reset time
-            reset_str = "Resetting..."
-            if "resetTime" in main_bucket:
-                # Basic ISO-8601 parsing/display
-                reset_str = f"Resets at {main_bucket['resetTime'].split('T')[-1][:5]}"
+            # Extract project and tier
+            project_id = tier_info.get("cloudaicompanionProject", "")
+            current_tier = tier_info.get("currentTier", {})
+            tier_name = current_tier.get("name", "Unknown Tier")
+            tier_id = current_tier.get("id", "unknown")
+            
+            # 2. Retrieve Quota with discovered project (required for gemini-3 models)
+            quota_resp = await client.post(
+                "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+                json={"project": project_id},
+                headers=headers
+            )
+            quota_data = quota_resp.json()
 
-            return [{
-                "service": "Gemini CLI",
-                "icon": "🔵",
-                "remaining": f"{percent}%",
-                "unit": "quota",
-                "reset": reset_str,
-                "health": "good" if percent > 20 else "warn",
-                "pace": tier,
-                "detail": f"Model: {main_bucket.get('modelId', 'Global')}",
-            }]
+            # Process quota buckets - return one card per model
+            buckets = quota_data.get("buckets", [])
+            if not buckets: 
+                return []
+
+            results = []
+            for bucket in buckets:
+                model_id = bucket.get("modelId", "Unknown")
+                display_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
+                
+                # remainingFraction: 1.0 = 100% remaining = 0% used
+                remaining_fraction = bucket.get("remainingFraction", 1.0)
+                percent_remaining = int(remaining_fraction * 100)
+                percent_used = 100 - percent_remaining
+                
+                # Format reset time
+                reset_str = "Resetting..."
+                if "resetTime" in bucket:
+                    reset_time = bucket["resetTime"]
+                    try:
+                        # Parse ISO-8601 and show time only
+                        reset_str = f"Resets at {reset_time.split('T')[-1][:5]}"
+                    except:
+                        reset_str = f"Resets {reset_time}"
+                
+                # Determine health based on % used (not remaining)
+                if percent_used < 50:
+                    health = "good"
+                elif percent_used < 80:
+                    health = "warning"
+                else:
+                    health = "critical"
+                
+                results.append({
+                    "service": display_name,
+                    "icon": "🔵",
+                    "remaining": f"{percent_used}%",
+                    "unit": "used",
+                    "reset": reset_str,
+                    "health": health,
+                    "pace": tier_name,
+                    "detail": f"{percent_remaining}% remaining | Model: {model_id}",
+                })
+            
+            # Sort by usage (highest % used first = most constrained)
+            results.sort(key=lambda x: int(x["remaining"].rstrip("%")), reverse=True)
+            
+            return results
 
         except FileNotFoundError as e:
             logger.debug(f"Gemini credential file not found: {e}")
@@ -148,7 +196,7 @@ class GeminiCollector(BaseCollector):
             logger.error(f"Gemini API collection failed: {e}")
             return []
 
-    async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Dict:
+    async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Optional[Dict]:
         """
         Refresh Google OAuth token if expired.
         
@@ -208,7 +256,8 @@ class GeminiCollector(BaseCollector):
         sessions_dir = settings.GEMINI_SESSIONS_DIR
         try:
             files = glob.glob(f"{sessions_dir}/*.jsonl")
-            if not files: return []
+            if not files: 
+                return []
             total = 0
             for fpath in files:
                 with open(fpath, "r") as f:
