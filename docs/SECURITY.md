@@ -116,11 +116,11 @@ For GitHub Actions or other CI/CD:
    ```
 
 3. **Test new credentials:**
-   ```bash
-   python scripts/test_ingest.py
-   python scripts/test_claude_oauth.py
-   python scripts/test_gemini_api.py
-   ```
+    ```bash
+    python -m pytest tests/unit/test_collectors.py -v
+    python scripts/sidecar.py --provider anthropic --dry-run
+    python scripts/sidecar.py --provider gemini --dry-run
+    ```
 
 4. **Revoke old credentials** from each service
 

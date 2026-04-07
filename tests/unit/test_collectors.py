@@ -21,7 +21,8 @@ from app.services.collectors.github import GitHubCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.opencode import OpenCodeCollector
-from app.services.collectors.chinese_ai import ChineseAICollector
+from app.services.collectors.zai import ZaiCollector
+from app.services.collectors.kimi_code import KimiCodeCollector
 
 
 class TestAnthropicCollector:
@@ -704,49 +705,113 @@ class TestOpenCodeCollector:
         assert result == []
 
 
-class TestChineseAICollector:
-    """Test suite for Chinese AI providers (zAI and Kimi)."""
+class TestZaiCollector:
+    """Test suite for zAI (Zhipu AI/GLM) collector."""
 
     @pytest.mark.asyncio
-    async def test_collect_zai_success(self, mock_http_client, mock_zai_response):
-        """Test successful zAI (Zhipu) balance collection."""
-        collector = ChineseAICollector()
+    async def test_collect_success(self, mock_http_client, mock_zai_response):
+        """Test successful zAI balance collection."""
+        collector = ZaiCollector()
         
-        zai_response = MagicMock(spec=httpx.Response)
-        zai_response.status_code = 200
-        zai_response.json.return_value = mock_zai_response
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = mock_zai_response
         
-        kimi_response = MagicMock(spec=httpx.Response)
-        kimi_response.status_code = 401  # Kimi fails, only zAI succeeds
+        mock_http_client.get.return_value = response
         
-        mock_http_client.get.side_effect = [zai_response, kimi_response]
-        
-        with patch('app.services.collectors.chinese_ai.settings') as mock_settings:
-            mock_settings.ZAI_API_KEY = "zai_key"
-            mock_settings.KIMI_API_KEY = "invalid"
+        with patch('app.services.collectors.zai.settings') as mock_settings:
+            mock_settings.ZAI_API_KEY = "zai_valid_key"
             result = await collector.collect(mock_http_client)
         
-        assert any("zAI" in card.get('service', '') for card in result)
-        assert any("¥" in card.get('remaining', '') for card in result if "zAI" in card.get('service', ''))
+        assert len(result) == 1
+        assert result[0]["service"] == "zAI (GLM)"
+        assert "¥125.45" in result[0]["remaining"]
+        assert result[0]["health"] == "good"
 
     @pytest.mark.asyncio
-    async def test_collect_kimi_success(self, mock_http_client, mock_kimi_response):
-        """Test successful Kimi balance collection."""
-        collector = ChineseAICollector()
+    async def test_collect_invalid_key(self, mock_http_client):
+        """Test zAI collection with invalid/placeholder key."""
+        collector = ZaiCollector()
         
-        zai_response = MagicMock(spec=httpx.Response)
-        zai_response.status_code = 401  # zAI fails
-        
-        kimi_response = MagicMock(spec=httpx.Response)
-        kimi_response.status_code = 200
-        kimi_response.json.return_value = mock_kimi_response
-        
-        mock_http_client.get.side_effect = [zai_response, kimi_response]
-        
-        with patch('app.services.collectors.chinese_ai.settings') as mock_settings:
-            mock_settings.ZAI_API_KEY = "invalid"
-            mock_settings.KIMI_API_KEY = "kimi_key_valid"
+        with patch('app.services.collectors.zai.settings') as mock_settings:
+            mock_settings.ZAI_API_KEY = "zai"  # Placeholder
             result = await collector.collect(mock_http_client)
         
-        assert any("Kimi" in card.get('service', '') for card in result)
-        assert any("$" in card.get('remaining', '') for card in result if "Kimi" in card.get('service', ''))
+        assert len(result) == 1
+        assert "zAI" in result[0]["service"]
+        assert result[0]["remaining"] == "ERR"
+        assert "Missing/Invalid Key" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error(self, mock_http_client):
+        """Test zAI collection when API returns error."""
+        collector = ZaiCollector()
+        
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 401
+        
+        mock_http_client.get.return_value = response
+        
+        with patch('app.services.collectors.zai.settings') as mock_settings:
+            mock_settings.ZAI_API_KEY = "invalid_key"
+            result = await collector.collect(mock_http_client)
+        
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "API Error" in result[0]["detail"]
+
+
+class TestKimiCodeCollector:
+    """Test suite for Kimi Code (Moonshot AI) collector."""
+
+    @pytest.mark.asyncio
+    async def test_collect_success(self, mock_http_client, mock_kimi_response):
+        """Test successful Kimi Code balance collection."""
+        collector = KimiCodeCollector()
+        
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = mock_kimi_response
+        
+        mock_http_client.get.return_value = response
+        
+        with patch('app.services.collectors.kimi_code.settings') as mock_settings:
+            mock_settings.KIMI_API_KEY = "kimi_valid_key_long"
+            result = await collector.collect(mock_http_client)
+        
+        assert len(result) == 1
+        assert result[0]["service"] == "Kimi Code"
+        assert "$8.75" in result[0]["remaining"]
+        assert result[0]["health"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_collect_invalid_key(self, mock_http_client):
+        """Test Kimi Code collection with short/invalid key."""
+        collector = KimiCodeCollector()
+        
+        with patch('app.services.collectors.kimi_code.settings') as mock_settings:
+            mock_settings.KIMI_API_KEY = "short"  # Too short
+            result = await collector.collect(mock_http_client)
+        
+        assert len(result) == 1
+        assert "Kimi Code" in result[0]["service"]
+        assert result[0]["remaining"] == "ERR"
+        assert "Missing/Invalid Key" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_unauthorized(self, mock_http_client):
+        """Test Kimi Code collection with 401 Unauthorized."""
+        collector = KimiCodeCollector()
+        
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 401
+        
+        mock_http_client.get.return_value = response
+        
+        with patch('app.services.collectors.kimi_code.settings') as mock_settings:
+            mock_settings.KIMI_API_KEY = "invalid_key_long"
+            result = await collector.collect(mock_http_client)
+        
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "Unauthorized" in result[0]["detail"]

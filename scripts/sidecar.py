@@ -504,6 +504,84 @@ class OpenCodeCollector:
         except:
             return []
 
+class ZaiCollector:
+    @staticmethod
+    def collect():
+        key = os.getenv("ZAI_API_KEY")
+        if not key or key.lower() == "zai":
+            return []
+        try:
+            headers = {"Authorization": f"Bearer {key}"}
+            data, code = http_get("https://open.bigmodel.cn/api/paas/v4/users/me/balance", headers)
+            if code != 200:
+                return []
+            bal = float(data.get("data", {}).get("available_balance", 0))
+            return [{
+                "service": "zAI (GLM)",
+                "icon": "🌐",
+                "remaining": f"¥{bal:.2f}",
+                "unit": "balance",
+                "reset": "Manual",
+                "health": "good" if bal > 10 else "warning",
+                "pace": "Stable",
+                "detail": "Prepaid balance [Sidecar]"
+            }]
+        except:
+            return []
+
+class KimiCodeCollector:
+    @staticmethod
+    def collect():
+        key = os.getenv("KIMI_API_KEY")
+        if not key or len(key) < 10:
+            return []
+        try:
+            headers = {"Authorization": f"Bearer {key}"}
+            data, code = http_get("https://api.moonshot.cn/v1/users/me/balance", headers)
+            if code == 401:
+                return []
+            if code != 200:
+                return []
+            bal = float(data.get("data", {}).get("available_balance", 0))
+            return [{
+                "service": "Kimi Code",
+                "icon": "🌙",
+                "remaining": f"${bal:.2f}",
+                "unit": "balance",
+                "reset": "Manual",
+                "health": "good" if bal > 5 else "warning",
+                "pace": "Stable",
+                "detail": "Prepaid balance [Sidecar]"
+            }]
+        except:
+            return []
+
+class AntigravityCollector:
+    @staticmethod
+    def collect():
+        path = Path.home() / ".antigravity" / "state" / "quota.json"
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            results = []
+            for name, usage in data.get("models", {}).items():
+                rem = usage.get("remaining_percent", 0.0)
+                reset_ts = usage.get("resets_at")
+                reset_at = datetime.datetime.fromtimestamp(reset_ts, tz=datetime.timezone.utc) if reset_ts else None
+                results.append({
+                    "service": f"AG: {name}",
+                    "icon": "🛸",
+                    "remaining": f"{rem:.1f}%",
+                    "unit": "remaining",
+                    "reset": human_delta(reset_at),
+                    "health": "good" if rem > 30 else "warning",
+                    "pace": "Stable",
+                    "detail": f"{name} [Sidecar]"
+                })
+            return results
+        except:
+            return []
+
 # --- Main Script Logic ---
 
 def run_install(api_url, api_key):
@@ -540,7 +618,7 @@ def run_install(api_url, api_key):
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Lightweight Sidecar for Runway")
-    parser.add_argument("--provider", default="all", help="Provider to collect (anthropic, github, gemini, all)")
+    parser.add_argument("--provider", default="all", help="Provider to collect (anthropic, github, gemini, chatgpt, opencode, zai, kimi_code, antigravity, all)")
     parser.add_argument("--api-url", help="Runway API URL")
     parser.add_argument("--api-key", help="Ingestion API Key")
     parser.add_argument("--install", action="store_true", help="Install as a background task")
@@ -555,12 +633,15 @@ def main():
     # Collection
     all_metrics = []
     providers = []
-    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector, OpenCodeCollector]
+    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector, OpenCodeCollector, ZaiCollector, KimiCodeCollector, AntigravityCollector]
     elif args.provider == "anthropic": providers = [AnthropicCollector]
     elif args.provider == "github": providers = [GitHubCollector]
     elif args.provider == "gemini": providers = [GeminiCollector]
     elif args.provider == "chatgpt": providers = [ChatGPTCollector]
     elif args.provider == "opencode": providers = [OpenCodeCollector]
+    elif args.provider == "zai": providers = [ZaiCollector]
+    elif args.provider == "kimi_code": providers = [KimiCodeCollector]
+    elif args.provider == "antigravity": providers = [AntigravityCollector]
     
     for p in providers:
         all_metrics.extend(p.collect())
