@@ -268,6 +268,64 @@ echo $GEMINI_OAUTH_CLIENT_SECRET
 
 ---
 
+## Future Options
+
+### Potential: CLI `/stats` Parsing (Tertiary Fallback)
+
+**Source:** CodexBar documentation mentions `GeminiStatusProbe.parse(text:)` can parse `/stats` output.
+
+**What it is:** The Gemini CLI has a `/stats` command that outputs formatted quota tables:
+```
+│  Model                   Reqs    Model usage                 Usage resets
+│  ────────────────────────────────────────────────────────────────────────────────
+│  gemini-2.5-flash           -    ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬    0%  3:30 PM (24h)
+│  gemini-3-pro-preview       -    ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬    0%  3:30 PM (24h)
+```
+
+**Implementation approach:**
+```python
+async def _collect_via_cli_stats(self) -> List[Dict[str, Any]]:
+    """Tertiary fallback: Parse `gemini /stats` CLI output."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gemini", "/stats",
+            stdout=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        # Parse table format to extract model, usage %, reset time
+        ...
+    except FileNotFoundError:
+        return []  # gemini CLI not installed
+```
+
+**Pros:**
+- No OAuth credentials required
+- Shows quota % (better than raw token counts from logs)
+- Always includes all models (gemini-3 included)
+
+**Cons:**
+- Requires gemini CLI binary to be installed
+- Slower (subprocess execution)
+- Fragile parsing (format could change)
+- Adds maintenance burden
+
+**Comparison:**
+
+| Method | Requires | Data Quality | Speed | Reliability |
+|--------|----------|--------------|-------|-------------|
+| OAuth API | Credentials | ⭐⭐⭐ Complete | Fast | High |
+| Session Logs | Log files | ⭐⭐ Token counts only | Fast | Medium |
+| CLI `/stats` | CLI binary | ⭐⭐⭐ Quota % visible | Slow | Low |
+
+**Decision:** **Not implemented currently.** The session log fallback is sufficient for most cases. OAuth API covers the primary use case well.
+
+**If needed in future:** Would slot between OAuth API and session logs:
+```
+OAuth API → CLI /stats (quota %) → Session Logs (token counts)
+```
+
+---
+
 ## Related Files
 
 | File | Purpose |
