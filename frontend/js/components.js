@@ -7,19 +7,200 @@ import { HEALTH_CONFIG, STATE } from './state.js';
  * @property {string} remaining - Remaining capacity (number, percentage, or "ERR")
  * @property {string} unit - Unit of measurement (e.g., "tokens / 5h", "capacity", "%")
  * @property {string} reset - Human-readable time until reset (e.g., "in 2h 30m")
- * @property {string} health - Health status ("good", "warning", "critical", "unknown")
+ * @property {string} health - Health status ("good", "warning", "critical", "unknown", "unlimited")
  * @property {string} pace - Burn rate descriptor (e.g., "Sustainable", "Fast Burn")
  * @property {string} detail - Additional details (e.g., usage percentage, last update time)
+ * @property {number|null} used_value - Raw used amount
+ * @property {number|null} limit_value - Raw limit amount
+ * @property {boolean} is_unlimited - Whether the plan has no hard limit
+ * @property {string} unit_type - Type of unit ("currency", "tokens", "requests", "minutes", "percent", "generic")
+ * @property {string|null} currency - Currency code ("USD", "EUR", "CNY", etc.)
+ * @property {string|null} reset_at - ISO 8601 timestamp for reset (for tooltip)
+ * @property {string} data_source - Data source indicator ("oauth", "web_api", "local", "cache", "fallback", "api", "sidecar")
  */
 
 /**
- * Parse percentage value from detail string
- * @param {string} detail - Detail string that may contain a percentage
- * @returns {number|null} Parsed percentage (0-100) or null if not found
+ * Format a number with appropriate abbreviations (K, M, B)
+ * @param {number} num - Number to format
+ * @returns {string} Formatted number
  */
-function parseProgressPct(detail) {
-    const m = detail.match(/(\d+(\.\d+)?)%/);
-    return m ? Math.min(100, parseFloat(m[1])) : null;
+function formatNumber(num) {
+    if (num === null || num === undefined || isNaN(num)) return '—';
+    const absNum = Math.abs(num);
+    if (absNum >= 1e9) return `${(num/1e9).toFixed(1)}B`;
+    if (absNum >= 1e6) return `${(num/1e6).toFixed(1)}M`;
+    if (absNum >= 1e3) return `${(num/1e3).toFixed(1)}K`;
+    if (Number.isInteger(num)) return num.toString();
+    return num.toFixed(1);
+}
+
+/**
+ * Format currency amount with appropriate symbol
+ * @param {number} amount - Amount to format
+ * @param {string} currencyCode - Currency code (USD, EUR, etc.)
+ * @returns {string} Formatted currency
+ */
+function formatCurrency(amount, currencyCode) {
+    if (amount === null || amount === undefined || isNaN(amount)) return '—';
+    const symbols = { USD: '$', EUR: '€', GBP: '£', CNY: '¥', JPY: '¥' };
+    const symbol = symbols[currencyCode] || '$';
+    return `${symbol}${amount.toFixed(2)}`;
+}
+
+/**
+ * Format used/limit values based on unit type
+ * @param {number} used - Used amount
+ * @param {number} limit - Limit amount
+ * @param {string} unitType - Type of unit
+ * @param {string} currency - Currency code
+ * @returns {Object} Formatted {used, limit, unit}
+ */
+function formatUsageValues(used, limit, unitType, currency) {
+    if (unitType === 'currency') {
+        return {
+            used: formatCurrency(used, currency),
+            limit: formatCurrency(limit, currency),
+            unit: ''
+        };
+    } else if (unitType === 'tokens') {
+        return {
+            used: formatNumber(used),
+            limit: formatNumber(limit),
+            unit: 'tokens'
+        };
+    } else if (unitType === 'requests') {
+        return {
+            used: formatNumber(used),
+            limit: formatNumber(limit),
+            unit: 'requests'
+        };
+    } else if (unitType === 'minutes') {
+        return {
+            used: formatNumber(used),
+            limit: formatNumber(limit),
+            unit: 'min'
+        };
+    } else if (unitType === 'percent') {
+        return {
+            used: used.toFixed(1),
+            limit: limit.toFixed(1),
+            unit: '%'
+        };
+    } else {
+        return {
+            used: formatNumber(used),
+            limit: formatNumber(limit),
+            unit: ''
+        };
+    }
+}
+
+/**
+ * Format reset time tooltip with absolute time
+ * @param {string|null} resetAt - ISO 8601 timestamp
+ * @returns {string|null} Formatted tooltip text or null
+ */
+function formatResetTooltip(resetAt) {
+    if (!resetAt || resetAt === '—') return null;
+
+    try {
+        const date = new Date(resetAt);
+        const now = new Date();
+
+        // Check if date is valid
+        if (isNaN(date.getTime())) return null;
+
+        const diffHours = (date - now) / (1000 * 60 * 60);
+
+        // Format time locale-aware (12h or 24h based on browser locale)
+        const timeStr = date.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: undefined // Browser decides based on locale
+        });
+
+        // Format date locale-aware (e.g., "10 Jan" or "Jan 10")
+        const dateStr = date.toLocaleDateString(undefined, {
+            day: 'numeric',
+            month: 'short'
+        });
+
+        // If > 24h away, include date
+        if (diffHours >= 24) {
+            return `Resets at ${timeStr} on ${dateStr}`;
+        } else {
+            return `Resets at ${timeStr}`;
+        }
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Source color mappings (subtle, glassmorphism-friendly)
+ */
+const SOURCE_COLORS = {
+    oauth: 'text-blue-400/80',
+    web_api: 'text-violet-400/80',
+    local: 'text-emerald-400/80',
+    cache: 'text-orange-400/80',
+    fallback: 'text-amber-400/80',
+    api: 'text-cyan-400/80',
+    sidecar: 'text-pink-400/80'
+};
+
+const SOURCE_LABELS = {
+    oauth: 'OAuth',
+    web_api: 'Web API',
+    local: 'Local',
+    cache: 'Cache',
+    fallback: 'Fallback',
+    api: 'API',
+    sidecar: 'Sidecar'
+};
+
+/**
+ * Format data source for display in subtitle
+ * @param {string} source - Data source key
+ * @returns {string} Formatted source HTML or empty string
+ */
+function formatDataSource(source) {
+    if (!source || source === 'unknown') return '';
+    const label = SOURCE_LABELS[source] || source;
+    const colorClass = SOURCE_COLORS[source] || 'text-zinc-400/80';
+    return ` · <span class="${colorClass}">${label}</span>`;
+}
+
+/**
+ * Calculate percentage used from raw values
+ * @param {LimitCard} item - The limit card data
+ * @returns {number|null} Percentage used (0-100) or null
+ */
+function calculateUsedPct(item) {
+    // If it's an unlimited plan, return null
+    if (item.is_unlimited) return null;
+
+    // Use provided values if available
+    if (item.used_value !== null && item.limit_value !== null && item.limit_value > 0) {
+        return (item.used_value / item.limit_value) * 100;
+    }
+
+    // Fallback: try to parse from detail string
+    if (item.detail) {
+        const m = item.detail.match(/(\d+(\.\d+)?)%/);
+        if (m) return parseFloat(m[1]);
+    }
+
+    // Try to parse from remaining field
+    if (item.remaining) {
+        const m = item.remaining.match(/(\d+(\.\d+)?)%/);
+        if (m) {
+            const remainingPct = parseFloat(m[1]);
+            return 100 - remainingPct;
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -28,28 +209,95 @@ function parseProgressPct(detail) {
  * @returns {string} HTML string representing the card
  */
 export function buildCard(item) {
+    const isUnlimited = item.is_unlimited || item.health === 'unlimited';
     const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
-    const usedPct = parseProgressPct(item.detail || '');
-    
-    // Inverted Logic: show remaining capacity instead of used
-    let barWidth = usedPct;
-    if (STATE.remaining && usedPct !== null) {
+
+    // Calculate percentage
+    let usedPct = calculateUsedPct(item);
+    const hasPercentage = usedPct !== null;
+
+    // For display: default shows % used, toggle shows % remaining
+    let displayPct = usedPct;
+    let displayLabel = 'used';
+    if (STATE.remaining && hasPercentage) {
+        displayPct = 100 - usedPct;
+        displayLabel = 'remaining';
+    }
+
+    // For unlimited plans, show special display
+    if (isUnlimited) {
+        displayPct = null;
+    }
+
+    // Progress bar width
+    let barWidth = hasPercentage ? usedPct : 0;
+    if (STATE.remaining && hasPercentage) {
         barWidth = 100 - usedPct;
+    }
+
+    // Build subtitle with raw values and data source
+    let subtitle = '';
+    const sourceLabel = formatDataSource(item.data_source);
+    if (isUnlimited) {
+        subtitle = `<span class="text-xs text-zinc-500">No usage limit${sourceLabel}</span>`;
+    } else if (hasPercentage && item.used_value !== null && item.limit_value !== null) {
+        const formatted = formatUsageValues(
+            item.used_value,
+            item.limit_value,
+            item.unit_type || 'generic',
+            item.currency
+        );
+        subtitle = `<span class="text-xs text-zinc-500">${formatted.used} of ${formatted.limit} ${formatted.unit} ${displayLabel}${sourceLabel}</span>`;
+    } else if (item.detail) {
+        // Fallback to detail field
+        subtitle = `<span class="text-xs text-zinc-600 mono truncate" title="${item.detail}">${item.detail}${sourceLabel}</span>`;
     }
 
     const isPlaceholder = item.health === 'unknown';
 
-    const progressBar = barWidth !== null ? `
-        <div class="progress-track mt-4">
-            <div class="progress-fill" style="width: ${barWidth}%; background: ${h.bar};"></div>
+    // Progress bar with appropriate styling
+    let progressBarClass = 'progress-fill';
+    let progressTrackClass = 'progress-track mt-3';
+
+    if (isUnlimited) {
+        progressTrackClass += ' progress-unlimited';
+    }
+
+    const progressBar = hasPercentage || isUnlimited ? `
+        <div class="${progressTrackClass}">
+            <div class="${progressBarClass}" style="width: ${isUnlimited ? 100 : barWidth}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};"></div>
         </div>` : '';
 
-    const detailEl = item.detail ? `
-        <p class="text-xs text-zinc-600 mono mt-1 truncate" title="${item.detail}">${item.detail}</p>` : '';
-
+    // Pace badge
     const paceBadge = item.pace ? `
         <span class="text-[10px] font-bold text-zinc-500 bg-zinc-900/80 border border-zinc-800 px-1.5 py-0.5 rounded-full mono">${item.pace}</span>
     ` : '';
+
+    // Main display value
+    let mainDisplay = '';
+    if (isUnlimited) {
+        mainDisplay = `<span class="text-4xl font-black tracking-tighter text-violet-400">∞</span>`;
+    } else if (hasPercentage) {
+        mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${displayPct.toFixed(1)}%</span>`;
+    } else {
+        // Fallback to remaining value
+        mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${item.remaining}</span>
+                <span class="text-sm font-medium text-zinc-500">${item.unit}</span>`;
+    }
+
+            // For unlimited plans, add unit label next to infinity
+    const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${item.unit || 'Unlimited'}</span>` : '';
+
+    // Build reset element with tooltip
+    const resetTooltip = formatResetTooltip(item.reset_at);
+    const resetElement = resetTooltip ? `
+        <div class="tooltip-container">
+            <span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono cursor-help">
+                ${item.reset}
+            </span>
+            <div class="tooltip">${resetTooltip}</div>
+        </div>
+    ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${item.reset}</span>`;
 
     return `
         <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3">
@@ -73,18 +321,17 @@ export function buildCard(item) {
             <!-- Main value -->
             <div class="mt-1">
                 <div class="flex items-baseline gap-1.5 flex-wrap">
-                    <span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${item.remaining}</span>
-                    <span class="text-sm font-medium text-zinc-500">${item.unit}</span>
+                    ${mainDisplay}${unitLabel}
                 </div>
-                ${detailEl}
+                <div class="mt-1">
+                    ${subtitle}
+                </div>
             </div>
 
             <!-- Reset footer -->
             <div class="mt-auto pt-3 border-t border-zinc-800/60 flex items-center justify-between">
                 <span class="text-xs text-zinc-600 mono font-medium">RESETS</span>
-                <span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">
-                    ${item.reset}
-                </span>
+                ${resetElement}
             </div>
         </div>
     `;

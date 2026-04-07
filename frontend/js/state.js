@@ -34,4 +34,5 @@ export const HEALTH_CONFIG = {
     warning:  { dot: 'dot-warning',  card: 'health-warning',  badge: 'text-amber-400',   bar: '#f59e0b', label: 'WARN' },
     critical: { dot: 'dot-critical', card: 'health-critical', badge: 'text-red-400',      bar: '#ef4444', label: 'CRIT' },
     unknown:  { dot: 'dot-unknown',  card: 'health-unknown',  badge: 'text-zinc-500',     bar: '#3f3f46', label: '——' },
+    unlimited:{ dot: 'dot-unlimited',card: 'health-unlimited',badge: 'text-violet-400',   bar: '#8b5cf6', label: '∞' },
 };

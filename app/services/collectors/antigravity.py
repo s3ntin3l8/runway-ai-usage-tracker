@@ -58,6 +58,8 @@ class AntigravityCollector(BaseCollector):
                     "health": "good" if rem > 30 else "warning",
                     "pace": PaceCalculator.estimate_longevity(100 - rem, reset),
                     "detail": f"{name} [IDE]",
+                    "reset_at": reset.isoformat() if reset else None,
+                    "data_source": "local",
                 })
             return res
         except: return []

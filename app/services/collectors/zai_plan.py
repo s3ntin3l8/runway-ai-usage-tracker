@@ -171,6 +171,7 @@ class ZaiPlanCollector(BaseCollector):
         
         # Parse reset time
         reset_str = "Manual"
+        reset_at = None
         if reset_ts:
             try:
                 # Handle both milliseconds and seconds
@@ -178,9 +179,10 @@ class ZaiPlanCollector(BaseCollector):
                     reset_ts = reset_ts / 1000
                 reset_dt = datetime.fromtimestamp(reset_ts, tz=timezone.utc)
                 reset_str = human_delta(reset_dt)
+                reset_at = reset_dt.isoformat()
             except (ValueError, OSError):
                 reset_str = "Unknown"
-        
+
         # Health based on percentage used
         if pct_used < 50:
             health = "good"
@@ -188,7 +190,10 @@ class ZaiPlanCollector(BaseCollector):
             health = "warning"
         else:
             health = "critical"
-        
+
+        # Determine unit_type based on limit_type
+        unit_type = "tokens" if limit_type == "TOKENS_LIMIT" else "minutes" if limit_type == "TIME_LIMIT" else "generic"
+
         return {
             "service": service,
             "icon": "📊",
@@ -198,4 +203,10 @@ class ZaiPlanCollector(BaseCollector):
             "health": health,
             "pace": "Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical",
             "detail": detail,
+            "used_value": float(used_val),
+            "limit_value": float(limit_val),
+            "is_unlimited": False,
+            "unit_type": unit_type,
+            "reset_at": reset_at,
+            "data_source": "api",
         }

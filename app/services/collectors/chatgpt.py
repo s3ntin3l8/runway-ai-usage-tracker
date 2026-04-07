@@ -103,7 +103,9 @@ class ChatGPTCollector(BaseCollector):
                         "reset": human_delta(reset_at),
                         "health": "good" if pct < 80 else "warning",
                         "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                        "detail": "API: wham/usage"
+                        "detail": "API: wham/usage",
+                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "data_source": "oauth",
                     }]
             except Exception as e:
                 # Fallback to local logs on API failure
@@ -136,5 +138,7 @@ class ChatGPTCollector(BaseCollector):
                 "health": "good" if pct < 80 else "warning",
                 "pace": PaceCalculator.estimate_longevity(pct, reset_at),
                 "detail": f"{pct:.1f}% used [Cache]",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "cache",
             }]
         except: return [error_card("ChatGPT Codex", "💬", "Parse Error")]

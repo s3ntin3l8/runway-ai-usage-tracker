@@ -33,7 +33,13 @@ function renderGrid() {
 window.toggleConfig = function(key) {
     STATE[key] = !STATE[key];
     const btn = document.getElementById(`toggle-${key}`);
-    if (btn) btn.classList.toggle('active', STATE[key]);
+    if (btn) {
+        btn.classList.toggle('active', STATE[key]);
+        // Update button text for remaining toggle
+        if (key === 'remaining') {
+            btn.innerHTML = STATE[key] ? '📈 % Remaining' : '📊 % Used';
+        }
+    }
     if (key === 'compact') {
         document.body.classList.toggle('compact-mode', STATE[key]);
     }

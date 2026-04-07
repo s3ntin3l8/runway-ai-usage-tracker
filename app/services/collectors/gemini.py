@@ -154,14 +154,19 @@ class GeminiCollector(BaseCollector):
                 
                 # Format reset time
                 reset_str = "Resetting..."
+                reset_at = None
                 if "resetTime" in bucket:
                     reset_time = bucket["resetTime"]
                     try:
                         # Parse ISO-8601 and show time only
                         reset_str = f"Resets at {reset_time.split('T')[-1][:5]}"
+                        # Parse for reset_at timestamp
+                        from datetime import datetime
+                        reset_dt = datetime.fromisoformat(reset_time.replace('Z', '+00:00'))
+                        reset_at = reset_dt.isoformat()
                     except:
                         reset_str = f"Resets {reset_time}"
-                
+
                 # Determine health based on % used (not remaining)
                 if percent_used < 50:
                     health = "good"
@@ -169,7 +174,7 @@ class GeminiCollector(BaseCollector):
                     health = "warning"
                 else:
                     health = "critical"
-                
+
                 results.append({
                     "service": display_name,
                     "icon": "🔵",
@@ -179,6 +184,12 @@ class GeminiCollector(BaseCollector):
                     "health": health,
                     "pace": tier_name,
                     "detail": f"{percent_remaining}% remaining | Model: {model_id}",
+                    "used_value": float(percent_used),
+                    "limit_value": 100.0,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "reset_at": reset_at,
+                    "data_source": "oauth",
                 })
             
             # Sort by usage (highest % used first = most constrained)
@@ -273,6 +284,7 @@ class GeminiCollector(BaseCollector):
                 "health": "good",
                 "pace": "Stable",
                 "detail": "Fallback: Local logs",
+                "data_source": "local",
             }]
         except FileNotFoundError:
             logger.debug(f"Gemini sessions directory not found: {sessions_dir}")

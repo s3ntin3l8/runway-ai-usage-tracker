@@ -31,7 +31,11 @@ def human_delta(target_dt: Optional[datetime]) -> str:
     if seconds < 0: return "Just now"
     if seconds < 60: return f"{seconds}s"
     if seconds < 3600: return f"{seconds // 60}m"
-    return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    if seconds < 86400: return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    # NEW: xd yh format for >24h
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    return f"{days}d {hours}h"
 
 def error_card(service: str, icon: str, message: str):
     return {

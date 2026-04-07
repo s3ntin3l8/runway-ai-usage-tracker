@@ -248,6 +248,12 @@ class AnthropicCollector(BaseCollector):
                 "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                 "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
                 "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
+                "used_value": pct_used,
+                "limit_value": 100.0,
+                "is_unlimited": False,
+                "unit_type": "percent",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "oauth",
             })
         
         return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
@@ -386,6 +392,12 @@ class AnthropicCollector(BaseCollector):
                 "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                 "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
                 "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
+                "used_value": pct_used,
+                "limit_value": 100.0,
+                "is_unlimited": False,
+                "unit_type": "percent",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "web_api",
             })
         
         # Add extra usage if present
@@ -519,6 +531,12 @@ class AnthropicCollector(BaseCollector):
             "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
             "pace": PaceCalculator.estimate_longevity(pct, reset_at),
             "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
+            "used_value": float(total_tokens),
+            "limit_value": float(limit),
+            "is_unlimited": False,
+            "unit_type": "tokens",
+            "reset_at": reset_at.isoformat() if reset_at else None,
+            "data_source": "local",
         }]
 
     def _get_config_dirs(self) -> List[str]:

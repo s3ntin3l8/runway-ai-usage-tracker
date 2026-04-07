@@ -84,6 +84,9 @@ class GitHubCollector(BaseCollector):
                     for key in ["completions", "chat"]:
                         if key in quotas:
                             val = quotas[key]
+                            # Free tier typically has limits around 50-100 requests
+                            estimated_limit = 100
+                            used = max(0, estimated_limit - val)
                             cards.append({
                                 "service": f"Copilot ({key.title()})",
                                 "icon": "🐙",
@@ -93,6 +96,12 @@ class GitHubCollector(BaseCollector):
                                 "health": "good" if val > 10 else "warning",
                                 "pace": "Manual",
                                 "detail": f"{val} requests left [Free/Limited Tier]",
+                                "used_value": float(used),
+                                "limit_value": float(estimated_limit),
+                                "is_unlimited": False,
+                                "unit_type": "requests",
+                                "reset_at": reset_at.isoformat() if reset_at else None,
+                                "data_source": "api",
                             })
 
             if user_resp.status_code == 200:
@@ -111,7 +120,8 @@ class GitHubCollector(BaseCollector):
                     for key in ["completions", "chat"]:
                         if key in quotas:
                             val = quotas[key]
-                            monthly_val = monthly.get(key, "?")
+                            monthly_val = monthly.get(key, 100)
+                            used_val = monthly_val - val if isinstance(monthly_val, int) else 0
                             cards.append({
                                 "service": f"Copilot ({key.title()})",
                                 "icon": "🐙",
@@ -121,6 +131,12 @@ class GitHubCollector(BaseCollector):
                                 "health": "good" if val > (monthly_val * 0.3 if isinstance(monthly_val, int) else 10) else "warning" if val > (monthly_val * 0.1 if isinstance(monthly_val, int) else 5) else "critical",
                                 "pace": "Manual",
                                 "detail": f"{val}/{monthly_val} requests left • Free Tier",
+                                "used_value": float(used_val),
+                                "limit_value": float(monthly_val) if isinstance(monthly_val, (int, float)) else 100.0,
+                                "is_unlimited": False,
+                                "unit_type": "requests",
+                                "reset_at": reset_at.isoformat() if reset_at else None,
+                                "data_source": "api",
                             })
                 
                 # Check for Pro/Enterprise tier quota snapshots
@@ -136,12 +152,13 @@ class GitHubCollector(BaseCollector):
                         "completions": "Autocomplete"
                     }
                     metric = metric_map.get(metric_raw, metric_raw.replace("_", " ").title())
-                    
+
                     rem = snap.get("remaining")
                     ent = snap.get("entitlement")
-                    
+
                     if rem is not None and ent is not None:
-                        pct_used = (ent - rem) / ent * 100 if ent > 0 else 0
+                        used_val = ent - rem
+                        pct_used = (used_val / ent * 100) if ent > 0 else 0
                         cards.append({
                             "service": f"Copilot ({metric})",
                             "icon": "🐙",
@@ -151,6 +168,12 @@ class GitHubCollector(BaseCollector):
                             "health": "good" if (rem/ent) > 0.3 else "warning" if (rem/ent) > 0.1 else "critical",
                             "pace": "Sustainable" if pct_used < 70 else "Fatigue",
                             "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
+                            "used_value": float(used_val),
+                            "limit_value": float(ent),
+                            "is_unlimited": False,
+                            "unit_type": "requests",
+                            "reset_at": None,  # Rolling quotas have no fixed reset time
+                            "data_source": "api",
                         })
             
             # Fallback to standard rate limit if no specific copilot data found
@@ -159,6 +182,7 @@ class GitHubCollector(BaseCollector):
                 if resp.status_code == 200:
                     data = resp.json()["resources"]["core"]
                     rem, lim = data["remaining"], data["limit"]
+                    used = lim - rem
                     reset_at = datetime.fromtimestamp(data["reset"], tz=timezone.utc)
                     cards.append({
                         "service": "GitHub API",
@@ -169,6 +193,12 @@ class GitHubCollector(BaseCollector):
                         "health": "good" if rem/lim > 0.3 else "warning",
                         "pace": "Stable",
                         "detail": f"{rem}/{lim} [API fallback]",
+                        "used_value": float(used),
+                        "limit_value": float(lim),
+                        "is_unlimited": False,
+                        "unit_type": "requests",
+                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "data_source": "fallback",
                     })
             
             return cards

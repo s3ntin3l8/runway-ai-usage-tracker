@@ -199,6 +199,13 @@ class OpenCodeCollector(BaseCollector):
                 "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                 "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                 "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+                "used_value": used,
+                "limit_value": limit,
+                "is_unlimited": False,
+                "unit_type": "currency",
+                "currency": "USD",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "web_api",
             })
         
         # Parse weekly usage
@@ -226,6 +233,13 @@ class OpenCodeCollector(BaseCollector):
                 "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                 "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                 "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+                "used_value": used,
+                "limit_value": limit,
+                "is_unlimited": False,
+                "unit_type": "currency",
+                "currency": "USD",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "web_api",
             })
         
         return cards
@@ -300,6 +314,13 @@ class OpenCodeCollector(BaseCollector):
                         "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                         "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                         "detail": f"${used:.2f} used · {count} msgs · Local DB",
+                        "used_value": used,
+                        "limit_value": limit,
+                        "is_unlimited": False,
+                        "unit_type": "currency",
+                        "currency": "USD",
+                        "reset_at": None,  # Rolling window has no fixed reset time
+                        "data_source": "local",
                     })
                 
                 return cards

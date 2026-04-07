@@ -177,6 +177,7 @@ class KimiCodingCollector(BaseCollector):
             
             # Parse reset time
             reset_delta = "Unknown"
+            reset_dt = None
             if reset_str:
                 try:
                     # ISO format with possible microseconds
@@ -184,10 +185,10 @@ class KimiCodingCollector(BaseCollector):
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
                     pass
-            
+
             # Detect tier from limit
             tier = self._detect_tier(limit)
-            
+
             return {
                 "service": "Kimi Coding (Weekly)",
                 "icon": "🌙",
@@ -197,6 +198,12 @@ class KimiCodingCollector(BaseCollector):
                 "health": "good" if pct_used < 50 else "warning" if pct_used < 80 else "critical",
                 "pace": tier,
                 "detail": f"{used} used · {tier}",
+                "used_value": float(used),
+                "limit_value": float(limit),
+                "is_unlimited": False,
+                "unit_type": "requests",
+                "reset_at": reset_dt.isoformat() if reset_dt else None,
+                "data_source": "api",
             }
         except (ValueError, TypeError):
             return None
@@ -220,17 +227,18 @@ class KimiCodingCollector(BaseCollector):
             
             # Parse reset time
             reset_delta = "Unknown"
+            reset_dt = None
             if reset_str:
                 try:
                     reset_dt = datetime.fromisoformat(reset_str.replace('Z', '+00:00'))
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
                     pass
-            
+
             # Get window duration
             duration = window.get("duration", 300)  # Default 5 hours in minutes
             window_label = f"{duration // 60}h" if duration >= 60 else f"{duration}m"
-            
+
             return {
                 "service": f"Kimi Coding ({window_label})",
                 "icon": "⏱️",
@@ -240,6 +248,12 @@ class KimiCodingCollector(BaseCollector):
                 "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                 "pace": "Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical",
                 "detail": f"{used} used · Rate limit window",
+                "used_value": float(used),
+                "limit_value": float(limit),
+                "is_unlimited": False,
+                "unit_type": "requests",
+                "reset_at": reset_dt.isoformat() if reset_dt else None,
+                "data_source": "api",
             }
         except (ValueError, TypeError):
             return None
