@@ -128,31 +128,110 @@ class GitHubCollector:
         }]
 
 class GeminiCollector:
+    # Google Gemini CLI OAuth Credentials
+    CLIENT_ID = "YOUR_CLIENT_ID_HERE"
+    CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
+
     @staticmethod
     def collect():
-        sessions_dir = Path.home() / ".gemini" / "tmp" / "sessions"
+        results = []
+        creds_path = Path.home() / ".gemini" / "oauth_creds.json"
+        
+        # 1. API Collection
+        if creds_path.exists():
+            try:
+                with open(creds_path, "r") as f:
+                    creds = json.load(f)
+                
+                # Check expiry
+                import time
+                if creds.get("expiry_date", 0) < (time.time() * 1000):
+                    creds = GeminiCollector._refresh_token(creds)
+                    if creds:
+                        with open(creds_path, "w") as f:
+                            json.dump(creds, f, indent=2)
+                
+                if creds:
+                    token = creds.get("access_token")
+                    headers = {"Authorization": f"Bearer {token}"}
+                    
+                    # Fetch Quota
+                    quota_url = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
+                    q_data, q_code = http_post(quota_url, {"project": ""}, headers)
+                    
+                    # Fetch Tier
+                    tier_url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+                    t_data, t_code = http_post(tier_url, {"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}}, headers)
+                    
+                    if q_code == 200:
+                        buckets = q_data.get("buckets", [])
+                        if buckets:
+                            main_bucket = min(buckets, key=lambda x: x.get("remainingFraction", 1.0))
+                            percent = int(main_bucket.get("remainingFraction", 1.0) * 100)
+                            tier = t_data.get("tier", "unknown").replace("-tier", "").capitalize() if t_code == 200 else "Unknown"
+                            
+                            reset_str = "Resetting..."
+                            if "resetTime" in main_bucket:
+                                reset_str = f"Resets {main_bucket['resetTime'].split('T')[-1][:5]}"
+                            
+                            results.append({
+                                "service": "Gemini CLI",
+                                "icon": "🔵",
+                                "remaining": f"{percent}%",
+                                "unit": "quota",
+                                "reset": reset_str,
+                                "health": "good" if percent > 20 else "warn",
+                                "pace": tier,
+                                "detail": f"Model: {main_bucket.get('modelId', 'Global')} [Sidecar]"
+                            })
+            except: pass
+
+        # 2. Fallback to Logs
+        if not results:
+            sessions_dir = Path.home() / ".gemini" / "tmp" / "sessions"
+            try:
+                files = list(sessions_dir.glob("*.jsonl"))
+                if files:
+                    total = 0
+                    for fpath in files:
+                        with open(fpath, "r") as f:
+                            for line in f:
+                                try:
+                                    u = json.loads(line).get("usage", {})
+                                    total += (u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
+                                except: pass
+                    results.append({
+                        "service": "Gemini CLI",
+                        "icon": "🔵",
+                        "remaining": f"{total:,}",
+                        "unit": "tokens (24h)",
+                        "reset": "Rolling 24h",
+                        "health": "good",
+                        "pace": "Stable",
+                        "detail": "Logs [Sidecar]"
+                    })
+            except: pass
+            
+        return results
+
+    @staticmethod
+    def _refresh_token(creds):
+        refresh_token = creds.get("refresh_token")
+        if not refresh_token: return None
+        
+        payload = f"client_id={GeminiCollector.CLIENT_ID}&client_secret={GeminiCollector.CLIENT_SECRET}&refresh_token={refresh_token}&grant_type=refresh_token"
+        req = request.Request("https://oauth2.googleapis.com/token", data=payload.encode("utf-8"), method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        
         try:
-            files = list(sessions_dir.glob("*.jsonl"))
-            if not files: return []
-            total = 0
-            for fpath in files:
-                with open(fpath, "r") as f:
-                    for line in f:
-                        try:
-                            u = json.loads(line).get("usage", {})
-                            total += (u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
-                        except: pass
-            return [{
-                "service": "Gemini CLI",
-                "icon": "🔵",
-                "remaining": f"{total:,}",
-                "unit": "tokens (24h)",
-                "reset": "Rolling 24h",
-                "health": "good",
-                "pace": "Stable",
-                "detail": "Sidecar Scan"
-            }]
-        except: return []
+            with request.urlopen(req, timeout=10) as resp:
+                new_data = json.loads(resp.read().decode("utf-8"))
+                creds["access_token"] = new_data["access_token"]
+                import time
+                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
+                return creds
+        except:
+            return None
 class ChatGPTCollector:
     @staticmethod
     def collect():

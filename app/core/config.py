@@ -34,6 +34,7 @@ class Settings:
     # Path settings
     CLAUDE_PROJECTS_DIR: str = os.path.expanduser("~/.claude/projects")
     GEMINI_SESSIONS_DIR: str = os.path.expanduser("~/.gemini/tmp/sessions")
+    GEMINI_OAUTH_PATH: str = os.path.expanduser("~/.gemini/oauth_creds.json")
     CHATGPT_SESSIONS_DIR: str = os.path.expanduser("~/.codex/sessions")
     ANTIGRAVITY_QUOTA_PATH: str = os.path.expanduser("~/.antigravity/state/quota.json")
     OPENCODE_DB_PATH: str = os.path.expanduser("~/.local/share/opencode/opencode.db")
