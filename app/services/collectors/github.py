@@ -35,6 +35,7 @@ import httpx
 from app.core.config import settings
 from app.core.utils import human_delta, error_card
 from app.services.collectors.base import BaseCollector
+from app.services.token_cache import token_cache
 
 class GitHubCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
@@ -46,11 +47,22 @@ class GitHubCollector(BaseCollector):
         2. copilot_internal/user - Pro tier quota snapshots
         3. /rate_limit - Fallback to GitHub API rate limits if above unavailable
         
+        Token priority:
+        1. GITHUB_TOKEN env var
+        2. Token cache from sidecar
+        
         Returns:
             List[Dict[str, Any]]: Cards for each quota type or error card
         """
+        # Check for token (env var or sidecar cache)
         token = settings.GITHUB_TOKEN
-        if not token: return []
+        if not token:
+            token = token_cache.get_token("github", "api_key")
+            if token:
+                logger.info("Using GitHub token from sidecar cache")
+        
+        if not token:
+            return []
         try:
             # Use Copilot internal endpoints for detailed metrics
             # Mimicking VS Code headers as suggested by CodexBar for better reliability

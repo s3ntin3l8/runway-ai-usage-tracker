@@ -1,34 +1,42 @@
 """
-Anthropic (Claude) quota collector with 4-tier fallback strategy.
+Anthropic (Claude) quota collector with 4-tier fallback strategy and automatic token refresh.
 
 Collection Strategy:
 1. Primary: OAuth API endpoint (https://api.anthropic.com/api/oauth/usage)
    - Requires CLAUDE_CODE_OAUTH_TOKEN environment variable or ~/.claude/.credentials.json
    - Returns real-time usage across multiple quota windows (5h, 7d, 7d-sonnet, 7d-opus, extra)
    - Implements caching (10 min TTL) to avoid rate limiting
+   - Automatic token refresh when expired (via platform.claude.com)
    
 2. Secondary: Web API via Chrome cookies (https://claude.ai/api/)
-   - Extracts sessionKey cookie from Chrome for claude.ai domain
-   - Calls Claude web API endpoints to get usage data
-   - Same data quality as OAuth (session, weekly, model-specific quotas)
-   
+    - Extracts sessionKey cookie from Chrome for claude.ai domain
+    - Calls Claude web API endpoints to get usage data
+    - Same data quality as OAuth (session, weekly, model-specific quotas)
+    
 3. Tertiary: Enhanced local cost usage parsing
-   - Parses .jsonl files from ~/.claude/projects/ and ~/.config/claude/projects/
-   - Supports comma-separated CLAUDE_CONFIG_DIR for multiple roots
-   - Tracks all token types: input, cache_read, cache_creation, output
-   - Deduplicates streaming chunks by message.id + requestId
-   
+    - Parses .jsonl files from ~/.claude/projects/ and ~/.config/claude/projects/
+    - Supports comma-separated CLAUDE_CONFIG_DIR for multiple roots
+    - Tracks all token types: input, cache_read, cache_creation, output
+    - Deduplicates streaming chunks by message.id + requestId
+    
 4. Quaternary: Error cards when all methods fail
-   - Returns descriptive error with failure reason
-   - Distinguishes between token expired, rate limited, missing data
+    - Returns descriptive error with failure reason
+    - Distinguishes between token expired, rate limited, missing data
 
 Data Caching:
 - OAuth results cached for 10 minutes to handle 429 rate limits gracefully
 - Cached results tagged with "[Cached]" in detail field
 - Falls back to Web API and local logs without repeating failed API calls
 
+Token Refresh:
+- Automatic refresh when access token expires (8 hour lifetime)
+- Uses platform.claude.com/v1/oauth/token endpoint
+- Persists new tokens to ~/.claude/.credentials.json
+- Exponential backoff on transient failures
+- Terminal failure for invalid_grant errors
+
 Error Handling:
-- 401: Token expired/invalid (prompt re-authentication)
+- 401: Token expired/invalid (attempt refresh, then prompt re-authentication)
 - 429: Rate limited (use cache if available, fall back to Web API/logs)
 - Connection errors: Fall back to next available method
 - Missing files/logs: Return error card with helpful message
@@ -39,6 +47,7 @@ import glob
 import json
 import hashlib
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 import httpx
@@ -46,25 +55,38 @@ from app.core.config import settings
 from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
 from app.core.chrome_cookies import get_claude_session_cookie
 from app.services.collectors.base import BaseCollector
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
+
+# OAuth client ID used by Claude Code CLI (public identifier)
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 
 class AnthropicCollector(BaseCollector):
     """Collector for Anthropic (Claude) quota and usage metrics with 4-tier fallback."""
     
     def __init__(self):
-        """Initialize caching for OAuth results to avoid rate limiting."""
+        """Initialize caching for OAuth results and token refresh tracking."""
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 600  # 10 minutes cache to be safe with 429s
+        
+        # Token refresh failure tracking (exponential backoff)
+        self._last_refresh_failure = None
+        self._refresh_backoff_seconds = 30  # Start with 30s
+        self._max_refresh_backoff = 21600  # Max 6 hours
+        self._terminal_failure = False  # Set to True on invalid_grant
+        
+        # Credentials file path
+        self._credentials_path = os.path.expanduser("~/.claude/.credentials.json")
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Collect Claude quota data using 4-tier fallback strategy.
         
         Tries in order:
-        1. OAuth API with caching (if CLAUDE_CODE_OAUTH_TOKEN set)
+        1. OAuth API with caching (env var or sidecar token)
         2. Web API via Chrome cookies (if user logged into claude.ai)
         3. Enhanced local log parsing (multiple config roots, full token tracking)
         4. Return descriptive error if all methods fail
@@ -72,9 +94,19 @@ class AnthropicCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: List of quota cards for each quota window.
         """
-        # 1. Try OAuth if token exists
-        if settings.CLAUDE_CODE_OAUTH_TOKEN:
-            oauth_res = await self._get_claude_oauth_with_cache(client, settings.CLAUDE_CODE_OAUTH_TOKEN)
+        # 1. Try OAuth API (env var or sidecar token)
+        token = settings.CLAUDE_CODE_OAUTH_TOKEN
+        token_source = "env"
+        
+        # Check token cache from sidecar if no env token
+        if not token:
+            token = token_cache.get_token("anthropic", "oauth_token")
+            if token:
+                token_source = "sidecar"
+                logger.info("Using OAuth token from sidecar cache")
+        
+        if token:
+            oauth_res = await self._get_claude_oauth_with_cache(client, token)
             
             # Check if it's a valid result (not an error card)
             is_error = any(r.get("remaining") == "ERR" for r in oauth_res)
@@ -82,7 +114,7 @@ class AnthropicCollector(BaseCollector):
                 return oauth_res
             
             # Log OAuth failure for debugging
-            logger.debug(f"OAuth failed, falling back to Web API. Result: {oauth_res}")
+            logger.debug(f"OAuth failed (source: {token_source}), falling back to Web API. Result: {oauth_res}")
 
         # 2. Try Web API via Chrome cookies
         web_res = await self._get_claude_via_web_api(client)
@@ -115,12 +147,189 @@ class AnthropicCollector(BaseCollector):
         """Check if a web cookie is available without making API calls."""
         return get_claude_session_cookie() is not None
 
+    def _is_token_expired(self, token: str) -> bool:
+        """Check if OAuth token is expired by reading credentials file."""
+        try:
+            if os.path.exists(self._credentials_path):
+                with open(self._credentials_path, 'r') as f:
+                    data = json.load(f)
+                    expires_at_ms = data.get("claudeAiOauth", {}).get("expiresAt")
+                    if expires_at_ms:
+                        expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=timezone.utc)
+                        return datetime.now(timezone.utc) >= expires_at
+        except Exception as e:
+            logger.debug(f"Could not check token expiration: {e}")
+        return False
+
+    def _can_attempt_refresh(self) -> bool:
+        """Check if we should attempt token refresh based on failure tracking."""
+        if self._terminal_failure:
+            logger.info("Token refresh blocked due to terminal failure (invalid_grant)")
+            return False
+        
+        if self._last_refresh_failure:
+            elapsed = (datetime.now(timezone.utc) - self._last_refresh_failure).total_seconds()
+            if elapsed < self._refresh_backoff_seconds:
+                logger.debug(f"Token refresh backed off, retry in {self._refresh_backoff_seconds - elapsed:.0f}s")
+                return False
+        
+        return True
+
+    async def _refresh_oauth_token(self, client: httpx.AsyncClient) -> Optional[str]:
+        """
+        Refresh OAuth token using refresh token from credentials file or sidecar cache.
+        
+        Calls platform.claude.com/v1/oauth/token endpoint with:
+        - grant_type=refresh_token
+        - refresh_token from ~/.claude/.credentials.json or sidecar cache
+        - client_id (public identifier from Claude Code CLI)
+        
+        On success, updates credentials file with new tokens.
+        On failure, implements exponential backoff or terminal failure.
+        
+        Args:
+            client: httpx.AsyncClient for making requests
+            
+        Returns:
+            Optional[str]: New access token if successful, None otherwise
+        """
+        if not self._can_attempt_refresh():
+            return None
+        
+        # Load refresh token from credentials file or sidecar cache
+        refresh_token = None
+        
+        # Priority 1: Credentials file (local access)
+        try:
+            if os.path.exists(self._credentials_path):
+                with open(self._credentials_path, 'r') as f:
+                    data = json.load(f)
+                    refresh_token = data.get("claudeAiOauth", {}).get("refreshToken")
+        except Exception as e:
+            logger.warning(f"Could not load credentials for refresh: {e}")
+        
+        # Priority 2: Sidecar token cache (for multi-host scenarios)
+        if not refresh_token:
+            refresh_token = token_cache.get_token("anthropic", "refresh_token")
+            if refresh_token:
+                logger.debug("Using refresh token from sidecar cache")
+        
+        if not refresh_token:
+            logger.debug("No refresh token available in credentials file")
+            return None
+        
+        try:
+            logger.info("Attempting OAuth token refresh")
+            
+            resp = await client.post(
+                "https://platform.claude.com/v1/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": CLAUDE_OAUTH_CLIENT_ID,
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json"
+                },
+                timeout=30.0
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                new_access_token = data.get("access_token")
+                new_refresh_token = data.get("refresh_token", refresh_token)
+                expires_in = data.get("expires_in", 28800)
+                
+                # Persist new tokens to credentials file
+                self._persist_refreshed_tokens(
+                    new_access_token, 
+                    new_refresh_token, 
+                    expires_in
+                )
+                
+                # Reset failure tracking
+                self._last_refresh_failure = None
+                self._refresh_backoff_seconds = 30
+                self._terminal_failure = False
+                
+                logger.info(f"Token refresh successful, new token expires in {expires_in}s")
+                return new_access_token
+            
+            # Handle failures
+            error_data = resp.json() if resp.text else {}
+            error_code = error_data.get("error", "")
+            
+            if resp.status_code in (400, 401):
+                if error_code == "invalid_grant":
+                    # Terminal failure - need to re-authenticate
+                    self._terminal_failure = True
+                    logger.error("Token refresh failed: invalid_grant - need to run 'claude login'")
+                else:
+                    # Transient failure - exponential backoff
+                    self._last_refresh_failure = datetime.now(timezone.utc)
+                    self._refresh_backoff_seconds = min(
+                        self._refresh_backoff_seconds * 2,
+                        self._max_refresh_backoff
+                    )
+                    logger.warning(f"Token refresh failed ({error_code}), backoff: {self._refresh_backoff_seconds}s")
+            else:
+                logger.error(f"Token refresh failed with status {resp.status_code}: {error_code}")
+                
+        except httpx.HTTPError as e:
+            self._last_refresh_failure = datetime.now(timezone.utc)
+            self._refresh_backoff_seconds = min(self._refresh_backoff_seconds * 2, self._max_refresh_backoff)
+            logger.warning(f"Token refresh HTTP error: {e}, backoff: {self._refresh_backoff_seconds}s")
+        except Exception as e:
+            logger.error(f"Token refresh unexpected error: {e}")
+        
+        return None
+
+    def _persist_refreshed_tokens(self, access_token: str, refresh_token: str, expires_in: int):
+        """
+        Persist refreshed tokens to ~/.claude/.credentials.json.
+        
+        Updates the credentials file with new access token, refresh token,
+        and calculated expiration timestamp.
+        
+        Args:
+            access_token: New access token
+            refresh_token: New refresh token (or old one if not rotated)
+            expires_in: Token lifetime in seconds
+        """
+        try:
+            # Load existing credentials
+            data = {}
+            if os.path.exists(self._credentials_path):
+                with open(self._credentials_path, 'r') as f:
+                    data = json.load(f)
+            
+            # Update OAuth section
+            if "claudeAiOauth" not in data:
+                data["claudeAiOauth"] = {}
+            
+            expires_at_ms = int((time.time() + expires_in) * 1000)
+            
+            data["claudeAiOauth"]["accessToken"] = access_token
+            data["claudeAiOauth"]["refreshToken"] = refresh_token
+            data["claudeAiOauth"]["expiresAt"] = expires_at_ms
+            
+            # Write back
+            with open(self._credentials_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            logger.info(f"Persisted refreshed tokens to {self._credentials_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to persist refreshed tokens: {e}")
+
     async def _get_claude_oauth_with_cache(self, client: httpx.AsyncClient, token: str):
         """
-        Fetch Claude OAuth usage with caching to handle rate limits.
+        Fetch Claude OAuth usage with caching and automatic token refresh.
         
+        Checks token expiration before use and attempts automatic refresh if expired.
         Caches results for 10 minutes. If cache is fresh, returns cached results
-        tagged with "[Cached]" in the detail field. Otherwise fetches fresh data.
+        tagged with "[Cached]" in the detail field.
         
         Args:
             client: httpx.AsyncClient for making requests
@@ -130,6 +339,17 @@ class AnthropicCollector(BaseCollector):
             List[Dict[str, Any]]: Quota cards or error card if fetch fails
         """
         now = datetime.now(timezone.utc)
+        
+        # Check if token is expired and attempt refresh
+        if self._is_token_expired(token):
+            logger.info("OAuth token expired, attempting refresh")
+            new_token = await self._refresh_oauth_token(client)
+            if new_token:
+                token = new_token
+            else:
+                logger.warning("Token refresh failed or unavailable, will try with current token")
+        
+        # Check cache
         if self._cached_results and self._last_fetch:
             if (now - self._last_fetch).total_seconds() < self._cache_ttl:
                 # Add a tag to show it's cached
@@ -139,6 +359,15 @@ class AnthropicCollector(BaseCollector):
                 return self._cached_results
 
         res = await self._get_claude_oauth(client, token)
+        
+        # Check if 401 (unauthorized) - try refreshing token once
+        is_401 = any("Expired/Invalid Token" in r.get("detail", "") for r in res)
+        if is_401 and not self._terminal_failure:
+            logger.info("Got 401 from OAuth API, attempting token refresh")
+            new_token = await self._refresh_oauth_token(client)
+            if new_token:
+                # Retry with new token
+                res = await self._get_claude_oauth(client, new_token)
         
         # Only cache if not an error
         is_error = any(r.get("remaining") == "ERR" for r in res)

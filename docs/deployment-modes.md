@@ -299,6 +299,53 @@ docker exec runway nslookup api.github.com
 
 ---
 
+## Data Collection & Caching
+
+Runway uses **SmartCollector** to implement intelligent caching and reduce API calls while maintaining fresh data.
+
+### How SmartCollector Works
+
+Each collector is wrapped with SmartCollector which implements:
+
+- **TTL Caching**: Each provider has a configurable cache duration (5-30 minutes)
+- **Error Tracking**: Monitors consecutive errors and forces retry after threshold
+- **Graceful Degradation**: Returns stale cached data during API failures instead of error cards
+- **Retry Delays**: Prevents API hammering during outages with 30s retry delays
+
+### Cache TTL by Provider
+
+| Provider | TTL | Reason |
+|----------|-----|--------|
+| **Gemini** | 5 min | Fast-changing quotas |
+| **Anthropic** | 10 min | OAuth rate limit safety |
+| **ChatGPT** | 10 min | Session-based windows |
+| **OpenCode** | 30 min | Slow-changing usage |
+| **GitHub** | 15 min | Stable quotas |
+| **zAI/Kimi** | 15 min | API-based, stable |
+
+### Cache Indicators
+
+When viewing cached data, cards show `[Cached Xm ago]` in the detail field:
+```python
+{
+    "detail": "25.0% used [OAuth] [Cached 5m ago]"
+}
+```
+
+### Token Cache (Sidecar Integration)
+
+For sidecar deployments, tokens received from sidecars are cached in memory with 30-minute TTL:
+
+1. Sidecar extracts tokens from local files/keychain
+2. Sends tokens to server via `/api/ingest`
+3. Server stores in `token_cache` (memory-only, 30min TTL)
+4. Collectors check token cache before attempting file/cookie extraction
+5. Server makes API calls using cached tokens
+
+This allows the main server to make OAuth API calls on behalf of sidecars without persistent storage.
+
+---
+
 ## Advanced: Mixed Mode
 
 You can combine modes for complex setups:

@@ -64,6 +64,56 @@ Avoid writing code that relies on native desktop UI features if the app is inten
 - **Surgical Precision**: Only modify what is strictly necessary. Preserve existing comments and structure.
 - **Reasoning Phase**: For complex logic changes, briefly explain the architectural approach before outputting code.
 
+## 🔐 Token Transmission Architecture
+
+### Overview
+Runway uses a **hybrid token architecture** where the server does all API calls, but can use tokens extracted by sidecars from other machines:
+
+**Server Responsibilities:**
+- Makes ALL API calls (OAuth, Web API, direct API)
+- Aggregates data from multiple sources
+- Serves the dashboard
+
+**Sidecar Responsibilities:**
+- Extracts tokens/cookies from local files (keychain, browser cookies, config files)
+- Reads local-only data files (SQLite, JSON logs)
+- Sends tokens to server via `/api/ingest`
+- Does NOT make API calls
+
+### Token Flow
+1. Sidecar extracts tokens from local sources (every 30 minutes via cron)
+2. Sidecar sends tokens to server via `/api/ingest` endpoint
+3. Server stores tokens in **in-memory cache** (30-minute TTL)
+4. Server uses tokens to make API calls on behalf of the sidecar
+5. Results are displayed with `data_source` indicating the API type used
+
+### Token Storage
+- **Memory-only**: Tokens stored in `app.services.token_cache` (30-min TTL)
+- **Stateless**: Lost on server restart, refreshed by sidecar on next run
+- **Security**: Tokens never persisted to disk
+
+### Data Source Values
+| Value | Meaning | Set By |
+|-------|---------|--------|
+| `oauth` | OAuth API call (e.g., api.anthropic.com) | Server |
+| `web_api` | Cookie-based web scraping | Server |
+| `api` | Direct API call with key | Server |
+| `local` | Local file reading (DB, logs) | Server or Sidecar |
+| `cache` | Cached/stored data | Server or Sidecar |
+
+### Token Priority (Per Provider)
+1. Environment variables (server local)
+2. Token cache from sidecar (if available)
+3. Server local files/cookies
+4. Sidecar local data (via external_metrics)
+5. Fallback to logs
+
+### Implementation
+- **Sidecar script**: `scripts/sidecar.py` - Extracts only, no API calls
+- **Token cache**: `app/services/token_cache.py` - In-memory storage
+- **Ingest endpoint**: `app/api/endpoints/ingest.py` - Receives and parses tokens
+- **Collectors**: Check token cache before making API calls
+
 ## 🤖 Behavior Guidelines
 1. **Be Resilient**: Always consider what happens if an external API is down or a file is missing.
 2. **Prioritize UI**: Frontend changes should be premium, high-performance, and maintain the glassmorphism aesthetic.

@@ -744,3 +744,74 @@ class AlertManager:
 ---
 
 *Last updated: 2026-04-07*
+
+---
+
+## Token Transmission Architecture
+
+### Encrypted Token Storage (Option B)
+
+**Problem**: Memory-only cache loses tokens on server restart, requiring sidecar to resend (up to 30min wait).
+
+**Solution**: Encrypt tokens and store in file for persistence across restarts.
+
+#### Implementation Plan
+
+```python
+# app/services/token_cache.py (enhanced)
+
+from cryptography.fernet import Fernet
+import os
+
+class EncryptedTokenCache(TokenCache):
+    """
+    Token cache with encrypted file persistence.
+    
+    Uses Fernet symmetric encryption with key derived from SECRET_KEY.
+    Tokens survive server restart while maintaining security.
+    """
+    
+    def __init__(self, ttl_seconds: int = 1800, storage_path: Optional[str] = None):
+        super().__init__(ttl_seconds)
+        self._storage_path = storage_path or os.path.expanduser("~/.runway/tokens.enc")
+        self._fernet = self._init_encryption()
+        self._load_from_disk()
+    
+    def _init_encryption(self) -> Fernet:
+        """Initialize Fernet with key from SECRET_KEY."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        import base64
+        
+        secret = os.getenv("SECRET_KEY", "").encode()
+        if not secret:
+            raise ValueError("SECRET_KEY required for encrypted token storage")
+        
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=b"runway_token_salt_v1",
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(secret))
+        return Fernet(key)
+```
+
+#### Pros
+- **Better UX**: Tokens survive server restart, no 30min wait
+- **Security**: Encrypted at rest with Fernet (AES-128)
+- **Backward Compatible**: Can fall back to memory-only if encryption fails
+
+#### Cons
+- **Breaks Pure Statelessness**: Requires disk storage
+- **Key Management**: Requires SECRET_KEY env var
+- **Salt Management**: Should use unique salt per installation
+- **Security Responsibility**: Encryption is only as good as SECRET_KEY protection
+
+#### Priority
+**LOW** - Current 30min TTL is acceptable for most use cases.
+
+#### When to Implement
+- User feedback indicates 30min delay is problematic
+- Running in environment with frequent server restarts
+- Security requirements demand encrypted storage

@@ -204,10 +204,14 @@ env | grep -E "(GITHUB|ZAI|KIMI|CLAUDE)"
 ### Push failures
 
 **Verify API connectivity:**
+The sidecar uses HMAC-SHA256 signing. Manual `curl` requires pre-calculating the signature:
 ```bash
+# Example showing expected headers
 curl -X POST http://localhost:8765/api/ingest \
   -H "Content-Type: application/json" \
-  -d '{"provider":"test","api_key":"your-key","metrics":[]}'
+  -H "X-Signature: <hmac-sha256-hex>" \
+  -H "X-Timestamp: <unix-timestamp>" \
+  -d '{"provider":"test","metrics":[]}'
 ```
 
 ### Installation issues
@@ -245,6 +249,70 @@ Reads from the IDE's quota export file:
 - **All platforms**: `~/.antigravity/state/quota.json`
 
 Ensure Antigravity IDE is running and has written the quota file.
+
+---
+
+## 🔐 Token Transmission Architecture
+
+### Overview
+
+Runway uses a **hybrid token architecture** where the server does all API calls, but can use tokens extracted by sidecars from other machines:
+
+**Server Responsibilities:**
+- Makes ALL API calls (OAuth, Web API, direct API)
+- Aggregates data from multiple sources
+- Serves the dashboard
+
+**Sidecar Responsibilities:**
+- Extracts tokens/cookies from local files (keychain, browser cookies, config files)
+- Reads local-only data files (SQLite, JSON logs)
+- Signs payload with `INGEST_API_KEY` using HMAC-SHA256
+- Sends tokens to server via `/api/ingest`
+- Does NOT make API calls
+
+### Token Flow
+
+```
+┌──────────────┐     Signed       ┌──────────────┐
+│   Sidecar    │ ───────────────► │    Server    │
+│  (Workstation)│  HMAC-SHA256    │  (Runway)    │
+│              │                  │              │
+│ • Files      │ ───────────────► │ • Signature  │
+│ • Keychain   │     POST         │   Verification
+│ • Cookies    │   /api/ingest    │ • Token Cache│
+└──────────────┘                  └──────────────┘
+```
+
+1. Sidecar extracts tokens from local sources (every 30 minutes via cron)
+2. Sidecar sends tokens to server via `/api/ingest` endpoint
+3. Server stores tokens in **in-memory cache** (30-minute TTL)
+4. Server uses tokens to make API calls on behalf of the sidecar
+5. Results are displayed with `data_source` indicating the API type used
+
+### Token Storage
+
+- **Memory-only**: Tokens stored in `app.services.token_cache` (30-min TTL)
+- **Stateless**: Lost on server restart, refreshed by sidecar on next run
+- **Security**: Tokens never persisted to disk
+
+### Data Source Values
+
+| Value | Meaning | Set By |
+|-------|---------|--------|
+| `oauth` | OAuth API call (e.g., api.anthropic.com) | Server |
+| `web_api` | Cookie-based web scraping | Server |
+| `api` | Direct API call with key | Server |
+| `local` | Local file reading (DB, logs) | Server or Sidecar |
+| `cache` | Cached/stored data | Server or Sidecar |
+| `sidecar` | Data pushed from sidecar | Sidecar |
+
+### Token Priority (Per Provider)
+
+1. Environment variables (server local)
+2. Token cache from sidecar (if available)
+3. Server local files/cookies
+4. Sidecar local data (via external_metrics)
+5. Fallback to logs
 
 ---
 

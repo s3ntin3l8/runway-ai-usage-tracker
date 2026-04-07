@@ -27,4 +27,4 @@ class LimitsResponse(BaseModel):
 class IngestRequest(BaseModel):
     provider: str
     metrics: List[LimitCard]
-    api_key: str
+    # api_key is now passed via X-Signature header for security

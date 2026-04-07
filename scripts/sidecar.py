@@ -1,60 +1,93 @@
 #!/usr/bin/env python3
+"""
+Runway Sidecar - Token and Local Data Collector
+
+Architecture:
+- Extracts tokens/cookies from local files and keychain
+- Reads local data files (SQLite DBs, JSON logs)
+- Sends tokens and data to Runway server via /api/ingest
+- Server uses tokens to make API calls
+
+IMPORTANT: This sidecar does NOT make API calls directly.
+All API calls are done by the server using tokens we provide.
+"""
+
 import os
 import sys
 import json
 import argparse
 import datetime
-import glob
 import subprocess
 import sqlite3
 import socket
+import hmac
+import hashlib
+import time
 from pathlib import Path
 from urllib import request, error
 
-# --- Lightweight Utilities (In-script) ---
+
+# --- HTTP Utilities ---
+
+def http_post_signed(url, data, api_key):
+    """POST data to URL with HMAC-SHA256 signature."""
+    timestamp = str(int(time.time()))
+    # Use compact separators to match Pydantic's default serialization
+    body = json.dumps(data, separators=(',', ':')).encode("utf-8")
+    
+    signature = hmac.new(
+        api_key.encode(),
+        timestamp.encode() + body,
+        hashlib.sha256
+    ).hexdigest()
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-Signature": signature,
+        "X-Timestamp": timestamp
+    }
+    
+    req = request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8")), resp.getcode()
+    except error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode("utf-8")), e.code
+        except:
+            return e.reason, e.code
+    except Exception as e:
+        return str(e), 500
+
 
 def human_delta(target_dt):
-    if not target_dt: return "—"
+    """Format datetime as human-readable delta."""
+    if not target_dt:
+        return "—"
     now = datetime.datetime.now(datetime.timezone.utc)
-    if target_dt.tzinfo is None: target_dt = target_dt.replace(tzinfo=datetime.timezone.utc)
+    if target_dt.tzinfo is None:
+        target_dt = target_dt.replace(tzinfo=datetime.timezone.utc)
     diff = target_dt - now
     seconds = int(diff.total_seconds())
-    if seconds < 0: return "Just now"
-    if seconds < 60: return f"{seconds}s"
-    if seconds < 3600: return f"{seconds // 60}m"
+    if seconds < 0:
+        return "Just now"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
     return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
 
-def http_post(url, data, headers=None):
-    headers = headers or {}
-    req = request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
-    req.add_header("Content-Type", "application/json")
-    try:
-        with request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8")), resp.getcode()
-    except error.HTTPError as e:
-        return e.read().decode("utf-8"), e.code
-    except Exception as e:
-        return str(e), 500
 
-def http_get(url, headers=None):
-    headers = headers or {}
-    req = request.Request(url, headers=headers, method="GET")
-    try:
-        with request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8")), resp.getcode()
-    except error.HTTPError as e:
-        return e.read().decode("utf-8"), e.code
-    except Exception as e:
-        return str(e), 500
-
-# --- Providers ---
+# --- Token Extractors ---
 
 class AnthropicCollector:
+    """Extract Claude OAuth tokens from local sources."""
+    
     @staticmethod
-    def get_keychain_token():
-        """Extract Claude OAuth token from macOS Keychain."""
+    def get_keychain_credentials():
+        """Extract credentials from macOS Keychain."""
         if sys.platform != "darwin":
-            return None
+            return None, None
         try:
             result = subprocess.run(
                 ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
@@ -64,329 +97,282 @@ class AnthropicCollector:
             )
             if result.returncode == 0:
                 keychain_data = result.stdout.strip()
-                # Keychain stores JSON credentials
                 try:
                     data = json.loads(keychain_data)
-                    return data.get("claudeAiOauth", {}).get("accessToken")
+                    oauth_data = data.get("claudeAiOauth", {})
+                    return oauth_data.get("accessToken"), oauth_data.get("refreshToken")
                 except json.JSONDecodeError:
-                    # Might be stored as raw token
                     if keychain_data.startswith("sk-"):
-                        return keychain_data
+                        return keychain_data, None
         except:
             pass
-        return None
+        return None, None
 
     @staticmethod
     def collect():
-        token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
-
+        """Extract OAuth tokens, send to server for API call."""
+        access_token = None
+        refresh_token = None
+        
+        # Priority 1: Env var (access token only)
+        access_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
+        
         # Priority 2: Credentials file
-        if not token:
+        if not access_token:
             cred_path = Path.home() / ".claude" / ".credentials.json"
             if cred_path.exists():
                 try:
-                    with open(cred_path, "r") as f:
+                    with open(cred_path) as f:
                         data = json.load(f)
-                        token = data.get("claudeAiOauth", {}).get("accessToken")
-                except: pass
+                        oauth_data = data.get("claudeAiOauth", {})
+                        access_token = oauth_data.get("accessToken")
+                        refresh_token = oauth_data.get("refreshToken")
+                except:
+                    pass
+        
+        # Priority 3: macOS Keychain
+        if not access_token:
+            access_token, refresh_token = AnthropicCollector.get_keychain_credentials()
+        
+        if not access_token:
+            return []
+        
+        # Build token detail string
+        detail_parts = [f"oauth_token:{access_token}"]
+        if refresh_token:
+            detail_parts.append(f"refresh_token:{refresh_token}")
+        detail_parts.append("[Sidecar]")
+        
+        # Send tokens to server - server will make API call and handle refresh
+        return [{
+            "service": "Claude Pro",
+            "icon": "🟠",
+            "remaining": "Token",
+            "unit": "oauth",
+            "reset": "—",
+            "health": "good",
+            "pace": "Token",
+            "detail": " ".join(detail_parts),
+            "data_source": "token_extracted",
+        }]
 
-        # Priority 3: macOS Keychain (for sidecar scenarios)
-        if not token:
-            token = AnthropicCollector.get_keychain_token()
-
-        if not token: return []
-        
-        url = "https://api.anthropic.com/api/oauth/usage"
-        headers = {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"}
-        data, code = http_get(url, headers)
-        
-        if code != 200: return []
-        
-        name_map = {
-            "five_hour": "Session Window",
-            "seven_day": "Weekly Window",
-            "seven_day_sonnet": "Sonnet Weekly",
-            "seven_day_opus": "Opus Weekly",
-            "extra_usage": "Extra Usage"
-        }
-        
-        results = []
-        for key, usage in data.items():
-            if not isinstance(usage, dict) or "utilization" not in usage: continue
-            u_type = name_map.get(key, key.replace("_", " ").title())
-            pct = usage.get("utilization")
-            if pct is None: pct = 0.0
-            
-            reset_raw = usage.get("resets_at") or usage.get("resetsAt")
-            reset_at = None
-            if reset_raw:
-                try: reset_at = datetime.datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
-                except: pass
-            
-            results.append({
-                "service": f"Claude ({u_type})",
-                "icon": "🟠",
-                "remaining": f"{100-pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                "pace": "Stable" if pct < 50 else "High Burn",
-                "detail": f"{pct:.1f}% used [Sidecar]"
-            })
-        return results
 
 class GitHubCollector:
+    """Extract GitHub token from local sources."""
+    
     @staticmethod
     def collect():
+        """Extract GitHub token, send to server for API call."""
+        # Priority 1: Env var
         token = os.getenv("GITHUB_TOKEN")
-        if not token: return []
         
-        headers = {"Authorization": f"token {token}", "Accept": "application/json"}
-        # Fetching basic rate limit for now (as lightweight fallback)
-        data, code = http_get("https://api.github.com/rate_limit", headers)
-        if code != 200: return []
+        # Priority 2: gh CLI config
+        if not token:
+            gh_path = Path.home() / ".config" / "gh" / "hosts.yml"
+            if gh_path.exists():
+                try:
+                    import yaml
+                    with open(gh_path) as f:
+                        data = yaml.safe_load(f)
+                        if data and "github.com" in data:
+                            token = data["github.com"].get("oauth_token")
+                except:
+                    pass
         
-        core = data.get("resources", {}).get("core", {})
-        rem, lim = core.get("remaining", 0), core.get("limit", 1)
-        reset_at = datetime.datetime.fromtimestamp(core.get("reset", 0), datetime.timezone.utc)
+        if not token:
+            return []
         
         return [{
             "service": "GitHub API",
             "icon": "🐙",
-            "remaining": f"{rem:,}",
-            "unit": "requests",
-            "reset": human_delta(reset_at),
-            "health": "good" if rem/lim > 0.3 else "warning",
-            "pace": "Stable",
-            "detail": f"{rem}/{lim} [Sidecar]"
+            "remaining": "Token",
+            "unit": "api_key",
+            "reset": "—",
+            "health": "good",
+            "pace": "Token",
+            "detail": f"api_key:{token} [Sidecar]",
+            "data_source": "token_extracted",
         }]
 
+
 class GeminiCollector:
-    # Google Gemini CLI OAuth Credentials (from environment)
-    @classmethod
-    def get_client_id(cls):
-        import os
-        return os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
+    """Extract Gemini OAuth credentials from local files."""
     
-    @classmethod
-    def get_client_secret(cls):
-        import os
-        return os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
-
-    # Model display name mapping
-    MODEL_DISPLAY_NAMES = {
-        "gemini-2.5-flash": "Gemini 2.5 Flash",
-        "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
-        "gemini-2.5-pro": "Gemini 2.5 Pro",
-        "gemini-3-flash-preview": "Gemini 3 Flash (Preview)",
-        "gemini-3-pro-preview": "Gemini 3 Pro (Preview)",
-        "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite (Preview)",
-        "gemini-3.1-pro-preview": "Gemini 3.1 Pro (Preview)",
-    }
-
     @staticmethod
     def collect():
-        results = []
+        """Extract OAuth credentials, send to server for API call."""
         creds_path = Path.home() / ".gemini" / "oauth_creds.json"
         
-        # 1. API Collection
-        if creds_path.exists():
-            try:
-                with open(creds_path, "r") as f:
-                    creds = json.load(f)
-                
-                # Check expiry
-                import time
-                if creds.get("expiry_date", 0) < (time.time() * 1000):
-                    creds = GeminiCollector._refresh_token(creds)
-                    if creds:
-                        with open(creds_path, "w") as f:
-                            json.dump(creds, f, indent=2)
-                
-                if creds:
-                    token = creds.get("access_token")
-                    headers = {"Authorization": f"Bearer {token}"}
-                    
-                    # Fetch Tier and Project first (needed for gemini-3 models)
-                    tier_url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
-                    t_data, t_code = http_post(tier_url, {"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}}, headers)
-                    
-                    # Get project and tier info
-                    project_id = t_data.get("cloudaicompanionProject", "") if t_code == 200 else ""
-                    current_tier = t_data.get("currentTier", {}) if t_code == 200 else {}
-                    tier_name = current_tier.get("name", "Unknown Tier")
-                    
-                    # Fetch Quota with discovered project (required for gemini-3 models)
-                    quota_url = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
-                    q_data, q_code = http_post(quota_url, {"project": project_id}, headers)
-                    
-                    if q_code == 200:
-                        buckets = q_data.get("buckets", [])
-                        if buckets:
-                            # Create one card per model bucket
-                            for bucket in buckets:
-                                model_id = bucket.get("modelId", "Unknown")
-                                display_name = GeminiCollector.MODEL_DISPLAY_NAMES.get(model_id, model_id)
-                                
-                                # remainingFraction: 1.0 = 100% remaining = 0% used
-                                remaining_fraction = bucket.get("remainingFraction", 1.0)
-                                percent_remaining = int(remaining_fraction * 100)
-                                percent_used = 100 - percent_remaining
-                                
-                                # Format reset time
-                                reset_str = "Resetting..."
-                                if "resetTime" in bucket:
-                                    try:
-                                        reset_str = f"Resets {bucket['resetTime'].split('T')[-1][:5]}"
-                                    except:
-                                        reset_str = f"Resets {bucket['resetTime']}"
-                                
-                                # Determine health based on % used
-                                if percent_used < 50:
-                                    health = "good"
-                                elif percent_used < 80:
-                                    health = "warning"
-                                else:
-                                    health = "critical"
-                                
-                                results.append({
-                                    "service": display_name,
-                                    "icon": "🔵",
-                                    "remaining": f"{percent_used}%",
-                                    "unit": "used",
-                                    "reset": reset_str,
-                                    "health": health,
-                                    "pace": tier_name,
-                                    "detail": f"{percent_remaining}% remaining | Model: {model_id} [Sidecar]"
-                                })
-                            
-                            # Sort by usage (highest % used first)
-                            results.sort(key=lambda x: int(x["remaining"].rstrip("%")), reverse=True)
-            except: pass
-
-        # 2. Fallback to Logs
-        if not results:
-            sessions_dir = Path.home() / ".gemini" / "tmp" / "sessions"
-            try:
-                files = list(sessions_dir.glob("*.jsonl"))
-                if files:
-                    total = 0
-                    for fpath in files:
-                        with open(fpath, "r") as f:
-                            for line in f:
-                                try:
-                                    u = json.loads(line).get("usage", {})
-                                    total += (u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
-                                except: pass
-                    results.append({
-                        "service": "Gemini CLI",
-                        "icon": "🔵",
-                        "remaining": f"{total:,}",
-                        "unit": "tokens (24h)",
-                        "reset": "Rolling 24h",
-                        "health": "good",
-                        "pace": "Stable",
-                        "detail": "Logs [Sidecar]"
-                    })
-            except: pass
-            
-        return results
-
-    @staticmethod
-    def _refresh_token(creds):
-        refresh_token = creds.get("refresh_token")
-        if not refresh_token: return None
-        
-        payload = f"client_id={GeminiCollector.get_client_id()}&client_secret={GeminiCollector.get_client_secret()}&refresh_token={refresh_token}&grant_type=refresh_token"
-        req = request.Request("https://oauth2.googleapis.com/token", data=payload.encode("utf-8"), method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        if not creds_path.exists():
+            return []
         
         try:
-            with request.urlopen(req, timeout=10) as resp:
-                new_data = json.loads(resp.read().decode("utf-8"))
-                creds["access_token"] = new_data["access_token"]
-                import time
-                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
-                return creds
+            with open(creds_path) as f:
+                creds = json.load(f)
+            
+            token = creds.get("access_token")
+            if not token:
+                return []
+            
+            return [{
+                "service": "Gemini API",
+                "icon": "🔵",
+                "remaining": "Token",
+                "unit": "oauth",
+                "reset": "—",
+                "health": "good",
+                "pace": "Token",
+                "detail": f"oauth_token:{token} [Sidecar]",
+                "data_source": "token_extracted",
+            }]
         except:
-            return None
+            return []
+
+
 class ChatGPTCollector:
+    """Extract ChatGPT OAuth token from local sources."""
+    
     @staticmethod
     def collect():
+        """Extract OAuth token, send to server for API call."""
+        # Priority 1: Env var
         token = os.getenv("CHATGPT_OAUTH_TOKEN")
+        
+        # Priority 2: Codex auth file
         if not token:
             auth_path = Path.home() / ".codex" / "auth.json"
             if auth_path.exists():
                 try:
-                    with open(auth_path, "r") as f:
+                    with open(auth_path) as f:
                         data = json.load(f)
                         token = data.get("tokens", {}).get("access_token")
-                except: pass
+                except:
+                    pass
         
-        results = []
-        if token:
-            url = "https://chatgpt.com/backend-api/wham/usage"
-            headers = {"Authorization": f"Bearer {token}"}
-            data, code = http_get(url, headers)
-            if code == 200:
-                primary = data.get("primary", {})
-                pct = primary.get("utilization_percent", 0.0)
-                reset_ts = primary.get("resets_at")
-                reset_at = datetime.datetime.fromtimestamp(reset_ts, datetime.timezone.utc) if reset_ts else None
-                
-                results.append({
-                    "service": "ChatGPT Codex",
-                    "icon": "💬",
-                    "remaining": f"{100-pct:.1f}%",
-                    "unit": "remaining",
-                    "reset": human_delta(reset_at),
-                    "health": "good" if pct < 80 else "warning",
-                    "pace": "Stable" if pct < 50 else "High Burn",
-                    "detail": "API [Sidecar]"
-                })
+        if not token:
+            return []
         
-        # Log fallback (if API failed or no token)
-        if not results:
-            sessions_dir = Path.home() / ".codex" / "sessions"
-            try:
-                files = list(sessions_dir.glob("**/*.jsonl"))
-                if files:
-                    latest = max(files, key=os.path.getmtime)
-                    with open(latest, "r") as f:
-                        lines = f.readlines()
-                        if lines:
-                            usage = json.loads(lines[-1])
-                            pct = usage.get("used_percent", 0.0)
-                            reset_ts = usage.get("resets_at")
-                            reset_at = datetime.datetime.fromtimestamp(reset_ts, datetime.timezone.utc) if reset_ts else None
-                            results.append({
-                                "service": "ChatGPT Codex",
-                                "icon": "💬",
-                                "remaining": f"{100-pct:.1f}%",
-                                "unit": "remaining",
-                                "reset": human_delta(reset_at),
-                                "health": "good" if pct < 80 else "warning",
-                                "pace": "Stable",
-                                "detail": "Log [Sidecar]"
-                            })
-            except: pass
+        return [{
+            "service": "ChatGPT Codex",
+            "icon": "💬",
+            "remaining": "Token",
+            "unit": "oauth",
+            "reset": "—",
+            "health": "good",
+            "pace": "Token",
+            "detail": f"oauth_token:{token} [Sidecar]",
+            "data_source": "token_extracted",
+        }]
+
+
+class KimiCollector:
+    """Extract Kimi auth token from Chrome cookies."""
+    
+    @staticmethod
+    def _get_cookie():
+        """Extract kimi-auth from Chrome cookies."""
+        try:
+            # Determine Chrome cookies path
+            if sys.platform == "darwin":
+                path = Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
+            elif sys.platform == "win32":
+                path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
+                if not path.exists():
+                    path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
+            else:
+                path = Path.home() / ".config/google-chrome/Default/Cookies"
+                if not path.exists():
+                    path = Path.home() / ".config/chromium/Default/Cookies"
             
-        return results
+            if not path.exists():
+                return None
+            
+            conn = sqlite3.connect(str(path))
+            cursor = conn.cursor()
+            
+            for cookie_name in ["kimi-auth", "kimi_token"]:
+                cursor.execute(
+                    "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
+                    (cookie_name,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    conn.close()
+                    return row[0]
+            
+            conn.close()
+        except:
+            pass
+        return None
+    
+    @staticmethod
+    def collect():
+        """Extract Kimi cookie, send to server for API call."""
+        # Priority 1: Env var
+        token = os.getenv("KIMI_AUTH_TOKEN")
+        
+        # Priority 2: Chrome cookie
+        if not token:
+            token = KimiCollector._get_cookie()
+        
+        if not token:
+            return []
+        
+        return [{
+            "service": "Kimi API",
+            "icon": "🌙",
+            "remaining": "Token",
+            "unit": "cookie",
+            "reset": "—",
+            "health": "good",
+            "pace": "Token",
+            "detail": f"cookie:kimi-auth:{token} [Sidecar]",
+            "data_source": "token_extracted",
+        }]
+
+
+class ZaiCollector:
+    """Extract ZAI API key from local sources."""
+    
+    @staticmethod
+    def collect():
+        """Extract API key, send to server for API call."""
+        key = os.getenv("ZAI_API_KEY")
+        
+        if not key or key.lower() == "zai":
+            return []
+        
+        return [{
+            "service": "zAI API",
+            "icon": "🌐",
+            "remaining": "Token",
+            "unit": "api_key",
+            "reset": "—",
+            "health": "good",
+            "pace": "Token",
+            "detail": f"api_key:{key} [Sidecar]",
+            "data_source": "token_extracted",
+        }]
+
+
+# --- Local Data Collectors (Keep these as-is, they read local files) ---
 
 class OpenCodeCollector:
+    """Read OpenCode local database."""
+    
     @staticmethod
     def get_chrome_cookies_path():
-        """Get Chrome cookies database path based on platform."""
+        """Get Chrome cookies database path."""
         system = sys.platform
         home = Path.home()
         
-        if system == "darwin":  # macOS
+        if system == "darwin":
             path = home / "Library/Application Support/Google/Chrome/Default/Cookies"
-        elif system == "win32":  # Windows
+        elif system == "win32":
             path = home / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
             if not path.exists():
                 path = home / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
-        else:  # Linux
+        else:
             path = home / ".config/google-chrome/Default/Cookies"
             if not path.exists():
                 path = home / ".config/chromium/Default/Cookies"
@@ -395,7 +381,7 @@ class OpenCodeCollector:
     
     @staticmethod
     def get_opencode_session():
-        """Extract opencode.ai session cookie from Chrome (if available)."""
+        """Extract opencode.ai session from Chrome."""
         cookies_path = OpenCodeCollector.get_chrome_cookies_path()
         if not cookies_path:
             return None
@@ -414,358 +400,97 @@ class OpenCodeCollector:
     
     @staticmethod
     def collect():
-        """
-        Collect OpenCode usage from local database.
+        """Read local OpenCode DB and extract session cookie."""
+        results = []
+        hostname = socket.gethostname()
         
-        Note: This sidecar sends local DB data. The main app will:
-        1. Try web API with Chrome cookies first (aggregates all devices)
-        2. Fall back to aggregating sidecar data from multiple hosts
-        """
+        # 1. Session cookie for server Web API
+        session = OpenCodeCollector.get_opencode_session()
+        if session:
+            results.append({
+                "service": "OpenCode (Web Token)",
+                "icon": "⚡",
+                "remaining": "Cookie",
+                "unit": "web",
+                "reset": "—",
+                "health": "good",
+                "pace": "Token",
+                "detail": f"cookie:session:{session} [Sidecar]",
+                "data_source": "token_extracted",
+            })
+        
+        # 2. Local DB data
         db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
-        if not db_path.exists(): 
-            # Try to extract and send cookie instead
-            session = OpenCodeCollector.get_opencode_session()
-            if session:
-                # Return a special marker that tells main app to use web API
-                hostname = socket.gethostname()
-                return [{
-                    "service": "OpenCode (Cookie)",
-                    "icon": "⚡",
-                    "remaining": "Web API",
-                    "unit": "session",
-                    "reset": "—",
-                    "health": "good",
-                    "pace": "Stable",
-                    "detail": f"session:{session} · {hostname} [Sidecar]",
-                }]
-            return []
-        
-        try:
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
-            
-            now = datetime.datetime.now(datetime.timezone.utc)
-            hostname = socket.gethostname()
-            
-            # Calculate cutoff times for each window
-            cutoffs = {
-                "5h": int((now - datetime.timedelta(hours=5)).timestamp() * 1000),
-                "week": int((now - datetime.timedelta(days=7)).timestamp() * 1000),
-                "month": int((now - datetime.timedelta(days=30)).timestamp() * 1000),
-            }
-            
-            # Documented limits for OpenCode Go
-            limits = {
-                "5h": 12.0,
-                "week": 30.0,
-                "month": 60.0,
-            }
-            
-            results = []
-            
-            for window, cutoff_ms in cutoffs.items():
-                cursor.execute("""
-                    SELECT 
-                        SUM(json_extract(data, '$.cost')),
-                        COUNT(*)
-                    FROM message
-                    WHERE time_created > ?
-                      AND json_valid(data)
-                      AND json_extract(data, '$.role') = 'assistant'
-                """, (cutoff_ms,))
-                row = cursor.fetchone()
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(str(db_path))
+                cursor = conn.cursor()
                 
-                used = float(row[0] or 0.0)
-                count = int(row[1] or 0)
-                limit = limits[window]
-                remaining = max(0, limit - used)
-                pct = (used / limit * 100) if limit > 0 else 0
+                now = datetime.datetime.now(datetime.timezone.utc)
                 
-                # Format window label
-                window_labels = {
-                    "5h": "5 Hours",
-                    "week": "7 Days",
-                    "month": "30 Days"
+                cutoffs = {
+                    "5h": int((now - datetime.timedelta(hours=5)).timestamp() * 1000),
+                    "week": int((now - datetime.timedelta(days=7)).timestamp() * 1000),
+                    "month": int((now - datetime.timedelta(days=30)).timestamp() * 1000),
                 }
                 
-                results.append({
-                    "service": f"OpenCode ({window_labels[window]})",
-                    "icon": "⚡",
-                    "remaining": f"${remaining:.2f}",
-                    "unit": f"${limit:.0f} limit",
-                    "reset": f"Rolling {window}",
-                    "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                    "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                    "detail": f"${used:.2f} used · {count} msgs · {hostname} [Sidecar]",
-                })
-            
-            conn.close()
-            return results
-        except:
-            return []
-
-class ZaiApiCollector:
-    @staticmethod
-    def collect():
-        key = os.getenv("ZAI_API_KEY")
-        if not key or key.lower() == "zai":
-            return []
-        try:
-            headers = {"Authorization": f"Bearer {key}"}
-            data, code = http_get("https://open.bigmodel.cn/api/paas/v4/users/me/balance", headers)
-            if code != 200:
-                return []
-            bal = float(data.get("data", {}).get("available_balance", 0))
-            return [{
-                "service": "zAI API",
-                "icon": "🌐",
-                "remaining": f"¥{bal:.2f}",
-                "unit": "balance",
-                "reset": "Manual",
-                "health": "good" if bal > 10 else "warning",
-                "pace": "Stable",
-                "detail": "Prepaid balance (API) [Sidecar]"
-            }]
-        except:
-            return []
-
-class ZaiPlanCollector:
-    @staticmethod
-    def collect():
-        key = os.getenv("ZAI_API_KEY")
-        if not key or key.lower() == "zai":
-            return []
-        
-        # Try multiple endpoints
-        endpoints = [
-            "https://api.z.ai/api/monitor/usage/quota/limit",
-            "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
-        ]
-        
-        for endpoint in endpoints:
-            try:
-                headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
-                data, code = http_get(endpoint, headers)
-                if code != 200:
-                    continue
+                limits = {"5h": 12.0, "week": 30.0, "month": 60.0}
                 
-                plan_data = data.get("data", {})
-                limits = plan_data.get("limits", [])
-                if not limits:
-                    continue
-                
-                results = []
-                for limit in limits:
-                    limit_type = limit.get("type", "")
-                    limit_val = limit.get("limit", 0)
-                    used_val = limit.get("used", 0)
-                    remaining = max(0, limit_val - used_val)
+                for window, cutoff_ms in cutoffs.items():
+                    cursor.execute("""
+                        SELECT SUM(json_extract(data, '$.cost')), COUNT(*)
+                        FROM message
+                        WHERE time_created > ?
+                          AND json_valid(data)
+                          AND json_extract(data, '$.role') = 'assistant'
+                    """, (cutoff_ms,))
                     
-                    if limit_type == "TOKENS_LIMIT":
-                        results.append({
-                            "service": "zAI Plan (Tokens)",
-                            "icon": "📊",
-                            "remaining": f"{remaining:,}",
-                            "unit": f"{limit_val:,} limit",
-                            "reset": "Plan cycle",
-                            "health": "good" if used_val / limit_val < 0.5 else "warning",
-                            "pace": "Stable",
-                            "detail": f"{used_val:,} used [Sidecar]"
-                        })
-                    elif limit_type == "TIME_LIMIT":
-                        results.append({
-                            "service": "zAI Plan (Time)",
-                            "icon": "📊",
-                            "remaining": f"{remaining}",
-                            "unit": f"{limit_val} min",
-                            "reset": "Plan cycle",
-                            "health": "good" if used_val / limit_val < 0.5 else "warning",
-                            "pace": "Stable",
-                            "detail": f"{used_val} min used [Sidecar]"
-                        })
+                    row = cursor.fetchone()
+                    used = float(row[0] or 0.0)
+                    count = int(row[1] or 0)
+                    limit = limits[window]
+                    remaining = max(0, limit - used)
+                    pct = (used / limit * 100) if limit > 0 else 0
+                    
+                    window_labels = {"5h": "5 Hours", "week": "7 Days", "month": "30 Days"}
+                    
+                    results.append({
+                        "service": f"OpenCode ({window_labels[window]})",
+                        "icon": "⚡",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": f"${limit:.0f} limit",
+                        "reset": f"Rolling {window}",
+                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                        "detail": f"${used:.2f} used · {count} msgs · {hostname} [Sidecar]",
+                        "data_source": "local",
+                    })
                 
-                return results
+                conn.close()
             except:
-                continue
+                pass
         
-        return []
+        return results
 
-class KimiApiCollector:
-    @staticmethod
-    def collect():
-        key = os.getenv("KIMI_API_KEY")
-        if not key or len(key) < 10:
-            return []
-        try:
-            headers = {"Authorization": f"Bearer {key}"}
-            data, code = http_get("https://api.moonshot.cn/v1/users/me/balance", headers)
-            if code == 401:
-                return []
-            if code != 200:
-                return []
-            bal = float(data.get("data", {}).get("available_balance", 0))
-            return [{
-                "service": "Kimi API",
-                "icon": "🌙",
-                "remaining": f"${bal:.2f}",
-                "unit": "balance",
-                "reset": "Manual",
-                "health": "good" if bal > 5 else "warning",
-                "pace": "Stable",
-                "detail": "Prepaid balance (API) [Sidecar]"
-            }]
-        except:
-            return []
-
-class KimiCodingCollector:
-    @staticmethod
-    def collect():
-        # Try env var first
-        token = os.getenv("KIMI_AUTH_TOKEN")
-        
-        # Then try Chrome cookie
-        if not token:
-            token = KimiCodingCollector._get_cookie()
-        
-        if not token:
-            return []
-        
-        try:
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
-            data, code = http_post(
-                "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages",
-                {},
-                headers
-            )
-            
-            if code != 200:
-                return []
-            
-            usages = data.get("usages", [])
-            if not usages:
-                return []
-            
-            # Find FEATURE_CODING usage
-            usage = None
-            for u in usages:
-                if u.get("scope") == "FEATURE_CODING":
-                    usage = u
-                    break
-            if not usage:
-                usage = usages[0]
-            
-            results = []
-            
-            # Weekly quota
-            weekly = usage.get("detail", {})
-            if weekly:
-                limit = int(weekly.get("limit", 0))
-                used = int(weekly.get("used", 0))
-                remaining = int(weekly.get("remaining", limit - used))
-                
-                if limit > 0:
-                    # Detect tier
-                    tier = "Basic"
-                    if limit >= 7000:
-                        tier = "Allegretto"
-                    elif limit >= 2000:
-                        tier = "Moderato"
-                    elif limit >= 1000:
-                        tier = "Andante"
-                    
-                    results.append({
-                        "service": "Kimi Coding (Weekly)",
-                        "icon": "🌙",
-                        "remaining": f"{remaining}",
-                        "unit": f"{limit} req",
-                        "reset": "Weekly",
-                        "health": "good" if used / limit < 0.5 else "warning" if used / limit < 0.8 else "critical",
-                        "pace": tier,
-                        "detail": f"{used} used · {tier} [Sidecar]"
-                    })
-            
-            # Rate limit
-            limits = usage.get("limits", [])
-            if limits:
-                rate = limits[0].get("detail", {})
-                window = limits[0].get("window", {})
-                limit = int(rate.get("limit", 0))
-                used = int(rate.get("used", 0))
-                remaining = int(rate.get("remaining", limit - used))
-                duration = window.get("duration", 300)
-                window_label = f"{duration // 60}h"
-                
-                if limit > 0:
-                    results.append({
-                        "service": f"Kimi Coding ({window_label})",
-                        "icon": "⏱️",
-                        "remaining": f"{remaining}",
-                        "unit": f"{limit} req",
-                        "reset": f"{window_label} window",
-                        "health": "good" if used / limit < 0.7 else "warning",
-                        "pace": "Stable",
-                        "detail": f"{used} used · Rate limit [Sidecar]"
-                    })
-            
-            return results
-            
-        except:
-            return []
-    
-    @staticmethod
-    def _get_cookie():
-        """Extract kimi-auth from Chrome cookies."""
-        try:
-            # Determine Chrome cookies path based on platform
-            if sys.platform == "darwin":
-                path = Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
-            elif sys.platform == "win32":
-                path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
-                if not path.exists():
-                    path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
-            else:
-                path = Path.home() / ".config/google-chrome/Default/Cookies"
-                if not path.exists():
-                    path = Path.home() / ".config/chromium/Default/Cookies"
-            
-            if not path.exists():
-                return None
-            
-            import sqlite3
-            conn = sqlite3.connect(str(path))
-            cursor = conn.cursor()
-            
-            for cookie_name in ["kimi-auth", "kimi_token"]:
-                cursor.execute(
-                    "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
-                    (cookie_name,)
-                )
-                row = cursor.fetchone()
-                if row:
-                    conn.close()
-                    return row[0]
-            
-            conn.close()
-            return None
-        except:
-            return None
 
 class AntigravityCollector:
+    """Read Antigravity local quota file."""
+    
     @staticmethod
     def collect():
+        """Read local Antigravity quota file."""
         path = Path.home() / ".antigravity" / "state" / "quota.json"
+        
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
+            
             results = []
             for name, usage in data.get("models", {}).items():
                 rem = usage.get("remaining_percent", 0.0)
                 reset_ts = usage.get("resets_at")
                 reset_at = datetime.datetime.fromtimestamp(reset_ts, tz=datetime.timezone.utc) if reset_ts else None
+                
                 results.append({
                     "service": f"AG: {name}",
                     "icon": "🛸",
@@ -774,18 +499,24 @@ class AntigravityCollector:
                     "reset": human_delta(reset_at),
                     "health": "good" if rem > 30 else "warning",
                     "pace": "Stable",
-                    "detail": f"{name} [Sidecar]"
+                    "detail": f"{name} [Sidecar]",
+                    "data_source": "local",
                 })
+            
             return results
         except:
             return []
 
-# --- Main Script Logic ---
+
+# --- Main Script ---
 
 def run_install(api_url, api_key):
+    """Install sidecar as scheduled task."""
     print("\n--- Sidecar Installer ---")
-    if not api_url: api_url = input("Enter Runway API URL (e.g. http://localhost:8765): ").strip()
-    if not api_key: api_key = input("Enter Ingestion API Key: ").strip()
+    if not api_url:
+        api_url = input("Enter Runway API URL (e.g. http://localhost:8765): ").strip()
+    if not api_key:
+        api_key = input("Enter Ingestion API Key: ").strip()
     
     script_path = os.path.abspath(__file__)
     
@@ -797,7 +528,6 @@ def run_install(api_url, api_key):
         except Exception as e:
             print(f"ERROR: Failed to create Task Scheduler entry: {e}")
     else:
-        # Mac/Linux crontab
         cron_entry = f"*/30 * * * * {sys.executable} {script_path} --api-url {api_url} --api-key {api_key} > /dev/null 2>&1\n"
         try:
             current_cron = subprocess.check_output("crontab -l", shell=True, stderr=subprocess.STDOUT).decode("utf-8")
@@ -814,74 +544,95 @@ def run_install(api_url, api_key):
         
         print("SUCCESS: Crontab entry created (Every 30m).")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Universal Lightweight Sidecar for Runway")
-    parser.add_argument("--provider", default="all", help="Provider to collect (anthropic, github, gemini, chatgpt, opencode, zai_api, zai_plan, kimi_api, kimi_coding, antigravity, all)")
+    parser = argparse.ArgumentParser(description="Runway Sidecar - Token & Data Collector")
+    parser.add_argument("--provider", default="all", help="Provider to collect")
     parser.add_argument("--api-url", help="Runway API URL")
     parser.add_argument("--api-key", help="Ingestion API Key")
-    parser.add_argument("--install", action="store_true", help="Install as a background task")
-    parser.add_argument("--dry-run", action="store_true", help="Print metrics without pushing")
+    parser.add_argument("--install", action="store_true", help="Install as scheduled task")
+    parser.add_argument("--dry-run", action="store_true", help="Print without pushing")
     
     args = parser.parse_args()
     
     if args.install:
         run_install(args.api_url, args.api_key)
         return
-
-    # Collection
+    
+    # Collect from all providers
     all_metrics = []
     providers = []
-    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector, OpenCodeCollector, ZaiApiCollector, ZaiPlanCollector, KimiApiCollector, KimiCodingCollector, AntigravityCollector]
-    elif args.provider == "anthropic": providers = [AnthropicCollector]
-    elif args.provider == "github": providers = [GitHubCollector]
-    elif args.provider == "gemini": providers = [GeminiCollector]
-    elif args.provider == "chatgpt": providers = [ChatGPTCollector]
-    elif args.provider == "opencode": providers = [OpenCodeCollector]
-    elif args.provider == "zai_api": providers = [ZaiApiCollector]
-    elif args.provider == "zai_plan": providers = [ZaiPlanCollector]
-    elif args.provider == "kimi_api": providers = [KimiApiCollector]
-    elif args.provider == "kimi_coding": providers = [KimiCodingCollector]
-    elif args.provider == "antigravity": providers = [AntigravityCollector]
+    
+    if args.provider == "all":
+        providers = [
+            AnthropicCollector,
+            GitHubCollector,
+            GeminiCollector,
+            ChatGPTCollector,
+            KimiCollector,
+            ZaiCollector,
+            OpenCodeCollector,
+            AntigravityCollector,
+        ]
+    elif args.provider == "anthropic":
+        providers = [AnthropicCollector]
+    elif args.provider == "github":
+        providers = [GitHubCollector]
+    elif args.provider == "gemini":
+        providers = [GeminiCollector]
+    elif args.provider == "chatgpt":
+        providers = [ChatGPTCollector]
+    elif args.provider == "kimi":
+        providers = [KimiCollector]
+    elif args.provider == "zai":
+        providers = [ZaiCollector]
+    elif args.provider == "opencode":
+        providers = [OpenCodeCollector]
+    elif args.provider == "antigravity":
+        providers = [AntigravityCollector]
     
     for p in providers:
-        all_metrics.extend(p.collect())
+        try:
+            all_metrics.extend(p.collect())
+        except Exception as e:
+            print(f"ERROR collecting from {p.__name__}: {e}", file=sys.stderr)
     
     if not all_metrics:
         print("No metrics collected.")
         return
-
+    
     if args.dry_run:
         print(f"Dry Run: {len(all_metrics)} metrics collected.")
         print(json.dumps(all_metrics, indent=2))
         return
-
+    
     if not args.api_url or not args.api_key:
-        print("ERROR: --api-url and --api-key are required to push metrics. Use --dry-run to test.")
+        print("ERROR: --api-url and --api-key required. Use --dry-run to test.")
         return
-
-    # Determine provider name based on collection type
+    
+    # Determine provider name
     hostname = socket.gethostname()
-    if args.provider == "opencode":
-        provider_name = f"opencode-{hostname}"
-    elif args.provider == "all":
+    if args.provider == "all":
         provider_name = f"sidecar-{hostname}"
     else:
         provider_name = f"{args.provider}-{hostname}"
-
-    # Pushing
+    
+    # Push to server
     payload = {
         "provider": provider_name,
-        "api_key": args.api_key,
         "metrics": all_metrics
     }
     
     target_url = f"{args.api_url.rstrip('/')}/api/ingest"
-    data, code = http_post(target_url, payload)
+    data, code = http_post_signed(target_url, payload, args.api_key)
     
     if code == 200:
         print(f"SUCCESS: Pushed {len(all_metrics)} metrics to {target_url}")
+        resp = data
+        print(f"  Tokens: {resp.get('tokens_received', 0)}, Metrics: {resp.get('metrics_stored', 0)}")
     else:
-        print(f"ERROR {code}: {data}")
+        print(f"ERROR {code}: {json.dumps(data) if isinstance(data, dict) else data}")
+
 
 if __name__ == "__main__":
     main()

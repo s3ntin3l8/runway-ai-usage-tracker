@@ -27,6 +27,7 @@ from app.core.utils import error_card, human_delta
 from app.core.chrome_cookies import get_opencode_session_cookie
 from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
+from app.services.token_cache import token_cache
 
 
 class OpenCodeCollector(BaseCollector):
@@ -73,7 +74,16 @@ class OpenCodeCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
         """
+        # Check for session cookie (local Chrome or sidecar cache)
         session_cookie = get_opencode_session_cookie()
+        cookie_source = "local"
+        
+        if not session_cookie:
+            session_cookie = token_cache.get_token("opencode", "cookie_session")
+            if session_cookie:
+                cookie_source = "sidecar"
+                logger.info("Using OpenCode session cookie from sidecar cache")
+        
         if not session_cookie:
             return []
         

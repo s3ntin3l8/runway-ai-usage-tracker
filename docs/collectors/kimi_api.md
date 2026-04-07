@@ -78,14 +78,14 @@ graph TD
 
 ```python
 {
-    "service": "Kimi Code",
+    "service": "Kimi API",
     "icon": "🌙",
     "remaining": "$45.75",       # Available balance
     "unit": "balance",
     "reset": "Manual",           # Prepaid - no automatic reset
     "health": "good",            # > $5 = good
     "pace": "Stable",
-    "detail": "Prepaid balance"
+    "detail": "Prepaid balance (API)",
 }
 ```
 
@@ -93,7 +93,7 @@ graph TD
 
 ```python
 {
-    "service": "Kimi Code",
+    "service": "Kimi API",
     "icon": "🌙",
     "remaining": "ERR",
     "unit": "Check State",
@@ -108,7 +108,7 @@ graph TD
 
 ```python
 {
-    "service": "Kimi Code",
+    "service": "Kimi API",
     "icon": "🌙",
     "remaining": "ERR",
     "unit": "Check State",
@@ -182,7 +182,7 @@ No special file permissions required - only needs the API key in environment.
 export KIMI_API_KEY="sk-proj-your-key-here"
 ```
 
-### Issue: "Unauthorized" error
+### Issue: "401 Unauthorized" error
 
 **Cause:** Invalid or expired API key
 
@@ -273,9 +273,9 @@ All models share the same prepaid balance pool.
 
 | File | Purpose |
 |------|---------|
-| `app/services/collectors/kimi_code.py` | Main collector implementation |
+| `app/services/collectors/kimi_api.py` | Main collector implementation |
 | `app/core/config.py` | API key configuration |
-| `tests/unit/test_collectors.py` | Unit tests (TestKimiCodeCollector) |
+| `tests/unit/test_collectors.py` | Unit tests (TestKimiApiCollector) |
 | `scripts/sidecar.py` | Sidecar implementation |
 
 ---

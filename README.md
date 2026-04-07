@@ -96,13 +96,16 @@ For services that cannot be reached directly by the dashboard, Runway provides a
 
 **Endpoint**: `POST /api/ingest`
 **Content-Type**: `application/json`
+**Security**: HMAC-SHA256 signature required
 
 ```bash
+# Example using manual curl with HMAC signature
 curl -X POST http://localhost:8765/api/ingest \
   -H "Content-Type: application/json" \
+  -H "X-Signature: <hmac-sha256-hex>" \
+  -H "X-Timestamp: <unix-timestamp>" \
   -d '{
     "provider": "my-custom-service",
-    "api_key": "your-secret-key",
     "metrics": [
       {
         "service": "Usage Limit",
@@ -115,6 +118,43 @@ curl -X POST http://localhost:8765/api/ingest \
     ]
   }'
 ```
+
+## 🏥 Health API
+
+Monitor the status of your collectors and token cache.
+
+**Endpoint**: `GET /api/health`
+
+```bash
+curl http://localhost:8765/api/health
+```
+
+### LimitCard Schema
+
+Each metric card follows this schema:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `service` | string | Provider name (e.g., "Claude Pro", "GitHub Copilot") |
+| `icon` | string | Unicode emoji for visual identification |
+| `remaining` | string | Remaining quota (number, percentage, or currency) |
+| `unit` | string | Unit description (e.g., "tokens", "requests", "$12 limit") |
+| `reset` | string | Human-readable reset time (e.g., "in 4h 23m") |
+| `health` | string | Status: `good`, `warning`, `critical`, or `unknown` |
+| `pace` | string | Consumption rate: "Stable", "Moderate Burn", "Fast Burn" |
+| `detail` | string | Additional context, data source, or error reason |
+
+**Extended Fields** (for programmatic use):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `used_value` | float | Raw used amount for calculations |
+| `limit_value` | float | Raw limit amount for calculations |
+| `is_unlimited` | bool | Whether this is an unlimited quota |
+| `unit_type` | string | `currency`, `tokens`, `requests`, `minutes`, `percent`, `generic` |
+| `currency` | string | Currency code: `USD`, `EUR`, `CNY`, etc. |
+| `reset_at` | string | ISO 8601 timestamp for absolute reset time |
+| `data_source` | string | Source: `oauth`, `web_api`, `local`, `cache`, `api`, `sidecar` |
 
 ## 🚀 Quick Start
 

@@ -18,6 +18,7 @@ The Claude collector retrieves usage and quota information for Claude (Anthropic
 - **Multi-Config Support**: Scans multiple config directories via `CLAUDE_CONFIG_DIR`
 - **macOS Keychain Support**: Sidecar can extract tokens from macOS Keychain
 - **OAuth Caching**: 10-minute cache to handle rate limits gracefully
+- **Automatic Token Refresh**: Refreshes expired OAuth tokens using platform.claude.com endpoint
 
 ---
 
@@ -194,6 +195,70 @@ When all methods fail, returns descriptive error:
 
 ---
 
+## Token Refresh
+
+The collector implements automatic OAuth token refresh when tokens expire (8 hour lifetime).
+
+### Refresh Endpoint
+
+**URL:** `POST https://platform.claude.com/v1/oauth/token`
+
+**Parameters (form-urlencoded):**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `grant_type` | `refresh_token` | OAuth2 grant type |
+| `refresh_token` | `sk-ant-ort01-...` | Refresh token from credentials file |
+| `client_id` | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` | Claude Code CLI client ID (public) |
+
+### Refresh Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Collector
+    participant F as Credentials File
+    participant A as Anthropic
+    
+    C->>F: Read ~/.claude/.credentials.json
+    C->>C: Check expiresAt timestamp
+    
+    alt Token expired
+        C->>A: POST /v1/oauth/token (refresh_token grant)
+        A-->>C: New access_token + refresh_token
+        C->>F: Persist new tokens
+        C->>A: Call /api/oauth/usage with new token
+    else Token valid
+        C->>A: Call /api/oauth/usage directly
+    end
+```
+
+### Failure Handling
+
+| Error Type | Response | Action |
+|------------|----------|--------|
+| `invalid_grant` | Terminal | Block refresh, require `claude login` |
+| 4xx/5xx (transient) | Exponential backoff | Start at 30s, double up to 6h |
+| Network errors | Exponential backoff | Same as HTTP errors |
+
+### Token Persistence
+
+On successful refresh, the collector updates `~/.claude/.credentials.json`:
+
+```json
+{
+  "claudeAiOauth": {
+    "accessToken": "sk-ant-oat01-...",
+    "refreshToken": "sk-ant-ort01-...",
+    "expiresAt": 1775622989071,
+    "scopes": ["user:profile", "user:inference"]
+  }
+}
+```
+
+**Important:** Refresh tokens are single-use. Each refresh generates a new refresh token.
+
+---
+
 ## Collection Flow
 
 ```mermaid
@@ -238,7 +303,14 @@ graph TD
     "reset": "in 2h 15m",
     "health": "good",           # < 70% used
     "pace": "Stable",           # < 50% used
-    "detail": "25.0% used [OAuth]"  # or [Web API]
+    "detail": "25.0% used [OAuth]",  # or [Web API]
+    # Extended fields
+    "used_value": 25.0,
+    "limit_value": 100.0,
+    "is_unlimited": False,
+    "unit_type": "percent",
+    "reset_at": "2026-04-07T15:00:00+00:00",
+    "data_source": "oauth"      # or "web_api"
 }
 ```
 
@@ -253,7 +325,14 @@ graph TD
     "reset": "in 3h 45m",
     "health": "good",
     "pace": "Stable",
-    "detail": "750,000 / 2,000,000 [Local Logs] (API Fallback)"
+    "detail": "750,000 / 2,000,000 [Local Logs] (API Fallback)",
+    # Extended fields
+    "used_value": 750000.0,
+    "limit_value": 2000000.0,
+    "is_unlimited": False,
+    "unit_type": "tokens",
+    "reset_at": "2026-04-07T15:00:00+00:00",
+    "data_source": "local"
 }
 ```
 
@@ -268,7 +347,8 @@ graph TD
     "reset": "—",
     "health": "critical",
     "pace": "Stopped",
-    "detail": "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai"
+    "detail": "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai",
+    "data_source": "fallback"
 }
 ```
 
@@ -576,11 +656,23 @@ OAuth API (/api/oauth/usage) → v1/rate_limits (simpler data) → Web API (cook
 
 | File | Purpose |
 |------|---------|
-| `app/services/collectors/anthropic.py` | Main collector implementation |
+| `app/services/collectors/anthropic.py` | Main collector implementation (with token refresh) |
 | `app/core/chrome_cookies.py` | Cross-platform cookie decryption |
 | `app/core/config.py` | Token source configuration |
+| `app/services/token_cache.py` | In-memory token cache for sidecar tokens |
+| `app/services/smart_collector.py` | Intelligent caching wrapper |
 | `scripts/sidecar.py` | Sidecar implementation (file + keychain) |
 | `tests/unit/test_collectors.py` | Unit tests |
+
+## OAuth Client ID
+
+The OAuth client ID used for token refresh is a **public identifier** from Claude Code CLI:
+
+```python
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+```
+
+This is the same client ID used by the official Claude Code CLI tool. It's publicly visible in the codebase and is not a secret.
 
 ---
 
@@ -603,9 +695,28 @@ OAuth API (/api/oauth/usage) → v1/rate_limits (simpler data) → Web API (cook
 ### Issue: "401 Unauthorized" error
 **Cause:** Token expired or invalid
 **Fix:**
-1. Generate new token from https://claude.ai/settings
-2. Update `CLAUDE_CODE_OAUTH_TOKEN` env var
-3. Or logout/login in Chrome to refresh cookies
+1. **Automatic refresh should handle this** - check logs for refresh attempts
+2. If refresh fails with `invalid_grant`: Run `claude login` to re-authenticate
+3. If refresh fails with other errors: Wait for backoff (30s → 60s → 120s... up to 6h)
+4. Manual fix: Generate new token from https://claude.ai/settings
+
+### Issue: "Token refresh blocked" or "invalid_grant"
+**Cause:** Refresh token is invalid or revoked
+**Fix:**
+```bash
+# Re-authenticate with Claude Code CLI
+claude login
+
+# This will update ~/.claude/.credentials.json with fresh tokens
+```
+
+### Issue: Token refresh keeps failing
+**Cause:** Exponential backoff after repeated failures
+**Fix:**
+1. Check network connectivity to `platform.claude.com`
+2. Verify credentials file has valid refresh token
+3. Wait for backoff period or restart the app
+4. Check logs for specific error codes
 
 ### Issue: Dashboard shows stale data
 **Cause:** OAuth has 5-minute cache

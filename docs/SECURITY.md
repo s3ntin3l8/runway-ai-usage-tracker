@@ -18,8 +18,33 @@
    CLAUDE_CODE_OAUTH_TOKEN=sk-ant-...
    GEMINI_OAUTH_CLIENT_ID=...
    GEMINI_OAUTH_CLIENT_SECRET=...
-   INGEST_API_KEY=...  (optional, defaults to "sidecar-default-secret")
+   INGEST_API_KEY=...  (Required secret shared between server and sidecars)
    ```
+
+## Ingestion API Security (Sidecar)
+
+Runway uses a cryptographically secure ingestion mechanism for sidecars (Mode 2 and Mode 3).
+
+### HMAC-SHA256 Signing
+
+To prevent token theft and replay attacks, all requests to `POST /api/ingest` must be signed using HMAC-SHA256:
+
+1. **Shared Secret**: The `INGEST_API_KEY` (from `.env`) acts as the HMAC secret.
+2. **Payload**: The signature is calculated over the concatenation of:
+   - `X-Timestamp`: Current Unix timestamp
+   - The raw JSON request body
+3. **Verification**: The server re-calculates the signature and verifies that:
+   - The signature matches (`hmac.compare_digest`).
+   - The timestamp is within a 5-minute sliding window of the server's current time.
+
+### Security Implications
+
+- **No Cleartext Keys**: The `INGEST_API_KEY` is never sent over the network (unlike the previous static key model).
+- **Replay Protection**: An attacker cannot capture and reuse a valid request after 5 minutes.
+- **Payload Integrity**: Any modification to the metrics or tokens in transit will invalidate the signature.
+
+> [!IMPORTANT]
+> Always use HTTPS (SSL/TLS) for the `APP_HOST` when deploying in non-local environments (Docker/Server) to provide an additional layer of encryption for the body content.
 
 ### Pre-commit Hooks
 
