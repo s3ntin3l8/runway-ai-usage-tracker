@@ -1,15 +1,37 @@
 import { HEALTH_CONFIG, STATE } from './state.js';
 
+/**
+ * @typedef {Object} LimitCard
+ * @property {string} service - Service name (e.g., "Claude Pro")
+ * @property {string} icon - Emoji icon representing the service
+ * @property {string} remaining - Remaining capacity (number, percentage, or "ERR")
+ * @property {string} unit - Unit of measurement (e.g., "tokens / 5h", "capacity", "%")
+ * @property {string} reset - Human-readable time until reset (e.g., "in 2h 30m")
+ * @property {string} health - Health status ("good", "warning", "critical", "unknown")
+ * @property {string} pace - Burn rate descriptor (e.g., "Sustainable", "Fast Burn")
+ * @property {string} detail - Additional details (e.g., usage percentage, last update time)
+ */
+
+/**
+ * Parse percentage value from detail string
+ * @param {string} detail - Detail string that may contain a percentage
+ * @returns {number|null} Parsed percentage (0-100) or null if not found
+ */
 function parseProgressPct(detail) {
     const m = detail.match(/(\d+(\.\d+)?)%/);
     return m ? Math.min(100, parseFloat(m[1])) : null;
 }
 
+/**
+ * Build an HTML card element for a limit
+ * @param {LimitCard} item - The limit card data
+ * @returns {string} HTML string representing the card
+ */
 export function buildCard(item) {
     const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
     const usedPct = parseProgressPct(item.detail || '');
     
-    // Inverted Logic
+    // Inverted Logic: show remaining capacity instead of used
     let barWidth = usedPct;
     if (STATE.remaining && usedPct !== null) {
         barWidth = 100 - usedPct;

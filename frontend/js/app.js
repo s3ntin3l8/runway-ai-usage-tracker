@@ -2,6 +2,11 @@ import { fetchLimits } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { buildCard } from './components.js';
 
+/**
+ * Render quota cards to the grid
+ * Builds HTML from STATE.data and populates the grid element
+ * Gracefully handles individual card rendering errors
+ */
 function renderGrid() {
     const grid = document.getElementById('grid');
     let html = '';
@@ -20,6 +25,11 @@ function renderGrid() {
     document.getElementById('footer-count').textContent = count;
 }
 
+/**
+ * Toggle a configuration option in the global state
+ * Updates the UI button state and optionally applies side effects (e.g., compact mode)
+ * @param {string} key - Configuration key to toggle (e.g., 'compact', 'remaining')
+ */
 window.toggleConfig = function(key) {
     STATE[key] = !STATE[key];
     const btn = document.getElementById(`toggle-${key}`);
@@ -30,6 +40,12 @@ window.toggleConfig = function(key) {
     renderGrid();
 }
 
+/**
+ * Load quota data from the API and render the grid
+ * Handles loading states, error display, and timestamp updates
+ * Gracefully degrades if the API fails with detailed error messaging
+ * @async
+ */
 async function loadData() {
     const grid = document.getElementById('grid');
     const loading = document.getElementById('loading');
@@ -56,13 +72,43 @@ async function loadData() {
         lastUpdated.classList.remove('hidden');
 
     } catch (err) {
+        console.error('Failed to fetch limits:', err);
+        
+        // Extract error message and categorize the error type
+        const errorMsg = err.message || 'Unknown error occurred';
+        const errorType = getErrorType(err);
+        
+        // Display user-friendly error message with technical details
+        const displayMsg = `⚠ ${errorMsg}`;
+        errorBanner.textContent = displayMsg;
+        errorBanner.title = `Error type: ${errorType}\nFull error: ${err.toString()}`;
         errorBanner.classList.remove('hidden');
+        
+        // Log detailed error for debugging
+        console.debug(`Error type detected: ${errorType}`);
+        if (err instanceof TypeError) {
+            console.debug('Likely network issue (CORS, no internet, etc.)');
+        } else if (err instanceof SyntaxError) {
+            console.debug('Invalid response format from server');
+        }
     } finally {
         loading.classList.add('hidden');
         grid.classList.remove('hidden');
         refreshBtn.disabled = false;
         refreshIcon.style.animation = 'none';
     }
+}
+
+/**
+ * Categorize error types for better debugging
+ * @param {Error} err - The error to categorize
+ * @returns {string} Error category (network, server, format, unknown)
+ */
+function getErrorType(err) {
+    if (err instanceof TypeError) return 'network';
+    if (err instanceof SyntaxError) return 'format';
+    if (err.message?.includes('HTTP')) return 'server';
+    return 'unknown';
 }
 
 // Initial load
