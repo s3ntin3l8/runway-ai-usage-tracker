@@ -1,0 +1,69 @@
+# Environment & secrets - NEVER include these
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+env/
+venv/
+ENV/
+.venv/
+
+# Testing - not needed in production image
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+
+# IDE & editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation - not needed in image
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.travis.yml
+.gitlab-ci.yml
+
+# Docker files themselves (not needed inside)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Temporary files
+tmp/
+temp/
+*.log
+*.bak
