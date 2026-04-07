@@ -124,13 +124,17 @@ class OpenCodeCollector(BaseCollector):
 
     async def _get_opencode_tui(self):
         """
-        Fetch OpenCode TUI local database statistics.
+        Fetch OpenCode TUI local database statistics with multi-window limits.
         
-        Reads SQLite database and sums tokens and cost from recent messages.
+        Calculates usage across rolling windows based on documented limits:
+        - 5-hour limit: $12 of usage
+        - Weekly limit: $30 of usage  
+        - Monthly limit: $60 of usage
+        
         Returns empty list if database not found (TUI not in use).
         
         Returns:
-            List[Dict[str, Any]]: Single card with token usage or error
+            List[Dict[str, Any]]: Cards for each time window (5h, week, month)
         """
         db = settings.OPENCODE_DB_PATH
         if not os.path.exists(db): return []
@@ -138,37 +142,62 @@ class OpenCodeCollector(BaseCollector):
             import aiosqlite
             from datetime import datetime, timezone, timedelta
             
-            cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+            now = datetime.now(timezone.utc)
+            
+            # Calculate cutoff times for each window
+            cutoffs = {
+                "5h": int((now - timedelta(hours=5)).timestamp() * 1000),
+                "week": int((now - timedelta(days=7)).timestamp() * 1000),
+                "month": int((now - timedelta(days=30)).timestamp() * 1000),
+            }
+            
+            # Documented limits for OpenCode Go
+            limits = {
+                "5h": 12.0,
+                "week": 30.0,
+                "month": 60.0,
+            }
             
             async with aiosqlite.connect(db) as conn:
-                async with conn.execute("""
-                    SELECT 
-                        SUM(json_extract(data, '$.tokens.input')),
-                        SUM(json_extract(data, '$.tokens.output')),
-                        SUM(json_extract(data, '$.cost')),
-                        COUNT(*)
-                    FROM message
-                    WHERE time_created > ?
-                      AND json_valid(data)
-                      AND json_extract(data, '$.role') = 'assistant'
-                """, (cutoff_ms,)) as cursor:
+                cards = []
+                
+                for window, cutoff_ms in cutoffs.items():
+                    cursor = await conn.execute("""
+                        SELECT 
+                            SUM(json_extract(data, '$.cost')),
+                            COUNT(*)
+                        FROM message
+                        WHERE time_created > ?
+                          AND json_valid(data)
+                          AND json_extract(data, '$.role') = 'assistant'
+                    """, (cutoff_ms,))
                     row = await cursor.fetchone()
                     
-            inp = int(row[0] or 0)
-            out = int(row[1] or 0)
-            cost = float(row[2] or 0.0)
-            count = int(row[3] or 0)
-            total = inp + out
-            
-            return [{
-                "service": "OpenCode TUI",
-                "icon": "⚡",
-                "remaining": f"{total:,}",
-                "unit": "tokens (24h)",
-                "reset": "Rolling 24h",
-                "health": "good",
-                "pace": "Stable",
-                "detail": f"{count} msgs · ${cost:.4f} · {inp:,} in / {out:,} out",
-            }]
+                    used = float(row[0] or 0.0)
+                    count = int(row[1] or 0)
+                    limit = limits[window]
+                    remaining = max(0, limit - used)
+                    pct = (used / limit * 100) if limit > 0 else 0
+                    
+                    # Format window label
+                    window_labels = {
+                        "5h": "5 Hours",
+                        "week": "7 Days", 
+                        "month": "30 Days"
+                    }
+                    
+                    cards.append({
+                        "service": f"OpenCode ({window_labels[window]})",
+                        "icon": "⚡",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": f"${limit:.0f} limit",
+                        "reset": f"Rolling {window}",
+                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                        "detail": f"${used:.2f} used · {count} msgs · {pct:.1f}%",
+                    })
+                
+                return cards
+                
         except Exception as e: 
             return [error_card("OpenCode TUI", "⚡", f"DB Error: {str(e)[:15]}")]
