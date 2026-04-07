@@ -97,6 +97,33 @@ class GitHubCollector(BaseCollector):
 
             if user_resp.status_code == 200:
                 user_data = user_resp.json()
+                
+                # Check for free/limited tier quotas in user response
+                if "limited_user_quotas" in user_data:
+                    quotas = user_data["limited_user_quotas"]
+                    monthly = user_data.get("monthly_quotas", {})
+                    reset_date = user_data.get("limited_user_reset_date")
+                    reset_at = None
+                    if reset_date:
+                        try: reset_at = datetime.fromisoformat(reset_date.replace("Z", "+00:00"))
+                        except: pass
+                    
+                    for key in ["completions", "chat"]:
+                        if key in quotas:
+                            val = quotas[key]
+                            monthly_val = monthly.get(key, "?")
+                            cards.append({
+                                "service": f"Copilot ({key.title()})",
+                                "icon": "🐙",
+                                "remaining": f"{val:,}",
+                                "unit": f"/ {monthly_val:,}",
+                                "reset": human_delta(reset_at),
+                                "health": "good" if val > (monthly_val * 0.3 if isinstance(monthly_val, int) else 10) else "warning" if val > (monthly_val * 0.1 if isinstance(monthly_val, int) else 5) else "critical",
+                                "pace": "Manual",
+                                "detail": f"{val}/{monthly_val} requests left • Free Tier",
+                            })
+                
+                # Check for Pro/Enterprise tier quota snapshots
                 snapshots = user_data.get("quota_snapshots", [])
                 plan = user_data.get("copilot_plan", "Individual")
                 
