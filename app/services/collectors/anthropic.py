@@ -65,19 +65,37 @@ class AnthropicCollector(BaseCollector):
     async def _get_claude_oauth(self, client: httpx.AsyncClient, token: str):
         url = "https://api.anthropic.com/api/oauth/usage"
         headers = {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"}
+        
+        # Mapping for human-friendly names
+        name_map = {
+            "five_hour": "Session Window",
+            "seven_day": "Weekly Window",
+            "seven_day_sonnet": "Sonnet Weekly",
+            "seven_day_opus": "Opus Weekly",
+            "extra_usage": "Extra Usage"
+        }
+        
         try:
             resp = await client.get(url, headers=headers, timeout=10.0)
-            if resp.status_code == 401: return [error_card("Claude Pro", "🟠", "Unauthorized (OAuth)")]
-            if resp.status_code == 429: return [error_card("Claude Pro", "🟠", "API Error 429 (Rate Limited)")]
-            if resp.status_code != 200: return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}")]
+            if resp.status_code == 401: 
+                return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)")]
+            if resp.status_code == 429: 
+                return [error_card("Claude Pro", "🟠", "Rate Limited (429)")]
+            if resp.status_code != 200: 
+                return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}")]
             
             data = resp.json()
             results = []
-            for key, usage in data.items():
+            
+            # Sort by name_map order to keep it consistent
+            sorted_keys = sorted(data.keys(), key=lambda k: list(name_map.keys()).index(k) if k in name_map else 999)
+            
+            for key in sorted_keys:
+                usage = data[key]
                 if not isinstance(usage, dict) or "utilization" not in usage:
                     continue
                 
-                u_type = key.replace("_", " ").title()
+                u_type = name_map.get(key, key.replace("_", " ").title())
                 pct_used = usage.get("utilization", 0.0)
                 remaining_pct = 100.0 - pct_used
                 
@@ -97,11 +115,11 @@ class AnthropicCollector(BaseCollector):
                     "reset": human_delta(reset_at),
                     "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% of quota used [OAuth]",
+                    "detail": f"{pct_used:.1f}% used [OAuth]",
                 })
             return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
         except Exception as e: 
-            return [error_card("Claude Pro", "🟠", f"Connection Fail: {str(e)[:20]}")]
+            return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}")]
 
     async def _get_claude_local(self):
         projects_dir = settings.CLAUDE_PROJECTS_DIR
