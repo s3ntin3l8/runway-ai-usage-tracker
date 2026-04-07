@@ -4,6 +4,36 @@
 **Runway** is a local-first, stateless monitoring tool for tracking AI provider quotas and balances (Claude, Gemini, ChatGPT, GitHub Copilot, etc.). It is designed to be modular and resilient, often running in containerized or headless environments.
 
 ## 🏗️ Architecture & Data Fetching
+
+Runway operates in **three deployment modes**, with data collection strategies adapting to each:
+
+### Mode 1: Standalone (Bare Metal)
+App runs directly on the coding workstation (Linux/Mac/Windows).
+- **Local Access**: Directly reads local files (`~/.claude/`, `opencode.db`, etc.)
+- **Cookie Extraction**: Extracts Chrome cookies locally
+- **Web APIs**: Calls provider APIs using extracted tokens
+- **Sidecar**: NOT needed (redundant)
+
+### Mode 2: Multi-Host (Main PC + Laptop)
+One computer runs the main app, others send data via sidecar.
+- **Main Host**: Scrapes own local data + receives sidecar data
+- **Secondary Hosts**: Run sidecar script only (extracts cookies/files, sends to main)
+- **Aggregation**: Main app combines all sources
+
+### Mode 3: Server/Docker
+App runs containerized, no local filesystem access.
+- **Local Files**: NONE (container has no host access)
+- **Web APIs**: Uses tokens/cookies sent by sidecars
+- **Sidecars**: REQUIRED on ALL workstations (provide raw data only)
+- **Golden Rule**: Heavy lifting (API calls, aggregation) happens server-side
+
+### Core Principles
+1. **Server Does Heavy Lifting**: API calls, aggregation, dashboard logic run ONLY on main app
+2. **Sidecar is Thin**: Only extracts and forwards raw data (cookies, tokens, DB files)
+3. **No Duplication**: If main app can access directly (standalone), don't use sidecar
+4. **Docker = Sidecar Only**: In containers, ALL data comes from sidecars + web APIs
+
+### Implementation Details
 - **Modular Services**: Each provider has a dedicated collector in `app/services/collectors/`.
 - **API First & Local Fallback**: Prefers direct HTTP requests; falls back to local log parsing (e.g., `~/.claude/activity.log`) when necessary.
 - **Sidecar Ingestion**: Supports external metrics via `POST /api/ingest` (Ingestion API).

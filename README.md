@@ -16,7 +16,32 @@
 
 ## 🏗️ Architecture
 
-Runway follows a modular **Service-Collector Pattern**:
+Runway follows a modular **Service-Collector Pattern** with three deployment modes:
+
+### Deployment Modes
+
+**Standalone** (Single Machine): Runway and coding tools on the same computer.
+- Direct local file access (`~/.claude/`, `opencode.db`)
+- Chrome cookie extraction
+- No sidecar needed
+
+**Multi-Host** (Multiple Computers): Main PC runs dashboard, laptop sends data.
+- Main PC aggregates from all sources
+- Sidecar runs on secondary machines
+- Combines local + sidecar data
+
+**Server/Docker** (Containerized): Runway in Docker, workstations send data.
+- No local file access
+- Sidecar required on ALL machines
+- Web APIs use tokens from sidecars
+
+### Core Principles
+1. **Server Does Heavy Lifting**: API calls, aggregation, dashboard logic run ONLY on main app
+2. **Sidecar is Thin**: Only extracts and forwards raw data (cookies, tokens, DB files)
+3. **No Duplication**: If main app can access directly (standalone), don't use sidecar
+4. **Docker = Sidecar Only**: In containers, ALL data comes from sidecars + web APIs
+
+### Components
 
 1.  **Direct API Collectors**: Use `httpx` to fetch live usage data from official provider endpoints (e.g., Claude OAuth, GitHub API).
 2.  **Local File Parsers**: Extract usage metrics from local CLI logs, SQLite databases (OpenCode), or JSON/JSONL state files.
@@ -60,51 +85,66 @@ curl -X POST http://localhost:8765/api/ingest \
   }'
 ```
 
-## 🖥️ Multi-Host Setup
+## 🖥️ Deployment Examples
 
-Runway supports aggregating usage data from multiple computers (e.g., laptop, desktop, server) using the **sidecar pattern**:
+### Standalone (Single Machine)
 
-### Architecture
-- **Primary host**: Runs the Runway dashboard (Docker or bare metal)
-- **Secondary hosts**: Run lightweight sidecar scripts that push local metrics to the primary
-
-### OpenCode Multi-Host Aggregation
-
-For OpenCode usage tracking across multiple machines:
-
-1. **On each secondary host**, run the sidecar script:
-   ```bash
-   python3 scripts/sidecar.py --provider opencode \
-     --api-url http://runway-primary:8765 \
-     --api-key sidecar-default-secret
-   ```
-
-2. **Install as a background task** (runs every 30 minutes):
-   ```bash
-   python3 scripts/sidecar.py --provider opencode \
-     --api-url http://runway-primary:8765 \
-     --api-key sidecar-default-secret \
-     --install
-   ```
-
-3. **Dashboard displays aggregated cards**:
-   - `OpenCode (5h Combined)` - Aggregated 5-hour window from all hosts
-   - `OpenCode (7d Combined)` - Aggregated 7-day window from all hosts  
-   - `OpenCode (30d Combined)` - Aggregated 30-day window from all hosts
-
-The aggregation automatically sums usage across all reporting hosts and shows the combined remaining budget against OpenCode Go limits ($12/5h, $30/week, $60/month).
-
-### Docker Deployment Note
-
-When running Runway in Docker (where local files are not accessible), disable the local OpenCode collector:
+Runway runs on the same computer as your coding tools.
 
 ```bash
-docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false -p 8765:8765 runway
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# Run
+python3 -m app.main
 ```
 
-Only sidecar data will be displayed in this mode.
+Access at `http://localhost:8765`. No sidecar needed.
+
+### Multi-Host (Main PC + Laptop)
+
+**Main PC** (runs full Runway app):
+```bash
+python3 -m app.main
+```
+
+**Laptop** (sidecar only):
+```bash
+python3 scripts/sidecar.py \
+  --api-url http://main-pc:8765 \
+  --api-key sidecar-default-secret
+```
+
+The main PC combines its own local data with data from the laptop's sidecar.
+
+### Server/Docker (Containerized)
+
+**Server** (Docker - no local file access):
+```bash
+docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
+  -p 8765:8765 \
+  -e INGEST_API_KEY=your-secret-key \
+  runway
+```
+
+**Each Workstation** (sidecar required):
+```bash
+python3 scripts/sidecar.py \
+  --api-url http://server:8765 \
+  --api-key your-secret-key
+```
+
+The server aggregates data from ALL workstation sidecars. Heavy lifting (API calls, aggregation) happens server-side.
 
 ## 📦 Setup
+
+### Quick Start (Standalone)
+
+For running Runway on the same machine as your coding tools:
 
 1.  **Install Dependencies**:
     ```bash
@@ -112,13 +152,30 @@ Only sidecar data will be displayed in this mode.
     ```
 
 2.  **Configure Environment**:
-    Create a `.env` file in the root directory (see `.env.example` for the list of required tokens).
+    ```bash
+    cp .env.example .env
+    # Edit .env with your API keys
+    ```
 
 3.  **Run the App**:
     ```bash
     python3 -m app.main
     ```
-    Access the dashboard at `http://localhost:8765`.
+
+Access the dashboard at `http://localhost:8765`.
+
+### Docker Deployment
+
+For running Runway on a server or container:
+
+```bash
+docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
+  -p 8765:8765 \
+  -e INGEST_API_KEY=your-secret-key \
+  runway
+```
+
+**Note**: You MUST run sidecar scripts on each workstation to send data to the container.
 
 ---
 *Built for the 2026 Developer Workflow.*
