@@ -62,6 +62,10 @@ class OpenCodeCollector(BaseCollector):
         
         Requires OPENCODE_GO_API_KEY. Returns error card if key missing or API fails.
         
+        Note: The OpenCode Go API endpoint (api.opencode.ai) appears to be deprecated
+        as of April 2026. The endpoint returns "Not Found" for all usage queries.
+        Users should check usage at https://opencode.ai/auth instead.
+        
         Returns:
             List[Dict[str, Any]]: Single card with remaining budget or error
         """
@@ -71,6 +75,21 @@ class OpenCodeCollector(BaseCollector):
             resp = await client.get("https://api.opencode.ai/v1/user/usage", headers={"Authorization": f"Bearer {key}"})
             if resp.status_code != 200: 
                 return [error_card("OpenCode Go", "🚀", f"HTTP {resp.status_code}")]
+            
+            # Check if response is valid JSON
+            content_type = resp.headers.get("content-type", "")
+            if "application/json" not in content_type:
+                # API endpoint deprecated - return informative message
+                return [{
+                    "service": "OpenCode Go",
+                    "icon": "🚀",
+                    "remaining": "N/A",
+                    "unit": "—",
+                    "reset": "Check Console",
+                    "health": "warning",
+                    "pace": "API Unavailable",
+                    "detail": "Visit opencode.ai/auth for usage",
+                }]
             
             data = resp.json()
             used, lim = data.get("total_usage_usd", 0), data.get("hard_limit_usd", 0)
@@ -88,7 +107,20 @@ class OpenCodeCollector(BaseCollector):
                 "detail": f"${used:.2f}/${lim:.2f} ({pct:.1f}%) [API]",
             }]
         except Exception as e: 
-            return [error_card("OpenCode Go", "🚀", f"Fail: {str(e)[:15]}")]
+            # Handle JSON parse errors (API returning HTML instead of JSON)
+            error_msg = str(e)
+            if "Expecting value" in error_msg or "not accessible" in error_msg.lower():
+                return [{
+                    "service": "OpenCode Go",
+                    "icon": "🚀",
+                    "remaining": "N/A",
+                    "unit": "—",
+                    "reset": "Check Console",
+                    "health": "warning",
+                    "pace": "API Unavailable",
+                    "detail": "Visit opencode.ai/auth for usage",
+                }]
+            return [error_card("OpenCode Go", "🚀", f"Fail: {error_msg[:15]}")]
 
     async def _get_opencode_tui(self):
         """

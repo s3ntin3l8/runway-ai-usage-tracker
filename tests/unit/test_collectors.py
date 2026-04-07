@@ -273,6 +273,7 @@ class TestOpenCodeCollector:
         
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
         mock_response.json.return_value = mock_opencode_go_response
         mock_http_client.get.return_value = mock_response
         
