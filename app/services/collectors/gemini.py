@@ -1,3 +1,36 @@
+"""
+Google Gemini quota collector with API and log fallback.
+
+Collection Strategy:
+1. Primary: Gemini API endpoints via OAuth
+   - Requires GEMINI_OAUTH_PATH credentials file (OAuth refresh flow)
+   - Calls cloudcode-pa.googleapis.com to retrieve user quota and tier
+   - Tracks multiple quota buckets (Standard/Flash models)
+   - Auto-refreshes expired tokens and saves back to credentials file
+   
+2. Secondary: Local log parsing from Gemini sessions
+   - Parses .jsonl files from GEMINI_SESSIONS_DIR
+   - Sums prompt_tokens + completion_tokens from logs
+   - Estimates usage on rolling 24-hour window
+   
+3. Error Handling:
+   - Missing credentials: Returns empty list (allows other collectors to run)
+   - Invalid JSON: Logs warning, returns empty list
+   - API failures: Falls back to local logs
+   - Token refresh failure: Uses existing token or returns empty list
+
+Token Management:
+- Credentials stored in JSON file with expiry_date (in milliseconds)
+- Auto-refreshes token if expired before API call
+- Saved immediately after refresh to persist for next run
+- Uses oauth2.googleapis.com/token endpoint for refresh
+
+Quota Buckets:
+- Gemini API can have multiple quota buckets (e.g., Standard vs Flash)
+- Collector uses most constrained bucket (lowest remainingFraction)
+- Displays model ID and tier information in detail field
+"""
+
 import glob
 import json
 import os
@@ -12,6 +45,12 @@ logger = logging.getLogger(__name__)
 
 class GeminiCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Collect Gemini quota using API first, fallback to local logs.
+        
+        Returns:
+            List[Dict[str, Any]]: Quota card or empty list if unavailable
+        """
         # Try API first
         api_data = await self._collect_via_api(client)
         if api_data:
@@ -21,6 +60,21 @@ class GeminiCollector(BaseCollector):
         return await self._collect_via_logs()
 
     async def _collect_via_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Fetch Gemini quota from Google Cloud Code API.
+        
+        Steps:
+        1. Load OAuth credentials from GEMINI_OAUTH_PATH
+        2. Refresh token if expired (saves updated credentials back to file)
+        3. Call retrieveUserQuota to get quota buckets
+        4. Call loadCodeAssist to determine user tier
+        5. Return card for most constrained bucket
+        
+        Returns empty list on any error to allow fallback to logs.
+        
+        Returns:
+            List[Dict[str, Any]]: Single quota card or empty list
+        """
         creds_path = settings.GEMINI_OAUTH_PATH
         if not os.path.exists(creds_path):
             logger.debug(f"Gemini credentials not found: {creds_path}")
@@ -95,6 +149,20 @@ class GeminiCollector(BaseCollector):
             return []
 
     async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Dict:
+        """
+        Refresh Google OAuth token if expired.
+        
+        Uses refresh_token from credentials to get new access_token.
+        Updates expiry_date in credentials dictionary (milliseconds).
+        Note: Caller is responsible for saving credentials back to file.
+        
+        Args:
+            client: httpx.AsyncClient for making requests
+            creds: Dictionary with access_token, refresh_token, expiry_date
+            
+        Returns:
+            Updated creds dict with new access_token and expiry_date, or None if refresh fails
+        """
         refresh_token = creds.get("refresh_token")
         if not refresh_token: 
             logger.warning("No refresh token in Gemini credentials")
@@ -124,6 +192,19 @@ class GeminiCollector(BaseCollector):
             return None
 
     async def _collect_via_logs(self) -> List[Dict[str, Any]]:
+        """
+        Fallback: Parse Gemini usage from local session logs.
+        
+        Scans GEMINI_SESSIONS_DIR for .jsonl files and sums prompt_tokens + completion_tokens.
+        Returns single card with total tokens on rolling 24-hour window.
+        
+        Data Source:
+        - Location: Configured by GEMINI_SESSIONS_DIR
+        - Format: JSONL with entries containing "usage" field
+        
+        Returns:
+            List[Dict[str, Any]]: Single card with token total or empty list if no logs
+        """
         sessions_dir = settings.GEMINI_SESSIONS_DIR
         try:
             files = glob.glob(f"{sessions_dir}/*.jsonl")

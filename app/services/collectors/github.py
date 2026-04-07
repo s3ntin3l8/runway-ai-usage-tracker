@@ -1,3 +1,33 @@
+"""
+GitHub Copilot quota collector with tier-aware fallback.
+
+Collection Strategy:
+1. Primary: GitHub Copilot API endpoints (authenticated with GITHUB_TOKEN)
+   - Requires GITHUB_TOKEN environment variable
+   - Calls copilot_internal/v2/token for free/limited user quotas
+   - Calls copilot_internal/user for pro/enterprise quota snapshots
+   - Returns cards for: Completions, Chat, Premium Interactions, etc.
+   
+2. Fallback: Standard GitHub API rate limits
+   - If Copilot-specific endpoints unavailable, falls back to /rate_limit
+   - Shows core API request quota as proxy for usage
+   
+3. Error Handling:
+   - Missing token: Returns empty list
+   - API errors: Returns error card with first 15 chars of error message
+   
+Data Details:
+- Free/Limited Tier: limited_user_quotas (e.g., "completions", "chat")
+  Includes reset_date for when quotas reset
+- Pro/Enterprise: quota_snapshots with individual metrics
+  Each snapshot has remaining and entitlement counts
+  Computes percentage used and health status
+
+Headers:
+- Mimics VS Code Copilot extension to improve API reliability
+- Includes editor version and plugin version headers
+"""
+
 import os
 from datetime import datetime, timezone
 from typing import List, Dict, Any
@@ -8,6 +38,17 @@ from app.services.collectors.base import BaseCollector
 
 class GitHubCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Collect GitHub Copilot quota for free, pro, and enterprise tiers.
+        
+        Queries:
+        1. copilot_internal/v2/token - Limited user quotas (free tier)
+        2. copilot_internal/user - Pro tier quota snapshots
+        3. /rate_limit - Fallback to GitHub API rate limits if above unavailable
+        
+        Returns:
+            List[Dict[str, Any]]: Cards for each quota type or error card
+        """
         token = settings.GITHUB_TOKEN
         if not token: return []
         try:

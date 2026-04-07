@@ -1,3 +1,32 @@
+"""
+ChatGPT Codex quota collector with API and local cache fallback.
+
+Collection Strategy:
+1. Primary: ChatGPT wham/usage API endpoint
+   - Requires OAuth token from environment (CHATGPT_OAUTH_TOKEN) or ~/.codex/auth.json
+   - Calls https://chatgpt.com/backend-api/wham/usage (requires Bearer auth)
+   - Returns utilization percentage and reset timestamp
+   
+2. Token Priority:
+   - Priority 1: CHATGPT_OAUTH_TOKEN environment variable (if set)
+   - Priority 2: ~/.codex/auth.json (Codex CLI cache location)
+   
+3. Fallback: Local session cache
+   - Parses CHATGPT_SESSIONS_DIR for .jsonl session files
+   - Uses most recently modified file (represents latest session)
+   - Reads last line of log file for cached usage snapshot
+   - Falls back if API fails with cached data from last known state
+   
+4. Error Handling:
+   - No auth: Returns "No logs/auth" error
+   - API failure: Falls back to local logs
+   - Empty/invalid logs: Returns parse error card
+
+Timestamp Handling:
+- API returns Unix timestamps in seconds (resets_at field)
+- Converted to UTC datetime for human-readable reset display
+"""
+
 import os
 import glob
 import json
@@ -10,6 +39,16 @@ from app.services.collectors.base import BaseCollector
 
 class ChatGPTCollector(BaseCollector):
     async def _get_auth_data(self) -> Dict[str, Any]:
+        """
+        Retrieve ChatGPT authentication token from environment or local cache.
+        
+        Tries in priority order:
+        1. CHATGPT_OAUTH_TOKEN environment variable
+        2. ~/.codex/auth.json (Codex CLI auth cache)
+        
+        Returns:
+            Dict with "token" and optionally "path" keys, or empty dict if not found
+        """
         # Priority 1: Env var
         token = os.getenv("CHATGPT_OAUTH_TOKEN", "")
         if token: return {"token": token}
@@ -26,6 +65,17 @@ class ChatGPTCollector(BaseCollector):
         return {}
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Collect ChatGPT Codex quota using API with local cache fallback.
+        
+        Attempts:
+        1. API call to wham/usage if token available
+        2. Falls back to local session cache if API fails or no token
+        3. Returns error card if both fail
+        
+        Returns:
+            List[Dict[str, Any]]: Single card with usage percentage or error
+        """
         auth = await self._get_auth_data()
         token = auth.get("token")
         

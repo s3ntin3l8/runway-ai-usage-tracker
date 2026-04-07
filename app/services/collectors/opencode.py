@@ -1,3 +1,30 @@
+"""
+OpenCode quota collector with dual data sources.
+
+Collection Strategy:
+1. OpenCode Go API
+   - Requires OPENCODE_GO_API_KEY environment variable
+   - Calls https://api.opencode.ai/v1/user/usage with Bearer auth
+   - Returns USD-based spending: total_usage_usd and hard_limit_usd
+   - Rolling 5-hour window for rate limiting
+   
+2. OpenCode TUI Local Database
+   - Reads SQLite database at OPENCODE_DB_PATH (local development)
+   - Queries session table to sum lines changed (additions + deletions)
+   - Historical data (no reset window)
+   - Used as complementary data source showing local activity
+
+Error Handling:
+- Missing API key: Silently skips API collector
+- API HTTP errors: Returns error card with status code
+- No limit set: Returns error card (API misconfiguration)
+- DB errors: Returns error card with first 15 chars of error
+
+Data Representation:
+- OpenCode Go: USD spending model with hard limit
+- OpenCode TUI: Lines of code changed (development metrics)
+"""
+
 import os
 from typing import List, Dict, Any
 import httpx
@@ -7,6 +34,16 @@ from app.services.collectors.base import BaseCollector
 
 class OpenCodeCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Collect OpenCode quota from both API and local database.
+        
+        Returns cards for:
+        - OpenCode Go API (USD spending)
+        - OpenCode TUI database (lines changed)
+        
+        Returns:
+            List[Dict[str, Any]]: Cards for available data sources
+        """
         results = []
         
         # 1. OpenCode Go (API)
@@ -20,6 +57,14 @@ class OpenCodeCollector(BaseCollector):
         return results
 
     async def _get_opencode_go(self, client: httpx.AsyncClient):
+        """
+        Fetch OpenCode Go API quota (USD-based spending).
+        
+        Requires OPENCODE_GO_API_KEY. Returns error card if key missing or API fails.
+        
+        Returns:
+            List[Dict[str, Any]]: Single card with remaining budget or error
+        """
         key = settings.OPENCODE_GO_API_KEY
         if not key: return []
         try:
@@ -46,6 +91,15 @@ class OpenCodeCollector(BaseCollector):
             return [error_card("OpenCode Go", "🚀", f"Fail: {str(e)[:15]}")]
 
     async def _get_opencode_tui(self):
+        """
+        Fetch OpenCode TUI local database statistics.
+        
+        Reads SQLite database and sums lines changed from session table.
+        Returns empty list if database not found (TUI not in use).
+        
+        Returns:
+            List[Dict[str, Any]]: Single card with total lines changed or error
+        """
         db = settings.OPENCODE_DB_PATH
         if not os.path.exists(db): return []
         try:

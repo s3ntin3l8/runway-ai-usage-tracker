@@ -1,3 +1,28 @@
+"""
+Antigravity IDE quota collector with file-based data source.
+
+Collection Strategy:
+- Single Source: Local JSON quota file
+  Antigravity IDE periodically writes quota data to ANTIGRAVITY_QUOTA_PATH
+  Expected format: {"models": {"model_name": {"remaining_percent": X, "resets_at": timestamp}}}
+  
+Data Source:
+- Location: Configured by ANTIGRAVITY_QUOTA_PATH (e.g., ~/.antigravity/quota.json)
+- Updated by: Antigravity IDE when user checks quota or at startup
+- Format: JSON with nested model usage data
+- Fallback: Returns empty list if file missing or unreadable (allows other collectors to run)
+
+Assumptions:
+- remaining_percent: Already computed by IDE (0-100)
+- resets_at: Unix timestamp in seconds when quota resets
+- multiple models: Each model may have different quota windows
+
+Error Handling:
+- Missing file: Silently returns empty list (not critical)
+- Invalid JSON: Silently returns empty list
+- No models: Returns empty list (IDE may not be configured)
+"""
+
 import json
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
@@ -8,6 +33,15 @@ from app.services.collectors.base import BaseCollector
 
 class AntigravityCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Collect Antigravity IDE quota from local JSON file.
+        
+        Reads ANTIGRAVITY_QUOTA_PATH and returns cards for each model.
+        Silently fails if file unavailable (assumes IDE not configured).
+        
+        Returns:
+            List[Dict[str, Any]]: Cards for each model or empty list if unavailable
+        """
         path = settings.ANTIGRAVITY_QUOTA_PATH
         try:
             with open(path, "r") as f: data = json.load(f)
