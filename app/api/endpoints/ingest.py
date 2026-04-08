@@ -88,6 +88,7 @@ async def ingest_metrics(
             detail = detail.replace(f"oauth_token:{oauth_token}", "oauth_token:[REDACTED]")
         if refresh_token:
             detail = detail.replace(f"refresh_token:{refresh_token}", "refresh_token:[REDACTED]")
+        if oauth_token or refresh_token:
             card.detail = detail
         
         # Check if this is a token-only card (should NOT be displayed)

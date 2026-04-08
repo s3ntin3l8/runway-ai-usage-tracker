@@ -214,6 +214,49 @@ class TestIngestEndpoint:
         assert response.status_code == 401
         assert "Invalid HMAC signature" in response.json()["detail"]
 
+    async def test_ingest_oauth_token_redacted_no_refresh_token(self):
+        """C2: card.detail must be redacted when oauth_token present but refresh_token absent."""
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch, MagicMock
+
+        test_client = TestClient(app)
+
+        oauth_token = "sk-ant-oauthtest123"
+        payload = {
+            "provider": "anthropic",
+            "metrics": [
+                {
+                    "service": "Claude Pro",
+                    "icon": "🟠",
+                    "remaining": "60%",
+                    "unit": "capacity",
+                    "reset": "in 3h",
+                    "health": "good",
+                    "pace": "~5 days",
+                    "detail": f"oauth_token:{oauth_token} some other data"
+                }
+            ]
+        }
+
+        body = json.dumps(payload)
+        headers = self._get_hmac_headers(body)
+
+        stored_metrics = {}
+
+        with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
+            mock_service.metrics = stored_metrics
+            mock_service._save = MagicMock()
+
+            with patch('app.api.endpoints.ingest.token_cache'):
+                response = test_client.post("/api/ingest", content=body, headers=headers)
+
+        assert response.status_code == 200
+        # The raw oauth token must not appear in any stored card detail
+        for provider_data in stored_metrics.values():
+            for card in provider_data.get("cards", []):
+                assert oauth_token not in card.get("detail", ""), \
+                    f"Raw oauth_token found in stored card detail: {card['detail']}"
+
     async def test_ingest_invalid_payload(self):
         """Test that invalid payloads are rejected with correct HMAC."""
         from fastapi.testclient import TestClient
