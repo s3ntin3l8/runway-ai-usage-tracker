@@ -538,8 +538,8 @@ class TestGeminiCollector:
         
         assert isinstance(result, list)
         assert len(result) >= 1
-        # Should return one card per model bucket
-        assert len(result) == len(mock_gemini_quota_response["buckets"])
+        # Should return one card per model family
+        assert len(result) <= len(mock_gemini_quota_response["buckets"])
         # Check that service name contains model identifier (either display name or raw model ID)
         assert any(name in str(result[0].get('service', '')) for name in ['Gemini', 'gemini'])
         # Verify health field exists

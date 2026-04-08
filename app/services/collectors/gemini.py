@@ -148,15 +148,34 @@ class GeminiCollector(BaseCollector):
             )
             quota_data = quota_resp.json()
 
-            # Process quota buckets - return one card per model
+            # Process quota buckets - return one card per model family
             buckets = quota_data.get("buckets", [])
             if not buckets: 
                 return []
 
             results = []
+            seen_classes = set()
+            
             for bucket in buckets:
                 model_id = bucket.get("modelId", "Unknown")
-                display_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
+                
+                # Consolidate models into classes since they share quotas
+                if "flash-lite" in model_id:
+                    display_name = "Gemini Flash Lite"
+                    model_class = "flash-lite"
+                elif "flash" in model_id:
+                    display_name = "Gemini Flash"
+                    model_class = "flash"
+                elif "pro" in model_id:
+                    display_name = "Gemini Pro"
+                    model_class = "pro"
+                else:
+                    display_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
+                    model_class = model_id
+                    
+                if model_class in seen_classes:
+                    continue
+                seen_classes.add(model_class)
                 
                 # remainingFraction: 1.0 = 100% remaining = 0% used
                 remaining_fraction = bucket.get("remainingFraction", 1.0)
