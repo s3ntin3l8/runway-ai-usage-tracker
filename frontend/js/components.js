@@ -367,6 +367,7 @@ export function buildModalContent(item) {
     const isUnlimited = item.is_unlimited || item.health === 'unlimited';
     const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
     const usedPct = calculateUsedPct(item);
+    const isDisabled = STATE.disabledServices.includes(item.service);
     
     const formatted = formatUsageValues(
         item.used_value,
