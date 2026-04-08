@@ -266,7 +266,7 @@ def queue_push(payload: Dict[str, Any]) -> None:
     queue_rotate()
 
 
-def queue_rotate(max_size_mb: Optional[int] = None, config: Optional[Dict[str, Any]] = None) -> None:
+def queue_rotate(max_size_mb: int = 10, config: Optional[Dict[str, Any]] = None) -> None:
     """Rotate queue files, removing oldest if total size exceeds limit."""
     queue_dir = get_queue_dir()
     if not queue_dir.exists():
