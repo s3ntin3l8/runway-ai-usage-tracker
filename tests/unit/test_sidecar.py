@@ -60,3 +60,25 @@ class TestWindowsCredCache:
             pytest.fail(f"Writing to _windows_cred_cache raised TypeError: {e}")
         finally:
             sidecar._windows_cred_cache.pop("test_target", None)
+
+    def test_windows_cred_cache_stays_dict_after_clear(self):
+        """After assigning _windows_cred_cache = {}, writes must not crash."""
+        # Simulate what shutdown_sidecar or start_daemon_mode does
+        original = sidecar._windows_cred_cache
+        try:
+            sidecar._windows_cred_cache = {}  # simulate reset
+            # Write must not crash
+            sidecar._windows_cred_cache["test_target"] = ("pw", time.time() + 300)
+            assert "test_target" in sidecar._windows_cred_cache
+        finally:
+            sidecar._windows_cred_cache = original
+
+    def test_no_none_assignments_to_cred_cache_at_runtime(self):
+        """shutdown_sidecar and start_daemon_mode must reset to {} not None."""
+        import inspect
+        import re
+        source = inspect.getsource(sidecar)
+        # Count assignments of _windows_cred_cache = None (should be 0 after fix)
+        matches = re.findall(r'_windows_cred_cache\s*=\s*None', source)
+        assert len(matches) == 0, \
+            f"Found {len(matches)} assignment(s) of _windows_cred_cache = None: {matches}"

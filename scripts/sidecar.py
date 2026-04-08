@@ -220,7 +220,7 @@ def cleanup() -> None:
     remove_pid_file()
     # Clear credential cache on exit
     global _windows_cred_cache
-    _windows_cred_cache = None
+    _windows_cred_cache = {}
     logging.info("Sidecar shutdown complete")
 
 
@@ -535,11 +535,10 @@ def get_windows_credential(target: str) -> Optional[str]:
         return None
     
     # Return cached credential if still valid
-    if _windows_cred_cache is not None:
-        now = time.time()
-        for cached_target, (password, ttl) in _windows_cred_cache.items():
-            if now < ttl and cached_target == target:
-                return password
+    now = time.time()
+    for cached_target, (password, ttl) in _windows_cred_cache.items():
+        if now < ttl and cached_target == target:
+            return password
     
     try:
         # Try using PowerShell to access Credential Manager
@@ -1080,7 +1079,7 @@ def run_daemon(config: Dict[str, Any]) -> None:
     api_key = config["api_key"]
     providers = config.get("providers", ["all"])
     # Clear credential cache when starting daemon
-    _windows_cred_cache = None
+    _windows_cred_cache = {}
     
     logging.info(f"Daemon started (PID: {os.getpid()}), interval: {interval}s")
     logging.info(f"API URL: {api_url}")
