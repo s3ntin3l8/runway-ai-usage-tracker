@@ -10,7 +10,7 @@ Architecture:
 
 import time
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ class TokenCache:
             del self._cache[provider]
             logger.debug(f"Cleared expired tokens for {provider}")
 
-    def get_all_stats(self) -> Dict[str, Dict[str, any]]:
+    def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
         """Get stats for all cached providers."""
         self._clear_expired()
         now = time.time()

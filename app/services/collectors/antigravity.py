@@ -62,4 +62,5 @@ class AntigravityCollector(BaseCollector):
                     "data_source": "local",
                 })
             return res
-        except: return []
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError, KeyError, ValueError):
+            return []

@@ -123,6 +123,16 @@ Currently all collectors instantiate on startup. Could lazy-load only requested 
 
 Add global timeout across all collectors (not just individual ones) to ensure the API never hangs indefinitely.
 
+### 4. Docker Multi-Stage Build Optimization
+**File**: `Dockerfile`  
+**Severity**: Low  
+**Effort**: 1-2 hours
+
+Transition the `Dockerfile` to a multi-stage build to reduce final image size.
+- Use a builder stage to install `gcc`, `libsqlite3-dev`, and pip packages into a `/opt/venv`.
+- Copy only the `/opt/venv` and source code to the final `python:3.12-slim-bookworm` stage.
+- Expected to significantly decrease image footprint and improve security.
+
 ---
 
 ## Documentation

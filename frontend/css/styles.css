@@ -105,11 +105,14 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 ::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 3px; }
 
 /* Compact Mode & Inverted */
-.compact-mode #grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.compact-mode .glass-panel { padding: 1rem; }
-.compact-mode .text-4xl { font-size: 1.875rem; line-height: 2.25rem; }
-.compact-mode .progress-track { margin-top: 0.5rem; height: 2px; }
-.compact-mode .pt-3 { padding-top: 0.5rem; }
+.compact-mode #grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.compact-mode .glass-panel { padding: 0.75rem; border-radius: 0.75rem; }
+.compact-mode .progress-track { margin-top: auto; height: 3px; }
+.compact-mode .dot { width: 6px; height: 6px; }
+.compact-mode .skeleton { height: 100px; border-radius: 0.75rem; }
+.compact-mode .text-xl { font-size: 1.25rem; line-height: 1.75rem; }
+
+
 
 .toggle-btn {
     background: #18181b;

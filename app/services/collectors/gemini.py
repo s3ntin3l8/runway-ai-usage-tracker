@@ -138,7 +138,9 @@ class GeminiCollector(BaseCollector):
             project_id = tier_info.get("cloudaicompanionProject", "")
             current_tier = tier_info.get("currentTier", {})
             tier_name = current_tier.get("name", "Unknown Tier")
-            tier_id = current_tier.get("id", "unknown")
+            tier_id_raw = current_tier.get("id", "unknown")
+            # Only show badge if we have actual tier info (not "unknown")
+            tier = tier_id_raw if tier_id_raw != "unknown" else None
             
             # 2. Retrieve Quota with discovered project (required for gemini-3 models)
             quota_resp = await client.post(
@@ -220,6 +222,7 @@ class GeminiCollector(BaseCollector):
                     "unit_type": "percent",
                     "reset_at": reset_at,
                     "data_source": "oauth",
+                    "tier": tier,
                 })
             
             # Sort by usage (highest % used first = most constrained)

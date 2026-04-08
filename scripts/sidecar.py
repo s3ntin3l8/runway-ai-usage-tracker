@@ -261,7 +261,10 @@ class GitHubCollector:
                             if data and "github.com" in data:
                                 token = data["github.com"].get("oauth_token")
                                 if token: break
-                    except:
+                    except ImportError:
+                        # PyYAML not installed, skip this method
+                        break
+                    except Exception:
                         pass
         
         if not token:

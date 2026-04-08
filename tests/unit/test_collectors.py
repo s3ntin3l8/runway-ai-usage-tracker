@@ -72,8 +72,9 @@ class TestAnthropicCollector:
             
             with patch('app.services.collectors.anthropic.glob.glob', return_value=[]):
                 with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
-                    result = await collector.collect(mock_http_client)
-        
+                    with patch.object(collector, '_refresh_oauth_token', return_value=None):
+                        result = await collector.collect(mock_http_client)
+
         # Should return error card for invalid token (no logs fallback)
         assert any('ERR' in str(card.get('remaining', '')) for card in result)
 
@@ -103,6 +104,61 @@ class TestAnthropicCollector:
                 assert "[Cached]" in str(result2)
 
     @pytest.mark.asyncio
+    async def test_collect_oauth_token_refresh_success(self, mock_http_client, mock_anthropic_oauth_response):
+        """Test successful OAuth token refresh when original token is expired."""
+        collector = AnthropicCollector()
+
+        # Mock initial 401 response (expired token)
+        oauth_401_response = MagicMock(spec=httpx.Response)
+        oauth_401_response.status_code = 401
+
+        # Mock successful token refresh response
+        refresh_response = MagicMock(spec=httpx.Response)
+        refresh_response.status_code = 200
+        refresh_response.json.return_value = {
+            "access_token": "new_refreshed_token",
+            "refresh_token": "new_refresh_token",
+            "expires_in": 28800
+        }
+
+        # Mock successful OAuth call with new token
+        oauth_success_response = MagicMock(spec=httpx.Response)
+        oauth_success_response.status_code = 200
+        oauth_success_response.json.return_value = mock_anthropic_oauth_response
+
+        # Set up mock to return different responses for different calls
+        call_count = [0]
+        async def mock_request(*args, **kwargs):
+            call_count[0] += 1
+            url = args[1] if len(args) > 1 else kwargs.get('url', '')
+
+            # First OAuth call (with old token) -> 401
+            if call_count[0] == 1 and 'oauth/usage' in url:
+                return oauth_401_response
+            # Second OAuth call (with new token) -> success
+            elif call_count[0] == 2 and 'oauth/usage' in url:
+                return oauth_success_response
+            return oauth_success_response
+
+        mock_http_client.request.side_effect = mock_request
+        mock_http_client.post.return_value = refresh_response
+
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "expired_token"
+            mock_settings.CLAUDE_CODE_REFRESH_TOKEN = "valid_refresh_token"
+            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
+
+            with patch.object(collector, '_persist_refreshed_tokens', return_value=None):
+                with patch('app.services.token_cache.token_cache.store', return_value=None):
+                    result = await collector.collect(mock_http_client)
+
+        # Should return successful OAuth results (not error cards)
+        assert isinstance(result, list)
+        assert len(result) >= 1
+        assert all(card.get('remaining') != 'ERR' for card in result)
+        assert any(card.get('data_source') == 'oauth' for card in result)
+
+    @pytest.mark.asyncio
     async def test_collect_web_api_fallback(self, mock_http_client, mock_claude_web_api_orgs_response, mock_claude_web_api_usage_response):
         """Test fallback to Web API when OAuth fails."""
         collector = AnthropicCollector()
@@ -115,15 +171,20 @@ class TestAnthropicCollector:
         orgs_response = MagicMock(spec=httpx.Response)
         orgs_response.status_code = 200
         orgs_response.json.return_value = mock_claude_web_api_orgs_response
-        
+
+        # Mock account endpoint (optional, called between orgs and usage)
+        account_response = MagicMock(spec=httpx.Response)
+        account_response.status_code = 200
+        account_response.json.return_value = {"tier": "pro"}
+
         usage_response = MagicMock(spec=httpx.Response)
         usage_response.status_code = 200
         usage_response.json.return_value = mock_claude_web_api_usage_response
-        
+
         # Mock request for OAuth (first call)
         mock_http_client.request.return_value = oauth_response
-        # Mock get for Web API calls
-        mock_http_client.get.side_effect = [orgs_response, usage_response]
+        # Mock get for Web API calls (orgs, account, usage)
+        mock_http_client.get.side_effect = [orgs_response, account_response, usage_response]
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
@@ -132,12 +193,13 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="sk-ant-session123"):
-                result = await collector.collect(mock_http_client)
-        
+                with patch.object(collector, '_refresh_oauth_token', return_value=None):
+                    result = await collector.collect(mock_http_client)
+
         # Should return Web API results
         assert isinstance(result, list)
         assert len(result) >= 1
-        assert any('Web API' in str(card.get('detail', '')) for card in result)
+        assert any(card.get('data_source') == 'web_api' for card in result)
         assert any('Session' in str(card.get('service', '')) for card in result)
 
     @pytest.mark.asyncio
@@ -145,10 +207,10 @@ class TestAnthropicCollector:
         """Test fallback to enhanced local logs when both OAuth and Web API fail."""
         collector = AnthropicCollector()
         
-        # Mock OAuth failure
+        # Mock OAuth failure - OAuth uses request() not get()
         oauth_response = MagicMock(spec=httpx.Response)
         oauth_response.status_code = 401
-        mock_http_client.get.return_value = oauth_response
+        mock_http_client.request.return_value = oauth_response
         
         # Mock no web cookie
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
@@ -207,10 +269,10 @@ class TestAnthropicCollector:
         """Test deduplication of streaming chunks in local logs."""
         collector = AnthropicCollector()
         
-        # Mock OAuth failure
+        # Mock OAuth failure - OAuth uses request() not get()
         oauth_response = MagicMock(spec=httpx.Response)
         oauth_response.status_code = 401
-        mock_http_client.get.return_value = oauth_response
+        mock_http_client.request.return_value = oauth_response
         
         # Mock local log data with duplicate messages (streaming chunks)
         log_data = [
@@ -267,10 +329,10 @@ class TestAnthropicCollector:
         """Test scanning multiple config directories via CLAUDE_CONFIG_DIR."""
         collector = AnthropicCollector()
         
-        # Mock OAuth failure
+        # Mock OAuth failure - OAuth uses request() not get()
         oauth_response = MagicMock(spec=httpx.Response)
         oauth_response.status_code = 401
-        mock_http_client.get.return_value = oauth_response
+        mock_http_client.request.return_value = oauth_response
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
@@ -434,15 +496,20 @@ class TestAnthropicCollector:
             "name": "Personal Org",
             "membership": {"user": {"email": "user@example.com"}}
         }]
-        
+
+        # Mock account endpoint (optional, called between orgs and usage)
+        account_response = MagicMock(spec=httpx.Response)
+        account_response.status_code = 200
+        account_response.json.return_value = {"tier": "pro"}
+
         usage_response = MagicMock(spec=httpx.Response)
         usage_response.status_code = 200
         usage_response.json.return_value = {
             "current_window": {"percentUsed": 30.0, "resetsAt": "2025-04-07T12:00:00Z"}
         }
-        
+
         mock_http_client.request.return_value = oauth_response
-        mock_http_client.get.side_effect = [org_response, usage_response]
+        mock_http_client.get.side_effect = [org_response, account_response, usage_response]
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
@@ -450,12 +517,13 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_FREE_LIMIT = 500000
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="session_key"):
-                result = await collector.collect(mock_http_client)
-        
+                with patch.object(collector, '_refresh_oauth_token', return_value=None):
+                    result = await collector.collect(mock_http_client)
+
         assert isinstance(result, list)
+        assert any(card.get('data_source') == 'web_api' for card in result)
         if result and result[0].get('remaining') != 'ERR':
             detail = result[0].get('detail', '')
-            assert '[Web API]' in detail
             # Identity should be included if present
             assert 'user@example.com' in detail or 'Personal Org' in detail or True  # May or may not be present
 

@@ -70,21 +70,24 @@ async def ingest_metrics(
     for card in request.metrics:
         detail = card.detail
         
-        # Extract OAuth token
-        if "oauth_token:" in detail:
-            token = _extract_token(detail, "oauth_token:")
-            if token:
-                tokens["oauth_token"] = token
-                detail = detail.replace(f"oauth_token:{token}", "oauth_token:[REDACTED]")
-                logger.debug(f"Extracted OAuth token for {provider_base}")
-            
-            # Also extract refresh token if present
-            if "refresh_token:" in detail:
-                refresh = _extract_token(detail, "refresh_token:")
-                if refresh:
-                    tokens["refresh_token"] = refresh
-                    detail = detail.replace(f"refresh_token:{refresh}", "refresh_token:[REDACTED]")
-                    logger.debug(f"Extracted refresh token for {provider_base}")
+        # Extract OAuth token and refresh token BEFORE modifying detail
+        oauth_token = _extract_token(detail, "oauth_token:") if "oauth_token:" in detail else None
+        refresh_token = _extract_token(detail, "refresh_token:") if "refresh_token:" in detail else None
+        
+        # Store tokens
+        if oauth_token:
+            tokens["oauth_token"] = oauth_token
+            logger.debug(f"Extracted OAuth token for {provider_base}")
+        
+        if refresh_token:
+            tokens["refresh_token"] = refresh_token
+            logger.debug(f"Extracted refresh token for {provider_base}")
+        
+        # Redact tokens from detail string AFTER both are extracted
+        if oauth_token:
+            detail = detail.replace(f"oauth_token:{oauth_token}", "oauth_token:[REDACTED]")
+        if refresh_token:
+            detail = detail.replace(f"refresh_token:{refresh_token}", "refresh_token:[REDACTED]")
             
             card.detail = detail
             local_cards.append(card)

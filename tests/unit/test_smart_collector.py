@@ -12,6 +12,7 @@ Tests cover:
 
 import pytest
 import time
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 import httpx
 
@@ -354,5 +355,4 @@ class TestSmartCollectorIntegration:
         assert smart.consecutive_errors == 0
 
 
-# Import asyncio for tests
-import asyncio
+

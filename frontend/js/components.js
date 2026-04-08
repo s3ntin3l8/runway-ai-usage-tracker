@@ -14,7 +14,29 @@ function escapeHTML(str) {
         '"': '&quot;',
         "'": '&#039;'
     };
-    return str.replace(/[&<>"']/g, function(m) { return map[m]; });
+    return str.replace(/[&<>"']/g, function (m) { return map[m]; });
+}
+
+/**
+ * Returns a styled tier badge based on the tier name
+ * @param {string} tier - Tier name (Free, Pro, Team, etc.)
+ * @returns {string} HTML for the badge, or empty string if no tier
+ */
+function getTierBadge(tier) {
+    // Don't show badge if tier is null, undefined, or empty
+    if (tier === null || tier === undefined || tier === '') return '';
+    const t = tier.toLowerCase();
+    let classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50'; // Default/Free
+
+    if (t.includes('pro') || t.includes('premium') || t.includes('plus')) {
+        classes = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+    } else if (t.includes('team') || t.includes('enterprise') || t.includes('organization')) {
+        classes = 'bg-violet-500/10 text-violet-400 border-violet-500/20';
+    } else if (t.includes('free')) {
+        classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50';
+    }
+
+    return `<span class="text-[8px] font-bold px-1 py-0.5 rounded border leading-none uppercase tracking-tighter ${classes}">${escapeHTML(tier)}</span>`;
 }
 
 /**
@@ -44,9 +66,9 @@ function escapeHTML(str) {
 function formatNumber(num) {
     if (num === null || num === undefined || isNaN(num)) return '—';
     const absNum = Math.abs(num);
-    if (absNum >= 1e9) return `${(num/1e9).toFixed(1)}B`;
-    if (absNum >= 1e6) return `${(num/1e6).toFixed(1)}M`;
-    if (absNum >= 1e3) return `${(num/1e3).toFixed(1)}K`;
+    if (absNum >= 1e9) return `${(num / 1e9).toFixed(1)}B`;
+    if (absNum >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
+    if (absNum >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
     if (Number.isInteger(num)) return num.toString();
     return num.toFixed(1);
 }
@@ -227,7 +249,15 @@ function calculateUsedPct(item) {
  */
 export function buildCard(item) {
     const isUnlimited = item.is_unlimited || item.health === 'unlimited';
-    const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
+    let h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
+    let errorIcon = '';
+
+    // Categorize error if present
+    if (item.health === 'critical' && item.error_type && ERROR_TYPES[item.error_type]) {
+        const errConfig = ERROR_TYPES[item.error_type];
+        h = { ...h, badge: errConfig.color, label: errConfig.label };
+        errorIcon = errConfig.icon + ' ';
+    }
 
     // Calculate percentage
     let usedPct = calculateUsedPct(item);
@@ -238,7 +268,7 @@ export function buildCard(item) {
     let displayLabel = 'used';
     if (STATE.remaining && hasPercentage) {
         displayPct = 100 - usedPct;
-        displayLabel = 'remaining';
+        displayLabel = 'rem.';
     }
 
     // For unlimited plans, show special display
@@ -251,6 +281,49 @@ export function buildCard(item) {
     if (STATE.remaining && hasPercentage) {
         barWidth = 100 - usedPct;
     }
+
+    const isPlaceholder = item.health === 'unknown';
+    const isDisabled = STATE.disabledServices.includes(item.service);
+    if (isDisabled && !STATE.showHidden) return '';
+
+    // Handle Compact Mode
+    if (STATE.compact) {
+        let mainDisplay = '';
+        if (isUnlimited) {
+            mainDisplay = `<span class="text-2xl font-black tracking-tighter text-violet-400 leading-none">∞</span>`;
+        } else if (hasPercentage) {
+            mainDisplay = `<span class="text-2xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'} leading-none">${displayPct.toFixed(1)}%</span>`;
+        } else {
+            mainDisplay = `<span class="text-2xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'} leading-none">${escapeHTML(item.remaining)}</span>`;
+        }
+
+        return `
+            <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="text-base leading-none">${escapeHTML(item.icon)}</span>
+                        <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-tight truncate">${escapeHTML(item.service)}</span>
+                    </div>
+                    <div class="dot ${h.dot} shrink-0"></div>
+                </div>
+
+                <div class="flex items-end justify-between gap-1 mt-1">
+                    <div class="flex items-baseline gap-1">
+                        ${mainDisplay}
+                        ${!isUnlimited && hasPercentage ? `<span class="text-[8px] font-bold text-zinc-500 uppercase">${displayLabel}</span>` : ''}
+                    </div>
+                    <span class="text-[9px] text-zinc-500 mono leading-none mb-0.5 truncate max-w-[80px]" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
+                </div>
+
+                <div class="progress-track h-1 mt-auto overflow-hidden rounded-full bg-zinc-800/50 ${isUnlimited ? 'progress-unlimited' : ''}">
+                    <div class="progress-fill h-full" style="width: ${isUnlimited ? 100 : barWidth}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};"></div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Standard Layout (Below)
+    displayLabel = STATE.remaining ? 'remaining' : 'used';
 
     // Build subtitle with raw values and data source
     let subtitle = '';
@@ -269,10 +342,8 @@ export function buildCard(item) {
     } else if (item.detail) {
         // Fallback to detail field
         const escapedDetail = escapeHTML(item.detail);
-        subtitle = `<span class="text-xs text-zinc-600 mono truncate" title="${escapedDetail}">${escapedDetail}${sourceLabel}</span>`;
+        subtitle = `<span class="text-xs text-zinc-600 mono truncate" title="${escapedDetail}">${errorIcon}${escapedDetail}${sourceLabel}</span>`;
     }
-
-    const isPlaceholder = item.health === 'unknown';
 
     // Progress bar with appropriate styling
     let progressBarClass = 'progress-fill';
@@ -304,7 +375,7 @@ export function buildCard(item) {
                 <span class="text-sm font-medium text-zinc-500">${escapeHTML(item.unit)}</span>`;
     }
 
-            // For unlimited plans, add unit label next to infinity
+    // For unlimited plans, add unit label next to infinity
     const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${escapeHTML(item.unit || 'Unlimited')}</span>` : '';
 
     // Build reset element with tooltip
@@ -318,9 +389,6 @@ export function buildCard(item) {
         </div>
     ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(item.reset)}</span>`;
 
-    const isDisabled = STATE.disabledServices.includes(item.service);
-    if (isDisabled && !STATE.showHidden) return '';
-
     return `
         <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
             <!-- Header row -->
@@ -328,7 +396,10 @@ export function buildCard(item) {
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                     <div class="flex flex-col">
-                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service)}</span>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service)}</span>
+                            ${getTierBadge(item.tier)}
+                        </div>
                         ${paceBadge}
                     </div>
                 </div>
@@ -366,10 +437,17 @@ export function buildCard(item) {
  */
 export function buildModalContent(item) {
     const isUnlimited = item.is_unlimited || item.health === 'unlimited';
-    const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
+    let h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
+
+    // Categorize error if present
+    if (item.health === 'critical' && item.error_type && ERROR_TYPES[item.error_type]) {
+        const errConfig = ERROR_TYPES[item.error_type];
+        h = { ...h, badge: errConfig.color, label: errConfig.label };
+    }
+
     const usedPct = calculateUsedPct(item);
     const isDisabled = STATE.disabledServices.includes(item.service);
-    
+
     const formatted = formatUsageValues(
         item.used_value,
         item.limit_value,
@@ -388,7 +466,10 @@ export function buildModalContent(item) {
                     <span class="text-3xl">${escapeHTML(item.icon)}</span>
                     <div>
                         <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service)}</h2>
-                        <span class="text-xs font-bold ${h.badge} mono uppercase tracking-widest">${h.label}</span>
+                        <div class="flex items-center gap-2 mt-0.5">
+                            <span class="text-xs font-bold ${h.badge} mono uppercase tracking-widest">${h.label}</span>
+                            ${getTierBadge(item.tier)}
+                        </div>
                     </div>
                 </div>
                 <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">

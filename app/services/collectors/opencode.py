@@ -21,6 +21,7 @@ Local DB Collection:
 import os
 import re
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
@@ -200,7 +201,6 @@ class OpenCodeCollector(BaseCollector):
             remaining = max(0, limit - used)
             
             # Calculate reset time
-            from datetime import datetime, timezone, timedelta
             reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
             
             cards.append({
@@ -233,10 +233,9 @@ class OpenCodeCollector(BaseCollector):
             
             used = (pct / 100) * limit
             remaining = max(0, limit - used)
-            
-            from datetime import datetime, timezone, timedelta
+
             reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
-            
+
             cards.append({
                 "service": "OpenCode (Weekly)",
                 "icon": "⚡",
@@ -272,8 +271,7 @@ class OpenCodeCollector(BaseCollector):
         
         try:
             import aiosqlite
-            from datetime import datetime, timezone, timedelta
-            
+
             now = datetime.now(timezone.utc)
             
             # Calculate cutoff times for each window

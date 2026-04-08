@@ -51,9 +51,9 @@ class KimiApiCollector(BaseCollector):
             )
             
             if resp.status_code == 401:
-                return [error_card("Kimi Code", "🌙", "Unauthorized", error_type="auth_failed")]
+                return [error_card("Kimi API", "🌙", "Unauthorized", error_type="auth_failed")]
             if resp.status_code != 200:
-                return [error_card("Kimi Code", "🌙", f"HTTP {resp.status_code}", error_type="api_error")]
+                return [error_card("Kimi API", "🌙", f"HTTP {resp.status_code}", error_type="api_error")]
             
             data = resp.json()
             bal = float(data.get("data", {}).get("available_balance", 0))
@@ -69,6 +69,6 @@ class KimiApiCollector(BaseCollector):
                 "detail": "Prepaid balance (API)",
             }]
         except httpx.RequestError:
-            return [error_card("Kimi Code", "🌙", "Connection Failed", error_type="timeout")]
+            return [error_card("Kimi API", "🌙", "Connection Failed", error_type="timeout")]
         except (ValueError, KeyError, TypeError):
-            return [error_card("Kimi Code", "🌙", "Invalid Response", error_type="parse_error")]
+            return [error_card("Kimi API", "🌙", "Invalid Response", error_type="parse_error")]

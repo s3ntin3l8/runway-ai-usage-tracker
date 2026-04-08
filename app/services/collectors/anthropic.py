@@ -455,9 +455,14 @@ class AnthropicCollector(BaseCollector):
         """Parse OAuth API response into quota cards with null-safety."""
         results = []
         
-        # Extract identity once for all cards
+        # Extract identity and tier once for all cards
         identity_str = self._extract_identity_from_oauth(data)
         identity_suffix = f" | {identity_str}" if identity_str else ""
+        
+        # Extract plan from account data for tier badge
+        account = data.get("account", {})
+        plan = account.get("plan", "")
+        tier = plan.capitalize() if plan else None
         
         # Guaranteed keys to process even if null from API
         core_keys = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"]
@@ -522,6 +527,7 @@ class AnthropicCollector(BaseCollector):
                 "unit_type": "percent",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "oauth",
+                "tier": tier,
             })
         
         return results if results else [error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")]
@@ -552,7 +558,7 @@ class AnthropicCollector(BaseCollector):
             return []
         
         headers = {"Cookie": f"sessionKey={session_key}"}
-        
+
         try:
             # Step 1: Get organization ID
             orgs_resp = await client.get(
@@ -577,7 +583,20 @@ class AnthropicCollector(BaseCollector):
                 logger.warning("No organization UUID found in response")
                 return []
             
-            # Step 2: Get usage data
+            # Step 2: Get account info for tier/plan
+            account_data = None
+            try:
+                account_resp = await client.get(
+                    "https://claude.ai/api/account",
+                    headers=headers,
+                    timeout=10.0
+                )
+                if account_resp.status_code == 200:
+                    account_data = account_resp.json()
+            except Exception as e:
+                logger.debug(f"Could not fetch account info: {e}")
+            
+            # Step 3: Get usage data
             usage_resp = await client.get(
                 f"https://claude.ai/api/organizations/{org_id}/usage",
                 headers=headers,
@@ -589,7 +608,7 @@ class AnthropicCollector(BaseCollector):
                 return []
 
             usage_data = usage_resp.json()
-            return self._parse_web_api_response(usage_data, org)
+            return self._parse_web_api_response(usage_data, org, account_data)
             
         except httpx.HTTPError as e:
             logger.warning(f"Claude Web API HTTP error: {e}")
@@ -617,13 +636,17 @@ class AnthropicCollector(BaseCollector):
             return f"org: {org_name}"
         return ""
 
-    def _parse_web_api_response(self, data: Dict[str, Any], org_data: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def _parse_web_api_response(self, data: Dict[str, Any], org_data: Dict[str, Any] = None, account_data: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Parse Web API response into quota cards."""
         results = []
         
         # Extract identity once for all cards
         identity_str = self._extract_identity_from_web(org_data) if org_data else ""
         identity_suffix = f" | {identity_str}" if identity_str else ""
+        
+        # Extract tier from account data
+        plan = account_data.get("plan", "") if account_data else ""
+        tier = plan.capitalize() if plan else None
         
         # Map Web API fields to our standard format
         window_map = {
@@ -667,6 +690,7 @@ class AnthropicCollector(BaseCollector):
                 "unit_type": "percent",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "web_api",
+                "tier": tier,
             })
         
         # Add extra usage if present
@@ -689,6 +713,7 @@ class AnthropicCollector(BaseCollector):
                     "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                     "pace": "Sustainable",
                     "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
+                    "tier": tier,
                 })
         
         return results
@@ -727,19 +752,20 @@ class AnthropicCollector(BaseCollector):
             return None
         
         # Read credentials file for tier info
-        tier = "pro"
+        tier = None
         try:
             if os.path.exists(self._credentials_path):
                 with open(self._credentials_path, "r") as f:
                     data = json.load(f)
-                    plan = data.get("account", {}).get("plan", "pro").lower()
-                    if plan == "free":
-                        tier = "free"
+                    plan = data.get("account", {}).get("plan", "").lower()
+                    if plan:
+                        tier = plan.capitalize()
         except Exception as e:
             logger.debug(f"Could not read tier from credentials: {e}")
 
         # 5-hour window to match OAuth session window
-        limit = settings.CLAUDE_PRO_LIMIT if tier == "pro" else settings.CLAUDE_FREE_LIMIT
+        # Default to pro limit if we can't determine tier (safer assumption for limits)
+        limit = settings.CLAUDE_FREE_LIMIT if tier == "Free" else settings.CLAUDE_PRO_LIMIT
         cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
         
         # Track tokens and deduplicate
@@ -818,6 +844,7 @@ class AnthropicCollector(BaseCollector):
             "used_value": float(total_tokens),
             "limit_value": float(limit),
             "is_unlimited": False,
+            "tier": tier,
             "unit_type": "tokens",
             "reset_at": reset_at.isoformat() if reset_at else None,
             "data_source": "local",

@@ -67,3 +67,7 @@ tmp/
 temp/
 *.log
 *.bak
+
+# AI config
+.gemini/
+.claude/

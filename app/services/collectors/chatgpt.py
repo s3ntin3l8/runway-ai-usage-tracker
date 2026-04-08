@@ -63,7 +63,8 @@ class ChatGPTCollector(BaseCollector):
                     data = json.load(f)
                     token = data.get("tokens", {}).get("access_token")
                     if token: return {"token": token, "path": auth_path}
-            except: pass
+            except (IOError, json.JSONDecodeError):
+                pass
             
         # Priority 3: Token cache from sidecar
         token = token_cache.get_token("chatgpt", "oauth_token")
@@ -155,4 +156,5 @@ class ChatGPTCollector(BaseCollector):
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "cache",
             }]
-        except: return [error_card("ChatGPT Codex", "💬", "Parse Error", error_type="parse_error")]
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            return [error_card("ChatGPT Codex", "💬", "Parse Error", error_type="parse_error")]
