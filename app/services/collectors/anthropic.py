@@ -726,8 +726,20 @@ class AnthropicCollector(BaseCollector):
             logger.debug(f"No Claude project log files found in any config directory")
             return None
         
+        # Read credentials file for tier info
+        tier = "pro"
+        try:
+            if os.path.exists(self._credentials_path):
+                with open(self._credentials_path, "r") as f:
+                    data = json.load(f)
+                    plan = data.get("account", {}).get("plan", "pro").lower()
+                    if plan == "free":
+                        tier = "free"
+        except Exception as e:
+            logger.debug(f"Could not read tier from credentials: {e}")
+
         # 5-hour window to match OAuth session window
-        limit = 2000000  # 2M tokens per 5h window (Pro tier)
+        limit = settings.CLAUDE_PRO_LIMIT if tier == "pro" else settings.CLAUDE_FREE_LIMIT
         cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
         
         # Track tokens and deduplicate

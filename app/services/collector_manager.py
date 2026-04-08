@@ -43,34 +43,38 @@ class CollectorManager:
     """
     
     def __init__(self):
-        """Initialize all collectors wrapped with SmartCollector."""
-        # Define collectors with names and TTL values
-        collector_configs = [
-            (AnthropicCollector(), "Claude (Anthropic)", 600),      # 10 min
-            (GeminiCollector(), "Gemini", 300),                     # 5 min
-            (GitHubCollector(), "GitHub Copilot", 900),             # 15 min
-            (ChatGPTCollector(), "ChatGPT", 600),                   # 10 min
-            (AntigravityCollector(), "Antigravity", 900),           # 15 min
-            (OpenCodeCollector(), "OpenCode", 1800),                # 30 min
-            (ZaiApiCollector(), "zAI API", 900),                    # 15 min
-            (ZaiPlanCollector(), "zAI Plan", 900),                  # 15 min
-            (KimiApiCollector(), "Kimi API", 900),                  # 15 min
-            (KimiCodingCollector(), "Kimi Coding", 900)             # 15 min
+        """Initialize collector configurations for lazy loading."""
+        # Define collectors with names and TTL values (classes instead of instances)
+        self.collector_configs = [
+            (AnthropicCollector, "Claude (Anthropic)", 600),      # 10 min
+            (GeminiCollector, "Gemini", 300),                     # 5 min
+            (GitHubCollector, "GitHub Copilot", 900),             # 15 min
+            (ChatGPTCollector, "ChatGPT", 600),                   # 10 min
+            (AntigravityCollector, "Antigravity", 900),           # 15 min
+            (OpenCodeCollector, "OpenCode", 1800),                # 30 min
+            (ZaiApiCollector, "zAI API", 900),                    # 15 min
+            (ZaiPlanCollector, "zAI Plan", 900),                  # 15 min
+            (KimiApiCollector, "Kimi API", 900),                  # 15 min
+            (KimiCodingCollector, "Kimi Coding", 900)             # 15 min
         ]
         
-        # Wrap each collector with SmartCollector for differential fetching
-        self.smart_collectors = [
-            SmartCollector(
-                collector=collector,
-                collector_name=name,
-                ttl=ttl,
-                error_threshold=3,      # Force retry after 3 consecutive errors
-                error_retry_delay=30.0  # Wait 30s before retrying after error
-            )
-            for collector, name, ttl in collector_configs
-        ]
-        
-        logger.info(f"CollectorManager initialized with {len(self.smart_collectors)} collectors")
+        self.smart_collectors = []
+        logger.info(f"CollectorManager initialized with {len(self.collector_configs)} collector configs")
+
+    def _lazy_load_collectors(self):
+        """Instantiate collectors only when first needed."""
+        if not self.smart_collectors:
+            self.smart_collectors = [
+                SmartCollector(
+                    collector=collector_cls(),
+                    collector_name=name,
+                    ttl=ttl,
+                    error_threshold=3,      # Force retry after 3 consecutive errors
+                    error_retry_delay=30.0  # Wait 30s before retrying after error
+                )
+                for collector_cls, name, ttl in self.collector_configs
+            ]
+            logger.info(f"Lazy loaded {len(self.smart_collectors)} collectors")
     
     async def collect_all(self) -> List[Dict[str, Any]]:
         """
@@ -87,6 +91,7 @@ class CollectorManager:
         Returns:
             List[Dict[str, Any]]: All limit cards from all sources
         """
+        self._lazy_load_collectors()
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 # Run all collectors concurrently with exception handling
@@ -134,6 +139,7 @@ class CollectorManager:
         Returns:
             Dictionary with stats for each collector
         """
+        self._lazy_load_collectors()
         return {
             "collectors": [
                 smart_collector.get_stats()

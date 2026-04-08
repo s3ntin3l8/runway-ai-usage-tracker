@@ -66,6 +66,8 @@ class TestAnthropicCollector:
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
             with patch('app.services.collectors.anthropic.glob.glob', return_value=[]):
@@ -125,6 +127,8 @@ class TestAnthropicCollector:
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="sk-ant-session123"):
@@ -149,6 +153,8 @@ class TestAnthropicCollector:
         # Mock no web cookie
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
                 # Mock local log data with all token types
@@ -240,6 +246,8 @@ class TestAnthropicCollector:
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
                 with patch('builtins.open', mock_open(read_data=''.join(log_data))):
@@ -266,6 +274,8 @@ class TestAnthropicCollector:
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
                 with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': '/path1,/path2'}):
@@ -436,6 +446,8 @@ class TestAnthropicCollector:
         
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="session_key"):
                 result = await collector.collect(mock_http_client)

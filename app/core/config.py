@@ -127,6 +127,10 @@ class Settings:
     GEMINI_OAUTH_CLIENT_ID: str = os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
     GEMINI_OAUTH_CLIENT_SECRET: str = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
     
+    # Quota Limits
+    CLAUDE_PRO_LIMIT: int = int(os.getenv("CLAUDE_PRO_LIMIT", "2000000"))
+    CLAUDE_FREE_LIMIT: int = int(os.getenv("CLAUDE_FREE_LIMIT", "500000"))
+    
     # Path settings
     CLAUDE_PROJECTS_DIR: str = os.getenv("CLAUDE_PROJECTS_DIR", os.path.join(get_platform_config_dir("claude"), "projects"))
     GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions"))
