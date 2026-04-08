@@ -87,13 +87,21 @@ class CollectorManager:
         Returns:
             List[Dict[str, Any]]: All limit cards from all sources
         """
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Run all collectors concurrently with exception handling
-            tasks = [
-                smart_collector.collect(client)
-                for smart_collector in self.smart_collectors
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Run all collectors concurrently with exception handling
+                tasks = [
+                    smart_collector.collect(client)
+                    for smart_collector in self.smart_collectors
+                ]
+                # Wrap with global timeout to protect against I/O hangs
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=20.0
+                )
+        except asyncio.TimeoutError:
+            logger.error("Global collector timeout reached (20.0s). Collection aborted.")
+            results = []
         
         # Flatten results, handling exceptions
         flattened = []
