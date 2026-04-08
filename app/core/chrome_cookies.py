@@ -71,12 +71,10 @@ def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
     try:
         import subprocess
         
-        # Chrome on macOS uses AES-256-GCM with a key stored in Keychain
-        # We need to use the 'security' command to get the key, or use ctypes
-        # For now, try a simpler approach - check if cookies are unencrypted
-        
-        # Try to decrypt using Chrome's key from Keychain
-        # This requires the 'Safe Storage' password
+        # Chrome on macOS uses AES-128-CBC with a key derived from the
+        # 'Chrome Safe Storage' password stored in Keychain (PBKDF2-HMAC-SHA1,
+        # salt=b'saltysalt', 1003 iterations, 16-byte key, fixed 16-space IV).
+        # Retrieve the key from Keychain via the 'security' command.
         result = subprocess.run(
             ["security", "find-generic-password", "-s", "Chrome Safe Storage", "-w"],
             capture_output=True,
@@ -88,31 +86,29 @@ def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
         
         password = result.stdout.strip()
         
-        # The encrypted value has a 'v10' or 'v11' prefix followed by nonce + ciphertext + tag
+        # Chrome v10/v11 cookies use AES-128-CBC with a fixed 16-space IV.
+        # The 3-byte prefix (v10/v11) is followed directly by the CBC ciphertext.
         if encrypted_value.startswith(b'v10') or encrypted_value.startswith(b'v11'):
-            # Extract nonce (12 bytes), ciphertext, and tag (16 bytes)
-            prefix_len = 3
-            nonce = encrypted_value[prefix_len:prefix_len + 12]
-            ciphertext = encrypted_value[prefix_len + 12:-16]
-            tag = encrypted_value[-16:]
-            
-            # Derive key using PBKDF2
             import hashlib
-            import hmac
-            
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
             salt = b'saltysalt'
             key = hashlib.pbkdf2_hmac('sha1', password.encode('utf-8'), salt, 1003, 16)
-            
-            # Decrypt using AES-256-GCM
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            aesgcm = AESGCM(key)
-            
+            iv = b' ' * 16
+            raw_ciphertext = encrypted_value[3:]  # strip v10/v11 prefix
+
             try:
-                decrypted = aesgcm.decrypt(nonce, ciphertext + tag, None)
-                return decrypted.decode('utf-8')
+                cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+                decryptor = cipher.decryptor()
+                decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
+                # Strip PKCS7 padding
+                pad_len = decrypted[-1]
+                if pad_len < 1 or pad_len > 16:
+                    return None
+                return decrypted[:-pad_len].decode('utf-8')
             except Exception:
                 return None
-        
+
         return None
     except Exception:
         return None
@@ -187,22 +183,24 @@ def decrypt_linux_cookie(encrypted_value: bytes) -> Optional[str]:
                 if item.get_label() == "Chrome Safe Storage":
                     password = item.get_secret()
                     
-                    # Decrypt using the password (similar to macOS)
+                    # Chrome v10/v11 cookies use AES-128-CBC with a fixed 16-space IV.
                     if encrypted_value.startswith(b'v10') or encrypted_value.startswith(b'v11'):
                         import hashlib
-                        
+                        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
                         salt = b'saltysalt'
                         key = hashlib.pbkdf2_hmac('sha1', password, salt, 1003, 16)
-                        
-                        nonce = encrypted_value[3:3 + 12]
-                        ciphertext = encrypted_value[3 + 12:-16]
-                        tag = encrypted_value[-16:]
-                        
-                        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-                        aesgcm = AESGCM(key)
-                        
-                        decrypted = aesgcm.decrypt(nonce, ciphertext + tag, None)
-                        return decrypted.decode('utf-8')
+                        iv = b' ' * 16
+                        raw_ciphertext = encrypted_value[3:]  # strip v10/v11 prefix
+
+                        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+                        decryptor = cipher.decryptor()
+                        decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
+                        # Strip PKCS7 padding
+                        pad_len = decrypted[-1]
+                        if pad_len < 1 or pad_len > 16:
+                            return None
+                        return decrypted[:-pad_len].decode('utf-8')
         except ImportError:
             pass
         
