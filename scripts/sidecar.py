@@ -52,7 +52,7 @@ REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
 _daemon_running = False
 _pid_file_path: Optional[Path] = None
 _hostname: Optional[str] = None  # Cached hostname from gethostname()
-_windows_cred_cache: Optional[dict] = None  # cache {target: password, ttl: timestamp}s
+_windows_cred_cache: dict = {}  # cache {target: (password, ttl_timestamp)}
 _windows_cred_ttl_seconds: int = 300  # Cache credential for 5 minutes
 
 

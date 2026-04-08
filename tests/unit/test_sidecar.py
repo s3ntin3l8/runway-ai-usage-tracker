@@ -42,3 +42,21 @@ class TestQueueRotate:
         assert len(files) == 1
         entry = json.loads(files[0].read_text().strip())
         assert entry["payload"] == {"provider": "test", "metrics": []}
+
+
+class TestWindowsCredCache:
+    """C4: _windows_cred_cache must be a dict, not None, to support item assignment."""
+
+    def test_windows_cred_cache_is_dict_not_none(self):
+        """_windows_cred_cache must be initialized as a dict."""
+        assert isinstance(sidecar._windows_cred_cache, dict), \
+            f"_windows_cred_cache is {type(sidecar._windows_cred_cache)}, expected dict"
+
+    def test_get_windows_credential_write_does_not_crash(self):
+        """Writing to _windows_cred_cache must not raise TypeError."""
+        try:
+            sidecar._windows_cred_cache["test_target"] = ("password", time.time() + 300)
+        except TypeError as e:
+            pytest.fail(f"Writing to _windows_cred_cache raised TypeError: {e}")
+        finally:
+            sidecar._windows_cred_cache.pop("test_target", None)
