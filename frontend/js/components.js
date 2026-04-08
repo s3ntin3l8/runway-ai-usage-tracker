@@ -258,8 +258,9 @@ export function buildCard(item) {
     if (isUnlimited) {
         subtitle = `<span class="text-xs text-zinc-500">No usage limit${sourceLabel}</span>`;
     } else if (hasPercentage && item.used_value !== null && item.limit_value !== null) {
+        const displayValue = STATE.remaining ? Math.max(0, item.limit_value - item.used_value) : item.used_value;
         const formatted = formatUsageValues(
-            item.used_value,
+            displayValue,
             item.limit_value,
             item.unit_type || 'generic',
             item.currency
