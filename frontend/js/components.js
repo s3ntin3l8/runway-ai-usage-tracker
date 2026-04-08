@@ -36,7 +36,30 @@ function getTierBadge(tier) {
         classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50';
     }
 
-    return `<span class="text-[8px] font-bold px-1 py-0.5 rounded border leading-none uppercase tracking-tighter ${classes}">${escapeHTML(tier)}</span>`;
+    return `<span class="text-[8px] font-bold px-1 py-0.5 rounded border leading-none uppercase tracking-tighter self-start ${classes}">${escapeHTML(tier)}</span>`;
+}
+
+/**
+ * Returns an icon representing the pace/consumption rate
+ * @param {string} pace - Pace descriptor (e.g., "Sustainable", "Fast Burn")
+ * @returns {string} Emoji icon for the pace
+ */
+function getPaceIcon(pace) {
+    if (!pace) return '';
+    const p = pace.toLowerCase();
+    const icons = {
+        'stable': '🐢',
+        'sustainable': '🌱',
+        'pending reset': '⏳',
+        'exhausted': '🪫',
+        'fast burn': '🔥',
+        'moderate burn': '⚡',
+        'high': '🚀',
+        'fatigue': '😫',
+        'critical': '🚨',
+        'stopped': '⏹️'
+    };
+    return icons[p] || '';
 }
 
 /**
@@ -452,11 +475,6 @@ export function buildCard(item) {
             <div class="${progressBarClass}" style="width: ${isUnlimited ? 100 : barWidth}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};"></div>
         </div>` : '';
 
-    // Pace badge
-    const paceBadge = item.pace ? `
-        <span class="text-[10px] font-bold text-zinc-500 bg-zinc-900/80 border border-zinc-800 px-1.5 py-0.5 rounded-full mono">${escapeHTML(item.pace)}</span>
-    ` : '';
-
     // Main display value
     let mainDisplay = '';
     if (isUnlimited) {
@@ -471,6 +489,14 @@ export function buildCard(item) {
 
     // For unlimited plans, add unit label next to infinity
     const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${escapeHTML(item.unit || 'Unlimited')}</span>` : '';
+
+    // Pace icon with tooltip (styled like resets tooltip)
+    const paceIcon = item.pace ? `
+        <div class="tooltip-container">
+            <span class="pace-icon cursor-help">${getPaceIcon(item.pace)}</span>
+            <div class="tooltip">Pace: ${escapeHTML(item.pace)}</div>
+        </div>
+    ` : '';
 
     // Build reset element with tooltip (use reset_at for consistent timezone handling)
     const resetDisplay = formatResetDisplay(item.reset_at);
@@ -491,11 +517,8 @@ export function buildCard(item) {
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                     <div class="flex flex-col">
-                        <div class="flex items-center gap-1.5">
-                            <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service)}</span>
-                            ${getTierBadge(item.tier)}
-                        </div>
-                        ${paceBadge}
+                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service)}</span>
+                        ${getTierBadge(item.tier)}
                     </div>
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
@@ -506,10 +529,13 @@ export function buildCard(item) {
 
             ${progressBar}
 
-            <!-- Main value -->
+            <!-- Main value with pace icon -->
             <div class="mt-1">
-                <div class="flex items-baseline gap-1.5 flex-wrap">
-                    ${mainDisplay}${unitLabel}
+                <div class="flex items-center justify-between">
+                    <div class="flex items-baseline gap-1.5 flex-wrap">
+                        ${mainDisplay}${unitLabel}
+                    </div>
+                    ${paceIcon}
                 </div>
                 <div class="mt-1">
                     ${subtitle}

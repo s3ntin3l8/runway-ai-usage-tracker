@@ -1,6 +1,9 @@
 import { fetchLimits } from './api.js';
-import { STATE, HEALTH_CONFIG } from './state.js';
+import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
 import { buildCard, buildModalContent } from './components.js';
+
+// Auto-refresh timer reference
+let refreshTimer = null;
 
 /**
  * Render quota cards to the grid
@@ -55,6 +58,80 @@ window.toggleConfig = function (key) {
 }
 
 /**
+ * Cycle through auto-refresh intervals
+ * OFF → 30s → 60s → 5m → OFF
+ */
+window.cycleRefreshInterval = function () {
+    const intervals = REFRESH_CONFIG.intervals;
+    const currentIndex = intervals.indexOf(STATE.refreshInterval);
+    const nextIndex = (currentIndex + 1) % intervals.length;
+    const nextInterval = intervals[nextIndex];
+
+    setRefreshInterval(nextInterval);
+}
+
+/**
+ * Set auto-refresh interval
+ * @param {string} interval - Interval key ('off', '30s', '60s', '5m')
+ */
+function setRefreshInterval(interval) {
+    STATE.refreshInterval = interval;
+    localStorage.setItem('runway_refresh_interval', interval);
+
+    // Clear existing timer
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+
+    // Update button UI
+    const btn = document.getElementById('toggle-refresh');
+    if (btn) {
+        btn.innerHTML = REFRESH_CONFIG.labels[interval];
+        btn.classList.toggle('refresh-active', interval !== 'off');
+    }
+
+    // Set new timer if not off
+    if (interval !== 'off' && REFRESH_CONFIG.ms[interval]) {
+        refreshTimer = setInterval(() => {
+            console.log(`Auto-refresh triggered (${interval})`);
+            loadData();
+        }, REFRESH_CONFIG.ms[interval]);
+        console.log(`Auto-refresh enabled: ${interval}`);
+    } else {
+        console.log('Auto-refresh disabled');
+    }
+}
+
+/**
+ * Toggle bright/dark mode
+ */
+window.toggleTheme = function () {
+    STATE.brightMode = !STATE.brightMode;
+    localStorage.setItem('runway_bright_mode', STATE.brightMode);
+
+    applyTheme();
+
+    // Update button UI
+    const btn = document.getElementById('toggle-theme');
+    if (btn) {
+        btn.innerHTML = STATE.brightMode ? '🌙' : '☀️';
+        btn.title = STATE.brightMode ? 'Switch to dark mode' : 'Switch to bright mode';
+    }
+}
+
+/**
+ * Apply current theme to document
+ */
+function applyTheme() {
+    if (STATE.brightMode) {
+        document.body.classList.add('bright-mode');
+    } else {
+        document.body.classList.remove('bright-mode');
+    }
+}
+
+/**
  * Initialize UI elements based on initial state
  */
 function initUI() {
@@ -70,6 +147,24 @@ function initUI() {
 
     if (STATE.compact) {
         document.body.classList.add('compact-mode');
+    }
+
+    // Initialize refresh interval
+    const refreshBtn = document.getElementById('toggle-refresh');
+    if (refreshBtn) {
+        refreshBtn.innerHTML = REFRESH_CONFIG.labels[STATE.refreshInterval];
+        refreshBtn.classList.toggle('refresh-active', STATE.refreshInterval !== 'off');
+    }
+    if (STATE.refreshInterval !== 'off') {
+        setRefreshInterval(STATE.refreshInterval);
+    }
+
+    // Initialize theme
+    applyTheme();
+    const themeBtn = document.getElementById('toggle-theme');
+    if (themeBtn) {
+        themeBtn.innerHTML = STATE.brightMode ? '🌙' : '☀️';
+        themeBtn.title = STATE.brightMode ? 'Switch to dark mode' : 'Switch to bright mode';
     }
 }
 
@@ -198,6 +293,13 @@ function closeModal() {
     container.classList.remove('active');
     document.body.style.overflow = '';
 }
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+    }
+});
 
 // Initial load
 document.addEventListener('DOMContentLoaded', () => {

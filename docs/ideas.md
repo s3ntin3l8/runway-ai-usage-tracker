@@ -27,11 +27,42 @@ Scrape `https://chatgpt.com/codex/settings/usage` for rate limits, credits, deta
 
 ## Medium Priority
 
-### 3. Dashboard Auto-Refresh UI Toggle
+### 3. Dashboard Auto-Refresh UI Toggle ✅
 **File:** `frontend/index.html` + `frontend/js/app.js`  
-**Effort:** 2-3 hours
+**Effort:** 2-3 hours  
+**Status:** Implemented
 
 Add auto-refresh toggle with intervals (30s, 60s, 5m). Store preference in `localStorage`.
+
+**Features:**
+- Cycle through OFF → 30s → 60s → 5m → OFF with single button click
+- Visual pulsing dot indicator when auto-refresh is active
+- Safe to use: server caches API responses for 5-10 minutes
+- Timer cleanup on page unload
+
+### 3b. Bright Mode Theme Toggle ✅
+**File:** `frontend/css/input.css` + `frontend/js/app.js`  
+**Effort:** 1-2 hours  
+**Status:** Implemented
+
+Add light/bright mode theme toggle for better visibility in well-lit environments.
+
+**Features:**
+- ☀️/🌙 toggle button with smooth transitions
+- Complete color palette swap (dark → bright)
+- All UI elements themed: cards, modals, buttons, scrollbars
+- Preference persisted in `localStorage`
+**File:** `frontend/index.html` + `frontend/js/app.js`  
+**Effort:** 2-3 hours  
+**Status:** Implemented
+
+Add auto-refresh toggle with intervals (30s, 60s, 5m). Store preference in `localStorage`.
+
+**Features:**
+- Cycle through OFF → 30s → 60s → 5m → OFF with single button click
+- Visual pulsing dot indicator when auto-refresh is active
+- Safe to use: server caches API responses for 5-10 minutes
+- Timer cleanup on page unload
 
 ### 4. Move Away from Hardcoded Limits
 **Files:** `app/services/collectors/*.py`  

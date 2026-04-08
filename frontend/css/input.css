@@ -214,3 +214,257 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
         padding: 2.5rem 2rem 2rem 2rem;
     }
 }
+
+/* Auto-refresh pulsing dot */
+.refresh-active::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: #22c55e;
+    border-radius: 50%;
+    margin-left: 6px;
+    animation: pulse-refresh 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-refresh {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* Theme toggle button - same size as other toggles */
+#toggle-theme {
+    padding: 4px 10px;
+}
+
+/* Pace icon styling */
+.pace-icon {
+    font-size: 20px;
+    line-height: 1;
+    cursor: help;
+    flex-shrink: 0;
+}
+
+/* Compact mode pace icon */
+.compact-mode .pace-icon {
+    font-size: 16px;
+}
+
+/* ============================================
+   BRIGHT MODE THEME
+   ============================================ */
+
+body.bright-mode {
+    background-color: #fafafa;
+    color: #18181b;
+}
+
+body.bright-mode .glass-panel {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(200, 200, 200, 0.5);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+body.bright-mode .glass-panel:hover {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* Text colors in bright mode */
+body.bright-mode .text-zinc-50 { color: #18181b; }
+body.bright-mode .text-zinc-200 { color: #27272a; }
+body.bright-mode .text-zinc-400 { color: #52525b; }
+body.bright-mode .text-zinc-500 { color: #71717a; }
+body.bright-mode .text-zinc-600 { color: #a1a1aa; }
+body.bright-mode .text-zinc-700 { color: #d4d4d8; }
+
+/* Toggle buttons in bright mode */
+body.bright-mode .toggle-btn {
+    background: #f4f4f5;
+    border-color: #d4d4d8;
+    color: #52525b;
+}
+
+body.bright-mode .toggle-btn.active {
+    border-color: #3b82f6;
+    color: #2563eb;
+    background: rgba(59, 130, 246, 0.1);
+}
+
+/* Refresh button in bright mode */
+body.bright-mode #refresh-btn {
+    background: #f4f4f5;
+    border-color: #d4d4d8;
+    color: #27272a;
+}
+
+body.bright-mode #refresh-btn:hover {
+    background: #e4e4e7;
+    border-color: #a1a1aa;
+}
+
+/* Modal in bright mode */
+body.bright-mode .tooltip {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(200, 200, 200, 0.8);
+    color: #18181b;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+body.bright-mode .tooltip::after {
+    border-color: rgba(200, 200, 200, 0.8) transparent transparent transparent;
+}
+
+body.bright-mode #modal-backdrop {
+    background: rgba(0, 0, 0, 0.4);
+}
+
+body.bright-mode #modal-content {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+body.bright-mode .modal-header {
+    background: linear-gradient(180deg, rgba(244, 244, 245, 0.6), transparent);
+}
+
+body.bright-mode .modal-detail-item {
+    border-bottom-color: rgba(200, 200, 200, 0.4);
+}
+
+/* Scrollbar in bright mode */
+body.bright-mode ::-webkit-scrollbar-thumb {
+    background: #d4d4d8;
+}
+
+/* Skeleton in bright mode */
+body.bright-mode .skeleton {
+    background: linear-gradient(90deg, rgba(228, 228, 231, 0.8) 25%, rgba(212, 212, 216, 0.5) 50%, rgba(228, 228, 231, 0.8) 75%);
+}
+
+/* Pace badge in bright mode */
+body.bright-mode .text-zinc-500.bg-zinc-900\/80 {
+    background: rgba(228, 228, 231, 0.8) !important;
+    border-color: rgba(212, 212, 216, 0.8) !important;
+    color: #52525b !important;
+}
+
+/* Reset element in bright mode */
+body.bright-mode .text-zinc-400.bg-zinc-800\/60 {
+    background: rgba(228, 228, 231, 0.6) !important;
+    color: #52525b !important;
+}
+
+/* Free tier badge in bright mode - blue tint */
+body.bright-mode .bg-zinc-800\/50.text-zinc-500.border-zinc-700\/50 {
+    background: rgba(59, 130, 246, 0.1) !important;
+    border-color: rgba(59, 130, 246, 0.2) !important;
+    color: #3b82f6 !important;
+}
+
+/* Modal technical summary in bright mode */
+body.bright-mode .bg-black\/40 {
+    background: rgba(244, 244, 245, 0.8) !important;
+}
+
+body.bright-mode .border-zinc-800\/60 {
+    border-color: rgba(212, 212, 216, 0.8) !important;
+}
+
+body.bright-mode .border-zinc-800\/80 {
+    border-color: rgba(212, 212, 216, 1) !important;
+}
+
+/* Modal toggle button in bright mode */
+body.bright-mode .bg-zinc-700 {
+    background: #d4d4d8 !important;
+}
+
+/* Modal close button hover in bright mode */
+body.bright-mode .hover\:bg-zinc-800:hover {
+    background: rgba(228, 228, 231, 0.8) !important;
+}
+
+/* Progress track in bright mode */
+body.bright-mode .bg-zinc-800\/50 {
+    background: rgba(228, 228, 231, 0.8) !important;
+}
+
+/* Modal usage URL button in bright mode */
+body.bright-mode a.w-10.h-10.flex.items-center.justify-center.rounded-full {
+    color: #52525b;
+}
+
+body.bright-mode a.w-10.h-10.flex.items-center.justify-center.rounded-full:hover {
+    background: rgba(228, 228, 231, 0.8);
+}
+
+/* Modal borders and dividers */
+body.bright-mode .border-t.border-zinc-800\/60 {
+    border-color: rgba(212, 212, 216, 0.8) !important;
+}
+
+body.bright-mode .border-t.border-zinc-800\/80 {
+    border-color: rgba(212, 212, 216, 1) !important;
+}
+
+/* Card footer border in bright mode */
+body.bright-mode .glass-panel .border-t {
+    border-color: rgba(212, 212, 216, 0.8) !important;
+}
+
+/* Footer link in bright mode */
+body.bright-mode footer a {
+    color: #a1a1aa;
+}
+
+body.bright-mode footer a:hover {
+    color: #52525b;
+}
+
+/* Tier badges in bright mode - Pro/Premium */
+body.bright-mode .bg-amber-500\/10 {
+    background: rgba(245, 158, 11, 0.15) !important;
+}
+
+/* Tier badges in bright mode - Team/Enterprise */
+body.bright-mode .bg-violet-500\/10 {
+    background: rgba(139, 92, 246, 0.15) !important;
+}
+
+/* Health states in bright mode - slightly adjusted for better visibility */
+body.bright-mode .health-good { border-color: rgba(34, 197, 94, 0.4); }
+body.bright-mode .health-good:hover { border-color: rgba(34, 197, 94, 0.8); box-shadow: 0 12px 40px rgba(34, 197, 94, 0.1); }
+
+body.bright-mode .health-warning { border-color: rgba(251, 191, 36, 0.4); }
+body.bright-mode .health-warning:hover { border-color: rgba(251, 191, 36, 0.8); box-shadow: 0 12px 40px rgba(251, 191, 36, 0.1); }
+
+body.bright-mode .health-critical { border-color: rgba(239, 68, 68, 0.5); }
+body.bright-mode .health-critical:hover { border-color: rgba(239, 68, 68, 0.9); box-shadow: 0 12px 40px rgba(239, 68, 68, 0.15); }
+
+body.bright-mode .health-unknown { border-color: rgba(200, 200, 200, 0.6); }
+
+/* Disabled card in bright mode */
+body.bright-mode .disabled-card {
+    filter: grayscale(1) opacity(0.4);
+}
+
+/* Background gradients in bright mode */
+body.bright-mode .fixed.inset-0.pointer-events-none {
+    background: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(59, 130, 246, 0.04) 0%, transparent 70%), 
+                radial-gradient(ellipse 50% 40% at 80% 80%, rgba(139, 92, 246, 0.03) 0%, transparent 60%) !important;
+}
+
+/* Error banner in bright mode */
+body.bright-mode #error-banner {
+    background: rgba(254, 242, 242, 0.8);
+    border-color: rgba(254, 202, 202, 0.8);
+    color: #dc2626;
+}
+
+body.bright-mode #error-banner strong {
+    color: #b91c1c;
+}
+
+/* Smooth transitions for theme switching */
+body, .glass-panel, .toggle-btn, #refresh-btn, .text-zinc-50, .text-zinc-200, .text-zinc-400, .text-zinc-500 {
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
