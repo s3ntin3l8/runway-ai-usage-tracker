@@ -23,9 +23,9 @@ services:
     ports:
       - "8765:8765"
     environment:
-      # Required: Sidecar authentication key
-      # Workstations must use this key to push metrics
-      - INGEST_API_KEY=${INGEST_API_KEY:-sidecar-default-secret}
+      # Required: Sidecar authentication key (MUST be changed from default)
+      # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+      - INGEST_API_KEY=${INGEST_API_KEY:?Set INGEST_API_KEY in .env}
       
       # Network: Must bind to 0.0.0.0 for external access to container
       - APP_HOST=0.0.0.0
@@ -67,11 +67,11 @@ services:
   #     dockerfile: Dockerfile
   #   image: runway:latest
   #   container_name: runway-sidecar
-  #   command: >
+#   command: >
   #     python3 scripts/sidecar.py
   #     --provider all
   #     --api-url http://runway:8765
-  #     --api-key ${INGEST_API_KEY:-sidecar-default-secret}
+  #     --api-key ${INGEST_API_KEY}
   #   environment:
   #     # Kimi Coding IDE authentication
   #     # Get from browser cookie 'kimi-auth' at https://www.kimi.com/code

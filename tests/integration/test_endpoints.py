@@ -136,11 +136,12 @@ class TestLimitsEndpoint:
 class TestIngestEndpoint:
     """Integration tests for /api/ingest endpoint."""
 
-    def _get_hmac_headers(self, body: str) -> dict:
+    def _get_hmac_headers(self, body: str, api_key: str = None) -> dict:
         """Generate HMAC headers for testing."""
+        key = api_key or settings.INGEST_API_KEY
         timestamp = str(int(time.time()))
         signature = hmac.new(
-            settings.INGEST_API_KEY.encode(),
+            key.encode(),
             f"{timestamp}".encode() + body.encode(),
             hashlib.sha256
         ).hexdigest()
@@ -150,12 +151,22 @@ class TestIngestEndpoint:
             "Content-Type": "application/json"
         }
 
+    @staticmethod
+    def _make_secure_settings():
+        """Create mock settings that pass security checks for ingest tests."""
+        from unittest.mock import PropertyMock
+        mock = MagicMock()
+        mock.INGEST_API_KEY = "test-secret-key-for-ingest-tests"
+        mock.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        return mock
+
     async def test_ingest_success(self):
         """Test successful metric ingestion."""
         from fastapi.testclient import TestClient
         from unittest.mock import patch, MagicMock
 
         test_client = TestClient(app)
+        test_key = "test-secret-key-for-ingest-tests"
 
         payload = {
             "provider": "claude",
@@ -174,20 +185,23 @@ class TestIngestEndpoint:
         }
 
         body = json.dumps(payload)
-        headers = self._get_hmac_headers(body)
+        headers = self._get_hmac_headers(body, api_key=test_key)
 
         # Mock external_metric_service to avoid writing to real file
-        # The endpoint accesses .metrics dict directly and calls ._save()
         mock_metrics = {}
         with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
             mock_service.metrics = mock_metrics
             mock_service._save = MagicMock()
 
-            response = test_client.post(
-                "/api/ingest",
-                content=body,
-                headers=headers
-            )
+            with patch('app.api.endpoints.ingest.settings') as mock_settings:
+                mock_settings.INGEST_API_KEY = test_key
+                mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+
+                response = test_client.post(
+                    "/api/ingest",
+                    content=body,
+                    headers=headers
+                )
 
             # Should accept valid ingest
             assert response.status_code in [200, 202]
@@ -210,7 +224,12 @@ class TestIngestEndpoint:
             "Content-Type": "application/json"
         }
         
-        response = test_client.post("/api/ingest", content=body, headers=headers)
+        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+            mock_settings.INGEST_API_KEY = "test-key"
+            mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+
+            response = test_client.post("/api/ingest", content=body, headers=headers)
+        
         assert response.status_code == 401
         assert "Invalid HMAC signature" in response.json()["detail"]
 
@@ -220,6 +239,7 @@ class TestIngestEndpoint:
         from unittest.mock import patch, MagicMock
 
         test_client = TestClient(app)
+        test_key = "test-secret-key-for-ingest-tests"
 
         oauth_token = "sk-ant-oauthtest123"
         payload = {
@@ -239,7 +259,7 @@ class TestIngestEndpoint:
         }
 
         body = json.dumps(payload)
-        headers = self._get_hmac_headers(body)
+        headers = self._get_hmac_headers(body, api_key=test_key)
 
         stored_metrics = {}
 
@@ -247,8 +267,12 @@ class TestIngestEndpoint:
             mock_service.metrics = stored_metrics
             mock_service._save = MagicMock()
 
-            with patch('app.api.endpoints.ingest.token_cache'):
-                response = test_client.post("/api/ingest", content=body, headers=headers)
+            with patch('app.api.endpoints.ingest.settings') as mock_settings:
+                mock_settings.INGEST_API_KEY = test_key
+                mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+
+                with patch('app.api.endpoints.ingest.token_cache'):
+                    response = test_client.post("/api/ingest", content=body, headers=headers)
 
         assert response.status_code == 200
         # The raw oauth token must not appear in any stored card detail
@@ -262,6 +286,7 @@ class TestIngestEndpoint:
         from fastapi.testclient import TestClient
 
         test_client = TestClient(app)
+        test_key = "test-secret-key-for-ingest-tests"
 
         invalid_payload = {
             "provider": "claude"
@@ -269,13 +294,17 @@ class TestIngestEndpoint:
         }
 
         body = json.dumps(invalid_payload)
-        headers = self._get_hmac_headers(body)
+        headers = self._get_hmac_headers(body, api_key=test_key)
 
-        response = test_client.post(
-            "/api/ingest",
-            content=body,
-            headers=headers
-        )
+        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+            mock_settings.INGEST_API_KEY = test_key
+            mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+
+            response = test_client.post(
+                "/api/ingest",
+                content=body,
+                headers=headers
+            )
 
         # Should reject invalid payload with 400 (per current implementation), NOT 401
         assert response.status_code == 400
@@ -302,6 +331,35 @@ class TestIngestEndpoint:
 
         assert response.status_code == 503
         assert "not configured" in response.json().get("detail", "").lower()
+
+    async def test_ingest_rejects_when_api_key_is_default(self):
+        """C3: ingest endpoint must return 503 when INGEST_API_KEY is the default insecure value."""
+        from fastapi.testclient import TestClient
+        from app.core.config import DEFAULT_INGEST_API_KEY
+
+        test_client = TestClient(app)
+
+        payload = {"provider": "claude", "metrics": []}
+        body = json.dumps(payload)
+        timestamp = str(int(time.time()))
+        sig = hmac.new(
+            DEFAULT_INGEST_API_KEY.encode(),
+            (timestamp + body).encode(),
+            hashlib.sha256
+        ).hexdigest()
+        headers = {
+            "X-Signature": sig,
+            "X-Timestamp": timestamp,
+            "Content-Type": "application/json",
+        }
+
+        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+            mock_settings.INGEST_API_KEY = DEFAULT_INGEST_API_KEY
+            mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = True
+            response = test_client.post("/api/ingest", content=body, headers=headers)
+
+        assert response.status_code == 503
+        assert "default" in response.json().get("detail", "").lower()
 
 
 class TestCollectorOrchestration:

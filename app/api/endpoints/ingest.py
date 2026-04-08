@@ -27,10 +27,13 @@ async def ingest_metrics(
     - X-Signature: HMAC-SHA256(secret, timestamp + body)
     - X-Timestamp: Unix timestamp (within 5 minutes)
     """
-    # 0. Guard against misconfigured empty API key
+    # 0. Guard against misconfigured or insecure API key
     if not settings.INGEST_API_KEY:
         logger.error("INGEST_API_KEY is empty — ingest endpoint is disabled")
         raise HTTPException(status_code=503, detail="Ingest endpoint not configured: INGEST_API_KEY is empty")
+    if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
+        logger.error("INGEST_API_KEY is the default insecure value — ingest endpoint is disabled")
+        raise HTTPException(status_code=503, detail="Ingest endpoint not configured: INGEST_API_KEY must be changed from default")
 
     # 1. Check headers
     if not x_signature or not x_timestamp:

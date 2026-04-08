@@ -47,6 +47,9 @@ def get_platform_config_dir(app_name: str) -> str:
         return os.path.join(home, ".config", app_name)
 
 
+DEFAULT_INGEST_API_KEY = "sidecar-default-secret"
+
+
 class Settings:
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
@@ -121,7 +124,11 @@ class Settings:
     ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
     KIMI_API_KEY: str = os.getenv("KIMI_API_KEY", "")
     KIMI_AUTH_TOKEN: str = os.getenv("KIMI_AUTH_TOKEN", "")
-    INGEST_API_KEY: str = os.getenv("INGEST_API_KEY", "sidecar-default-secret")
+    INGEST_API_KEY: str = os.getenv("INGEST_API_KEY", DEFAULT_INGEST_API_KEY)
+    
+    @property
+    def INGEST_API_KEY_IS_INSECURE_DEFAULT(self) -> bool:
+        return self.INGEST_API_KEY == DEFAULT_INGEST_API_KEY
     
     # OAuth Credentials (from environment)
     GEMINI_OAUTH_CLIENT_ID: str = os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
@@ -149,8 +156,9 @@ class Settings:
 settings = Settings()
 
 # Security check: Warn if using default ingest secret
-if settings.INGEST_API_KEY == "sidecar-default-secret":
+if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
     logger.warning("=" * 60)
     logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
-    logger.warning("Please set INGEST_API_KEY environment variable to a strong secret.")
+    logger.warning("The ingest endpoint is DISABLED until a custom key is set.")
+    logger.warning("Set INGEST_API_KEY environment variable to a strong secret.")
     logger.warning("=" * 60)
