@@ -51,6 +51,9 @@ REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
 # Global state for daemon mode
 _daemon_running = False
 _pid_file_path: Optional[Path] = None
+_hostname: Optional[str] = None  # Cached hostname from gethostname()
+_windows_cred_cache: Optional[dict] = None  # cache {target: password, ttl: timestamp}s
+_windows_cred_ttl_seconds: int = 300  # Cache credential for 5 minutes
 
 
 def get_sidecar_dir() -> Path:
@@ -77,6 +80,14 @@ def get_log_path() -> Path:
 def get_pid_file_path() -> Path:
     """Get the PID file path."""
     return get_sidecar_dir() / "sidecar.pid"
+
+
+def get_hostname() -> str:
+    """Get cached hostname or call gethostname() once."""
+    global _hostname
+    if _hostname is None:
+        _hostname = socket.gethostname()
+    return _hostname
 
 
 def ensure_dirs() -> None:
@@ -187,6 +198,8 @@ def write_pid_file() -> bool:
             pass
     
     _pid_file_path.write_text(str(os.getpid()))
+    # Cache hostname after initialization
+    get_hostname()
     return True
 
 
@@ -205,6 +218,9 @@ def cleanup() -> None:
     global _daemon_running
     _daemon_running = False
     remove_pid_file()
+    # Clear credential cache on exit
+    global _windows_cred_cache
+    _windows_cred_cache = None
     logging.info("Sidecar shutdown complete")
 
 
@@ -250,16 +266,16 @@ def queue_push(payload: Dict[str, Any]) -> None:
     queue_rotate()
 
 
-def queue_rotate() -> None:
+def queue_rotate(max_size_mb: Optional[int] = None, config: Optional[Dict[str, Any]] = None) -> None:
     """Rotate queue files, removing oldest if total size exceeds limit."""
     queue_dir = get_queue_dir()
     if not queue_dir.exists():
         return
     
-    max_size_bytes = 10 * 1024 * 1024  # 10MB default
-    config = load_config()
-    if "queue_max_size_mb" in config:
-        max_size_bytes = config["queue_max_size_mb"] * 1024 * 1024
+    if max_size_mb is None and config:
+        max_size_mb = config.get("queue_max_size_mb", 10)
+    
+    max_size_bytes = max_size_mb * 1024 * 1024
     
     # Get all queue files sorted by modification time (oldest first)
     queue_files = sorted(
@@ -512,9 +528,18 @@ def get_all_chrome_cookies_paths() -> list:
 
 
 def get_windows_credential(target: str) -> Optional[str]:
-    """Extract credential from Windows Credential Manager."""
+    """Extract credential from Windows Credential Manager with caching."""
+    import time
+    
     if platform.system() != "Windows":
         return None
+    
+    # Return cached credential if still valid
+    if _windows_cred_cache is not None:
+        now = time.time()
+        for cached_target, (password, ttl) in _windows_cred_cache.items():
+            if now < ttl and cached_target == target:
+                return password
     
     try:
         # Try using PowerShell to access Credential Manager
@@ -527,6 +552,7 @@ def get_windows_credential(target: str) -> Optional[str]:
         if result.returncode == 0:
             password = result.stdout.strip()
             if password:
+                _windows_cred_cache[target] = (password, time.time() + _windows_cred_ttl_seconds)
                 return password
     except Exception:
         pass
@@ -762,41 +788,33 @@ class KimiCollector:
     """Extract Kimi auth token from Chrome cookies."""
     
     @staticmethod
-    def _get_cookie():
-        """Extract kimi-auth from Chrome cookies."""
+    def _get_cookie(cookie_name: str = "kimi-auth") -> Optional[str]:
+        """Extract cookie from Chrome cookies using direct URI access.
+        
+        Uses SQLite URI mode for direct file access without copying.
+        """
         cookies_paths = get_all_chrome_cookies_paths()
         if not cookies_paths:
             return None
         
         for cookies_path in cookies_paths:
-            temp_db = None
             try:
-                with tempfile.NamedTemporaryFile(delete=False) as tf:
-                    temp_db = tf.name
-                shutil.copy2(str(cookies_path), temp_db)
-                
-                conn = sqlite3.connect(temp_db)
+                # Use URI mode for direct file access, read-only
+                conn = sqlite3.connect(f"file:{str(cookies_path)}?mode=ro&uri=1", uri=True)
                 cursor = conn.cursor()
                 
-                for cookie_name in ["kimi-auth", "kimi_token"]:
-                    cursor.execute(
-                        "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
-                        (cookie_name,)
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        conn.close()
-                        return row[0]
-                
+                cursor.execute(
+                    "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
+                    (cookie_name,)
+                )
+                row = cursor.fetchone()
                 conn.close()
-            except:
+                
+                if row:
+                    return row[0]
+            except Exception as e:
+                logging.debug(f"Failed to read Kimi cookies from {cookies_path.name}: {e}")
                 continue
-            finally:
-                if temp_db and os.path.exists(temp_db):
-                    try:
-                        os.unlink(temp_db)
-                    except:
-                        pass
         return None
     
     @staticmethod
@@ -858,29 +876,21 @@ class OpenCodeCollector:
             return None
         
         for cookies_path in cookies_paths:
-            temp_db = None
             try:
-                with tempfile.NamedTemporaryFile(delete=False) as tf:
-                    temp_db = tf.name
-                shutil.copy2(str(cookies_path), temp_db)
-                
-                conn = sqlite3.connect(temp_db)
+                # Use URI mode for direct file access, read-only
+                conn = sqlite3.connect(f"file:{str(cookies_path)}?mode=ro&uri=1", uri=True)
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
                 )
                 row = cursor.fetchone()
                 conn.close()
+                
                 if row:
                     return row[0]
-            except:
+            except Exception as e:
+                logging.debug(f"Failed to read OpenCode cookies from {cookies_path.name}: {e}")
                 continue
-            finally:
-                if temp_db and os.path.exists(temp_db):
-                    try:
-                        os.unlink(temp_db)
-                    except:
-                        pass
         return None
     
     @staticmethod
@@ -1069,6 +1079,8 @@ def run_daemon(config: Dict[str, Any]) -> None:
     api_url = config["api_url"]
     api_key = config["api_key"]
     providers = config.get("providers", ["all"])
+    # Clear credential cache when starting daemon
+    _windows_cred_cache = None
     
     logging.info(f"Daemon started (PID: {os.getpid()}), interval: {interval}s")
     logging.info(f"API URL: {api_url}")
@@ -1083,7 +1095,7 @@ def run_daemon(config: Dict[str, Any]) -> None:
             if flushed > 0:
                 logging.info(f"Flushed {flushed} queued payloads")
             
-            # Check server health
+            # Check server health  
             if not health_check(api_url):
                 logging.warning("Server unreachable, queuing metrics for retry")
                 # Still collect and queue
@@ -1091,7 +1103,7 @@ def run_daemon(config: Dict[str, Any]) -> None:
                     metrics = collect_metrics(provider)
                     if metrics:
                         payload = {
-                            "provider": f"{provider}-{socket.gethostname()}",
+                            "provider": f"{provider}-{get_hostname()}",
                             "metrics": metrics
                         }
                         queue_push(payload)
@@ -1103,7 +1115,7 @@ def run_daemon(config: Dict[str, Any]) -> None:
                         continue
                     
                     payload = {
-                        "provider": f"{provider}-{socket.gethostname()}",
+                        "provider": f"{provider}-{get_hostname()}",
                         "metrics": metrics
                     }
                     
