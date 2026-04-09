@@ -199,7 +199,7 @@ class SmartCollector:
             
             if result:
                 self._mark_success(result)
-                return result
+                return copy.deepcopy(result)
             else:
                 # Empty result without error
                 self._mark_failure(Exception("Empty result from collector"))

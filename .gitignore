@@ -1,4 +1,5 @@
 .env
+.pytest_cache/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,8 +14,22 @@ node_modules/
 tasks.md
 task.md
 diagnose.py
-docs/competitors.md
 .gemini/
+.claude/
+.codex/
+.anthropic/
+
+# Local data and logs
+*.jsonl
+data/
+sessions/
+metrics/
+
+# Database and state files
+*.db
+*.sqlite
+quota.json
+external_metrics.json
 
 # NOTE: frontend/css/styles.css is built from frontend/css/input.css
 # It is checked into git so the app works without Node.js installed

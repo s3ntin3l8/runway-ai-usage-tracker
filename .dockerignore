@@ -67,7 +67,19 @@ tmp/
 temp/
 *.log
 *.bak
+*.jsonl
+
+# Database & State
+*.db
+*.sqlite
+metrics/
+sessions/
+data/
+quota.json
+external_metrics.json
 
 # AI config
 .gemini/
 .claude/
+.codex/
+.anthropic/
