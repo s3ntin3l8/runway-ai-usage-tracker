@@ -212,12 +212,6 @@ class TestAnthropicCollector:
         """Test successful OAuth token refresh when original token is expired."""
         collector = AnthropicCollector()
 
-        # Mock initial 401 response (expired token)
-        oauth_401_response = MagicMock(spec=httpx.Response)
-        oauth_401_response.status_code = 401
-        oauth_401_response.json.return_value = {"error": "unauthorized"}
-        oauth_401_response.text = '{"error": "unauthorized"}'
-
         # Mock successful token refresh response
         refresh_response = MagicMock(spec=httpx.Response)
         refresh_response.status_code = 200
@@ -227,18 +221,19 @@ class TestAnthropicCollector:
             "expires_in": 28800,
         }
 
-        # Mock successful OAuth response
-        oauth_success_response = MagicMock(spec=httpx.Response)
-        oauth_success_response.status_code = 200
-        oauth_success_response.json.return_value = mock_anthropic_oauth_response
-
-        # Use patch for http_request_with_retry to control the flow precisely
-        with patch(
-            "app.services.collectors.anthropic.http_request_with_retry",
-            new_callable=AsyncMock,
-        ) as mock_retry:
-            # First call returns 401, second (after refresh) returns 200
-            mock_retry.side_effect = [oauth_401_response, oauth_success_response]
+        # Control the flow by mocking _get_claude_oauth directly
+        with patch.object(collector, "_get_claude_oauth") as mock_get_oauth:
+            # First call returns 401 error card, second (after refresh) returns success
+            mock_get_oauth.side_effect = [
+                [
+                    {
+                        "service": "Claude Pro",
+                        "remaining": "ERR",
+                        "detail": "Expired/Invalid Token (OAuth)",
+                    }
+                ],
+                [{"service": "Claude", "remaining": "50%", "data_source": "oauth"}],
+            ]
             mock_http_client.post.return_value = refresh_response
 
             with patch(
@@ -267,13 +262,10 @@ class TestAnthropicCollector:
                             ):
                                 # First request gets 401, then reactive refresh happens, then second request succeeds
                                 result = await collector.collect(mock_http_client)
-                                print(f"\nDEBUG: result after refresh = {result}")
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
         assert len(result) >= 1
-        for i, card in enumerate(result):
-            print(f"DEBUG: card {i} = {card}")
         assert all(card.get("remaining") != "ERR" for card in result)
         assert any(card.get("data_source") == "oauth" for card in result)
 
