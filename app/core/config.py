@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from typing import Optional
 import platform
 import subprocess
 from dotenv import load_dotenv
@@ -85,10 +86,37 @@ class Settings:
         return ""
 
     @property
+    def CHATGPT_OAUTH_TOKEN(self) -> str:
+        """Get ChatGPT OAuth token from env or auth.json."""
+        # Priority 1: Env var
+        token = os.getenv("CHATGPT_OAUTH_TOKEN", "")
+        if token:
+            return token
+
+        # Priority 2: ~/.codex/auth.json
+        if os.path.exists(self.CHATGPT_AUTH_PATH):
+            try:
+                with open(self.CHATGPT_AUTH_PATH, "r") as f:
+                    data = json.load(f)
+                    val = data.get("tokens", {}).get("access_token")
+                    if val:
+                        return val
+            except Exception as e:
+                logger.debug(f"Error reading ChatGPT auth from {self.CHATGPT_AUTH_PATH}: {e}")
+
+        return ""
+
+    _claude_token_cache: Optional[str] = None
+
+    @property
     def CLAUDE_CODE_OAUTH_TOKEN(self) -> str:
+        if self._claude_token_cache:
+            return self._claude_token_cache
+            
         # Priority 1: Env var
         token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
         if token:
+            self._claude_token_cache = token
             return token
 
         # Priority 2: Claude Code credentials (search multiple locations)
@@ -105,6 +133,7 @@ class Settings:
                         data = json.load(f)
                         val = data.get("claudeAiOauth", {}).get("accessToken")
                         if val:
+                            self._claude_token_cache = val
                             return val
                 except Exception as e:
                     logger.debug(f"Error reading credentials from {cred_path}: {e}")
@@ -126,10 +155,12 @@ class Settings:
                         val = data.get("claudeAiOauth", {}).get("accessToken")
                         if val:
                             logger.debug("Found Claude OAuth token in macOS Keychain")
+                            self._claude_token_cache = val
                             return val
                     except json.JSONDecodeError:
                         # Might be stored as raw token string
                         if keychain_data.startswith("sk-"):
+                            self._claude_token_cache = keychain_data
                             return keychain_data
             except subprocess.TimeoutExpired:
                 logger.debug("Keychain access timed out")
@@ -142,6 +173,7 @@ class Settings:
             token = keyring.get_password("runway", "claude-oauth-token")
             if token:
                 logger.debug("Found Claude OAuth token in system keyring")
+                self._claude_token_cache = token
                 return token
         except ImportError:
             logger.debug("keyring library not installed, skipping keyring retrieval")

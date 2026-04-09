@@ -31,6 +31,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
+import asyncio
 import httpx
 from app.core.config import settings
 from app.core.utils import PaceCalculator, human_delta, error_card
@@ -137,101 +138,117 @@ class ChatGPTCollector(BaseCollector):
                     return self._cached_api_results
                 cached_error = self._cached_api_results
 
-        # Try API if we have a token and no cached error
-        if token and not cached_error:
-            try:
-                headers = {"Authorization": f"Bearer {token}"}
-                cards = []
-                
-                # 1. Fetch Account Info (Tier, Credits)
-                account_url = "https://chatgpt.com/backend-api/accounts/check/v4"
-                acc_resp = await client.get(account_url, headers=headers, timeout=5)
-                acc_resp.raise_for_status()
-                
-                acc_data = acc_resp.json()
-                account_list = acc_data.get("accounts", {})
-                primary_account = next(iter(account_list.values()), {}) if account_list else {}
-                entitlements = primary_account.get("entitlements", [])
-                
-                if any(e.get("slug") == "plus" for e in entitlements):
-                    tier = "plus"
-                elif any(e.get("slug") == "team" for e in entitlements):
-                    tier = "team"
-                else:
-                    tier = "free"
+        # Try API if we have a token and no fresh cached error
+        # (We skip API if we have a cached error that is very recent, e.g. < 60s)
+        if token:
+            skip_api = False
+            if cached_error:
+                error_age = (now - self._last_api_fetch).total_seconds()
+                if error_age < 60: # Only skip API for 60s on error
+                    skip_api = True
+            
+            if not skip_api:
+                try:
+                    headers = {"Authorization": f"Bearer {token}"}
+                    cards = []
+                    
+                    # 1. Fetch Account Info (Tier, Credits)
+                    account_url = "https://chatgpt.com/backend-api/accounts/check/v4"
+                    acc_resp = await client.get(account_url, headers=headers, timeout=5)
+                    acc_resp.raise_for_status()
+                    
+                    acc_data = acc_resp.json()
+                    account_list = acc_data.get("accounts", {})
+                    primary_account = next(iter(account_list.values()), {}) if account_list else {}
+                    entitlements = primary_account.get("entitlements", [])
+                    
+                    if any(e.get("slug") == "plus" for e in entitlements):
+                        tier = "plus"
+                    elif any(e.get("slug") == "team" for e in entitlements):
+                        tier = "team"
+                    else:
+                        tier = "free"
 
-                status = primary_account.get("account_status", "active")
-                cards.append({
-                    "service": "ChatGPT Account",
-                    "icon": "💬",
-                    "remaining": tier.upper(),
-                    "unit": "tier",
-                    "reset": status.capitalize(),
-                    "health": "good",
-                    "pace": "Active" if status == "active" else "Alert",
-                    "detail": f"Account Tier: {tier.capitalize()} · {status}",
-                    "data_source": auth.get("source", "oauth"),
-                    "tier": tier,
-                    "updated_at": now.isoformat(),
-                })
-
-                # 2. Fetch Usage (wham/usage)
-                usage_url = "https://chatgpt.com/backend-api/wham/usage"
-                resp = await client.get(usage_url, headers=headers, timeout=5)
-                resp.raise_for_status()
-                
-                data = resp.json()
-                rate_limit = data.get("rate_limit", {})
-                primary = rate_limit.get("primary_window", {})
-                if primary:
-                    pct = primary.get("used_percent", 0.0)
-                    reset_ts = primary.get("reset_at")
-                    reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
-
+                    status = primary_account.get("account_status", "active")
                     cards.append({
-                        "service": "ChatGPT Codex",
+                        "service": "ChatGPT Account",
                         "icon": "💬",
-                        "remaining": f"{(100-pct):.1f}%",
-                        "unit": "remaining",
-                        "reset": human_delta(reset_at),
-                        "health": "good" if pct < 80 else "warning",
-                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                        "detail": f"{pct:.1f}% used",
-                        "used_value": float(pct),
-                        "limit_value": 100.0,
-                        "unit_type": "percent",
-                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "remaining": tier.upper(),
+                        "unit": "tier",
+                        "reset": status.capitalize(),
+                        "health": "good",
+                        "pace": "Active" if status == "active" else "Alert",
+                        "detail": f"Account Tier: {tier.capitalize()} · {status}",
                         "data_source": auth.get("source", "oauth"),
                         "tier": tier,
-                        "usage_url": "https://chatgpt.com/codex/settings/usage/",
                         "updated_at": now.isoformat(),
                     })
 
-                if cards:
-                    self._cached_api_results = cards
-                    self._last_api_fetch = now
-                    return cards
+                    # 2. Fetch Usage (wham/usage)
+                    usage_url = "https://chatgpt.com/backend-api/wham/usage"
+                    resp = await client.get(usage_url, headers=headers, timeout=5)
+                    resp.raise_for_status()
+                    
+                    data = resp.json()
+                    rate_limit = data.get("rate_limit", {})
+                    primary = rate_limit.get("primary_window", {})
+                    if primary:
+                        pct = primary.get("used_percent", 0.0)
+                        reset_ts = primary.get("reset_at")
+                        reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
 
-            except Exception as e:
-                logger.debug(f"ChatGPT API Error: {e}")
-                error_result = [error_card("ChatGPT Codex", "💬", f"API Error: {str(e)[:20]}", error_type="api_error")]
-                self._cached_api_results = error_result
-                self._last_api_fetch = now
+                        cards.append({
+                            "service": "ChatGPT Codex",
+                            "icon": "💬",
+                            "remaining": f"{(100-pct):.1f}%",
+                            "unit": "remaining",
+                            "reset": human_delta(reset_at),
+                            "health": "good" if pct < 80 else "warning",
+                            "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                            "detail": f"{pct:.1f}% used",
+                            "used_value": float(pct),
+                            "limit_value": 100.0,
+                            "unit_type": "percent",
+                            "reset_at": reset_at.isoformat() if reset_at else None,
+                            "data_source": auth.get("source", "oauth"),
+                            "tier": tier,
+                            "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                            "updated_at": now.isoformat(),
+                        })
+
+                    if cards:
+                        self._cached_api_results = cards
+                        self._last_api_fetch = now
+                        return cards
+
+                except Exception as e:
+                    logger.debug(f"ChatGPT API Error: {e}")
+                    error_result = [error_card("ChatGPT Codex", "💬", f"API Error: {str(e)[:20]}", error_type="api_error")]
+                    self._cached_api_results = error_result
+                    self._last_api_fetch = now
+                    cached_error = error_result # Update local cached_error for potential returns
 
         # Fallback to local logs
         path = settings.CHATGPT_SESSIONS_DIR
         try:
-            files = glob.glob(f"{path}/**/*.jsonl", recursive=True)
+            # Wrap blocking glob and stat calls in thread
+            files = await asyncio.to_thread(glob.glob, f"{path}/**/*.jsonl", recursive=True)
             if not files:
+                # If we have an API error (either from this call or cached), prefer returning that
                 if cached_error: return cached_error
                 if token: return [error_card("ChatGPT Codex", "💬", "API Error", error_type="api_error")]
                 return [error_card("ChatGPT Codex", "💬", "No logs/auth", error_type="missing_config")]
                 
-            latest = max(files, key=os.path.getmtime)
-            last_line = None
-            with open(latest, "r") as f:
-                for line in f:
-                    if line.strip(): last_line = line
+            latest = await asyncio.to_thread(max, files, key=os.path.getmtime)
+            
+            def read_last_line(file_path):
+                last_line = None
+                with open(file_path, "r") as f:
+                    for line in f:
+                        if line.strip(): last_line = line
+                return last_line
+
+            last_line = await asyncio.to_thread(read_last_line, latest)
             
             if not last_line: return [error_card("ChatGPT Codex", "💬", "Empty log", error_type="parse_error")]
             usage = json.loads(last_line)

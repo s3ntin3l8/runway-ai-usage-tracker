@@ -155,16 +155,19 @@ class AnthropicCollector(BaseCollector):
         """Check if a web cookie is available without making API calls."""
         return get_claude_session_cookie() is not None
 
-    def _is_token_expired(self, token: str) -> bool:
+    async def _is_token_expired(self, token: str) -> bool:
         """Check if OAuth token is expired by reading credentials file."""
         try:
-            if os.path.exists(self._credentials_path):
-                with open(self._credentials_path, 'r') as f:
-                    data = json.load(f)
-                    expires_at_ms = data.get("claudeAiOauth", {}).get("expiresAt")
-                    if expires_at_ms:
-                        expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=timezone.utc)
-                        return datetime.now(timezone.utc) >= expires_at
+            if await asyncio.to_thread(os.path.exists, self._credentials_path):
+                def read_json(path):
+                    with open(path, "r") as f:
+                        return json.load(f)
+                
+                data = await asyncio.to_thread(read_json, self._credentials_path)
+                expires_at_ms = data.get("claudeAiOauth", {}).get("expiresAt")
+                if expires_at_ms:
+                    expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=timezone.utc)
+                    return datetime.now(timezone.utc) >= expires_at
         except Exception as e:
             logger.debug(f"Could not check token expiration: {e}")
         return False
@@ -207,7 +210,7 @@ class AnthropicCollector(BaseCollector):
             if not token:
                 token = await token_cache.get_token("anthropic", "oauth_token")
             
-            if token and not self._is_token_expired(token):
+            if token and not await self._is_token_expired(token):
                 # Another request already refreshed the token
                 logger.info("Token already refreshed by another concurrent request")
                 return token
@@ -220,10 +223,12 @@ class AnthropicCollector(BaseCollector):
         
         # Priority 1: Credentials file (local access)
         try:
-            if os.path.exists(self._credentials_path):
-                with open(self._credentials_path, 'r') as f:
-                    data = json.load(f)
-                    refresh_token = data.get("claudeAiOauth", {}).get("refreshToken")
+            if await asyncio.to_thread(os.path.exists, self._credentials_path):
+                def read_json(path):
+                    with open(path, "r") as f:
+                        return json.load(f)
+                data = await asyncio.to_thread(read_json, self._credentials_path)
+                refresh_token = data.get("claudeAiOauth", {}).get("refreshToken")
         except Exception as e:
             logger.warning(f"Could not load credentials for refresh: {e}")
         
@@ -368,7 +373,7 @@ class AnthropicCollector(BaseCollector):
                 return self._cached_results
 
         # Check if token is expired and attempt refresh
-        if self._is_token_expired(token):
+        if await self._is_token_expired(token):
             logger.info("OAuth token expired, attempting refresh")
             new_token = await self._refresh_oauth_token(client)
             if new_token:
@@ -768,7 +773,7 @@ class AnthropicCollector(BaseCollector):
 
         if not all_files:
             logger.debug(f"No Claude project log files found in any config directory")
-            return None
+            return []
 
         # Read credentials file for tier info
         tier = None

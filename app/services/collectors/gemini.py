@@ -45,7 +45,7 @@ import time
 import asyncio
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import httpx
 from app.core.config import settings
 from app.core.utils import error_card, PaceCalculator, safe_write_json
@@ -121,9 +121,15 @@ class GeminiCollector(BaseCollector):
         # Fetch fresh data
         results = await self._collect_via_api(client)
 
-        # Cache ALL results (success or error, including empty list)
-        self._cached_results = results
-        self._last_fetch = now
+        # Cache results: 5m for success, 60s for errors/empty
+        if results and not self._is_error_result(results):
+            self._cached_results = results
+            self._last_fetch = now
+        else:
+            # Store error results temporarily so we don't hammer the API on every request
+            # but allow relatively quick recovery
+            self._cached_results = results
+            self._last_fetch = now - timedelta(seconds=(self._cache_ttl - 60))
 
         return results
 
@@ -153,10 +159,13 @@ class GeminiCollector(BaseCollector):
             # (same logic as sidecar for consistency)
             creds = None
             
-            if os.path.exists(self._credentials_path):
+            if await asyncio.to_thread(os.path.exists, self._credentials_path):
                 try:
-                    with open(self._credentials_path, "r") as f:
-                        creds = json.load(f)
+                    def read_json(path):
+                        with open(path, "r") as f:
+                            return json.load(f)
+                    
+                    creds = await asyncio.to_thread(read_json, self._credentials_path)
                     logger.debug(f"Loaded Gemini credentials from {self._credentials_path}")
                 except Exception as e:
                     logger.debug(f"Failed to read {self._credentials_path}: {e}")
@@ -173,8 +182,10 @@ class GeminiCollector(BaseCollector):
                     if not cached_token:
                         # Re-read from file in case another request updated it
                         try:
-                            with open(self._credentials_path, "r") as f:
-                                creds = json.load(f)
+                            def read_json(path):
+                                with open(path, "r") as f:
+                                    return json.load(f)
+                            creds = await asyncio.to_thread(read_json, self._credentials_path)
                         except:
                             pass
                     
@@ -391,15 +402,20 @@ class GeminiCollector(BaseCollector):
         """
         sessions_dir = settings.GEMINI_SESSIONS_DIR
         try:
-            files = glob.glob(f"{sessions_dir}/*.jsonl")
+            files = await asyncio.to_thread(glob.glob, f"{sessions_dir}/*.jsonl")
             if not files: 
                 return []
-            total = 0
-            for fpath in files:
-                with open(fpath, "r") as f:
-                    for line in f:
-                        u = json.loads(line).get("usage", {})
-                        total += (u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
+            
+            def process_logs(fpaths):
+                total = 0
+                for fpath in fpaths:
+                    with open(fpath, "r") as f:
+                        for line in f:
+                            u = json.loads(line).get("usage", {})
+                            total += (u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
+                return total
+
+            total = await asyncio.to_thread(process_logs, files)
             return [{
                 "service": "Gemini CLI (Logs)",
                 "icon": "🔵",

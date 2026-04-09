@@ -101,9 +101,10 @@ class CollectorManager:
         self._lazy_load_collectors()
         client = await self._get_client()
         try:
-            # Run all collectors concurrently with exception handling
+            # Run all collectors concurrently with exception handling and per-collector timeouts
+            # Each collector gets 10s to complete, with a 25s global timeout as safety
             tasks = [
-                smart_collector.collect(client)
+                asyncio.wait_for(smart_collector.collect(client), timeout=10.0)
                 for smart_collector in self.smart_collectors
             ]
             # Wrap with global timeout to protect against I/O hangs

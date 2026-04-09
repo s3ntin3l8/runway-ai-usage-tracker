@@ -93,7 +93,6 @@ class SmartCollector:
             return False
         
         age = time.time() - self.last_success_time
-        self.cache_age_seconds = age
         
         # If error threshold exceeded, force fresh fetch attempt
         if self.consecutive_errors >= self.error_threshold:
@@ -264,7 +263,7 @@ class SmartCollector:
             "collector": self.collector_name,
             "cache_status": {
                 "has_cache": self.last_result is not None,
-                "cache_age_seconds": self.cache_age_seconds,
+                "cache_age_seconds": time.time() - self.last_success_time if self.last_success_time else 0,
                 "cache_ttl_seconds": self.ttl,
             },
             "error_tracking": {
