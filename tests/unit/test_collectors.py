@@ -51,12 +51,17 @@ class TestAnthropicCollector:
                 mock_settings.CLAUDE_PROJECTS_DIR = "/home/user/.claude/projects"
                 mock_settings.LOCAL_COLLECTOR_ENABLED = True
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.CLAUDE_PRO_LIMIT = 2000000
+                mock_settings.CLAUDE_FREE_LIMIT = 500000
 
                 with patch(
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    result = await collector.collect(mock_http_client)
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="test_token"
+                    ):
+                        result = await collector.collect(mock_http_client)
 
         # Should return cards for each quota window
         assert isinstance(result, list)
@@ -86,14 +91,15 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.glob.glob", return_value=[]
+                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    return_value=None,
                 ):
-                    with patch(
-                        "app.services.collectors.anthropic.get_claude_session_cookie",
-                        return_value=None,
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="invalid_token"
                     ):
-                        with patch.object(
-                            collector, "_get_valid_token", return_value=None
+                        with patch(
+                            "app.services.collectors.anthropic.glob.glob",
+                            return_value=[],
                         ):
                             result = await collector.collect(mock_http_client)
 
@@ -119,16 +125,20 @@ class TestAnthropicCollector:
             with patch("app.services.collectors.anthropic.settings") as mock_settings:
                 mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    # First call - should hit API
-                    result1 = await collector.collect(mock_http_client)
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="test_token"
+                    ):
+                        # First call - should hit API
+                        result1 = await collector.collect(mock_http_client)
 
-                    # Second call immediately - should use cache
-                    result2 = await collector.collect(mock_http_client)
+                        # Second call immediately - should use cache
+                        result2 = await collector.collect(mock_http_client)
 
                 # API should only be called once (cached on second call)
                 assert mock_http_client.request.call_count == 1
@@ -152,44 +162,48 @@ class TestAnthropicCollector:
             with patch("app.services.collectors.anthropic.settings") as mock_settings:
                 mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value="fake_session",
                 ):
                     with patch.object(
-                        collector,
-                        "_get_claude_via_web_api",
-                        return_value=[
-                            {
-                                "service": "Claude (Session Window)",
-                                "icon": "🟠",
-                                "remaining": "50.0%",
-                                "unit": "capacity",
-                                "reset": "in 4h",
-                                "health": "good",
-                                "pace": "Sustainable",
-                                "detail": "50.0% used [Web API]",
-                                "used_value": 50.0,
-                                "limit_value": 100.0,
-                                "unit_type": "percent",
-                                "data_source": "web_api",
-                            }
-                        ],
+                        collector, "_get_valid_token", return_value="test_token"
                     ):
-                        # First call - OAuth gets 429 (3 retries), falls back to Web API
-                        result1 = await collector.collect(mock_http_client)
+                        with patch.object(
+                            collector,
+                            "_get_claude_via_web_api",
+                            return_value=[
+                                {
+                                    "service": "Claude (Session Window)",
+                                    "icon": "🟠",
+                                    "remaining": "50.0%",
+                                    "unit": "capacity",
+                                    "reset": "in 4h",
+                                    "health": "good",
+                                    "pace": "Sustainable",
+                                    "detail": "50.0% used [Web API]",
+                                    "used_value": 50.0,
+                                    "limit_value": 100.0,
+                                    "unit_type": "percent",
+                                    "data_source": "web_api",
+                                }
+                            ],
+                        ):
+                            # First call - OAuth gets 429 (3 retries), falls back to Web API
+                            result1 = await collector.collect(mock_http_client)
 
-                        # Second call - should use cached 429 error, skip OAuth entirely
-                        result2 = await collector.collect(mock_http_client)
+                            # Second call - should use cached 429 error, skip OAuth entirely
+                            result2 = await collector.collect(mock_http_client)
 
-                        # OAuth API should be called 3 times on first call (retries), 0 times on second (cached)
-                        assert (
-                            mock_http_client.request.call_count == 3
-                        )  # 3 retries on first call
-                        # Both results should come from Web API fallback
-                        assert result1[0]["data_source"] == "web_api"
-                        assert result2[0]["data_source"] == "web_api"
+                            # OAuth API should be called 3 times on first call (retries), 0 times on second (cached)
+                            assert (
+                                mock_http_client.request.call_count == 3
+                            )  # 3 retries on first call
+                            # Both results should come from Web API fallback
+                            assert result1[0]["data_source"] == "web_api"
+                            assert result2[0]["data_source"] == "web_api"
 
     @pytest.mark.asyncio
     async def test_collect_oauth_token_refresh_success(
@@ -245,6 +259,7 @@ class TestAnthropicCollector:
                 mock_settings.CLAUDE_PRO_LIMIT = 2000000
                 mock_settings.CLAUDE_FREE_LIMIT = 500000
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 # Return False for expiration check so we hit the reactive path (401 response)
                 with patch.object(collector, "_is_token_expired", return_value=False):
@@ -310,12 +325,15 @@ class TestAnthropicCollector:
                 mock_settings.CLAUDE_FREE_LIMIT = 500000
                 mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value="sk-ant-session123",
                 ):
-                    with patch.object(collector, "_get_valid_token", return_value=None):
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="invalid_token"
+                    ):
                         result = await collector.collect(mock_http_client)
 
         # Should return Web API results
@@ -349,51 +367,54 @@ class TestAnthropicCollector:
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    # Mock local log data with all token types
-                    log_data = [
-                        json.dumps(
-                            {
-                                "type": "assistant",
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "message": {
-                                    "id": "msg_1",
-                                    "requestId": "req_1",
-                                    "usage": {
-                                        "input_tokens": 1000,
-                                        "output_tokens": 500,
-                                        "cache_read_tokens": 2000,
-                                        "cache_creation_tokens": 100,
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="invalid_token"
+                    ):
+                        # Mock local log data with all token types
+                        log_data = [
+                            json.dumps(
+                                {
+                                    "type": "assistant",
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "message": {
+                                        "id": "msg_1",
+                                        "requestId": "req_1",
+                                        "usage": {
+                                            "input_tokens": 1000,
+                                            "output_tokens": 500,
+                                            "cache_read_tokens": 2000,
+                                            "cache_creation_tokens": 100,
+                                        },
                                     },
-                                },
-                            }
-                        )
-                        + "\n",
-                        json.dumps(
-                            {
-                                "type": "assistant",
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "message": {
-                                    "id": "msg_2",  # Different message, should be counted
-                                    "requestId": "req_2",
-                                    "usage": {
-                                        "input_tokens": 500,
-                                        "output_tokens": 200,
-                                        "cache_read_tokens": 0,
-                                        "cache_creation_tokens": 0,
+                                }
+                            )
+                            + "\n",
+                            json.dumps(
+                                {
+                                    "type": "assistant",
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "message": {
+                                        "id": "msg_2",  # Different message, should be counted
+                                        "requestId": "req_2",
+                                        "usage": {
+                                            "input_tokens": 500,
+                                            "output_tokens": 200,
+                                            "cache_read_tokens": 0,
+                                            "cache_creation_tokens": 0,
+                                        },
                                     },
-                                },
-                            }
-                        )
-                        + "\n",
-                    ]
+                                }
+                            )
+                            + "\n",
+                        ]
 
-                    with patch("builtins.open", mock_open(read_data="".join(log_data))):
-                        with patch(
-                            "app.services.collectors.anthropic.glob.glob",
-                            return_value=["/fake/path/test.jsonl"],
-                        ):
-                            with patch("os.path.isdir", return_value=True):
-                                result = await collector.collect(mock_http_client)
+                        with patch("builtins.open", mock_open(read_data="".join(log_data))):
+                            with patch(
+                                "app.services.collectors.anthropic.glob.glob",
+                                return_value=["/fake/path/test.jsonl"],
+                            ):
+                                with patch("os.path.isdir", return_value=True):
+                                    result = await collector.collect(mock_http_client)
 
         # Should return local log results
         assert isinstance(result, list)
@@ -467,13 +488,16 @@ class TestAnthropicCollector:
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    with patch("builtins.open", mock_open(read_data="".join(log_data))):
-                        with patch(
-                            "app.services.collectors.anthropic.glob.glob",
-                            return_value=["/fake/path/test.jsonl"],
-                        ):
-                            with patch("os.path.isdir", return_value=True):
-                                result = await collector.collect(mock_http_client)
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="invalid_token"
+                    ):
+                        with patch("builtins.open", mock_open(read_data="".join(log_data))):
+                            with patch(
+                                "app.services.collectors.anthropic.glob.glob",
+                                return_value=["/fake/path/test.jsonl"],
+                            ):
+                                with patch("os.path.isdir", return_value=True):
+                                    result = await collector.collect(mock_http_client)
 
         # Should deduplicate - only count once
         assert isinstance(result, list)
@@ -506,74 +530,77 @@ class TestAnthropicCollector:
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    with patch.dict(
-                        "os.environ", {"CLAUDE_CONFIG_DIR": "/path1,/path2"}
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="invalid_token"
                     ):
-                        with patch("os.path.isdir", return_value=True):
-                            with patch(
-                                "app.services.collectors.anthropic.glob.glob"
-                            ) as mock_glob:
-                                # Return files from both paths
-                                def glob_side_effect(pattern, **kwargs):
-                                    if "/path1" in pattern:
-                                        return ["/path1/projects/file1.jsonl"]
-                                    elif "/path2" in pattern:
-                                        return ["/path2/projects/file2.jsonl"]
-                                    return []
-
-                                mock_glob.side_effect = glob_side_effect
-
-                                # Mock file contents
-                                log_data_1 = (
-                                    json.dumps(
-                                        {
-                                            "type": "assistant",
-                                            "timestamp": datetime.now(
-                                                timezone.utc
-                                            ).isoformat(),
-                                            "message": {
-                                                "id": "msg_1",
-                                                "requestId": "req_1",
-                                                "usage": {
-                                                    "input_tokens": 1000,
-                                                    "output_tokens": 500,
-                                                },
-                                            },
-                                        }
-                                    )
-                                    + "\n"
-                                )
-
-                                log_data_2 = (
-                                    json.dumps(
-                                        {
-                                            "type": "assistant",
-                                            "timestamp": datetime.now(
-                                                timezone.utc
-                                            ).isoformat(),
-                                            "message": {
-                                                "id": "msg_2",
-                                                "requestId": "req_2",
-                                                "usage": {
-                                                    "input_tokens": 500,
-                                                    "output_tokens": 200,
-                                                },
-                                            },
-                                        }
-                                    )
-                                    + "\n"
-                                )
-
-                                def open_side_effect(path, **kwargs):
-                                    if "file1" in path:
-                                        return mock_open(read_data=log_data_1)()
-                                    else:
-                                        return mock_open(read_data=log_data_2)()
-
+                        with patch.dict(
+                            "os.environ", {"CLAUDE_CONFIG_DIR": "/path1,/path2"}
+                        ):
+                            with patch("os.path.isdir", return_value=True):
                                 with patch(
-                                    "builtins.open", side_effect=open_side_effect
-                                ):
-                                    result = await collector.collect(mock_http_client)
+                                    "app.services.collectors.anthropic.glob.glob"
+                                ) as mock_glob:
+                                    # Return files from both paths
+                                    def glob_side_effect(pattern, **kwargs):
+                                        if "/path1" in pattern:
+                                            return ["/path1/projects/file1.jsonl"]
+                                        elif "/path2" in pattern:
+                                            return ["/path2/projects/file2.jsonl"]
+                                        return []
+
+                                    mock_glob.side_effect = glob_side_effect
+
+                                    # Mock file contents
+                                    log_data_1 = (
+                                        json.dumps(
+                                            {
+                                                "type": "assistant",
+                                                "timestamp": datetime.now(
+                                                    timezone.utc
+                                                ).isoformat(),
+                                                "message": {
+                                                    "id": "msg_1",
+                                                    "requestId": "req_1",
+                                                    "usage": {
+                                                        "input_tokens": 1000,
+                                                        "output_tokens": 500,
+                                                    },
+                                                },
+                                            }
+                                        )
+                                        + "\n"
+                                    )
+
+                                    log_data_2 = (
+                                        json.dumps(
+                                            {
+                                                "type": "assistant",
+                                                "timestamp": datetime.now(
+                                                    timezone.utc
+                                                ).isoformat(),
+                                                "message": {
+                                                    "id": "msg_2",
+                                                    "requestId": "req_2",
+                                                    "usage": {
+                                                        "input_tokens": 500,
+                                                        "output_tokens": 200,
+                                                    },
+                                                },
+                                            }
+                                        )
+                                        + "\n"
+                                    )
+
+                                    def open_side_effect(path, **kwargs):
+                                        if "file1" in path:
+                                            return mock_open(read_data=log_data_1)()
+                                        else:
+                                            return mock_open(read_data=log_data_2)()
+
+                                    with patch(
+                                        "builtins.open", side_effect=open_side_effect
+                                    ):
+                                        result = await collector.collect(mock_http_client)
 
         # Should aggregate from both directories
         assert isinstance(result, list)
@@ -656,11 +683,15 @@ class TestAnthropicCollector:
         ):
             with patch("app.services.collectors.anthropic.settings") as mock_settings:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.LOCAL_COLLECTOR_ENABLED = False
                 with patch(
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    result = await collector.collect(mock_http_client)
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="test_token"
+                    ):
+                        result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
         assert len(result) >= 1
@@ -716,12 +747,15 @@ class TestAnthropicCollector:
                 mock_settings.CLAUDE_PRO_LIMIT = 2000000
                 mock_settings.CLAUDE_FREE_LIMIT = 500000
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value="session_key",
                 ):
-                    with patch.object(collector, "_get_valid_token", return_value=None):
+                    with patch.object(
+                        collector, "_get_valid_token", return_value="invalid_token"
+                    ):
                         result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
