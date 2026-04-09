@@ -234,7 +234,8 @@ class TestAnthropicCollector:
 
         # Use patch for http_request_with_retry to control the flow precisely
         with patch(
-            "app.services.collectors.anthropic.http_request_with_retry"
+            "app.services.collectors.anthropic.http_request_with_retry",
+            new_callable=AsyncMock,
         ) as mock_retry:
             # First call returns 401, second (after refresh) returns 200
             mock_retry.side_effect = [oauth_401_response, oauth_success_response]
