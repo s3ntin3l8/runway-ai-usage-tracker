@@ -20,31 +20,31 @@ from app.models.schemas import LimitCard
 class BaseCollector(ABC):
     """
     Abstract base class for all AI provider quota collectors.
-    
+
     Defines the interface that all provider-specific collectors must implement.
     Collectors are responsible for:
     - Fetching quota and usage data from their respective providers
     - Implementing resilient fallback strategies when APIs are unavailable
     - Returning standardized LimitCard dictionaries for frontend rendering
-    
+
     The collect() method should be idempotent and handle errors gracefully,
     returning error cards instead of raising exceptions.
     """
-    
+
     @abstractmethod
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Collect usage limits from the provider and return standardized result cards.
-        
+
         Implements the 3-tier fallback pattern:
         1. Primary: Direct API/OAuth calls with retry logic
         2. Secondary: Local log/file parsing as fallback
         3. Tertiary: Return error cards describing what failed
-        
+
         Args:
             client: httpx.AsyncClient instance for making API requests.
                    Reused across collectors to manage connection pooling.
-        
+
         Returns:
             List[Dict[str, Any]]: List of result dictionaries, each containing:
                 - service: str - Provider name (e.g., "Claude Pro", "Gemini API")
@@ -55,7 +55,7 @@ class BaseCollector(ABC):
                 - health: str - Status (good/warning/critical/unknown)
                 - pace: str - Estimated consumption rate or longevity
                 - detail: str - Additional context (data source, error reason, etc.)
-        
+
         Note:
             Should never raise exceptions. Return error_card() for all failure scenarios.
         """

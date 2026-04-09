@@ -7,18 +7,18 @@ Collection Strategy:
    - Returns real-time usage across multiple quota windows (5h, 7d, 7d-sonnet, 7d-opus, extra)
    - Implements caching (10 min TTL) to avoid rate limiting
    - Automatic token refresh when expired (via platform.claude.com)
-   
+
 2. Secondary: Web API via Chrome cookies (https://claude.ai/api/)
     - Extracts sessionKey cookie from Chrome for claude.ai domain
     - Calls Claude web API endpoints to get usage data
     - Same data quality as OAuth (session, weekly, model-specific quotas)
-    
+
 3. Tertiary: Enhanced local cost usage parsing
     - Parses .jsonl files from ~/.claude/projects/ and ~/.config/claude/projects/
     - Supports comma-separated CLAUDE_CONFIG_DIR for multiple roots
     - Tracks all token types: input, cache_read, cache_creation, output
     - Deduplicates streaming chunks by message.id + requestId
-    
+
 4. Quaternary: Error cards when all methods fail
     - Returns descriptive error with failure reason
     - Distinguishes between token expired, rate limited, missing data
@@ -54,7 +54,13 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from app.core.config import settings, get_platform_config_dir
 from app.services.credential_provider import credential_provider
-from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry, safe_write_json
+from app.core.utils import (
+    PaceCalculator,
+    human_delta,
+    error_card,
+    http_request_with_retry,
+    safe_write_json,
+)
 from app.core.browser_cookies import get_claude_session_cookie
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
@@ -68,19 +74,21 @@ CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 class AnthropicCollector(OAuthBaseCollector):
     """Collector for Anthropic (Claude) quota and usage metrics with 4-tier fallback."""
-    
+
     def __init__(self):
         """Initialize caching for OAuth results and token refresh tracking."""
         # Credentials file path (search multiple locations, default to standard)
         home = os.path.expanduser("~")
         credentials_path = os.path.join(home, ".claude", ".credentials.json")
-        platform_cred_path = os.path.join(get_platform_config_dir("claude"), ".credentials.json")
-        
+        platform_cred_path = os.path.join(
+            get_platform_config_dir("claude"), ".credentials.json"
+        )
+
         if not os.path.exists(credentials_path) and os.path.exists(platform_cred_path):
             credentials_path = platform_cred_path
-            
+
         super().__init__(provider_name="Anthropic", credentials_path=credentials_path)
-        
+
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 600  # 10 minutes cache to be safe with 429s
@@ -101,7 +109,9 @@ class AnthropicCollector(OAuthBaseCollector):
             if creds:
                 expires_at_ms = creds.get("claudeAiOauth", {}).get("expiresAt")
                 if expires_at_ms:
-                    expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=timezone.utc)
+                    expires_at = datetime.fromtimestamp(
+                        expires_at_ms / 1000, tz=timezone.utc
+                    )
                     return datetime.now(timezone.utc) >= expires_at
         except Exception as e:
             logger.debug(f"Could not check token expiration: {e}")
@@ -110,43 +120,52 @@ class AnthropicCollector(OAuthBaseCollector):
     async def _execute_refresh(self, client: httpx.AsyncClient) -> Optional[Dict]:
         """Execute the HTTP request to refresh the token for Anthropic."""
         creds = await self._get_credentials()
-        refresh_token = creds.get("claudeAiOauth", {}).get("refreshToken") if creds else None
-        
+        refresh_token = (
+            creds.get("claudeAiOauth", {}).get("refreshToken") if creds else None
+        )
+
         if not refresh_token:
             refresh_token = await token_cache.get_token("anthropic", "refresh_token")
-            
+
         if not refresh_token:
             return None
-            
+
         try:
             resp = await client.post(
                 "https://platform.claude.com/v1/oauth/token",
                 json={
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
-                    "client_id": CLAUDE_OAUTH_CLIENT_ID
+                    "client_id": CLAUDE_OAUTH_CLIENT_ID,
                 },
-                timeout=10
+                timeout=10,
             )
-            
+
             if resp.status_code == 200:
                 new_data = resp.json()
                 if not creds:
                     creds = {"claudeAiOauth": {}}
-                
+
                 creds["claudeAiOauth"]["accessToken"] = new_data["access_token"]
-                creds["claudeAiOauth"]["refreshToken"] = new_data.get("refresh_token", refresh_token)
-                creds["claudeAiOauth"]["expiresAt"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
-                
+                creds["claudeAiOauth"]["refreshToken"] = new_data.get(
+                    "refresh_token", refresh_token
+                )
+                creds["claudeAiOauth"]["expiresAt"] = int(time.time() * 1000) + (
+                    new_data["expires_in"] * 1000
+                )
+
                 # Update sidecar cache
-                await token_cache.store("anthropic", {
-                    "oauth_token": new_data["access_token"],
-                    "refresh_token": new_data.get("refresh_token", refresh_token)
-                })
-                
+                await token_cache.store(
+                    "anthropic",
+                    {
+                        "oauth_token": new_data["access_token"],
+                        "refresh_token": new_data.get("refresh_token", refresh_token),
+                    },
+                )
+
                 # Update credential_provider cache
                 credential_provider._claude_token_cache = new_data["access_token"]
-                
+
                 return creds
             elif resp.status_code == 400:
                 error_data = resp.json()
@@ -161,27 +180,29 @@ class AnthropicCollector(OAuthBaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Collect Claude quota data using 4-tier fallback strategy.
-        
+
         Tries in order:
         1. OAuth API with caching (env var or sidecar token)
         2. Web API via Chrome cookies (if user logged into claude.ai)
         3. Enhanced local log parsing (multiple config roots, full token tracking)
         4. Return descriptive error if all methods fail
-        
+
         Returns:
             List[Dict[str, Any]]: List of quota cards for each quota window.
         """
         # 1. Try OAuth API (automatic refresh handled by _get_valid_token)
         token = await self._get_valid_token(client)
-        
+
         if token:
             oauth_res = await self._get_claude_oauth_with_cache(client, token)
-            
+
             # Check if it's a 401 error - try refreshing once reactively
-            is_401 = any("Expired/Invalid Token" in str(r.get("detail", "")) for r in oauth_res)
+            is_401 = any(
+                "Expired/Invalid Token" in str(r.get("detail", "")) for r in oauth_res
+            )
             if is_401 and not self._terminal_failure:
                 logger.info("Got 401 from OAuth API, attempting proactive refresh")
-                # Force refresh by marking as failed if needed, but _get_valid_token 
+                # Force refresh by marking as failed if needed, but _get_valid_token
                 # doesn't have a "force" flag. Let's just call _execute_refresh under lock.
                 async with self._refresh_lock:
                     new_creds = await self._execute_refresh(client)
@@ -192,7 +213,9 @@ class AnthropicCollector(OAuthBaseCollector):
                         self._cached_results = None
                         self._last_fetch = None
                         # Retry with new token
-                        oauth_res = await self._get_claude_oauth_with_cache(client, new_token)
+                        oauth_res = await self._get_claude_oauth_with_cache(
+                            client, new_token
+                        )
 
             # Check if it's a valid result (not an error card)
             is_error = any(r.get("remaining") == "ERR" for r in oauth_res)
@@ -212,20 +235,44 @@ class AnthropicCollector(OAuthBaseCollector):
             local_res = await self._get_claude_local_enhanced()
             if local_res:
                 # If we fell back due to an error, we could tag it
-                if credential_provider.get_claude_token() or await self._has_web_cookie():
+                if (
+                    credential_provider.get_claude_token()
+                    or await self._has_web_cookie()
+                ):
                     for r in local_res:
                         if "(API Fallback)" not in r.get("detail", ""):
                             r["detail"] += " (API Fallback)"
                 return local_res
-            
+
         # 4. Final Fallback: Return error with context
         if credential_provider.get_claude_token():
-            return [error_card("Claude Pro", "🟠", "No data — OAuth failed & Logs empty", error_type="missing_config")]
-        
+            return [
+                error_card(
+                    "Claude Pro",
+                    "🟠",
+                    "No data — OAuth failed & Logs empty",
+                    error_type="missing_config",
+                )
+            ]
+
         if await self._has_web_cookie():
-            return [error_card("Claude Pro", "🟠", "No data — Web API failed & Logs empty", error_type="missing_config")]
-            
-        return [error_card("Claude Pro", "🟠", "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai", error_type="missing_config")]
+            return [
+                error_card(
+                    "Claude Pro",
+                    "🟠",
+                    "No data — Web API failed & Logs empty",
+                    error_type="missing_config",
+                )
+            ]
+
+        return [
+            error_card(
+                "Claude Pro",
+                "🟠",
+                "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai",
+                error_type="missing_config",
+            )
+        ]
 
     async def _has_web_cookie(self) -> bool:
         """Check if a web cookie is available without making API calls."""
@@ -264,58 +311,91 @@ class AnthropicCollector(OAuthBaseCollector):
     async def _get_claude_oauth(self, client: httpx.AsyncClient, token: str):
         """
         Fetch Claude quota from Anthropic OAuth API.
-        
+
         Calls https://api.anthropic.com/api/oauth/usage to get real-time usage
         across multiple quota windows (5h, 7d, 7d-sonnet, 7d-opus, extra).
-        
+
         Handles errors gracefully:
         - 401: Invalid/expired token
         - 429: Rate limited (will be retried by http_request_with_retry)
         - Other: Connection or server error
-        
+
         Args:
             client: httpx.AsyncClient for making requests
             token: OAuth bearer token
-            
+
         Returns:
             List[Dict[str, Any]]: List of quota cards, one per window, or error card
         """
         url = "https://api.anthropic.com/api/oauth/usage"
-        headers = {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"}
-        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+        }
+
         # Mapping for human-friendly names
         name_map = {
             "five_hour": "Session Window",
             "seven_day": "Weekly Window",
             "seven_day_sonnet": "Sonnet Weekly",
             "seven_day_opus": "Opus Weekly",
-            "extra_usage": "Extra Usage"
+            "extra_usage": "Extra Usage",
         }
-        
+
         try:
             # Use retry logic for rate limit handling
-            resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10.0)
-            
-            if resp.status_code == 401: 
-                return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)", error_type="auth_failed")]
-            if resp.status_code == 429: 
-                return [error_card("Claude Pro", "🟠", "Rate Limited (429) - max retries exceeded", error_type="rate_limited")]
-            if resp.status_code != 200: 
-                return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error")]
-            
+            resp = await http_request_with_retry(
+                client, "GET", url, headers=headers, timeout=10.0
+            )
+
+            if resp.status_code == 401:
+                return [
+                    error_card(
+                        "Claude Pro",
+                        "🟠",
+                        "Expired/Invalid Token (OAuth)",
+                        error_type="auth_failed",
+                    )
+                ]
+            if resp.status_code == 429:
+                return [
+                    error_card(
+                        "Claude Pro",
+                        "🟠",
+                        "Rate Limited (429) - max retries exceeded",
+                        error_type="rate_limited",
+                    )
+                ]
+            if resp.status_code != 200:
+                return [
+                    error_card(
+                        "Claude Pro",
+                        "🟠",
+                        f"API Error {resp.status_code}",
+                        error_type="api_error",
+                    )
+                ]
+
             data = resp.json()
             return self._parse_oauth_response(data, name_map)
-            
+
         except Exception as e:
             logger.error(f"Claude OAuth collection failed: {e}")
-            return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")]
+            return [
+                error_card(
+                    "Claude Pro",
+                    "🟠",
+                    f"Conn Fail: {str(e)[:20]}",
+                    error_type="timeout",
+                )
+            ]
 
     def _extract_identity_from_oauth(self, data: Dict[str, Any]) -> str:
         """Extract account identity from OAuth API response for display in detail field."""
         account = data.get("account", {})
         email = account.get("email", "")
         org = account.get("organization", "")
-        
+
         if email and org:
             return f"{email} @ {org}"
         elif email:
@@ -324,59 +404,61 @@ class AnthropicCollector(OAuthBaseCollector):
             return f"org: {org}"
         return ""
 
-    def _parse_oauth_response(self, data: Dict[str, Any], name_map: Dict[str, str]) -> List[Dict[str, Any]]:
+    def _parse_oauth_response(
+        self, data: Dict[str, Any], name_map: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
         """Parse OAuth API response into quota cards with null-safety."""
         results = []
-        
+
         # Extract identity and tier once for all cards
         identity_str = self._extract_identity_from_oauth(data)
         identity_suffix = f" | {identity_str}" if identity_str else ""
-        
+
         # Extract plan from account data for tier badge
         account = data.get("account", {})
         plan = account.get("plan", "")
         tier = plan.capitalize() if plan else None
-        
+
         # Guaranteed keys to process even if null from API
         core_keys = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"]
-        
+
         # Combine API keys with our core keys to ensure we show everything
         all_keys = list(data.keys())
         for ck in core_keys:
             if ck not in all_keys:
                 all_keys.append(ck)
-        
+
         # Sort using name_map order
         def sort_key(k):
             try:
                 return list(name_map.keys()).index(k)
             except ValueError:
                 return 999
-                
+
         sorted_keys = sorted(all_keys, key=sort_key)
-        
+
         for key in sorted_keys:
             # Skip non-quota metadata like 'account'
             if key == "account":
                 continue
-                
+
             usage = data.get(key)
-            
+
             # If the API returned null (or hasn't returned it yet), treat as 0 utilization
             if usage is None:
                 usage = {"utilization": 0.0, "resets_at": None}
-            
+
             # If it's a dict but missing utilization (like extra_usage when disabled), treat it as null
             if not isinstance(usage, dict):
                 continue
-                
+
             u_type = name_map.get(key, key.replace("_", " ").title())
-            
+
             # IMPORTANT: Handle null utilization value explicitly (null -> 0.0)
             raw_utilization = usage.get("utilization")
             pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
             remaining_pct = 100.0 - pct_used
-            
+
             reset_raw = usage.get("resets_at") or usage.get("resetsAt")
             reset_at = None
             if reset_raw:
@@ -384,45 +466,61 @@ class AnthropicCollector(OAuthBaseCollector):
                     reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
                 except (ValueError, TypeError):
                     pass
-            
-            results.append({
-                "service": f"Claude ({u_type})",
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "oauth",
-                "tier": tier,
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-        
-        return results if results else [error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")]
 
-    async def _get_claude_via_web_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+            results.append(
+                {
+                    "service": f"Claude ({u_type})",
+                    "icon": "🟠",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at),
+                    "health": (
+                        "good"
+                        if pct_used < 70
+                        else "warning" if pct_used < 90 else "critical"
+                    ),
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": "oauth",
+                    "tier": tier,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+        return (
+            results
+            if results
+            else [
+                error_card(
+                    "Claude Pro", "🟠", "No quota data", error_type="parse_error"
+                )
+            ]
+        )
+
+    async def _get_claude_via_web_api(
+        self, client: httpx.AsyncClient
+    ) -> List[Dict[str, Any]]:
         """
         Fetch Claude quota via Web API using Chrome cookies.
-        
+
         This is a secondary method that extracts the sessionKey cookie from
         Chrome and uses it to call Claude's web API endpoints. This provides
         the same data quality as OAuth but without requiring the OAuth token.
-        
+
         Endpoints called:
         1. GET /api/organizations - Get organization UUID
         2. GET /api/organizations/{orgId}/usage - Get usage quotas
         3. GET /api/organizations/{orgId}/overage_spend_limit - Get extra usage (optional)
-        
+
         Args:
             client: httpx.AsyncClient for making requests
-            
+
         Returns:
             List[Dict[str, Any]]: Quota cards or empty list if cookie unavailable/failed
         """
@@ -431,60 +529,60 @@ class AnthropicCollector(OAuthBaseCollector):
         if not session_key:
             logger.debug("No Claude sessionKey cookie found in Chrome")
             return []
-        
+
         headers = {"Cookie": f"sessionKey={session_key}"}
 
         try:
             # Step 1: Get organization ID
             orgs_resp = await client.get(
-                "https://claude.ai/api/organizations",
-                headers=headers,
-                timeout=10.0
+                "https://claude.ai/api/organizations", headers=headers, timeout=10.0
             )
-            
+
             if orgs_resp.status_code != 200:
-                logger.warning(f"Claude Web API orgs call failed: {orgs_resp.status_code}")
+                logger.warning(
+                    f"Claude Web API orgs call failed: {orgs_resp.status_code}"
+                )
                 return []
-            
+
             orgs_data = orgs_resp.json()
             if not orgs_data or not isinstance(orgs_data, list) or len(orgs_data) == 0:
                 logger.warning("No organizations found in Claude Web API response")
                 return []
-            
+
             # Use first organization (usually there's only one)
             org = orgs_data[0]
             org_id = org.get("uuid") or org.get("id")
             if not org_id:
                 logger.warning("No organization UUID found in response")
                 return []
-            
+
             # Step 2: Get account info for tier/plan
             account_data = None
             try:
                 account_resp = await client.get(
-                    "https://claude.ai/api/account",
-                    headers=headers,
-                    timeout=10.0
+                    "https://claude.ai/api/account", headers=headers, timeout=10.0
                 )
                 if account_resp.status_code == 200:
                     account_data = account_resp.json()
             except Exception as e:
                 logger.debug(f"Could not fetch account info: {e}")
-            
+
             # Step 3: Get usage data
             usage_resp = await client.get(
                 f"https://claude.ai/api/organizations/{org_id}/usage",
                 headers=headers,
-                timeout=10.0
+                timeout=10.0,
             )
 
             if usage_resp.status_code != 200:
-                logger.warning(f"Claude Web API usage call failed: {usage_resp.status_code}")
+                logger.warning(
+                    f"Claude Web API usage call failed: {usage_resp.status_code}"
+                )
                 return []
 
             usage_data = usage_resp.json()
             return self._parse_web_api_response(usage_data, org, account_data)
-            
+
         except httpx.HTTPError as e:
             logger.warning(f"Claude Web API HTTP error: {e}")
             return []
@@ -502,7 +600,7 @@ class AnthropicCollector(OAuthBaseCollector):
         user = membership.get("user", {})
         email = user.get("email", "")
         org_name = org_data.get("name", "")
-        
+
         if email and org_name:
             return f"{email} @ {org_name}"
         elif email:
@@ -511,18 +609,23 @@ class AnthropicCollector(OAuthBaseCollector):
             return f"org: {org_name}"
         return ""
 
-    def _parse_web_api_response(self, data: Dict[str, Any], org_data: Dict[str, Any] = None, account_data: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def _parse_web_api_response(
+        self,
+        data: Dict[str, Any],
+        org_data: Dict[str, Any] = None,
+        account_data: Dict[str, Any] = None,
+    ) -> List[Dict[str, Any]]:
         """Parse Web API response into quota cards."""
         results = []
-        
+
         # Extract identity once for all cards
         identity_str = self._extract_identity_from_web(org_data) if org_data else ""
         identity_suffix = f" | {identity_str}" if identity_str else ""
-        
+
         # Extract tier from account data
         plan = account_data.get("plan", "") if account_data else ""
         tier = plan.capitalize() if plan else None
-        
+
         # Map Web API fields to our standard format
         window_map = {
             "session": ("Session Window", "current_window"),
@@ -530,17 +633,17 @@ class AnthropicCollector(OAuthBaseCollector):
             "sonnet": ("Sonnet Weekly", "current_week_sonnet"),
             "opus": ("Opus Weekly", "current_week_opus"),
         }
-        
+
         for window_key, (display_name, api_key) in window_map.items():
             window_data = data.get(api_key)
             if not window_data:
                 continue
-            
+
             # Get usage percentage - null safety added
             raw_pct = window_data.get("percentUsed")
             pct_used = float(raw_pct) if raw_pct is not None else 0.0
             remaining_pct = 100.0 - pct_used
-            
+
             # Parse reset time
             reset_at = None
             reset_raw = window_data.get("resetsAt")
@@ -549,27 +652,33 @@ class AnthropicCollector(OAuthBaseCollector):
                     reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
                 except (ValueError, TypeError):
                     pass
-            
-            results.append({
-                "service": f"Claude ({display_name})",
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "web_api",
-                "tier": tier,
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-        
+
+            results.append(
+                {
+                    "service": f"Claude ({display_name})",
+                    "icon": "🟠",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at),
+                    "health": (
+                        "good"
+                        if pct_used < 70
+                        else "warning" if pct_used < 90 else "critical"
+                    ),
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": "web_api",
+                    "tier": tier,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
         # Add extra usage if present
         extra_data = data.get("extra_usage") or data.get("overage")
         if extra_data and isinstance(extra_data, dict):
@@ -577,24 +686,30 @@ class AnthropicCollector(OAuthBaseCollector):
             raw_limit = extra_data.get("limit")
             spend = float(raw_spend) if raw_spend is not None else 0.0
             limit = float(raw_limit) if raw_limit is not None else 0.0
-            
+
             if limit > 0:
                 pct_used = (spend / limit) * 100
                 remaining_pct = 100.0 - pct_used
-                results.append({
-                    "service": "Claude (Extra Usage)",
-                    "icon": "🟠",
-                    "remaining": f"${remaining_pct:.0f}%",
-                    "unit": "spend",
-                    "reset": "Monthly",
-                    "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                    "pace": "Sustainable",
-                    "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
-                    "tier": tier,
-                    "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                })
-        
+                results.append(
+                    {
+                        "service": "Claude (Extra Usage)",
+                        "icon": "🟠",
+                        "remaining": f"${remaining_pct:.0f}%",
+                        "unit": "spend",
+                        "reset": "Monthly",
+                        "health": (
+                            "good"
+                            if pct_used < 70
+                            else "warning" if pct_used < 90 else "critical"
+                        ),
+                        "pace": "Sustainable",
+                        "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
+                        "tier": tier,
+                        "usage_url": "https://claude.ai/settings/usage",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+
         return results
 
     async def _get_claude_local_enhanced(self) -> List[Dict[str, Any]]:
@@ -652,7 +767,9 @@ class AnthropicCollector(OAuthBaseCollector):
 
         # 5-hour window to match OAuth session window
         # Default to pro limit if we can't determine tier (safer assumption for limits)
-        limit = settings.CLAUDE_FREE_LIMIT if tier == "Free" else settings.CLAUDE_PRO_LIMIT
+        limit = (
+            settings.CLAUDE_FREE_LIMIT if tier == "Free" else settings.CLAUDE_PRO_LIMIT
+        )
         cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
 
         # Track tokens and deduplicate
@@ -703,7 +820,9 @@ class AnthropicCollector(OAuthBaseCollector):
                         cache_read = usage.get("cache_read_tokens", 0)
                         cache_creation = usage.get("cache_creation_tokens", 0)
 
-                        total_tokens += input_tokens + output_tokens + cache_read + cache_creation
+                        total_tokens += (
+                            input_tokens + output_tokens + cache_read + cache_creation
+                        )
 
                         if not oldest or ts < oldest:
                             oldest = ts
@@ -719,38 +838,40 @@ class AnthropicCollector(OAuthBaseCollector):
         pct = (total_tokens / limit * 100) if limit > 0 else 0
         reset_at = (oldest + timedelta(hours=5)) if oldest else None
 
-        return [{
-            "service": "Claude Pro",
-            "icon": "🟠",
-            "remaining": f"{remaining:,}",
-            "unit": "tokens / 5h",
-            "reset": human_delta(reset_at),
-            "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-            "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-            "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
-            "used_value": float(total_tokens),
-            "limit_value": float(limit),
-            "is_unlimited": False,
-            "tier": tier,
-            "unit_type": "tokens",
-            "reset_at": reset_at.isoformat() if reset_at else None,
-            "data_source": "local",
-            "usage_url": "https://claude.ai/settings/usage",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }]
+        return [
+            {
+                "service": "Claude Pro",
+                "icon": "🟠",
+                "remaining": f"{remaining:,}",
+                "unit": "tokens / 5h",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
+                "used_value": float(total_tokens),
+                "limit_value": float(limit),
+                "is_unlimited": False,
+                "tier": tier,
+                "unit_type": "tokens",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "local",
+                "usage_url": "https://claude.ai/settings/usage",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
 
     def _get_config_dirs(self) -> List[str]:
         """
         Get list of Claude config directories to scan.
-        
+
         Checks CLAUDE_CONFIG_DIR environment variable first (supports comma-separated paths),
         then falls back to default locations.
-        
+
         Returns:
             List[str]: List of directory paths that exist
         """
         dirs = []
-        
+
         # Priority 1: CLAUDE_CONFIG_DIR (comma-separated)
         config_env = os.getenv("CLAUDE_CONFIG_DIR", "")
         if config_env:
@@ -758,19 +879,23 @@ class AnthropicCollector(OAuthBaseCollector):
                 path = path.strip()
                 if path and os.path.isdir(path):
                     # Append /projects if not already present
-                    projects_path = os.path.join(path, "projects") if not path.endswith("/projects") else path
+                    projects_path = (
+                        os.path.join(path, "projects")
+                        if not path.endswith("/projects")
+                        else path
+                    )
                     if os.path.isdir(projects_path):
                         dirs.append(projects_path)
-        
+
         # Priority 2: Default locations (platform-aware)
         default_paths = [
             os.path.join(get_platform_config_dir("claude"), "projects"),
             os.path.expanduser("~/.config/claude/projects"),  # Legacy/Generic Linux
-            os.path.expanduser("~/.claude/projects"),          # Legacy/Direct home
+            os.path.expanduser("~/.claude/projects"),  # Legacy/Direct home
         ]
-        
+
         for path in default_paths:
             if os.path.isdir(path) and path not in dirs:
                 dirs.append(path)
-        
+
         return dirs

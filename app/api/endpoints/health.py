@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 router = APIRouter()
 
+
 @router.get("/health")
 async def health_check() -> Dict[str, Any]:
     """Check system health and collector status."""
@@ -15,11 +16,11 @@ async def health_check() -> Dict[str, Any]:
         "collectors": {
             "token_cache": {
                 "providers": await token_cache.get_all_stats(),
-                "count": len(token_cache._cache)
+                "count": len(token_cache._cache),
             },
             "external_metrics": {
                 "active_providers": list(external_metric_service.metrics.keys()),
-                "count": len(external_metric_service.metrics)
-            }
-        }
+                "count": len(external_metric_service.metrics),
+            },
+        },
     }

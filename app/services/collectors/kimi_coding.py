@@ -57,57 +57,88 @@ from app.services.collectors.base import BaseCollector
 
 class KimiCodingCollector(BaseCollector):
     """Collector for Kimi Coding IDE quotas (weekly + rate limits)."""
-    
-    API_ENDPOINT = "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
-    
+
+    API_ENDPOINT = (
+        "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
+    )
+
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Collect Kimi Coding quota information.
-        
+
         Tries env var first, then Chrome cookie.
         Returns 2 cards: Weekly quota + 5-hour rate limit.
-        
+
         Returns:
             List[Dict[str, Any]]: Two quota cards or error
         """
         # Get auth token
         token = self._get_auth_token()
         if not token:
-            return [error_card("Kimi Coding", "🌙", "No Auth (set KIMI_AUTH_TOKEN or login in Chrome)", error_type="missing_config")]
-        
+            return [
+                error_card(
+                    "Kimi Coding",
+                    "🌙",
+                    "No Auth (set KIMI_AUTH_TOKEN or login in Chrome)",
+                    error_type="missing_config",
+                )
+            ]
+
         try:
             resp = await client.post(
                 self.API_ENDPOINT,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
-                    "Accept": "application/json"
+                    "Accept": "application/json",
                 },
                 json={},  # Empty body required
-                timeout=10.0
+                timeout=10.0,
             )
-            
+
             if resp.status_code == 401:
-                return [error_card("Kimi Coding", "🌙", "Unauthorized (token expired)", error_type="auth_failed")]
+                return [
+                    error_card(
+                        "Kimi Coding",
+                        "🌙",
+                        "Unauthorized (token expired)",
+                        error_type="auth_failed",
+                    )
+                ]
             if resp.status_code != 200:
-                return [error_card("Kimi Coding", "🌙", f"HTTP {resp.status_code}", error_type="api_error")]
-            
+                return [
+                    error_card(
+                        "Kimi Coding",
+                        "🌙",
+                        f"HTTP {resp.status_code}",
+                        error_type="api_error",
+                    )
+                ]
+
             data = resp.json()
             return self._parse_response(data)
-            
+
         except httpx.RequestError:
-            return [error_card("Kimi Coding", "🌙", "Connection Failed", error_type="timeout")]
+            return [
+                error_card(
+                    "Kimi Coding", "🌙", "Connection Failed", error_type="timeout"
+                )
+            ]
         except (ValueError, KeyError, TypeError):
-            return [error_card("Kimi Coding", "🌙", "Invalid Response", error_type="parse_error")]
-    
+            return [
+                error_card(
+                    "Kimi Coding", "🌙", "Invalid Response", error_type="parse_error"
+                )
+            ]
+
     def _get_auth_token(self) -> Optional[str]:
         """
         Get authentication token from env var or Chrome cookie.
-        
+
         Priority:
         1. KIMI_AUTH_TOKEN environment variable
         2. Chrome cookie 'kimi-auth'
-        
+
         Returns:
             Token string or None
         """
@@ -115,24 +146,28 @@ class KimiCodingCollector(BaseCollector):
         token = settings.KIMI_AUTH_TOKEN
         if token:
             return token
-        
+
         # Priority 2: Chrome cookie
         return get_kimi_auth_cookie()
-    
+
     def _parse_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Parse API response into quota cards.
-        
+
         Args:
             data: API response dict
-            
+
         Returns:
             List of 2 cards (weekly + rate limit) or error
         """
         usages = data.get("usages", [])
         if not usages:
-            return [error_card("Kimi Coding", "🌙", "No Usage Data", error_type="parse_error")]
-        
+            return [
+                error_card(
+                    "Kimi Coding", "🌙", "No Usage Data", error_type="parse_error"
+                )
+            ]
+
         # Get first FEATURE_CODING usage or first available
         usage = None
         for u in usages:
@@ -141,16 +176,16 @@ class KimiCodingCollector(BaseCollector):
                 break
         if not usage:
             usage = usages[0]
-        
+
         cards = []
-        
+
         # Card 1: Weekly quota
         weekly = usage.get("detail", {})
         if weekly:
             card = self._parse_weekly_quota(weekly)
             if card:
                 cards.append(card)
-        
+
         # Card 2: Rate limit (5-hour window)
         limits = usage.get("limits", [])
         if limits:
@@ -160,9 +195,17 @@ class KimiCodingCollector(BaseCollector):
                 card = self._parse_rate_limit(rate_limit, window)
                 if card:
                     cards.append(card)
-        
-        return cards if cards else [error_card("Kimi Coding", "🌙", "No Quota Data", error_type="parse_error")]
-    
+
+        return (
+            cards
+            if cards
+            else [
+                error_card(
+                    "Kimi Coding", "🌙", "No Quota Data", error_type="parse_error"
+                )
+            ]
+        )
+
     def _parse_weekly_quota(self, detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Parse weekly quota into card."""
         try:
@@ -170,19 +213,19 @@ class KimiCodingCollector(BaseCollector):
             used = int(detail.get("used", 0))
             remaining = int(detail.get("remaining", limit - used))
             reset_str = detail.get("resetTime", "")
-            
+
             if limit == 0:
                 return None
-            
+
             pct_used = (used / limit * 100) if limit > 0 else 0
-            
+
             # Parse reset time
             reset_delta = "Unknown"
             reset_dt = None
             if reset_str:
                 try:
                     # ISO format with possible microseconds
-                    reset_dt = datetime.fromisoformat(reset_str.replace('Z', '+00:00'))
+                    reset_dt = datetime.fromisoformat(reset_str.replace("Z", "+00:00"))
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
                     pass
@@ -196,7 +239,11 @@ class KimiCodingCollector(BaseCollector):
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",
                 "reset": reset_delta,
-                "health": "good" if pct_used < 50 else "warning" if pct_used < 80 else "critical",
+                "health": (
+                    "good"
+                    if pct_used < 50
+                    else "warning" if pct_used < 80 else "critical"
+                ),
                 "pace": tier,
                 "detail": f"{used} used · {tier}",
                 "used_value": float(used),
@@ -209,11 +256,9 @@ class KimiCodingCollector(BaseCollector):
             }
         except (ValueError, TypeError):
             return None
-    
+
     def _parse_rate_limit(
-        self, 
-        detail: Dict[str, Any], 
-        window: Dict[str, Any]
+        self, detail: Dict[str, Any], window: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Parse rate limit (5-hour window) into card."""
         try:
@@ -221,18 +266,18 @@ class KimiCodingCollector(BaseCollector):
             used = int(detail.get("used", 0))
             remaining = int(detail.get("remaining", limit - used))
             reset_str = detail.get("resetTime", "")
-            
+
             if limit == 0:
                 return None
-            
+
             pct_used = (used / limit * 100) if limit > 0 else 0
-            
+
             # Parse reset time
             reset_delta = "Unknown"
             reset_dt = None
             if reset_str:
                 try:
-                    reset_dt = datetime.fromisoformat(reset_str.replace('Z', '+00:00'))
+                    reset_dt = datetime.fromisoformat(reset_str.replace("Z", "+00:00"))
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
                     pass
@@ -247,8 +292,16 @@ class KimiCodingCollector(BaseCollector):
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",
                 "reset": reset_delta,
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": "Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical",
+                "health": (
+                    "good"
+                    if pct_used < 70
+                    else "warning" if pct_used < 90 else "critical"
+                ),
+                "pace": (
+                    "Stable"
+                    if pct_used < 50
+                    else "High" if pct_used < 80 else "Critical"
+                ),
                 "detail": f"{used} used · Rate limit window",
                 "used_value": float(used),
                 "limit_value": float(limit),
@@ -260,14 +313,14 @@ class KimiCodingCollector(BaseCollector):
             }
         except (ValueError, TypeError):
             return None
-    
+
     def _detect_tier(self, limit: int) -> str:
         """
         Detect membership tier from weekly quota limit.
-        
+
         Args:
             limit: Weekly request limit
-            
+
         Returns:
             Tier name
         """

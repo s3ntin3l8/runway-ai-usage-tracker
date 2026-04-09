@@ -48,27 +48,31 @@ from app.services.collectors.base import BaseCollector
 
 class ZaiPlanCollector(BaseCollector):
     """Collector for zAI Plan quota limits (tokens and time windows)."""
-    
+
     # API endpoints in priority order
     API_ENDPOINTS = [
         "https://api.z.ai/api/monitor/usage/quota/limit",
         "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
     ]
-    
+
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Collect zAI plan quota limits.
-        
+
         Tries multiple endpoints (api.z.ai first, then open.bigmodel.cn).
         Returns 1-2 cards depending on limit types present.
-        
+
         Returns:
             List[Dict[str, Any]]: Cards for each limit type or error
         """
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
-            return [error_card("zAI Plan", "📊", "Missing/Invalid Key", error_type="missing_config")]
-        
+            return [
+                error_card(
+                    "zAI Plan", "📊", "Missing/Invalid Key", error_type="missing_config"
+                )
+            ]
+
         # Try each endpoint in order
         last_error = None
         for endpoint in self.API_ENDPOINTS:
@@ -79,63 +83,67 @@ class ZaiPlanCollector(BaseCollector):
             except Exception as e:
                 last_error = e
                 continue
-        
+
         # All endpoints failed
         return [error_card("zAI Plan", "📊", "API Unavailable", error_type="api_error")]
-    
+
     async def _fetch_quota(
-        self, 
-        client: httpx.AsyncClient, 
-        key: str, 
-        endpoint: str
+        self, client: httpx.AsyncClient, key: str, endpoint: str
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Fetch quota from a specific endpoint.
-        
+
         Args:
             client: HTTP client
             key: API key
             endpoint: URL to query
-            
+
         Returns:
             List of cards or None if endpoint failed
         """
         resp = await client.get(
             endpoint,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Accept": "application/json"
-            },
-            timeout=10.0
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            timeout=10.0,
         )
-        
+
         if resp.status_code != 200:
             return None
-        
+
         data = resp.json()
         plan_data = data.get("data", {})
-        plan_name = plan_data.get("planName") or plan_data.get("plan") or plan_data.get("packageName", "Unknown")
+        plan_name = (
+            plan_data.get("planName")
+            or plan_data.get("plan")
+            or plan_data.get("packageName", "Unknown")
+        )
         limits = plan_data.get("limits", [])
-        
+
         if not limits:
-            return [error_card("zAI Plan", "📊", "No Limits Found", error_type="parse_error")]
-        
+            return [
+                error_card(
+                    "zAI Plan", "📊", "No Limits Found", error_type="parse_error"
+                )
+            ]
+
         cards = []
         for limit in limits:
             card = self._parse_limit(limit, plan_name)
             if card:
                 cards.append(card)
-        
+
         return cards if cards else None
-    
-    def _parse_limit(self, limit: Dict[str, Any], plan_name: str) -> Optional[Dict[str, Any]]:
+
+    def _parse_limit(
+        self, limit: Dict[str, Any], plan_name: str
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse a single limit entry into a card.
-        
+
         Args:
             limit: Limit dict from API
             plan_name: Name of the plan
-            
+
         Returns:
             Card dict or None if invalid
         """
@@ -143,15 +151,15 @@ class ZaiPlanCollector(BaseCollector):
         limit_val = limit.get("limit", 0)
         used_val = limit.get("used", 0)
         reset_ts = limit.get("nextResetTime")
-        
+
         # Skip invalid entries
         if not limit_val:
             return None
-        
+
         # Calculate remaining
         remaining = max(0, limit_val - used_val)
         pct_used = (used_val / limit_val * 100) if limit_val > 0 else 0
-        
+
         # Determine label and formatting based on type
         if limit_type == "TOKENS_LIMIT":
             service = "zAI Plan (Tokens)"
@@ -169,7 +177,7 @@ class ZaiPlanCollector(BaseCollector):
             remaining_str = f"{remaining}"
             unit = f"{limit_val} limit"
             detail = f"{used_val} used · {plan_name}"
-        
+
         # Parse reset time
         reset_str = "Manual"
         reset_at = None
@@ -193,7 +201,11 @@ class ZaiPlanCollector(BaseCollector):
             health = "critical"
 
         # Determine unit_type based on limit_type
-        unit_type = "tokens" if limit_type == "TOKENS_LIMIT" else "minutes" if limit_type == "TIME_LIMIT" else "generic"
+        unit_type = (
+            "tokens"
+            if limit_type == "TOKENS_LIMIT"
+            else "minutes" if limit_type == "TIME_LIMIT" else "generic"
+        )
 
         return {
             "service": service,
@@ -202,7 +214,9 @@ class ZaiPlanCollector(BaseCollector):
             "unit": unit,
             "reset": reset_str,
             "health": health,
-            "pace": "Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical",
+            "pace": (
+                "Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical"
+            ),
             "detail": detail,
             "used_value": float(used_val),
             "limit_value": float(limit_val),

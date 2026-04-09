@@ -11,14 +11,15 @@ router.include_router(health_router, tags=["health"])
 router.include_router(github_router, prefix="/github/oauth", tags=["github_oauth"])
 manager = CollectorManager()
 
+
 @router.get("/limits")
 async def fetch_all_limits():
     """Fetch all AI service usage limits."""
     results = await manager.collect_all()
-    
+
     # Validate and serialize with None values included
     limit_cards = [LimitCard(**item) for item in results]
     response = LimitsResponse(limits=limit_cards)
-    
+
     # Return dict with None values included (needed for tier field)
     return response.model_dump(exclude_none=False)

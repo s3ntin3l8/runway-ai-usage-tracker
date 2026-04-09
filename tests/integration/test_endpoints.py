@@ -28,6 +28,7 @@ from app.models.schemas import LimitCard
 async def test_client():
     """Create a test client for FastAPI app."""
     from fastapi.testclient import TestClient
+
     return TestClient(app)
 
 
@@ -38,10 +39,10 @@ class TestLimitsEndpoint:
     async def test_limits_endpoint_success(self):
         """Test successful response from /api/limits with multiple collectors."""
         from fastapi.testclient import TestClient
-        
+
         test_client = TestClient(app)
-        
-        with patch.object(manager, 'collect_all') as mock_collect:
+
+        with patch.object(manager, "collect_all") as mock_collect:
             mock_collect.return_value = [
                 {
                     "service": "Claude Pro",
@@ -51,7 +52,7 @@ class TestLimitsEndpoint:
                     "reset": "in 4h 23m",
                     "health": "good",
                     "pace": "~5 days",
-                    "detail": "45.5% used [OAuth]"
+                    "detail": "45.5% used [OAuth]",
                 },
                 {
                     "service": "GitHub Copilot",
@@ -61,12 +62,12 @@ class TestLimitsEndpoint:
                     "reset": "in 2h 15m",
                     "health": "warning",
                     "pace": "Sustainable",
-                    "detail": "90.0% used"
-                }
+                    "detail": "90.0% used",
+                },
             ]
-            
+
             response = test_client.get("/api/limits")
-            
+
             assert response.status_code == 200
             data = response.json()
             assert "limits" in data
@@ -76,10 +77,10 @@ class TestLimitsEndpoint:
     async def test_limits_endpoint_partial_failure(self):
         """Test endpoint gracefully handles one collector failing."""
         from fastapi.testclient import TestClient
-        
+
         test_client = TestClient(app)
-        
-        with patch.object(manager, 'collect_all') as mock_collect:
+
+        with patch.object(manager, "collect_all") as mock_collect:
             # Some collectors succeed, some fail (collector failures handled internally)
             mock_collect.return_value = [
                 {
@@ -90,7 +91,7 @@ class TestLimitsEndpoint:
                     "reset": "in 5h",
                     "health": "good",
                     "pace": "~5 days",
-                    "detail": "API: OAuth"
+                    "detail": "API: OAuth",
                 },
                 {
                     "service": "GitHub API",
@@ -100,17 +101,17 @@ class TestLimitsEndpoint:
                     "reset": "Unknown",
                     "health": "critical",
                     "pace": "N/A",
-                    "detail": "Connection timeout"
-                }
+                    "detail": "Connection timeout",
+                },
             ]
-            
+
             response = test_client.get("/api/limits")
-            
+
             # Should still return 200 with mixed results
             assert response.status_code == 200
             data = response.json()
             assert len(data["limits"]) == 2
-            
+
             # One success, one error
             assert any(card.get("remaining") != "ERR" for card in data["limits"])
             assert any(card.get("remaining") == "ERR" for card in data["limits"])
@@ -118,14 +119,14 @@ class TestLimitsEndpoint:
     async def test_limits_endpoint_all_collectors_fail(self):
         """Test endpoint when all collectors fail."""
         from fastapi.testclient import TestClient
-        
+
         test_client = TestClient(app)
-        
-        with patch.object(manager, 'collect_all') as mock_collect:
+
+        with patch.object(manager, "collect_all") as mock_collect:
             mock_collect.return_value = []
-            
+
             response = test_client.get("/api/limits")
-            
+
             # Should still return 200 with empty limits
             assert response.status_code == 200
             data = response.json()
@@ -141,20 +142,19 @@ class TestIngestEndpoint:
         key = api_key or settings.INGEST_API_KEY
         timestamp = str(int(time.time()))
         signature = hmac.new(
-            key.encode(),
-            f"{timestamp}".encode() + body.encode(),
-            hashlib.sha256
+            key.encode(), f"{timestamp}".encode() + body.encode(), hashlib.sha256
         ).hexdigest()
         return {
             "X-Signature": signature,
             "X-Timestamp": timestamp,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     @staticmethod
     def _make_secure_settings():
         """Create mock settings that pass security checks for ingest tests."""
         from unittest.mock import PropertyMock
+
         mock = MagicMock()
         mock.INGEST_API_KEY = "test-secret-key-for-ingest-tests"
         mock.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -179,29 +179,27 @@ class TestIngestEndpoint:
                     "reset": "in 3h",
                     "health": "good",
                     "pace": "~5 days",
-                    "detail": "External ingest"
+                    "detail": "External ingest",
                 }
-            ]
+            ],
         }
 
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
         # Mock external_metric_service to avoid writing to real file
-        with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
+        with patch("app.api.endpoints.ingest.external_metric_service") as mock_service:
             mock_service.metrics_update_from_ingest = AsyncMock()
 
-            with patch('app.api.endpoints.ingest.settings') as mock_settings:
+            with patch("app.api.endpoints.ingest.settings") as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
                 mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-                with patch('app.api.endpoints.ingest.token_cache') as mock_cache:
+                with patch("app.api.endpoints.ingest.token_cache") as mock_cache:
                     mock_cache.store = AsyncMock()
-                    
+
                     response = test_client.post(
-                        "/api/ingest",
-                        content=body,
-                        headers=headers
+                        "/api/ingest", content=body, headers=headers
                     )
 
             # Should accept valid ingest
@@ -213,24 +211,24 @@ class TestIngestEndpoint:
     async def test_ingest_invalid_signature(self):
         """Test that invalid signatures are rejected."""
         from fastapi.testclient import TestClient
-        
+
         test_client = TestClient(app)
-        
+
         payload = {"provider": "test", "metrics": []}
         body = json.dumps(payload)
-        
+
         headers = {
             "X-Signature": "invalid-sig",
             "X-Timestamp": str(int(time.time())),
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        
-        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+
+        with patch("app.api.endpoints.ingest.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = "test-key"
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
             response = test_client.post("/api/ingest", content=body, headers=headers)
-        
+
         assert response.status_code == 401
         assert "Invalid HMAC signature" in response.json()["detail"]
 
@@ -256,27 +254,27 @@ class TestIngestEndpoint:
                     "pace": "Token",
                     "detail": "[Token Extracted] [Sidecar]",
                     "data_source": "token_extracted",
-                    "metadata": {
-                        "oauth_token": oauth_token
-                    }
+                    "metadata": {"oauth_token": oauth_token},
                 }
-            ]
+            ],
         }
 
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
+        with patch("app.api.endpoints.ingest.external_metric_service") as mock_service:
             mock_service.metrics_update_from_ingest = AsyncMock()
 
-            with patch('app.api.endpoints.ingest.settings') as mock_settings:
+            with patch("app.api.endpoints.ingest.settings") as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
                 mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-                with patch('app.api.endpoints.ingest.token_cache') as mock_cache:
+                with patch("app.api.endpoints.ingest.token_cache") as mock_cache:
                     mock_cache.store = AsyncMock()
-                    response = test_client.post("/api/ingest", content=body, headers=headers)
-                    
+                    response = test_client.post(
+                        "/api/ingest", content=body, headers=headers
+                    )
+
                     # Verify token was stored in cache
                     mock_cache.store.assert_called_once()
                     stored_tokens = mock_cache.store.call_args[0][1]
@@ -299,15 +297,11 @@ class TestIngestEndpoint:
         body = json.dumps(invalid_payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+        with patch("app.api.endpoints.ingest.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            response = test_client.post(
-                "/api/ingest",
-                content=body,
-                headers=headers
-            )
+            response = test_client.post("/api/ingest", content=body, headers=headers)
 
         # Should reject invalid payload with 400 (per current implementation), NOT 401
         assert response.status_code == 400
@@ -328,7 +322,7 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+        with patch("app.api.endpoints.ingest.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = ""
             response = test_client.post("/api/ingest", content=body, headers=headers)
 
@@ -346,9 +340,7 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         timestamp = str(int(time.time()))
         sig = hmac.new(
-            DEFAULT_INGEST_API_KEY.encode(),
-            (timestamp + body).encode(),
-            hashlib.sha256
+            DEFAULT_INGEST_API_KEY.encode(), (timestamp + body).encode(), hashlib.sha256
         ).hexdigest()
         headers = {
             "X-Signature": sig,
@@ -356,7 +348,7 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+        with patch("app.api.endpoints.ingest.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = DEFAULT_INGEST_API_KEY
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = True
             response = test_client.post("/api/ingest", content=body, headers=headers)
@@ -388,7 +380,7 @@ class TestResponseValidation:
     async def test_limit_card_schema_validation(self):
         """Test that all responses conform to LimitCard schema."""
         from app.models.schemas import LimitCard
-        
+
         valid_card = {
             "service": "Claude Pro",
             "icon": "🟠",
@@ -397,9 +389,9 @@ class TestResponseValidation:
             "reset": "in 4h",
             "health": "good",
             "pace": "~5 days",
-            "detail": "Details"
+            "detail": "Details",
         }
-        
+
         # Should validate successfully
         card = LimitCard(**valid_card)
         assert card.service == "Claude Pro"
@@ -410,12 +402,12 @@ class TestResponseValidation:
         """Test that cards with missing required fields are rejected."""
         from app.models.schemas import LimitCard
         from pydantic import ValidationError
-        
+
         invalid_card = {
             "service": "Claude Pro",
             # Missing required fields like 'icon', 'remaining', 'reset', etc.
         }
-        
+
         with pytest.raises(ValidationError):
             LimitCard(**invalid_card)
 
@@ -427,11 +419,13 @@ class TestErrorHandling:
     async def test_malformed_collector_response(self):
         """Test graceful handling of malformed collector responses."""
         from unittest.mock import AsyncMock, patch
+
         # This test needs revision to properly patch the manager's collectors
         pass
 
     async def test_collector_exception_isolation(self):
         """Test that one collector exception doesn't crash the orchestrator."""
         from unittest.mock import AsyncMock, patch
+
         # This test needs revision to properly patch the manager's collectors
         pass

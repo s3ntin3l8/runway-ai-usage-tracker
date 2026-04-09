@@ -14,7 +14,7 @@ def get_platform_data_dir(app_name: str) -> str:
     """Get the platform-specific directory for user data."""
     system = platform.system()
     home = os.path.expanduser("~")
-    
+
     if system == "Windows":
         local_app_data = os.getenv("LOCALAPPDATA")
         if local_app_data:
@@ -33,7 +33,7 @@ def get_platform_config_dir(app_name: str) -> str:
     """Get the platform-specific directory for user configuration."""
     system = platform.system()
     home = os.path.expanduser("~")
-    
+
     if system == "Windows":
         app_data = os.getenv("APPDATA")
         if app_data:
@@ -53,10 +53,14 @@ DEFAULT_INGEST_API_KEY = "sidecar-default-secret"
 
 class Settings:
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
-    RUN_MODE: str = os.getenv("RUN_MODE", "standalone") # "standalone", "multi-host", "docker"
-    
+    RUN_MODE: str = os.getenv(
+        "RUN_MODE", "standalone"
+    )  # "standalone", "multi-host", "docker"
+
     # GitHub OAuth Settings
-    GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "Ov23liC6f9v0bAcZpXmB") # Community default
+    GITHUB_CLIENT_ID: str = os.getenv(
+        "GITHUB_CLIENT_ID", "Ov23liC6f9v0bAcZpXmB"
+    )  # Community default
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
     # ChatGPT OAuth Settings
@@ -70,43 +74,76 @@ class Settings:
     KIMI_API_KEY: str = os.getenv("KIMI_API_KEY", "")
     KIMI_AUTH_TOKEN: str = os.getenv("KIMI_AUTH_TOKEN", "")
     INGEST_API_KEY: str = os.getenv("INGEST_API_KEY", DEFAULT_INGEST_API_KEY)
-    
+
     @property
     def INGEST_API_KEY_IS_INSECURE_DEFAULT(self) -> bool:
         return self.INGEST_API_KEY == DEFAULT_INGEST_API_KEY
-    
+
     # OAuth Credentials (from environment)
     GEMINI_OAUTH_CLIENT_ID: str = os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
     GEMINI_OAUTH_CLIENT_SECRET: str = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
-    
+
     # Quota Limits
     CLAUDE_PRO_LIMIT: int = int(os.getenv("CLAUDE_PRO_LIMIT", "2000000"))
     CLAUDE_FREE_LIMIT: int = int(os.getenv("CLAUDE_FREE_LIMIT", "500000"))
-    
+
     # Path settings
-    CLAUDE_PROJECTS_DIR: str = os.getenv("CLAUDE_PROJECTS_DIR", os.path.join(get_platform_config_dir("claude"), "projects"))
-    GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions"))
-    GEMINI_OAUTH_PATH: str = os.getenv("GEMINI_OAUTH_PATH", os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"))
-    GITHUB_OAUTH_PATH: str = os.getenv("GITHUB_OAUTH_PATH", os.path.join(get_platform_config_dir("usage-tracker"), "github_oauth.json"))
+    CLAUDE_PROJECTS_DIR: str = os.getenv(
+        "CLAUDE_PROJECTS_DIR",
+        os.path.join(get_platform_config_dir("claude"), "projects"),
+    )
+    GEMINI_SESSIONS_DIR: str = os.getenv(
+        "GEMINI_SESSIONS_DIR",
+        os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions"),
+    )
+    GEMINI_OAUTH_PATH: str = os.getenv(
+        "GEMINI_OAUTH_PATH",
+        os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"),
+    )
+    GITHUB_OAUTH_PATH: str = os.getenv(
+        "GITHUB_OAUTH_PATH",
+        os.path.join(get_platform_config_dir("usage-tracker"), "github_oauth.json"),
+    )
     CHATGPT_AUTH_PATH: str = os.path.expanduser("~/.codex/auth.json")
-    CHATGPT_SESSIONS_DIR: str = os.getenv("CHATGPT_SESSIONS_DIR", os.path.join(get_platform_config_dir("codex"), "sessions"))
-    ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.join(get_platform_data_dir("antigravity"), "state", "quota.json"))
-    OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.join(get_platform_data_dir("opencode"), "opencode.db"))
-    EXTERNAL_METRICS_PATH: str = os.getenv("EXTERNAL_METRICS_PATH", os.path.join(get_platform_config_dir("usage-tracker"), "external_metrics.json"))
-    LOCAL_COLLECTOR_ENABLED: bool = os.getenv("LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
-    LOCAL_CREDENTIAL_SCRAPING_ENABLED: bool = os.getenv("LOCAL_CREDENTIAL_SCRAPING_ENABLED", "true").lower() == "true"
-    
+    CHATGPT_SESSIONS_DIR: str = os.getenv(
+        "CHATGPT_SESSIONS_DIR",
+        os.path.join(get_platform_config_dir("codex"), "sessions"),
+    )
+    ANTIGRAVITY_QUOTA_PATH: str = os.getenv(
+        "ANTIGRAVITY_QUOTA_PATH",
+        os.path.join(get_platform_data_dir("antigravity"), "state", "quota.json"),
+    )
+    OPENCODE_DB_PATH: str = os.getenv(
+        "OPENCODE_DB_PATH",
+        os.path.join(get_platform_data_dir("opencode"), "opencode.db"),
+    )
+    EXTERNAL_METRICS_PATH: str = os.getenv(
+        "EXTERNAL_METRICS_PATH",
+        os.path.join(get_platform_config_dir("usage-tracker"), "external_metrics.json"),
+    )
+    LOCAL_COLLECTOR_ENABLED: bool = (
+        os.getenv("LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
+    )
+    LOCAL_CREDENTIAL_SCRAPING_ENABLED: bool = (
+        os.getenv("LOCAL_CREDENTIAL_SCRAPING_ENABLED", "true").lower() == "true"
+    )
+
     # Network settings
-    APP_HOST: str = os.getenv("APP_HOST", "127.0.0.1")  # Default: local-only for security
+    APP_HOST: str = os.getenv(
+        "APP_HOST", "127.0.0.1"
+    )  # Default: local-only for security
     APP_PORT: int = int(os.getenv("APP_PORT", "8765"))
     CORS_ORIGINS: list = ["http://localhost:8765", "http://127.0.0.1:8765"]
+
 
 settings = Settings()
 
 # Security check: Warn if using default ingest secret
 if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
     logger.warning("=" * 60)
-    logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
+    logger.warning(
+        "SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')"
+    )
     logger.warning("The ingest endpoint is DISABLED until a custom key is set.")
     logger.warning("Set INGEST_API_KEY environment variable to a strong secret.")
     logger.warning("=" * 60)

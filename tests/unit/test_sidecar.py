@@ -1,4 +1,5 @@
 """Unit tests for sidecar critical bug fixes."""
+
 import sys
 import os
 import json
@@ -17,7 +18,7 @@ class TestQueueRotate:
 
     def test_queue_rotate_no_args_does_not_crash(self, tmp_path):
         """queue_rotate() with no args must not raise TypeError."""
-        with patch.object(sidecar, 'get_queue_dir', return_value=tmp_path):
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
             # Previously crashed with TypeError: NoneType * 1024
             sidecar.queue_rotate()
 
@@ -26,7 +27,7 @@ class TestQueueRotate:
         queue_file = tmp_path / "2026-01-01.jsonl"
         queue_file.write_text('{"ts": 1, "payload": {}}\n')
 
-        with patch.object(sidecar, 'get_queue_dir', return_value=tmp_path):
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
             sidecar.queue_rotate()
 
         # Small file must survive rotation
@@ -34,8 +35,8 @@ class TestQueueRotate:
 
     def test_queue_push_does_not_crash(self, tmp_path):
         """queue_push must queue a payload without crashing."""
-        with patch.object(sidecar, 'get_queue_dir', return_value=tmp_path):
-            with patch.object(sidecar, 'ensure_dirs'):
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
+            with patch.object(sidecar, "ensure_dirs"):
                 sidecar.queue_push({"provider": "test", "metrics": []})
 
         files = list(tmp_path.glob("*.jsonl"))
@@ -49,8 +50,9 @@ class TestWindowsCredCache:
 
     def test_windows_cred_cache_is_dict_not_none(self):
         """_windows_cred_cache must be initialized as a dict."""
-        assert isinstance(sidecar._windows_cred_cache, dict), \
-            f"_windows_cred_cache is {type(sidecar._windows_cred_cache)}, expected dict"
+        assert isinstance(
+            sidecar._windows_cred_cache, dict
+        ), f"_windows_cred_cache is {type(sidecar._windows_cred_cache)}, expected dict"
 
     def test_get_windows_credential_write_does_not_crash(self):
         """Writing to _windows_cred_cache must not raise TypeError."""
@@ -77,8 +79,10 @@ class TestWindowsCredCache:
         """shutdown_sidecar and start_daemon_mode must reset to {} not None."""
         import inspect
         import re
+
         source = inspect.getsource(sidecar)
         # Count assignments of _windows_cred_cache = None (should be 0 after fix)
-        matches = re.findall(r'_windows_cred_cache\s*=\s*None', source)
-        assert len(matches) == 0, \
-            f"Found {len(matches)} assignment(s) of _windows_cred_cache = None: {matches}"
+        matches = re.findall(r"_windows_cred_cache\s*=\s*None", source)
+        assert (
+            len(matches) == 0
+        ), f"Found {len(matches)} assignment(s) of _windows_cred_cache = None: {matches}"

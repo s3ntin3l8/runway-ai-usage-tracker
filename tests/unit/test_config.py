@@ -23,15 +23,16 @@ class TestSettings:
         test_vars = {
             "CLAUDE_CODE_OAUTH_TOKEN": "test_claude_token",
             "GITHUB_TOKEN": "test_github_token",
-            "GEMINI_OAUTH_PATH": "/fake/gemini/creds.json"
+            "GEMINI_OAUTH_PATH": "/fake/gemini/creds.json",
         }
-        
+
         with patch.dict(os.environ, test_vars, clear=False):
             # Import fresh to get new environment
             import importlib
             from app.core import config
+
             importlib.reload(config)
-            
+
             assert config.settings.CLAUDE_CODE_OAUTH_TOKEN == "test_claude_token"
             assert config.settings.GITHUB_TOKEN == "test_github_token"
             assert config.settings.GEMINI_OAUTH_PATH == "/fake/gemini/creds.json"
@@ -39,7 +40,7 @@ class TestSettings:
     def test_settings_defaults(self):
         """Test that default values are applied for optional settings."""
         from app.core import config
-        
+
         # Settings should have sensible defaults
         assert config.settings.CLAUDE_PROJECTS_DIR is not None
         assert config.settings.CHATGPT_SESSIONS_DIR is not None
@@ -48,7 +49,7 @@ class TestSettings:
     def test_settings_path_expansion(self):
         """Test that ~ paths are properly expanded."""
         from app.core import config
-        
+
         # Paths should not contain ~ after loading
         assert "~" not in config.settings.CLAUDE_PROJECTS_DIR
         assert "~" not in config.settings.ANTIGRAVITY_QUOTA_PATH
@@ -57,7 +58,7 @@ class TestSettings:
         """Test that invalid settings raise validation errors."""
         from pydantic import ValidationError
         from app.core.config import Settings
-        
+
         # Invalid settings should be caught
         # (This is a placeholder - actual test would depend on Settings implementation)
         pass
@@ -79,6 +80,7 @@ class TestConfigEnvironmentVariables:
         test_token = "sk-ant-test-token-12345"
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": test_token}):
             from app.core.config import settings
+
             # Token would be loaded from environment
             pass
 
@@ -87,6 +89,7 @@ class TestConfigEnvironmentVariables:
         test_token = "ghp_test_token_123456"
         with patch.dict(os.environ, {"GITHUB_TOKEN": test_token}):
             from app.core.config import settings
+
             # Token would be loaded from environment
             pass
 
@@ -95,6 +98,7 @@ class TestConfigEnvironmentVariables:
         test_path = "/custom/path/to/gemini/credentials.json"
         with patch.dict(os.environ, {"GEMINI_OAUTH_PATH": test_path}):
             from app.core.config import settings
+
             # Path would be loaded from environment
             pass
 
@@ -102,7 +106,7 @@ class TestConfigEnvironmentVariables:
         """Test that optional settings use defaults when not provided."""
         with patch.dict(os.environ, {}, clear=True):
             from app.core.config import settings
-            
+
             # Optional settings should have defaults
             assert settings.CLAUDE_PROJECTS_DIR
             assert settings.CHATGPT_SESSIONS_DIR
@@ -113,15 +117,16 @@ class TestConfigEnvFileLoading:
 
     def test_dotenv_loading(self):
         """Test that .env file is properly loaded."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
             f.write("TEST_VAR=test_value\n")
             f.write("TEST_INT=42\n")
             temp_path = f.name
-        
+
         try:
             from dotenv import load_dotenv
+
             load_dotenv(temp_path)
-            
+
             assert os.getenv("TEST_VAR") == "test_value"
             assert os.getenv("TEST_INT") == "42"
         finally:
@@ -129,7 +134,7 @@ class TestConfigEnvFileLoading:
 
     def test_env_file_missing_graceful(self):
         """Test that missing .env file doesn't crash the app."""
-        with patch('dotenv.load_dotenv') as mock_load:
+        with patch("dotenv.load_dotenv") as mock_load:
             # Should handle missing .env file gracefully
             mock_load.return_value = None
             assert mock_load.return_value is None
@@ -137,7 +142,7 @@ class TestConfigEnvFileLoading:
 
 class TestConfigKeyringIntegration:
     """Test system keyring integration for token retrieval.
-    
+
     Note: These tests verify the keyring logic is implemented correctly
     in config.py. The actual keyring.get_password() call is mocked to
     avoid requiring the keyring library to be installed.
@@ -148,21 +153,21 @@ class TestConfigKeyringIntegration:
         # Verify the credential_provider.py code has try/except around keyring import
         import inspect
         from app.services.credential_provider import CredentialProvider
-        
+
         # Get source code of the get_claude_token method
         source = inspect.getsource(CredentialProvider.get_claude_token)
-        
+
         # Check that keyring is used with try/except
-        assert 'import keyring' in source or 'keyring.get_password' in source
-        assert 'except ImportError' in source or 'except Exception' in source
+        assert "import keyring" in source or "keyring.get_password" in source
+        assert "except ImportError" in source or "except Exception" in source
 
     def test_keyring_get_password_called_with_correct_args(self):
         """Test keyring.get_password is called with correct service and username."""
         import inspect
         from app.services.credential_provider import CredentialProvider
-        
+
         source = inspect.getsource(CredentialProvider.get_claude_token)
-        
+
         # Should call with "runway" and "claude-oauth-token"
         assert '"runway"' in source
         assert '"claude-oauth-token"' in source

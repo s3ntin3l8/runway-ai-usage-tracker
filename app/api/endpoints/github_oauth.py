@@ -11,6 +11,7 @@ from app.services.credential_provider import credential_provider
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
 class DeviceFlowInitResponse(BaseModel):
     device_code: str
     user_code: str
@@ -18,12 +19,15 @@ class DeviceFlowInitResponse(BaseModel):
     expires_in: int
     interval: int
 
+
 class DeviceFlowPollRequest(BaseModel):
     device_code: str
+
 
 class DeviceFlowStatusResponse(BaseModel):
     authenticated: bool
     account: Optional[str] = None
+
 
 @router.get("/init", response_model=DeviceFlowInitResponse)
 async def init_device_flow():
@@ -34,16 +38,19 @@ async def init_device_flow():
                 "https://github.com/login/device/code",
                 data={
                     "client_id": settings.GITHUB_CLIENT_ID,
-                    "scope": "repo,read:org,user"
+                    "scope": "repo,read:org,user",
                 },
-                headers={"Accept": "application/json"}
+                headers={"Accept": "application/json"},
             )
             resp.raise_for_status()
             data = resp.json()
             return DeviceFlowInitResponse(**data)
         except Exception as e:
             logger.error(f"Failed to initiate GitHub Device Flow: {e}")
-            raise HTTPException(status_code=500, detail="Failed to initiate login with GitHub")
+            raise HTTPException(
+                status_code=500, detail="Failed to initiate login with GitHub"
+            )
+
 
 @router.post("/poll")
 async def poll_device_flow(request: DeviceFlowPollRequest):
@@ -55,13 +62,13 @@ async def poll_device_flow(request: DeviceFlowPollRequest):
                 data={
                     "client_id": settings.GITHUB_CLIENT_ID,
                     "device_code": request.device_code,
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 },
-                headers={"Accept": "application/json"}
+                headers={"Accept": "application/json"},
             )
             resp.raise_for_status()
             data = resp.json()
-            
+
             if "error" in data:
                 error = data["error"]
                 if error == "authorization_pending":
@@ -69,19 +76,26 @@ async def poll_device_flow(request: DeviceFlowPollRequest):
                 elif error == "slow_down":
                     return {"status": "slow_down", "interval": data.get("interval", 5)}
                 else:
-                    raise HTTPException(status_code=400, detail=data.get("error_description", error))
-            
+                    raise HTTPException(
+                        status_code=400, detail=data.get("error_description", error)
+                    )
+
             if "access_token" in data:
                 # Save the token
                 await save_token(data)
                 return {"status": "success"}
-                
-            raise HTTPException(status_code=500, detail="Unexpected response from GitHub")
+
+            raise HTTPException(
+                status_code=500, detail="Unexpected response from GitHub"
+            )
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error polling GitHub Device Flow: {e}")
-            raise HTTPException(status_code=500, detail="Error communicating with GitHub")
+            raise HTTPException(
+                status_code=500, detail="Error communicating with GitHub"
+            )
+
 
 @router.get("/status", response_model=DeviceFlowStatusResponse)
 async def get_status():
@@ -93,21 +107,21 @@ async def get_status():
                 token = credential_provider.get_github_token()
                 if not token:
                     return DeviceFlowStatusResponse(authenticated=False)
-                
+
                 # Optional: Check if token is actually valid by calling /user
                 resp = await client.get(
                     "https://api.github.com/user",
-                    headers={"Authorization": f"token {token}"}
+                    headers={"Authorization": f"token {token}"},
                 )
                 if resp.status_code == 200:
                     user_data = resp.json()
                     return DeviceFlowStatusResponse(
-                        authenticated=True, 
-                        account=user_data.get("login")
+                        authenticated=True, account=user_data.get("login")
                     )
         except Exception:
             pass
     return DeviceFlowStatusResponse(authenticated=False)
+
 
 @router.post("/logout")
 async def logout():
@@ -120,18 +134,19 @@ async def logout():
             raise HTTPException(status_code=500, detail=f"Failed to logout: {e}")
     return {"status": "success"}
 
+
 async def save_token(data: dict):
     """Securely save the GitHub token to disk."""
     config_dir = os.path.dirname(settings.GITHUB_OAUTH_PATH)
     if not os.path.exists(config_dir):
         os.makedirs(config_dir, exist_ok=True)
-    
+
     with open(settings.GITHUB_OAUTH_PATH, "w") as f:
         # Only save necessary fields
         token_data = {
             "access_token": data["access_token"],
             "token_type": data.get("token_type", "bearer"),
-            "scope": data.get("scope", "")
+            "scope": data.get("scope", ""),
         }
         json.dump(token_data, f, indent=2)
     logger.info(f"GitHub OAuth token saved to {settings.GITHUB_OAUTH_PATH}")

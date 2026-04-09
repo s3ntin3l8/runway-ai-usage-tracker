@@ -40,7 +40,7 @@ async def refresh_token(client, creds):
     if not refresh_token:
         print(f"{RED}ERROR: No refresh token available{RESET}")
         return None
-    
+
     resp = await client.post(
         "https://oauth2.googleapis.com/token",
         data={
@@ -48,13 +48,13 @@ async def refresh_token(client, creds):
             "client_secret": CLIENT_SECRET,
             "refresh_token": refresh_token,
             "grant_type": "refresh_token",
-        }
+        },
     )
-    
+
     if resp.status_code != 200:
         print(f"{RED}Token refresh failed: {resp.status_code}{RESET}")
         return None
-    
+
     new_data = resp.json()
     creds["access_token"] = new_data["access_token"]
     creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
@@ -65,29 +65,29 @@ async def refresh_token(client, creds):
 async def test_quota_detailed(client, headers, project_id=""):
     """Test quota endpoint and print all fields."""
     print_section("RETRIEVE USER QUOTA - FULL RESPONSE")
-    
+
     body = {"project": project_id} if project_id else {}
-    
+
     resp = await client.post(
         "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
         json=body,
-        headers=headers
+        headers=headers,
     )
-    
+
     print(f"Status: {resp.status_code}")
-    
+
     if resp.status_code == 200:
         data = resp.json()
         print(f"\n{BOLD}Full Response Structure:{RESET}")
         print(json.dumps(data, indent=2))
-        
+
         # Check for any non-bucket fields
         print(f"\n{BOLD}Top-level keys:{RESET}")
         for key in data.keys():
             print(f"  • {key}")
             if key != "buckets":
                 print(f"    Value: {data[key]}")
-        
+
         # Deep dive into bucket fields
         if data.get("buckets"):
             print(f"\n{BOLD}Bucket fields (first bucket):{RESET}")
@@ -101,24 +101,34 @@ async def test_quota_detailed(client, headers, project_id=""):
 async def test_tier_detailed(client, headers):
     """Test tier endpoint and print all fields."""
     print_section("LOAD CODE ASSIST - FULL RESPONSE")
-    
+
     resp = await client.post(
         "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
         json={"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
-        headers=headers
+        headers=headers,
     )
-    
+
     print(f"Status: {resp.status_code}")
-    
+
     if resp.status_code == 200:
         data = resp.json()
         print(f"\n{BOLD}Full Response Structure:{RESET}")
         print(json.dumps(data, indent=2))
-        
+
         # Look for billing/credit/overusage fields
         print(f"\n{BOLD}Searching for billing/credit/overusage fields:{RESET}")
-        billing_keywords = ["bill", "credit", "spend", "cost", "payment", "overage", "overus", "limit", "quota"]
-        
+        billing_keywords = [
+            "bill",
+            "credit",
+            "spend",
+            "cost",
+            "payment",
+            "overage",
+            "overus",
+            "limit",
+            "quota",
+        ]
+
         def search_dict(d, path=""):
             """Recursively search dict for billing-related fields."""
             for key, value in d.items():
@@ -126,14 +136,14 @@ async def test_tier_detailed(client, headers):
                 # Check if key matches billing keywords
                 if any(kw in key.lower() for kw in billing_keywords):
                     print(f"  {GREEN}• {current_path}: {value}{RESET}")
-                
+
                 # Recurse into nested dicts
                 if isinstance(value, dict):
                     search_dict(value, current_path)
                 elif isinstance(value, list) and value and isinstance(value[0], dict):
                     for i, item in enumerate(value):
                         search_dict(item, f"{current_path}[{i}]")
-        
+
         search_dict(data)
     else:
         print(f"{RED}Error: {resp.text}{RESET}")
@@ -142,13 +152,13 @@ async def test_tier_detailed(client, headers):
 async def test_cloud_billing_api(client, headers):
     """Try to access cloud billing API to get spend data."""
     print_section("CLOUD BILLING API (EXPERIMENTAL)")
-    
+
     # Try various billing endpoints
     endpoints = [
         "https://cloudbilling.googleapis.com/v1/billingAccounts",
         "https://cloudbilling.googleapis.com/v1/projects/climbing-engine-hczq7/billingInfo",
     ]
-    
+
     for endpoint in endpoints:
         print(f"\n{BOLD}Testing: {endpoint}{RESET}")
         try:
@@ -165,7 +175,7 @@ async def test_cloud_billing_api(client, headers):
 async def test_usage_api(client, headers):
     """Try to find a usage/metrics API endpoint."""
     print_section("USAGE/METRICS API (EXPERIMENTAL)")
-    
+
     # Try monitoring API for usage metrics
     project_id = "climbing-engine-hczq7"
     endpoints = [
@@ -173,7 +183,7 @@ async def test_usage_api(client, headers):
         f"https://cloudcode-pa.googleapis.com/v1internal:retrieveUsage",
         f"https://cloudcode-pa.googleapis.com/v1internal:getUsage",
     ]
-    
+
     for endpoint in endpoints:
         print(f"\n{BOLD}Testing: {endpoint}{RESET}")
         try:
@@ -193,31 +203,33 @@ async def test_usage_api(client, headers):
 async def main():
     print_section("GEMINI OVERUSAGE/CREDITS INVESTIGATION")
     print(f"Credentials path: {CREDS_PATH}")
-    
+
     if not CREDS_PATH.exists():
         print(f"{RED}ERROR: Credentials not found{RESET}")
         return
-    
+
     if not CLIENT_ID or not CLIENT_SECRET:
-        print(f"{RED}ERROR: GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET must be set{RESET}")
+        print(
+            f"{RED}ERROR: GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET must be set{RESET}"
+        )
         return
-    
+
     with open(CREDS_PATH, "r") as f:
         creds = json.load(f)
-    
+
     async with httpx.AsyncClient() as client:
         # Check and refresh token if needed
         expiry = creds.get("expiry_date", 0)
         now = time.time() * 1000
-        
+
         if expiry < now:
             creds = await refresh_token(client, creds)
             if not creds:
                 return
-        
+
         token = creds.get("access_token")
         headers = {"Authorization": f"Bearer {token}"}
-        
+
         # Test all endpoints
         await test_quota_detailed(client, headers, "climbing-engine-hczq7")
         await test_tier_detailed(client, headers)

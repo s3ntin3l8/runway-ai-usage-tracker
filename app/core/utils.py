@@ -11,35 +11,51 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
+
 class PaceCalculator:
     @staticmethod
     def estimate_longevity(pct_used: float, reset_at: Optional[datetime]) -> str:
-        if pct_used <= 0: return "Stable"
-        if not reset_at: return "Sustainable"
+        if pct_used <= 0:
+            return "Stable"
+        if not reset_at:
+            return "Sustainable"
         now = datetime.now(timezone.utc)
-        if reset_at.tzinfo is None: reset_at = reset_at.replace(tzinfo=timezone.utc)
+        if reset_at.tzinfo is None:
+            reset_at = reset_at.replace(tzinfo=timezone.utc)
         time_to_reset = (reset_at - now).total_seconds()
-        if time_to_reset <= 0: return "Pending Reset"
+        if time_to_reset <= 0:
+            return "Pending Reset"
         remaining_pct = 100 - pct_used
-        if remaining_pct <= 0: return "Exhausted"
-        if remaining_pct < 10: return "Fast Burn"
-        if remaining_pct < 30: return "Moderate Burn"
+        if remaining_pct <= 0:
+            return "Exhausted"
+        if remaining_pct < 10:
+            return "Fast Burn"
+        if remaining_pct < 30:
+            return "Moderate Burn"
         return "Sustainable"
 
+
 def human_delta(target_dt: Optional[datetime]) -> str:
-    if not target_dt: return "—"
+    if not target_dt:
+        return "—"
     now = datetime.now(timezone.utc)
-    if target_dt.tzinfo is None: target_dt = target_dt.replace(tzinfo=timezone.utc)
+    if target_dt.tzinfo is None:
+        target_dt = target_dt.replace(tzinfo=timezone.utc)
     diff = target_dt - now
     seconds = int(diff.total_seconds())
-    if seconds < 0: return "Just now"
-    if seconds < 60: return f"{seconds}s"
-    if seconds < 3600: return f"{seconds // 60}m"
-    if seconds < 86400: return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    if seconds < 0:
+        return "Just now"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
     # NEW: xd yh format for >24h
     days = seconds // 86400
     hours = (seconds % 86400) // 3600
     return f"{days}d {hours}h"
+
 
 def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
     return {
@@ -51,15 +67,17 @@ def error_card(service: str, icon: str, message: str, error_type: str = "unknown
         "health": "critical",
         "pace": "Stopped",
         "detail": truncate_string(message, 40),
-        "error_type": error_type
+        "error_type": error_type,
     }
+
 
 def truncate_string(s: Any, limit: int = 40) -> str:
     """Standardize string truncation with ellipsis."""
     str_val = str(s)
     if len(str_val) <= limit:
         return str_val
-    return str_val[:limit-3] + "..."
+    return str_val[: limit - 3] + "..."
+
 
 def extract_token_regex(detail: str, prefix: str) -> Optional[str]:
     """
@@ -70,17 +88,18 @@ def extract_token_regex(detail: str, prefix: str) -> Optional[str]:
     match = re.search(pattern, detail)
     return match.group(1) if match else None
 
+
 async def http_request_with_retry(
     client: httpx.AsyncClient,
     method: str,
     url: str,
     max_retries: int = 3,
     initial_delay: float = 0.5,
-    **kwargs
+    **kwargs,
 ) -> httpx.Response:
     """
     Make an HTTP request with exponential backoff retry on 429 (rate limit).
-    
+
     Args:
         client: httpx.AsyncClient instance
         method: HTTP method (get, post, etc.)
@@ -88,37 +107,46 @@ async def http_request_with_retry(
         max_retries: Maximum number of retries (default: 3)
         initial_delay: Initial backoff delay in seconds (default: 0.5)
         **kwargs: Additional arguments to pass to the request
-    
+
     Returns:
         httpx.Response: The successful response or the final failed response
     """
     for attempt in range(max_retries):
         try:
             response = await client.request(method, url, **kwargs)
-            
+
             # If not rate limited, return immediately
             if response.status_code != 429:
                 return response
-            
+
             # If this was the last attempt, return the 429 response
             if attempt == max_retries - 1:
-                logger.warning(f"Rate limited (429) on {method.upper()} {url} after {max_retries} attempts")
+                logger.warning(
+                    f"Rate limited (429) on {method.upper()} {url} after {max_retries} attempts"
+                )
                 return response
-            
+
             # Calculate backoff with jitter
-            wait_time = (2 ** attempt) * initial_delay + random.uniform(0, 0.1 * (2 ** attempt))
-            logger.info(f"Rate limited (429) on {method.upper()} {url}, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})")
+            wait_time = (2**attempt) * initial_delay + random.uniform(
+                0, 0.1 * (2**attempt)
+            )
+            logger.info(
+                f"Rate limited (429) on {method.upper()} {url}, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})"
+            )
             await asyncio.sleep(wait_time)
-            
+
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
             # For non-rate-limit errors, log and retry with shorter delay
             logger.warning(f"Request failed on attempt {attempt + 1}: {e}, retrying...")
             await asyncio.sleep(initial_delay * (attempt + 1))
-    
+
     # This shouldn't be reached but just in case
-    raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")
+    raise RuntimeError(
+        f"Max retries ({max_retries}) exceeded for {method.upper()} {url}"
+    )
+
 
 def safe_write_json(path: str, data: dict):
     """
@@ -127,15 +155,17 @@ def safe_write_json(path: str, data: dict):
     """
     # ensure directory exists
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    
+
     # Use the same directory for the temp file to ensure os.replace is atomic (same filesystem)
-    fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix="." + os.path.basename(path) + ".tmp")
+    fd, temp_path = tempfile.mkstemp(
+        dir=os.path.dirname(path), prefix="." + os.path.basename(path) + ".tmp"
+    )
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())  # Ensure data is written to disk
-        
+
         # Atomic rename
         os.replace(temp_path, path)
     except Exception as e:

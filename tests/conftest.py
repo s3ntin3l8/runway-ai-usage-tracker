@@ -25,16 +25,18 @@ from tests.fixtures.mock_data import (
     CHATGPT_USAGE_RESPONSE,
     OPENCODE_GO_RESPONSE,
     BIGMODEL_ZAI_RESPONSE,
-    KIMI_RESPONSE
+    KIMI_RESPONSE,
 )
 
 
 @pytest.fixture
 def env_vars(monkeypatch):
     """Provide a helper to set environment variables during tests using monkeypatch."""
+
     def set_vars(**kwargs):
         for key, value in kwargs.items():
             monkeypatch.setenv(key, value)
+
     return set_vars
 
 
@@ -55,13 +57,13 @@ def mock_http_client():
 @pytest.fixture
 def temp_env_file():
     """Create a temporary .env file for testing configuration loading."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
         f.write("CLAUDE_CODE_OAUTH_TOKEN=test_token\n")
         f.write("GITHUB_TOKEN=github_test_token\n")
         temp_path = f.name
-    
+
     yield temp_path
-    
+
     # Cleanup
     if os.path.exists(temp_path):
         os.unlink(temp_path)
@@ -124,32 +126,35 @@ def mock_kimi_response():
 @pytest.fixture
 def error_response():
     """Provide common error response mocks."""
+
     def _create(status_code=500, detail="Internal Server Error"):
         response = MagicMock(spec=httpx.Response)
         response.status_code = status_code
         response.json.return_value = {"detail": detail}
         response.text = json.dumps({"detail": detail})
         return response
+
     return _create
 
 
 @pytest.fixture
 def mock_http_response(monkeypatch):
     """Factory fixture to create mock httpx.Response objects."""
+
     def create_response(status_code=200, json_data=None, text=""):
         response = MagicMock(spec=httpx.Response)
         response.status_code = status_code
         response.json.return_value = json_data or {}
         response.text = text
         return response
-    
+
     return create_response
 
 
 @pytest.fixture
 def mock_keyring():
     """Provide a mock keyring module for testing token retrieval."""
-    with patch('app.core.config.keyring') as mock_keyring:
+    with patch("app.core.config.keyring") as mock_keyring:
         mock_keyring.get_password.return_value = None
         yield mock_keyring
 
@@ -157,6 +162,4 @@ def mock_keyring():
 # Pytest asyncio configuration
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""
-    config.addinivalue_line(
-        "markers", "asyncio: mark test as asyncio"
-    )
+    config.addinivalue_line("markers", "asyncio: mark test as asyncio")

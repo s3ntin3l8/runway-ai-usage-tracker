@@ -8,12 +8,12 @@ Collection Strategy:
    - Discovers project via loadCodeAssist for complete model list (including gemini-3)
    - Auto-refreshes expired tokens and saves back to credentials file
    - Returns one card per model quota bucket
-   
+
 2. Secondary: Local log parsing from Gemini sessions
    - Parses .jsonl files from GEMINI_SESSIONS_DIR
    - Sums prompt_tokens + completion_tokens from logs
    - Estimates usage on rolling 24-hour window
-   
+
 3. Error Handling:
    - Missing credentials: Returns empty list (allows other collectors to run)
    - Invalid JSON: Logs warning, returns empty list
@@ -73,10 +73,12 @@ class GeminiCollector(OAuthBaseCollector):
         """Initialize caching for API results."""
         # Credentials file path (search multiple locations, default to standard)
         home = os.path.expanduser("~")
-        credentials_path = settings.GEMINI_OAUTH_PATH or os.path.join(home, ".gemini", "oauth_creds.json")
-        
+        credentials_path = settings.GEMINI_OAUTH_PATH or os.path.join(
+            home, ".gemini", "oauth_creds.json"
+        )
+
         super().__init__(provider_name="Gemini", credentials_path=credentials_path)
-        
+
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
@@ -107,7 +109,7 @@ class GeminiCollector(OAuthBaseCollector):
         creds = await self._get_credentials()
         if not creds:
             return None
-            
+
         refresh_token = creds.get("refresh_token")
         if not refresh_token:
             logger.warning("No refresh token in Gemini credentials")
@@ -122,21 +124,27 @@ class GeminiCollector(OAuthBaseCollector):
                     "refresh_token": refresh_token,
                     "grant_type": "refresh_token",
                 },
-                timeout=10
+                timeout=10,
             )
-            
+
             if resp.status_code == 200:
                 new_data = resp.json()
                 creds["access_token"] = new_data["access_token"]
                 # Expiry is in seconds in response, convert to ms
-                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
-                
+                creds["expiry_date"] = int(time.time() * 1000) + (
+                    new_data["expires_in"] * 1000
+                )
+
                 # Update sidecar cache
-                await token_cache.store("gemini", {"oauth_token": new_data["access_token"]})
-                
+                await token_cache.store(
+                    "gemini", {"oauth_token": new_data["access_token"]}
+                )
+
                 return creds
             else:
-                logger.warning(f"Gemini token refresh failed with status {resp.status_code}")
+                logger.warning(
+                    f"Gemini token refresh failed with status {resp.status_code}"
+                )
                 return None
         except Exception as e:
             logger.error(f"Failed to refresh Gemini token: {e}")
@@ -169,13 +177,16 @@ class GeminiCollector(OAuthBaseCollector):
         # Return API error if no logs available
         return api_data if api_data else []
 
-    async def _collect_via_api_with_cache(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _collect_via_api_with_cache(
+        self, client: httpx.AsyncClient
+    ) -> List[Dict[str, Any]]:
         """
         Fetch Gemini quota with caching (cache both success and errors).
 
         Returns cached result if within TTL to avoid hammering API.
         """
         from datetime import timezone
+
         now = datetime.now(timezone.utc)
 
         # Check cache - works for both success AND error results (check is not None for empty lists)
@@ -218,52 +229,61 @@ class GeminiCollector(OAuthBaseCollector):
             tier_resp = await client.post(
                 "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
                 json={"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
-                headers=headers
+                headers=headers,
             )
 
             tier_info = tier_resp.json()
-            
+
             # Extract project and tier
             project_id = tier_info.get("cloudaicompanionProject", "")
-            
+
             # Check for paid tier first (user has Pro subscription)
             paid_tier = tier_info.get("paidTier", {})
             current_tier = tier_info.get("currentTier", {})
-            
+
             if paid_tier:
                 # User has Pro access
                 tier_id_raw = paid_tier.get("id", "unknown")
             else:
                 # Free tier only
                 tier_id_raw = current_tier.get("id", "unknown")
-            
+
             # Map tier IDs to short display names
             tier_mapping = {
                 "g1-pro-tier": "pro",
                 "g1-ultra-tier": "ultra",
                 "standard-tier": "free",
             }
-            tier = tier_mapping.get(tier_id_raw, tier_id_raw if tier_id_raw != "unknown" else None)
-            
+            tier = tier_mapping.get(
+                tier_id_raw, tier_id_raw if tier_id_raw != "unknown" else None
+            )
+
             # 2. Retrieve Quota with discovered project (required for gemini-3 models)
             quota_resp = await client.post(
                 "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
                 json={"project": project_id},
-                headers=headers
+                headers=headers,
             )
             quota_data = quota_resp.json()
 
             # Process quota buckets - return one card per model family
             buckets = quota_data.get("buckets", [])
             if not buckets:
-                return [error_card("Gemini", "🔵", "No quota buckets returned", error_type="api_error")]
+                return [
+                    error_card(
+                        "Gemini",
+                        "🔵",
+                        "No quota buckets returned",
+                        error_type="api_error",
+                    )
+                ]
 
             results = []
             seen_classes = set()
-            
+
             for bucket in buckets:
                 model_id = bucket.get("modelId", "Unknown")
-                
+
                 # Consolidate models into classes since they share quotas
                 if "flash-lite" in model_id:
                     display_name = "Gemini Flash Lite"
@@ -277,16 +297,16 @@ class GeminiCollector(OAuthBaseCollector):
                 else:
                     display_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
                     model_class = model_id
-                    
+
                 if model_class in seen_classes:
                     continue
                 seen_classes.add(model_class)
-                
+
                 # remainingFraction: 1.0 = 100% remaining = 0% used
                 remaining_fraction = bucket.get("remainingFraction", 1.0)
                 percent_remaining = int(remaining_fraction * 100)
                 percent_used = 100 - percent_remaining
-                
+
                 # Parse reset time
                 reset_at = None
                 reset_dt = None
@@ -294,7 +314,9 @@ class GeminiCollector(OAuthBaseCollector):
                     reset_time = bucket["resetTime"]
                     try:
                         # Parse for reset_at timestamp (frontend will format display)
-                        reset_dt = datetime.fromisoformat(reset_time.replace('Z', '+00:00'))
+                        reset_dt = datetime.fromisoformat(
+                            reset_time.replace("Z", "+00:00")
+                        )
                         reset_at = reset_dt.isoformat()
                     except:
                         pass
@@ -308,86 +330,112 @@ class GeminiCollector(OAuthBaseCollector):
                     health = "critical"
 
                 # Calculate pace based on usage rate
-                pace = PaceCalculator.estimate_longevity(percent_used, reset_dt if reset_at else None)
+                pace = PaceCalculator.estimate_longevity(
+                    percent_used, reset_dt if reset_at else None
+                )
 
-                results.append({
-                    "service": display_name,
-                    "icon": "🔵",
-                    "remaining": f"{percent_used}%",
-                    "unit": "used",
-                    "reset": reset_at,  # Frontend will format this ISO timestamp
-                    "health": health,
-                    "pace": pace,
-                    "detail": f"{percent_remaining}% remaining | Model: {model_id}",
-                    "used_value": float(percent_used),
-                    "limit_value": 100.0,
-                    "is_unlimited": False,
-                    "unit_type": "percent",
-                    "reset_at": reset_at,
-                    "data_source": "oauth",
-                    "tier": tier,
-                    "usage_url": "https://one.google.com/settings",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                })
-            
+                results.append(
+                    {
+                        "service": display_name,
+                        "icon": "🔵",
+                        "remaining": f"{percent_used}%",
+                        "unit": "used",
+                        "reset": reset_at,  # Frontend will format this ISO timestamp
+                        "health": health,
+                        "pace": pace,
+                        "detail": f"{percent_remaining}% remaining | Model: {model_id}",
+                        "used_value": float(percent_used),
+                        "limit_value": 100.0,
+                        "is_unlimited": False,
+                        "unit_type": "percent",
+                        "reset_at": reset_at,
+                        "data_source": "oauth",
+                        "tier": tier,
+                        "usage_url": "https://one.google.com/settings",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+
             # Sort by usage (highest % used first = most constrained)
             results.sort(key=lambda x: int(x["remaining"].rstrip("%")), reverse=True)
-            
+
             return results
 
         except FileNotFoundError as e:
             logger.debug(f"Gemini credential file not found: {e}")
-            return [error_card("Gemini", "🔵", "No credentials file found", error_type="missing_config")]
+            return [
+                error_card(
+                    "Gemini",
+                    "🔵",
+                    "No credentials file found",
+                    error_type="missing_config",
+                )
+            ]
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON in Gemini credentials: {e}")
-            return [error_card("Gemini", "🔵", "Invalid credentials format", error_type="parse_error")]
+            return [
+                error_card(
+                    "Gemini",
+                    "🔵",
+                    "Invalid credentials format",
+                    error_type="parse_error",
+                )
+            ]
         except Exception as e:
             logger.error(f"Gemini API collection failed: {e}")
-            return [error_card("Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error")]
+            return [
+                error_card(
+                    "Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error"
+                )
+            ]
 
     async def _collect_via_logs(self) -> List[Dict[str, Any]]:
         """
         Fallback: Parse Gemini usage from local session logs.
-        
+
         Scans GEMINI_SESSIONS_DIR for .jsonl files and sums prompt_tokens + completion_tokens.
         Returns single card with total tokens on rolling 24-hour window.
-        
+
         Data Source:
         - Location: Configured by GEMINI_SESSIONS_DIR
         - Format: JSONL with entries containing "usage" field
-        
+
         Returns:
             List[Dict[str, Any]]: Single card with token total or empty list if no logs
         """
         sessions_dir = settings.GEMINI_SESSIONS_DIR
         try:
             files = await asyncio.to_thread(glob.glob, f"{sessions_dir}/*.jsonl")
-            if not files: 
+            if not files:
                 return []
-            
+
             def process_logs(fpaths):
                 total = 0
                 for fpath in fpaths:
                     with open(fpath, "r") as f:
                         for line in f:
                             u = json.loads(line).get("usage", {})
-                            total += (u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
+                            total += u.get("prompt_tokens", 0) + u.get(
+                                "completion_tokens", 0
+                            )
                 return total
 
             total = await asyncio.to_thread(process_logs, files)
-            return [{
-                "service": "Gemini CLI (Logs)",
-                "icon": "🔵",
-                "remaining": f"{total:,}",
-                "unit": "tokens (24h)",
-                "reset": "Rolling 24h",
-                "health": "good",
-                "pace": "Stable",
-                "detail": "Fallback: Local logs",
-                "data_source": "local",
-                "usage_url": "https://one.google.com/settings",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }]
+            return [
+                {
+                    "service": "Gemini CLI (Logs)",
+                    "icon": "🔵",
+                    "remaining": f"{total:,}",
+                    "unit": "tokens (24h)",
+                    "reset": "Rolling 24h",
+                    "health": "good",
+                    "pace": "Stable",
+                    "detail": "Fallback: Local logs",
+                    "data_source": "local",
+                    "usage_url": "https://one.google.com/settings",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ]
         except FileNotFoundError:
             logger.debug(f"Gemini sessions directory not found: {sessions_dir}")
             return []

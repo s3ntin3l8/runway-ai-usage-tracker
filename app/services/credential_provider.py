@@ -8,6 +8,7 @@ from app.core.config import settings, get_platform_config_dir
 
 logger = logging.getLogger(__name__)
 
+
 class CredentialProvider:
     """
     Centralized service for discovering credentials from various sources.
@@ -72,7 +73,7 @@ class CredentialProvider:
         """Get Claude OAuth token with priority: Env -> File -> Keychain -> Keyring."""
         if cls._claude_token_cache:
             return cls._claude_token_cache
-            
+
         # Priority 1: Env var
         token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
         if token:
@@ -89,7 +90,7 @@ class CredentialProvider:
             os.path.join(home, ".claude", ".credentials.json"),
             os.path.join(get_platform_config_dir("claude"), ".credentials.json"),
         ]
-        
+
         for cred_path in potential_paths:
             if os.path.exists(cred_path):
                 try:
@@ -106,10 +107,16 @@ class CredentialProvider:
         if settings.RUN_MODE != "docker" and platform.system() == "Darwin":
             try:
                 result = subprocess.run(
-                    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                    [
+                        "security",
+                        "find-generic-password",
+                        "-s",
+                        "Claude Code-credentials",
+                        "-w",
+                    ],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=5,
                 )
                 if result.returncode == 0:
                     keychain_data = result.stdout.strip()
@@ -131,6 +138,7 @@ class CredentialProvider:
         if settings.RUN_MODE != "docker":
             try:
                 import keyring
+
                 token = keyring.get_password("runway", "claude-oauth-token")
                 if token:
                     logger.debug("Found Claude OAuth token in system keyring")
@@ -142,5 +150,6 @@ class CredentialProvider:
                 logger.debug(f"Could not read from keyring: {e}")
 
         return ""
+
 
 credential_provider = CredentialProvider()
