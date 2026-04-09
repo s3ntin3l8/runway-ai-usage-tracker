@@ -53,7 +53,36 @@ DEFAULT_INGEST_API_KEY = "sidecar-default-secret"
 class Settings:
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
     RUN_MODE: str = os.getenv("RUN_MODE", "standalone") # "standalone", "multi-host", "docker"
-    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+    
+    # GitHub OAuth Settings
+    GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "Ov23liC6f9v0bAcZpXmB") # Community default
+
+    @property
+    def GITHUB_TOKEN(self) -> str:
+        """
+        Get GitHub token with priority:
+        1. GITHUB_TOKEN env var
+        2. Stored OAuth token (~/.runway/github_oauth.json)
+        3. Sidecar token cache (in-memory)
+        """
+        # Priority 1: Env var
+        token = os.getenv("GITHUB_TOKEN", "")
+        if token:
+            return token
+
+        # Priority 2: Stored OAuth token
+        if os.path.exists(self.GITHUB_OAUTH_PATH):
+            try:
+                with open(self.GITHUB_OAUTH_PATH, "r") as f:
+                    data = json.load(f)
+                    val = data.get("access_token")
+                    if val:
+                        return val
+            except Exception as e:
+                logger.debug(f"Error reading GitHub OAuth token from {self.GITHUB_OAUTH_PATH}: {e}")
+
+        # Priority 3: Fallback to sidecar cache (will be handled by collector if this returns empty)
+        return ""
 
     @property
     def CLAUDE_CODE_OAUTH_TOKEN(self) -> str:
@@ -143,6 +172,7 @@ class Settings:
     CLAUDE_PROJECTS_DIR: str = os.getenv("CLAUDE_PROJECTS_DIR", os.path.join(get_platform_config_dir("claude"), "projects"))
     GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions"))
     GEMINI_OAUTH_PATH: str = os.getenv("GEMINI_OAUTH_PATH", os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"))
+    GITHUB_OAUTH_PATH: str = os.getenv("GITHUB_OAUTH_PATH", os.path.join(get_platform_config_dir("usage-tracker"), "github_oauth.json"))
     CHATGPT_SESSIONS_DIR: str = os.getenv("CHATGPT_SESSIONS_DIR", os.path.join(get_platform_config_dir("codex"), "sessions"))
     ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.join(get_platform_data_dir("antigravity"), "state", "quota.json"))
     OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.join(get_platform_data_dir("opencode"), "opencode.db"))

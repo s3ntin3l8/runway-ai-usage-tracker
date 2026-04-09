@@ -6,16 +6,7 @@ This document tracks planned enhancements for Runway. Items are organized by cat
 
 ## High Priority
 
-### 1. GitHub OAuth Device Flow
-**File:** `app/services/collectors/github.py` + frontend  
-**Effort:** 6-8 hours
-
-Replace manual `GITHUB_TOKEN` entry with [GitHub Device Flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow).
-- Display user code in frontend
-- Poll for access token in background
-- Useful for headless/Docker environments
-
-### 2. ChatGPT Web Dashboard Scraping
+### 1. ChatGPT Web Dashboard Scraping
 **File:** `app/services/collectors/chatgpt.py`  
 **Effort:** 1-2 days
 
@@ -32,19 +23,6 @@ Scrape `https://chatgpt.com/codex/settings/usage` for rate limits, credits, deta
 **Effort:** 1-2 days
 
 Query local IDE config files for plan information instead of hardcoded limits (e.g., 2M tokens for Claude).
-
-### 5. Multi-Browser Cookie Support
-**Files:** `app/core/chrome_cookies.py`  
-**Effort:** 4-6 hours
-
-Add support for:
-- **Firefox** (`cookies.sqlite`)
-- **Safari** (`Cookies.binarycookies`, macOS only)
-- **Edge** (Chromium-based)
-
----
-
-## Low Priority
 
 ## Low Priority
 
@@ -124,12 +102,6 @@ OAuth API → Web API → Local Logs → CLI PTY → Error Cards
 
 Simpler data structure (single window vs per-window). Could add between OAuth and Web API.
 
-#### Firefox/Safari/Edge Cookie Support
-Extend `chrome_cookies.py` to support other browsers.
-
-#### Windows Credential Store
-Add Windows Credential Manager support (currently macOS Keychain only).
-
 ### Gemini
 
 #### CLI `/stats` Parsing
@@ -168,4 +140,4 @@ Use active LSP protocol instead of passive file reading:
 
 ---
 
-*Last updated: 2026-04-08*
+*Last updated: 2026-04-09*

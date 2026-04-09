@@ -3,10 +3,12 @@ from app.models.schemas import LimitsResponse, LimitCard
 from app.services.collector_manager import CollectorManager
 from app.api.endpoints.ingest import router as ingest_router
 from app.api.endpoints.health import router as health_router
+from app.api.endpoints.github_oauth import router as github_router
 
 router = APIRouter()
 router.include_router(ingest_router, tags=["ingest"])
 router.include_router(health_router, tags=["health"])
+router.include_router(github_router, prefix="/github/oauth", tags=["github_oauth"])
 manager = CollectorManager()
 
 @router.get("/limits")

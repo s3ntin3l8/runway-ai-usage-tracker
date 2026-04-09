@@ -675,3 +675,84 @@ export function buildModalContent(item) {
         </div>
     `;
 }
+
+/**
+ * Build HTML for the GitHub OAuth login modal
+ * @param {Object} data - Device flow data (user_code, verification_uri)
+ * @param {string} [error] - Optional error message
+ * @returns {string} HTML string for modal content
+ */
+export function buildGitHubOAuthModal(data, error = null) {
+    if (error) {
+        return `
+            <div class="p-6 text-center">
+                <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                </div>
+                <h2 class="text-xl font-black text-zinc-50 mb-2">Connection Failed</h2>
+                <p class="text-zinc-400 text-sm mb-6">${escapeHTML(error)}</p>
+                <button id="close-modal" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all">CLOSE</button>
+            </div>
+        `;
+    }
+
+    if (!data) {
+        return `
+            <div class="p-12 text-center">
+                <div class="inline-block w-8 h-8 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+                <p class="text-zinc-500 font-bold tracking-widest text-xs uppercase">Initializing GitHub Login...</p>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="p-2">
+            <div class="flex items-center justify-between mb-8">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-zinc-50 text-zinc-950 rounded-full flex items-center justify-center font-bold">🐙</div>
+                    <h2 class="text-xl font-black text-zinc-50 tracking-tight">Connect GitHub</h2>
+                </div>
+                <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+
+            <div class="space-y-6">
+                <div class="text-center">
+                    <p class="text-zinc-400 text-sm mb-1">Enter this code on GitHub to authorize Runway:</p>
+                    <div class="text-4xl font-black tracking-[0.2em] text-blue-400 mono py-4 bg-blue-500/5 rounded-2xl border border-blue-500/20 my-4 select-all">
+                        ${escapeHTML(data.user_code)}
+                    </div>
+                </div>
+
+                <div class="bg-zinc-900/50 rounded-2xl p-5 border border-zinc-800/50">
+                    <ol class="space-y-3 text-sm text-zinc-300">
+                        <li class="flex gap-3">
+                            <span class="flex-shrink-0 w-5 h-5 bg-zinc-800 text-zinc-400 rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+                            <span>Open <a href="${escapeHTML(data.verification_uri)}" target="_blank" class="text-blue-400 hover:underline font-bold">${escapeHTML(data.verification_uri)}</a></span>
+                        </li>
+                        <li class="flex gap-3">
+                            <span class="flex-shrink-0 w-5 h-5 bg-zinc-800 text-zinc-400 rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+                            <span>Enter the 8-character code shown above.</span>
+                        </li>
+                        <li class="flex gap-3">
+                            <span class="flex-shrink-0 w-5 h-5 bg-zinc-800 text-zinc-400 rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
+                            <span>Once authorized, this window will close automatically.</span>
+                        </li>
+                    </ol>
+                </div>
+
+                <div class="flex items-center justify-center gap-3 py-2">
+                    <div class="flex gap-1">
+                        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce"></div>
+                    </div>
+                    <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Waiting for authorization...</span>
+                </div>
+
+                <button id="cancel-github-login" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CANCEL</button>
+            </div>
+        </div>
+    `;
+}

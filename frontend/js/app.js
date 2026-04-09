@@ -1,9 +1,10 @@
-import { fetchLimits } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
-import { buildCard, buildModalContent } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal } from './components.js';
 
 // Auto-refresh timer reference
 let refreshTimer = null;
+let githubPollTimer = null;
 
 /**
  * Render quota cards to the grid
@@ -165,6 +166,105 @@ function initUI() {
     if (themeBtn) {
         themeBtn.innerHTML = STATE.brightMode ? '🌙' : '☀️';
         themeBtn.title = STATE.brightMode ? 'Switch to dark mode' : 'Switch to bright mode';
+    }
+
+    checkGitHubStatus();
+}
+
+/**
+ * Check and update GitHub authentication status
+ */
+async function checkGitHubStatus() {
+    const status = await getGitHubOAuthStatus();
+    STATE.githubAuth = status;
+    
+    const btn = document.getElementById('connect-github');
+    if (btn) {
+        if (status.authenticated) {
+            btn.innerHTML = `🐙 ${status.account.toUpperCase()}`;
+            btn.title = `Connected as ${status.account}. Click to logout.`;
+            btn.classList.remove('hidden');
+            btn.classList.add('active');
+            btn.onclick = handleGitHubLogout;
+        } else {
+            btn.innerHTML = '🐙 CONNECT';
+            btn.title = 'Connect GitHub for Copilot limits';
+            btn.classList.remove('active');
+            btn.classList.remove('hidden');
+            btn.onclick = startGitHubLogin;
+        }
+    }
+}
+
+/**
+ * Initiate GitHub OAuth Device Flow
+ */
+async function startGitHubLogin() {
+    const container = document.getElementById('modal-container');
+    const content = document.getElementById('modal-content');
+
+    // Show loading modal
+    content.innerHTML = buildGitHubOAuthModal(null);
+    container.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    try {
+        const data = await initGitHubOAuth();
+        content.innerHTML = buildGitHubOAuthModal(data);
+        
+        // Re-attach close/cancel listeners
+        document.getElementById('close-modal').onclick = cancelGitHubLogin;
+        document.getElementById('cancel-github-login').onclick = cancelGitHubLogin;
+
+        // Start polling
+        let pollCount = 0;
+        const maxPolls = Math.floor(data.expires_in / data.interval);
+        
+        if (githubPollTimer) clearInterval(githubPollTimer);
+        
+        githubPollTimer = setInterval(async () => {
+            pollCount++;
+            if (pollCount > maxPolls) {
+                cancelGitHubLogin();
+                return;
+            }
+
+            try {
+                const result = await pollGitHubOAuth(data.device_code);
+                if (result.status === 'success') {
+                    clearInterval(githubPollTimer);
+                    githubPollTimer = null;
+                    closeModal();
+                    await checkGitHubStatus();
+                    loadData(); // Refresh to show new GitHub limits
+                } else if (result.status === 'slow_down') {
+                    // Adjust interval if GitHub asks (simplified: just wait one more cycle)
+                    pollCount -= 1; 
+                }
+            } catch (err) {
+                console.error("Polling error:", err);
+            }
+        }, data.interval * 1000);
+
+    } catch (err) {
+        content.innerHTML = buildGitHubOAuthModal(null, err.message);
+        document.getElementById('close-modal').onclick = closeModal;
+    }
+}
+
+function cancelGitHubLogin() {
+    if (githubPollTimer) {
+        clearInterval(githubPollTimer);
+        githubPollTimer = null;
+    }
+    closeModal();
+}
+
+async function handleGitHubLogout() {
+    if (confirm('Disconnect GitHub account?')) {
+        await logoutGitHub();
+        await checkGitHubStatus();
+        loadData();
     }
 }
 

@@ -16,6 +16,7 @@ export const STATE = {
     disabledServices: JSON.parse(localStorage.getItem('runway_disabled_services') || '[]'),
     refreshInterval: localStorage.getItem('runway_refresh_interval') || 'off',
     brightMode: localStorage.getItem('runway_bright_mode') === 'true',
+    githubAuth: { authenticated: false, account: null },
     data: []
 };
 

@@ -38,3 +38,35 @@ export async function fetchLimits() {
         throw err;
     }
 }
+
+/**
+ * GitHub OAuth Functions
+ */
+
+export async function initGitHubOAuth() {
+    const resp = await fetch('/api/github/oauth/init');
+    if (!resp.ok) throw new Error('Failed to initiate GitHub login');
+    return await resp.json();
+}
+
+export async function pollGitHubOAuth(deviceCode) {
+    const resp = await fetch('/api/github/oauth/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: deviceCode })
+    });
+    if (!resp.ok) throw new Error('Polling failed');
+    return await resp.json();
+}
+
+export async function getGitHubOAuthStatus() {
+    const resp = await fetch('/api/github/oauth/status');
+    if (!resp.ok) return { authenticated: false };
+    return await resp.json();
+}
+
+export async function logoutGitHub() {
+    const resp = await fetch('/api/github/oauth/logout', { method: 'POST' });
+    if (!resp.ok) throw new Error('Logout failed');
+    return await resp.json();
+}
