@@ -52,6 +52,7 @@ DEFAULT_INGEST_API_KEY = "sidecar-default-secret"
 
 class Settings:
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
+    RUN_MODE: str = os.getenv("RUN_MODE", "standalone") # "standalone", "multi-host", "docker"
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
     @property

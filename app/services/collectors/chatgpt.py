@@ -78,10 +78,12 @@ class ChatGPTCollector(BaseCollector):
             except (IOError, json.JSONDecodeError):
                 pass
             
-        # Priority 3: Token cache from sidecar
-        token = token_cache.get_token("chatgpt", "oauth_token")
-        if token:
-            return {"token": token, "path": "cache"}
+        # Check token cache from sidecar
+        if not token:
+            token = await token_cache.get_token("chatgpt", "oauth_token")
+            if token:
+                logger.debug("Using OAuth token from sidecar cache")
+                return {"token": token, "path": "cache"}
             
         return {}
 

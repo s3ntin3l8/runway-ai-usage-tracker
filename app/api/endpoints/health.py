@@ -14,7 +14,7 @@ async def health_check() -> Dict[str, Any]:
         "timestamp": time.time(),
         "collectors": {
             "token_cache": {
-                "providers": token_cache.get_all_stats(),
+                "providers": await token_cache.get_all_stats(),
                 "count": len(token_cache._cache)
             },
             "external_metrics": {

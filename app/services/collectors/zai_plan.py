@@ -105,7 +105,8 @@ class ZaiPlanCollector(BaseCollector):
             headers={
                 "Authorization": f"Bearer {key}",
                 "Accept": "application/json"
-            }
+            },
+            timeout=10.0
         )
         
         if resp.status_code != 200:

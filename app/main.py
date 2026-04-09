@@ -1,14 +1,14 @@
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.requests import Request
 from starlette.responses import Response
 from app.api.routes import router as api_router
 from app.core.config import settings
 import os
 import logging
 import sys
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
+# Cache for dashboard HTML
+_DASHBOARD_HTML_CACHE = None
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -29,6 +32,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global Exception Handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception caught: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "message": str(exc)}
+    )
 
 # API routes
 app.include_router(api_router, prefix="/api")
@@ -59,21 +71,25 @@ async def favicon():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    """Serve the main dashboard page."""
-    index_file = os.path.join(frontend_path, "index.html")
-    if os.path.exists(index_file):
-        with open(index_file, "r") as f:
-            content = f.read()
-        # Return with no-cache headers
-        return HTMLResponse(
-            content=content,
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0"
-            }
-        )
-    return "<h1>Frontend index.html not found!</h1>"
+    """Serve the main dashboard page with caching."""
+    global _DASHBOARD_HTML_CACHE
+    if _DASHBOARD_HTML_CACHE is None:
+        index_file = os.path.join(frontend_path, "index.html")
+        if os.path.exists(index_file):
+            with open(index_file, "r") as f:
+                _DASHBOARD_HTML_CACHE = f.read()
+        else:
+            return "<h1>Frontend index.html not found!</h1>"
+            
+    # Return with no-cache headers to ensure sidecar updates are visible immediately in state
+    return HTMLResponse(
+        content=_DASHBOARD_HTML_CACHE,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn

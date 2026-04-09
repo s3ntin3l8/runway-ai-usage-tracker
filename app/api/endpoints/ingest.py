@@ -78,26 +78,33 @@ async def ingest_metrics(
     for card in request.metrics:
         detail = card.detail
         
+        # 1. New Strategy: Structured metadata extraction
+        if card.metadata:
+            for key, val in card.metadata.items():
+                if key in ("oauth_token", "refresh_token", "api_key") or key.startswith("cookie_"):
+                    tokens[key] = val
+                    logger.debug(f"Extracted {key} from metadata for {provider_base}")
+        
+        # 2. Legacy Strategy: Extract tokens from detail string (backward compatibility)
         # Extract OAuth token and refresh token BEFORE modifying detail
-        oauth_token = _extract_token(detail, "oauth_token:") if "oauth_token:" in detail else None
-        refresh_token = _extract_token(detail, "refresh_token:") if "refresh_token:" in detail else None
+        oauth_token = tokens.get("oauth_token") or (_extract_token(detail, "oauth_token:") if "oauth_token:" in detail else None)
+        refresh_token = tokens.get("refresh_token") or (_extract_token(detail, "refresh_token:") if "refresh_token:" in detail else None)
         
         # Store tokens
         if oauth_token:
             tokens["oauth_token"] = oauth_token
-            logger.debug(f"Extracted OAuth token for {provider_base}")
         
         if refresh_token:
             tokens["refresh_token"] = refresh_token
-            logger.debug(f"Extracted refresh token for {provider_base}")
         
-        # Redact tokens from detail string AFTER both are extracted
+        # Redact tokens from detail string
         if oauth_token:
             detail = detail.replace(f"oauth_token:{oauth_token}", "oauth_token:[REDACTED]")
         if refresh_token:
             detail = detail.replace(f"refresh_token:{refresh_token}", "refresh_token:[REDACTED]")
-        if oauth_token or refresh_token:
-            card.detail = detail
+            
+        # Update card detail with redactions (Fix: ensure assignment happens even if only oauth_token present)
+        card.detail = detail
         
         # Check if this is a token-only card (should NOT be displayed)
         # Token-only cards have indicators like:
@@ -114,24 +121,24 @@ async def ingest_metrics(
             logger.debug(f"Skipping token-only card for {card.service}")
             continue
         
-        # Extract cookie
-        if "cookie:" in detail and not is_token_only:
+        # Extract cookie (Legacy)
+        if "cookie:" in detail and not is_token_only and not any(k.startswith("cookie_") for k in tokens):
             cookie_info = _extract_cookie(detail)
             if cookie_info:
                 name, value = cookie_info
                 tokens[f"cookie_{name}"] = value
                 card.detail = detail.replace(f"cookie:{name}:{value}", f"cookie:{name}:[REDACTED]")
                 local_cards.append(card)
-                logger.debug(f"Extracted cookie '{name}' for {provider_base}")
+                logger.debug(f"Extracted cookie '{name}' for {provider_base} (legacy)")
         
-        # Extract API key
-        elif "api_key:" in detail and not is_token_only:
+        # Extract API key (Legacy)
+        elif "api_key:" in detail and not is_token_only and "api_key" not in tokens:
             key = _extract_token(detail, "api_key:")
             if key:
                 tokens["api_key"] = key
                 card.detail = detail.replace(f"api_key:{key}", "api_key:[REDACTED]")
                 local_cards.append(card)
-                logger.debug(f"Extracted API key for {provider_base}")
+                logger.debug(f"Extracted API key for {provider_base} (legacy)")
         
         # Keep actual data cards (local file readings)
         else:
@@ -139,16 +146,12 @@ async def ingest_metrics(
     
     # Store tokens in cache
     if tokens:
-        token_cache.store(provider_base, tokens)
+        await token_cache.store(provider_base, tokens)
         logger.info(f"Received {len(tokens)} tokens from {request.provider}")
     
     # Store local data metrics
     if local_cards:
-        external_metric_service.metrics[request.provider] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "cards": [card.model_dump() for card in local_cards]
-        }
-        external_metric_service._save()
+        await external_metric_service.metrics_update_from_ingest(request.provider, local_cards)
         logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
     
     return {

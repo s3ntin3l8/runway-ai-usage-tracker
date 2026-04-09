@@ -106,7 +106,7 @@ class AnthropicCollector(BaseCollector):
         
         # Check token cache from sidecar if no env token
         if not token:
-            token = token_cache.get_token("anthropic", "oauth_token")
+            token = await token_cache.get_token("anthropic", "oauth_token")
             if token:
                 token_source = "sidecar"
                 logger.info("Using OAuth token from sidecar cache")
@@ -216,7 +216,7 @@ class AnthropicCollector(BaseCollector):
         
         # Priority 2: Sidecar token cache (for multi-host scenarios)
         if not refresh_token:
-            refresh_token = token_cache.get_token("anthropic", "refresh_token")
+            refresh_token = await token_cache.get_token("anthropic", "refresh_token")
             if refresh_token:
                 logger.debug("Using refresh token from sidecar cache")
         
@@ -256,7 +256,7 @@ class AnthropicCollector(BaseCollector):
                 )
                 
                 # Update sidecar token cache so other sessions have the new token
-                token_cache.store("anthropic", {"oauth_token": new_access_token, "refresh_token": new_refresh_token})
+                await token_cache.store("anthropic", {"oauth_token": new_access_token, "refresh_token": new_refresh_token})
                 
                 # Reset failure tracking
                 self._last_refresh_failure = None
@@ -298,15 +298,12 @@ class AnthropicCollector(BaseCollector):
     def _persist_refreshed_tokens(self, access_token: str, refresh_token: str, expires_in: int):
         """
         Persist refreshed tokens to ~/.claude/.credentials.json.
-        
-        Updates the credentials file with new access token, refresh token,
-        and calculated expiration timestamp.
-        
-        Args:
-            access_token: New access token
-            refresh_token: New refresh token (or old one if not rotated)
-            expires_in: Token lifetime in seconds
         """
+        # Skip persistence in Docker mode (as per Mode 3 rule)
+        if settings.RUN_MODE == "docker":
+            logger.info("Skipping token persistence in Docker mode")
+            return
+
         try:
             # Load existing credentials
             data = {}

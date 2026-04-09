@@ -71,10 +71,12 @@ class GitHubCollector(BaseCollector):
         """
         # Check for token (env var or sidecar cache)
         token = settings.GITHUB_TOKEN
+        # Check token cache from sidecar
         if not token:
-            token = token_cache.get_token("github", "api_key")
+            token = await token_cache.get_token("github", "api_key")
             if token:
-                logger.info("Using GitHub token from sidecar cache")
+                token_source = "sidecar"
+                logger.debug("Using API key from sidecar cache")
 
         if not token:
             return []
@@ -101,7 +103,7 @@ class GitHubCollector(BaseCollector):
             }
             
             # 1. Fetch User/Quota Info first (Main source for Pro and Enterprise)
-            user_resp = await client.get("https://api.github.com/copilot_internal/user", headers=headers)
+            user_resp = await client.get("https://api.github.com/copilot_internal/user", headers=headers, timeout=10.0)
             
             # 2. Determine if we need to call v2/token (primarily for Free/Limited tier reset dates)
             token_resp = None
@@ -116,10 +118,10 @@ class GitHubCollector(BaseCollector):
                 has_limited_info = "limited_user_quotas" in user_data and "limited_user_reset_date" in user_data
                 
                 if not (has_snapshots or has_limited_info):
-                    token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers)
+                    token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers, timeout=10.0)
             else:
                 # If /user failed (e.g., 404 or 403), try /v2/token as a fallback
-                token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers)
+                token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers, timeout=10.0)
             
             cards = []
             
@@ -253,7 +255,7 @@ class GitHubCollector(BaseCollector):
             
             # Fallback to standard rate limit if no specific copilot data found
             if not cards:
-                resp = await client.get("https://api.github.com/rate_limit", headers={"Authorization": f"Bearer {token}"})
+                resp = await client.get("https://api.github.com/rate_limit", headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
                 if resp.status_code == 200:
                     data = resp.json()["resources"]["core"]
                     rem, lim = data["remaining"], data["limit"]

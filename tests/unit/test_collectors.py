@@ -1232,3 +1232,83 @@ class TestKimiCodingCollector:
         
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
+
+
+class TestHttpTimeouts:
+    """I2: All collector HTTP calls must pass an explicit timeout."""
+
+    @pytest.mark.asyncio
+    async def test_github_collector_passes_timeout(self, mock_http_client):
+        """GitHub collector must pass timeout= on all HTTP calls."""
+        from app.services.collectors.github import GitHubCollector
+        collector = GitHubCollector()
+
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"assignee": {"chat_enabled": True}}
+        mock_http_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch('app.services.collectors.github.settings') as mock_settings:
+            mock_settings.GITHUB_TOKEN = "ghp_test123"
+            await collector.collect(mock_http_client)
+
+        for i, call in enumerate(mock_http_client.get.call_args_list):
+            assert 'timeout' in call.kwargs, \
+                f"GitHub HTTP call #{i} missing timeout=: {call}"
+
+    @pytest.mark.asyncio
+    async def test_zai_api_collector_passes_timeout(self, mock_http_client):
+        """ZAI API collector must pass timeout= on its HTTP call."""
+        from app.services.collectors.zai_api import ZaiApiCollector
+        collector = ZaiApiCollector()
+
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": {"available_balance": "10.0"}}
+        mock_http_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch('app.services.collectors.zai_api.settings') as mock_settings:
+            mock_settings.ZAI_API_KEY = "test_key"
+            await collector.collect(mock_http_client)
+
+        for i, call in enumerate(mock_http_client.get.call_args_list):
+            assert 'timeout' in call.kwargs, \
+                f"ZAI API HTTP call #{i} missing timeout=: {call}"
+
+    @pytest.mark.asyncio
+    async def test_kimi_coding_collector_passes_timeout(self, mock_http_client):
+        """Kimi Coding collector must pass timeout= on its HTTP call."""
+        from app.services.collectors.kimi_coding import KimiCodingCollector
+        collector = KimiCodingCollector()
+
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_http_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch('app.services.collectors.kimi_coding.settings') as mock_settings:
+            mock_settings.KIMI_AUTH_TOKEN = "test_kimi_key"
+            await collector.collect(mock_http_client)
+
+        for i, call in enumerate(mock_http_client.post.call_args_list):
+            assert 'timeout' in call.kwargs, \
+                f"Kimi Coding HTTP call #{i} missing timeout=: {call}"
+
+    @pytest.mark.asyncio
+    async def test_zai_plan_collector_passes_timeout(self, mock_http_client):
+        """ZAI Plan collector must pass timeout= on its HTTP call."""
+        from app.services.collectors.zai_plan import ZaiPlanCollector
+        collector = ZaiPlanCollector()
+
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_http_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch('app.services.collectors.zai_plan.settings') as mock_settings:
+            mock_settings.ZAI_API_KEY = "test_key"
+            await collector.collect(mock_http_client)
+
+        for i, call in enumerate(mock_http_client.get.call_args_list):
+            assert 'timeout' in call.kwargs, \
+                f"ZAI Plan HTTP call #{i} missing timeout=: {call}"

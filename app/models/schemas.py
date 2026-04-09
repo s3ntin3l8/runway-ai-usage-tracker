@@ -1,5 +1,5 @@
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, field_validator
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, ConfigDict, field_validator, Field
 import html
 
 class LimitCard(BaseModel):
@@ -29,6 +29,8 @@ class LimitCard(BaseModel):
     usage_url: Optional[str] = None
     # NEW: ISO 8601 timestamp when data was last collected/updated
     updated_at: Optional[str] = None
+    # NEW: Flexible metadata for structured data (tokens, raw metrics)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("service", "remaining", "unit", "reset", "pace", "detail", "tier")
     @classmethod

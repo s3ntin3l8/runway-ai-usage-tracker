@@ -83,7 +83,8 @@ class KimiCodingCollector(BaseCollector):
                     "Content-Type": "application/json",
                     "Accept": "application/json"
                 },
-                json={}  # Empty body required
+                json={},  # Empty body required
+                timeout=10.0
             )
             
             if resp.status_code == 401:

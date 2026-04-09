@@ -44,9 +44,12 @@ class ZaiApiCollector(BaseCollector):
             return [error_card("zAI", "🌐", "Missing/Invalid Key", error_type="missing_config")]
         
         try:
+            # Use standard httpx get with Bearer auth
+            # NOTE: Timeout is essential for responsiveness in aggregate dashboard
             resp = await client.get(
                 "https://open.bigmodel.cn/api/paas/v4/users/me/balance",
-                headers={"Authorization": f"Bearer {key}"}
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=10.0
             )
             
             if resp.status_code != 200:

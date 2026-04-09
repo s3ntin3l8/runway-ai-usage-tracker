@@ -188,26 +188,27 @@ class TestIngestEndpoint:
         headers = self._get_hmac_headers(body, api_key=test_key)
 
         # Mock external_metric_service to avoid writing to real file
-        mock_metrics = {}
         with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
-            mock_service.metrics = mock_metrics
-            mock_service._save = MagicMock()
+            mock_service.metrics_update_from_ingest = AsyncMock()
 
             with patch('app.api.endpoints.ingest.settings') as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
                 mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-                response = test_client.post(
-                    "/api/ingest",
-                    content=body,
-                    headers=headers
-                )
+                with patch('app.api.endpoints.ingest.token_cache') as mock_cache:
+                    mock_cache.store = AsyncMock()
+                    
+                    response = test_client.post(
+                        "/api/ingest",
+                        content=body,
+                        headers=headers
+                    )
 
             # Should accept valid ingest
             assert response.status_code in [200, 202]
-            # Verify metrics were stored and save was called
-            assert "claude" in mock_metrics
-            assert mock_service._save.called
+            # Verify update method was called
+            assert mock_service.metrics_update_from_ingest.called
+            assert mock_service.metrics_update_from_ingest.call_args[0][0] == "claude"
 
     async def test_ingest_invalid_signature(self):
         """Test that invalid signatures are rejected."""
@@ -261,25 +262,27 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        stored_metrics = {}
-
         with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
-            mock_service.metrics = stored_metrics
-            mock_service._save = MagicMock()
+            # Capturing the cards to verify redaction
+            stored_cards = []
+            async def mock_update(provider, cards):
+                stored_cards.extend([c.model_dump() if hasattr(c, 'model_dump') else c for c in cards])
+            mock_service.metrics_update_from_ingest = AsyncMock(side_effect=mock_update)
 
             with patch('app.api.endpoints.ingest.settings') as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
                 mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-                with patch('app.api.endpoints.ingest.token_cache'):
+                with patch('app.api.endpoints.ingest.token_cache') as mock_cache:
+                    mock_cache.store = AsyncMock()
                     response = test_client.post("/api/ingest", content=body, headers=headers)
 
         assert response.status_code == 200
         # The raw oauth token must not appear in any stored card detail
-        for provider_data in stored_metrics.values():
-            for card in provider_data.get("cards", []):
-                assert oauth_token not in card.get("detail", ""), \
-                    f"Raw oauth_token found in stored card detail: {card['detail']}"
+        assert len(stored_cards) > 0
+        for card in stored_cards:
+            assert oauth_token not in card.get("detail", ""), \
+                f"Raw oauth_token found in stored card detail: {card['detail']}"
 
     async def test_ingest_invalid_payload(self):
         """Test that invalid payloads are rejected with correct HMAC."""

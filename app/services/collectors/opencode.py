@@ -80,13 +80,12 @@ class OpenCodeCollector(BaseCollector):
         """
         # Check for session cookie (local Chrome or sidecar cache)
         session_cookie = get_opencode_session_cookie()
-        cookie_source = "local"
-        
+        # Check token cache from sidecar
         if not session_cookie:
-            session_cookie = token_cache.get_token("opencode", "cookie_session")
+            session_cookie = await token_cache.get_token("opencode", "cookie_session")
             if session_cookie:
                 cookie_source = "sidecar"
-                logger.info("Using OpenCode session cookie from sidecar cache")
+                logger.debug("Using session cookie from sidecar cache")
         
         if not session_cookie:
             return []

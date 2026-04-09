@@ -137,8 +137,8 @@ class GeminiCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: List of quota cards, one per model, or empty list
         """
-        # Priority 1: Check token cache from sidecar first
-        cached_token = token_cache.get_token("gemini", "oauth_token")
+        # Check for sidecar token
+        cached_token = await token_cache.get_token("gemini", "oauth_token")
         if cached_token:
             creds = {"access_token": cached_token, "expiry_date": float('inf')}
             creds_path = None  # No file path for cached tokens
@@ -312,6 +312,18 @@ class GeminiCollector(BaseCollector):
         except Exception as e:
             logger.error(f"Gemini API collection failed: {e}")
             return [error_card("Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error")]
+
+    def _persist_refreshed_tokens(self, access_token: str, refresh_token: str):
+        """Persist refreshed tokens to local config file."""
+        if settings.RUN_MODE == "docker":
+            logger.info("Skipping Gemini token persistence in Docker mode")
+            return
+            
+        try:
+            # Logic to save to file would go here
+            pass
+        except Exception as e:
+            logger.error(f"Failed to persist tokens: {e}")
 
     async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Optional[Dict]:
         """

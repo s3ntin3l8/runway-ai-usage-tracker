@@ -638,6 +638,10 @@ class AnthropicCollector:
             detail_parts.append(f"refresh_token:{refresh_token}")
         detail_parts.append("[Sidecar]")
         
+        metadata = {"oauth_token": access_token}
+        if refresh_token:
+            metadata["refresh_token"] = refresh_token
+            
         return [{
             "service": "Claude Pro",
             "icon": "🟠",
@@ -648,6 +652,7 @@ class AnthropicCollector:
             "pace": "Token",
             "detail": " ".join(detail_parts),
             "data_source": "token_extracted",
+            "metadata": metadata
         }]
 
 
@@ -697,6 +702,7 @@ class GitHubCollector:
             "pace": "Token",
             "detail": f"api_key:{token} [Sidecar]",
             "data_source": "token_extracted",
+            "metadata": {"api_key": token}
         }]
 
 
@@ -738,6 +744,7 @@ class GeminiCollector:
                 "pace": "Token",
                 "detail": f"oauth_token:{token} [Sidecar]",
                 "data_source": "token_extracted",
+                "metadata": {"oauth_token": token}
             }]
         except:
             return []
@@ -780,6 +787,7 @@ class ChatGPTCollector:
             "pace": "Token",
             "detail": f"oauth_token:{token} [Sidecar]",
             "data_source": "token_extracted",
+            "metadata": {"oauth_token": token}
         }]
 
 
@@ -837,6 +845,7 @@ class KimiCollector:
             "pace": "Token",
             "detail": f"cookie:kimi-auth:{token} [Sidecar]",
             "data_source": "token_extracted",
+            "metadata": {"cookie_kimi-auth": token}
         }]
 
 
@@ -861,6 +870,7 @@ class ZaiCollector:
             "pace": "Token",
             "detail": f"api_key:{key} [Sidecar]",
             "data_source": "token_extracted",
+            "metadata": {"api_key": key}
         }]
 
 
@@ -911,6 +921,7 @@ class OpenCodeCollector:
                 "pace": "Token",
                 "detail": f"cookie:session:{session} [Sidecar]",
                 "data_source": "token_extracted",
+                "metadata": {"cookie_session": session}
             })
         
         # 2. Local DB data
@@ -968,6 +979,12 @@ class OpenCodeCollector:
                         "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                         "detail": f"${used:.2f} used · {count} msgs · {hostname} [Sidecar]",
                         "data_source": "local",
+                        "metadata": {
+                            "used": used,
+                            "count": count,
+                            "window": window,
+                            "hostname": hostname
+                        }
                     })
                 
                 conn.close()
@@ -1017,6 +1034,11 @@ class AntigravityCollector:
                     "pace": "Stable",
                     "detail": f"{name} [Sidecar]",
                     "data_source": "local",
+                    "metadata": {
+                        "name": name,
+                        "remaining_percent": rem,
+                        "resets_at": reset_ts
+                    }
                 })
             
             return results
