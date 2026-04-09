@@ -272,10 +272,13 @@ class TestAnthropicCollector:
                         ):
                             # First request gets 401, then reactive refresh happens, then second request succeeds
                             result = await collector.collect(mock_http_client)
+                            print(f"\nDEBUG: result after refresh = {result}")
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
         assert len(result) >= 1
+        for i, card in enumerate(result):
+            print(f"DEBUG: card {i} = {card}")
         assert all(card.get("remaining") != "ERR" for card in result)
         assert any(card.get("data_source") == "oauth" for card in result)
 
@@ -408,7 +411,9 @@ class TestAnthropicCollector:
                             + "\n",
                         ]
 
-                        with patch("builtins.open", mock_open(read_data="".join(log_data))):
+                        with patch(
+                            "builtins.open", mock_open(read_data="".join(log_data))
+                        ):
                             with patch(
                                 "app.services.collectors.anthropic.glob.glob",
                                 return_value=["/fake/path/test.jsonl"],
@@ -491,7 +496,9 @@ class TestAnthropicCollector:
                     with patch.object(
                         collector, "_get_valid_token", return_value="invalid_token"
                     ):
-                        with patch("builtins.open", mock_open(read_data="".join(log_data))):
+                        with patch(
+                            "builtins.open", mock_open(read_data="".join(log_data))
+                        ):
                             with patch(
                                 "app.services.collectors.anthropic.glob.glob",
                                 return_value=["/fake/path/test.jsonl"],
@@ -600,7 +607,9 @@ class TestAnthropicCollector:
                                     with patch(
                                         "builtins.open", side_effect=open_side_effect
                                     ):
-                                        result = await collector.collect(mock_http_client)
+                                        result = await collector.collect(
+                                            mock_http_client
+                                        )
 
         # Should aggregate from both directories
         assert isinstance(result, list)
