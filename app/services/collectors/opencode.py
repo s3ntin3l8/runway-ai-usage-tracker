@@ -26,7 +26,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
 from app.core.utils import error_card, human_delta
-from app.core.chrome_cookies import get_opencode_session_cookie
+from app.core.browser_cookies import get_opencode_session_cookie
 from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
 from app.services.token_cache import token_cache

@@ -82,7 +82,7 @@ Sidecar can extract tokens from `~/.claude/.credentials.json` or macOS keychain.
 | File | Purpose |
 |------|---------|
 | `app/services/collectors/anthropic.py` | Main collector |
-| `app/core/chrome_cookies.py` | Cross-platform cookie decryption |
+| `app/core/browser_cookies.py` | Cross-platform cookie decryption |
 | `scripts/sidecar.py` | Sidecar implementation |
 
 ## References

@@ -54,7 +54,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from app.core.config import settings, get_platform_config_dir
 from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry, safe_write_json
-from app.core.chrome_cookies import get_claude_session_cookie
+from app.core.browser_cookies import get_claude_session_cookie
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 

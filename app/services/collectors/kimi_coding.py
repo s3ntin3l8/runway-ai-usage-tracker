@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 import httpx
 from app.core.config import settings
 from app.core.utils import error_card, human_delta
-from app.core.chrome_cookies import get_kimi_auth_cookie
+from app.core.browser_cookies import get_kimi_auth_cookie
 from app.services.collectors.base import BaseCollector
 
 

@@ -42,19 +42,9 @@ Add support for:
 - **Safari** (`Cookies.binarycookies`, macOS only)
 - **Edge** (Chromium-based)
 
-### 6. Sidecar Daemon Mode
-**File:** `scripts/sidecar.py`  
-**Effort:** 2-3 hours
-
-Support `--daemon` flag for persistent process with configurable sleep interval (more real-time than 30m crontab).
-
-### 7. Sidecar Offline Queuing
-**File:** `scripts/sidecar.py`  
-**Effort:** 4-6 hours
-
-If ingestion API unreachable, cache metrics locally and retry on next connection.
-
 ---
+
+## Low Priority
 
 ## Low Priority
 

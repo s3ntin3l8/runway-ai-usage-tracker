@@ -69,7 +69,7 @@ Sidecar queries local DB or extracts Chrome cookie. See [sidecar documentation](
 ### Web API returns empty
 **Fix:**
 1. Login to https://opencode.ai in Chrome
-2. Check cookie extraction: `python3 -c "from app.core.chrome_cookies import get_opencode_session_cookie; print(get_opencode_session_cookie())"`
+2. Check cookie extraction: `python3 -c "from app.core.browser_cookies import get_opencode_session_cookie; print(get_opencode_session_cookie())"`
 
 ### Database not found
 **Fix:** Use OpenCode IDE at least once to create `~/.local/share/opencode/opencode.db`
@@ -79,7 +79,7 @@ Sidecar queries local DB or extracts Chrome cookie. See [sidecar documentation](
 | File | Purpose |
 |------|---------|
 | `app/services/collectors/opencode.py` | Main collector |
-| `app/core/chrome_cookies.py` | Cookie extraction |
+| `app/core/browser_cookies.py` | Cookie extraction |
 | `app/services/external_metrics.py` | Sidecar aggregation |
 
 ## References

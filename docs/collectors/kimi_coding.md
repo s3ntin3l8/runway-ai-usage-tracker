@@ -76,7 +76,7 @@ Sidecar extracts token from Chrome cookies. See [sidecar documentation](../sidec
 |------|---------|
 | `app/services/collectors/kimi_coding.py` | Main collector |
 | `app/services/collectors/kimi_api.py` | API balance collector |
-| `app/core/chrome_cookies.py` | Cookie extraction |
+| `app/core/browser_cookies.py` | Cookie extraction |
 
 ## References
 

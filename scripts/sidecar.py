@@ -493,38 +493,184 @@ def get_platform_config_dir(app_name: str) -> Path:
         return home / ".config" / app_name
 
 
-def get_all_chrome_cookies_paths() -> list:
-    """Get all potential paths to Chrome's Cookies databases."""
+# --- Browser Cookie Extraction ---
+
+def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
+    """Decrypt a Chromium-based cookie value based on the current platform."""
+    if not encrypted_value: return None
     system = platform.system()
-    home = Path.home()
-    paths = []
     
-    base_dirs = []
+    # macOS decryption
     if system == "Darwin":
-        base_dirs.append(home / "Library/Application Support/Google/Chrome")
+        try:
+            service = f"{browser_name} Safe Storage"
+            if "Edge" in browser_name: service = "Microsoft Edge Safe Storage"
+            
+            cmd = ["security", "find-generic-password", "-s", service, "-w"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if result.returncode != 0: return None
+            
+            password = result.stdout.strip()
+            if encrypted_value.startswith(b'v10') or encrypted_value.startswith(b'v11'):
+                import hashlib
+                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                salt = b'saltysalt'
+                key = hashlib.pbkdf2_hmac('sha1', password.encode('utf-8'), salt, 1003, 16)
+                iv = b' ' * 16
+                raw_ciphertext = encrypted_value[3:]
+                cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+                decryptor = cipher.decryptor()
+                decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
+                pad_len = decrypted[-1]
+                if 1 <= pad_len <= 16: return decrypted[:-pad_len].decode('utf-8')
+        except: pass
+        return None
+
+    # Windows decryption
     elif system == "Windows":
-        local_app_data = os.getenv("LOCALAPPDATA")
-        if local_app_data:
-            base_dirs.append(Path(local_app_data) / "Google/Chrome/User Data")
-        else:
-            base_dirs.append(home / "AppData/Local/Google/Chrome/User Data")
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class DATA_BLOB(ctypes.Structure):
+                _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(wintypes.BYTE))]
+            crypt32 = ctypes.windll.crypt32
+            blob_in = DATA_BLOB()
+            blob_in.cbData = len(encrypted_value)
+            blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(wintypes.BYTE))
+            blob_out = DATA_BLOB()
+            if crypt32.CryptUnprotectData(ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)):
+                buffer = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+                ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+                return buffer.decode('utf-8')
+        except: pass
+        return None
+
+    # Linux decryption
     else:
-        base_dirs.append(home / ".config/google-chrome")
-        base_dirs.append(home / ".config/chromium")
-        base_dirs.append(home / "snap/google-chrome/common/.config/google-chrome")
-        base_dirs.append(home / "snap/chromium/common/.config/chromium")
+        try:
+            try: return encrypted_value.decode('utf-8')
+            except: pass
+            import hashlib
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            # Try secretstorage for Chrome/Edge keys
+            import secretstorage
+            conn = secretstorage.dbus_init()
+            collection = secretstorage.get_default_collection(conn)
+            password = None
+            for item in collection.get_all_items():
+                if item.get_label() in ["Chrome Safe Storage", "Chromium Safe Storage", "Microsoft Edge Safe Storage"]:
+                    password = item.get_secret()
+                    break
+            if password and (encrypted_value.startswith(b'v10') or encrypted_value.startswith(b'v11')):
+                salt = b'saltysalt'
+                key = hashlib.pbkdf2_hmac('sha1', password, salt, 1003, 16)
+                iv = b' ' * 16
+                raw_ciphertext = encrypted_value[3:]
+                cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+                decryptor = cipher.decryptor()
+                decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
+                pad_len = decrypted[-1]
+                if 1 <= pad_len <= 16: return decrypted[:-pad_len].decode('utf-8')
+        except: pass
+        return None
+
+
+class BrowserCookieExtractor:
+    """Unified extractor for cookies across multiple browsers."""
     
-    profiles = ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"]
-    
-    for base in base_dirs:
-        if not base.exists():
-            continue
-        for profile in profiles:
-            for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
-                p = base / rel
-                if p.exists():
-                    paths.append(p)
-    return paths
+    @staticmethod
+    def get_all_paths():
+        system = platform.system()
+        home = Path.home()
+        results = []
+        
+        # 1. Chromium-based
+        variants = [
+            {"name": "Chrome", "darwin": "Google/Chrome", "linux": [".config/google-chrome"], "win": "Google/Chrome/User Data"},
+            {"name": "Chromium", "darwin": "Chromium", "linux": [".config/chromium"], "win": "Chromium/User Data"},
+            {"name": "Edge", "darwin": "Microsoft Edge", "linux": [".config/microsoft-edge"], "win": "Microsoft/Edge/User Data"},
+        ]
+        for v in variants:
+            dirs = []
+            if system == "Darwin": dirs.append(home / "Library/Application Support" / v["darwin"])
+            elif system == "Windows": 
+                la = os.getenv("LOCALAPPDATA")
+                dirs.append(Path(la) / v["win"] if la else home / "AppData/Local" / v["win"])
+            else:
+                for lp in v["linux"]: dirs.append(home / lp)
+            
+            for base in dirs:
+                if not base.exists(): continue
+                for profile in ["Default", "Profile 1", "Profile 2"]:
+                    for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
+                        p = base / rel
+                        if p.exists(): results.append({"browser": v["name"], "type": "chromium", "path": p})
+        
+        # 2. Firefox
+        ff_dirs = []
+        if system == "Darwin": ff_dirs.append(home / "Library/Application Support/Firefox/Profiles")
+        elif system == "Windows": ff_dirs.append(home / "AppData/Roaming/Mozilla/Firefox/Profiles")
+        else: ff_dirs.append(home / ".mozilla/firefox")
+        for base in ff_dirs:
+            if not base.exists(): continue
+            for p in base.glob("*.default*"):
+                if (p / "cookies.sqlite").exists():
+                    results.append({"browser": "Firefox", "type": "firefox", "path": p / "cookies.sqlite"})
+        
+        # 3. Safari
+        if system == "Darwin" and (home / "Library/Cookies/Cookies.binarycookies").exists():
+            results.append({"browser": "Safari", "type": "safari", "path": home / "Library/Cookies/Cookies.binarycookies"})
+            
+        return results
+
+    @staticmethod
+    def parse_safari(path):
+        """Minimal safari binary cookie parser."""
+        try:
+            with open(path, 'rb') as f:
+                if f.read(4) != b'cook': return []
+                num_pages = struct.unpack('>I', f.read(4))[0]
+                page_sizes = [struct.unpack('>I', f.read(4))[0] for _ in range(num_pages)]
+                all_cookies = []
+                for size in page_sizes:
+                    data = f.read(size)
+                    if len(data) < 12: continue
+                    num_c = struct.unpack('<I', data[4:8])[0]
+                    off = [struct.unpack('<I', data[8+(i*4):12+(i*4)])[0] for i in range(num_c)]
+                    for o in off:
+                        c = data[o:]
+                        u_o, n_o = struct.unpack('<I', c[16:20])[0], struct.unpack('<I', c[20:24])[0]
+                        v_o = struct.unpack('<I', c[28:32])[0]
+                        def r_s(at):
+                            e = c.find(b'\x00', at)
+                            return c[at:e].decode('utf-8', errors='replace') if e != -1 else ""
+                        all_cookies.append({"domain": r_s(u_o), "name": r_s(n_o), "value": r_s(v_o)})
+                return all_cookies
+        except: return []
+
+    @staticmethod
+    def get_cookie(domain, name):
+        for target in BrowserCookieExtractor.get_all_paths():
+            try:
+                if target["type"] == "safari":
+                    for c in BrowserCookieExtractor.parse_safari(target["path"]):
+                        if domain in c["domain"] and c["name"] == name: return c["value"]
+                else:
+                    conn = sqlite3.connect(f"file:{str(target['path'])}?mode=ro&uri=1", uri=True)
+                    cursor = conn.cursor()
+                    if target["type"] == "chromium":
+                        cursor.execute("SELECT encrypted_value FROM cookies WHERE host_key LIKE ? AND name = ?", (f"%{domain}%", name))
+                        row = cursor.fetchone()
+                        if row:
+                            val = decrypt_chromium_cookie(row[0], target["browser"])
+                            if val: conn.close(); return val
+                    else: # Firefox
+                        cursor.execute("SELECT value FROM moz_cookies WHERE host LIKE ? AND name = ?", (f"%{domain}%", name))
+                        row = cursor.fetchone()
+                        if row: val = row[0]; conn.close(); return val
+                    conn.close()
+            except: continue
+        return None
 
 
 def get_windows_credential(target: str) -> Optional[str]:
@@ -796,33 +942,8 @@ class KimiCollector:
     
     @staticmethod
     def _get_cookie(cookie_name: str = "kimi-auth") -> Optional[str]:
-        """Extract cookie from Chrome cookies using direct URI access.
-        
-        Uses SQLite URI mode for direct file access without copying.
-        """
-        cookies_paths = get_all_chrome_cookies_paths()
-        if not cookies_paths:
-            return None
-        
-        for cookies_path in cookies_paths:
-            try:
-                # Use URI mode for direct file access, read-only
-                conn = sqlite3.connect(f"file:{str(cookies_path)}?mode=ro&uri=1", uri=True)
-                cursor = conn.cursor()
-                
-                cursor.execute(
-                    "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
-                    (cookie_name,)
-                )
-                row = cursor.fetchone()
-                conn.close()
-                
-                if row:
-                    return row[0]
-            except Exception as e:
-                logging.debug(f"Failed to read Kimi cookies from {cookies_path.name}: {e}")
-                continue
-        return None
+        """Extract cookie across all browsers."""
+        return BrowserCookieExtractor.get_cookie("kimi.com", cookie_name)
     
     @staticmethod
     def collect():
@@ -879,28 +1000,8 @@ class OpenCodeCollector:
     
     @staticmethod
     def get_opencode_session():
-        """Extract opencode.ai session from Chrome."""
-        cookies_paths = get_all_chrome_cookies_paths()
-        if not cookies_paths:
-            return None
-        
-        for cookies_path in cookies_paths:
-            try:
-                # Use URI mode for direct file access, read-only
-                conn = sqlite3.connect(f"file:{str(cookies_path)}?mode=ro&uri=1", uri=True)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
-                )
-                row = cursor.fetchone()
-                conn.close()
-                
-                if row:
-                    return row[0]
-            except Exception as e:
-                logging.debug(f"Failed to read OpenCode cookies from {cookies_path.name}: {e}")
-                continue
-        return None
+        """Extract opencode.ai session across all browsers."""
+        return BrowserCookieExtractor.get_cookie("opencode.ai", "session")
     
     @staticmethod
     def collect():
