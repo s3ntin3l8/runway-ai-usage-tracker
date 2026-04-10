@@ -7,11 +7,10 @@ This document tracks planned enhancements and architectural recommendations for 
 ## 🏗️ Architecture & Core Logic
 
 ### 1. Logic Unification (Shared Registry)
-**Status:** Planned  
-**Source:** Code Review
-Extract common collector logic (endpoints, headers, parsing rules) into a shared `registry.json`. 
-- **Goal:** Reduce logic drift between `app/` and `scripts/sidecar.py`.
-- **Implementation:** Use a "Sidecar Generator" script (`scripts/generate_sidecar.py`) to keep the sidecar zero-dependency while maintaining a single source of truth.
+**Status:** Completed (2026-04-10)
+Extracted common collector logic (endpoints, headers, parsing rules) into a shared `registry.json`. 
+- **Infrastructure:** Created `scripts/generate_sidecar.py` to build a zero-dependency sidecar from the registry.
+- **Benefit:** Eliminated logic drift between the server and sidecar; new providers only need a single JSON entry.
 
 ### 3. Binary Sidecar Distribution
 **File:** `sidecar/` (build scripts)  
