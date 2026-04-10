@@ -176,16 +176,40 @@ class AnthropicCollector(OAuthBaseCollector):
             logger.error(f"Failed to refresh Anthropic token: {e}")
             return None
 
-    def _get_strategies(self) -> List[Any]:
-        """Return the 4-tier fallback strategies for Claude."""
+    def _fallback_strategies(self) -> List[Any]:
+        """Return the fallback strategies for Claude (Web, CLI, Logs)."""
         return [
-            self._strategy_oauth,
             self._get_claude_via_web_api,
             self._strategy_cli_pty,
             self._strategy_local_enhanced,
         ]
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """OAuth strategy with reactive token refresh."""
+        token = await self._get_valid_token(client)
+        if not token:
+            return []
+
+        oauth_res = await self._get_claude_oauth_with_cache(client, token)
+
+        # Reactive 401 handling
+        is_401 = any(
+            "Expired/Invalid Token" in str(r.get("detail", "")) for r in oauth_res
+        )
+        if is_401 and not self._terminal_failure:
+            logger.info("Got 401 from OAuth API, attempting proactive refresh")
+            async with self._refresh_lock:
+                new_creds = await self._execute_refresh(client)
+                if new_creds:
+                    new_token = new_creds.get("claudeAiOauth", {}).get("accessToken")
+                    self._persist_credentials(new_creds)
+                    self._cached_results = None
+                    self._last_fetch = None
+                    oauth_res = await self._get_claude_oauth_with_cache(client, new_token)
+
+        return oauth_res
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return descriptive error card context when all strategies fail."""
         if credential_provider.get_claude_token():
             return [
@@ -215,31 +239,6 @@ class AnthropicCollector(OAuthBaseCollector):
                 error_type="missing_config",
             )
         ]
-
-    async def _strategy_oauth(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """OAuth strategy with reactive token refresh."""
-        token = await self._get_valid_token(client)
-        if not token:
-            return []
-
-        oauth_res = await self._get_claude_oauth_with_cache(client, token)
-
-        # Reactive 401 handling
-        is_401 = any(
-            "Expired/Invalid Token" in str(r.get("detail", "")) for r in oauth_res
-        )
-        if is_401 and not self._terminal_failure:
-            logger.info("Got 401 from OAuth API, attempting proactive refresh")
-            async with self._refresh_lock:
-                new_creds = await self._execute_refresh(client)
-                if new_creds:
-                    new_token = new_creds.get("claudeAiOauth", {}).get("accessToken")
-                    self._persist_credentials(new_creds)
-                    self._cached_results = None
-                    self._last_fetch = None
-                    oauth_res = await self._get_claude_oauth_with_cache(client, new_token)
-
-        return oauth_res
 
 
     async def _has_web_cookie(self) -> bool:

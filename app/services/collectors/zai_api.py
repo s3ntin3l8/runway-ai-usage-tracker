@@ -29,11 +29,15 @@ from app.services.collectors.base import BaseCollector
 class ZaiApiCollector(BaseCollector):
     """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
 
-    def _get_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> List[Any]:
         """Return the strategy list for zAI API."""
-        return [self._strategy_api]
+        return []
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect zAI prepaid balance via API."""
+        return await self._strategy_api(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return fallback error when API fails."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":

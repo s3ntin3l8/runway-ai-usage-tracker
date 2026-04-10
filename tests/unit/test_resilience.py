@@ -12,16 +12,16 @@ from app.services.collectors.base import BaseCollector
 
 
 class MockCollector(BaseCollector):
-    def _get_strategies(self) -> List[Any]:
-        return [self._strategy_mock]
-
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    def _fallback_strategies(self) -> List[Any]:
         return []
 
-    async def _strategy_mock(self, client):
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         return [
             {"service": "Mock", "detail": "original", "metadata": {"nested": "value"}}
         ]
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
+        return []
 
 
 class TestCacheResilience:

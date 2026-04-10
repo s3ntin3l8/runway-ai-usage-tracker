@@ -12,9 +12,11 @@ where desktop UI features may not be available.
 """
 
 import httpx
+import logging
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
-from app.models.schemas import LimitCard
+from typing import List, Dict, Any, Callable, Awaitable
+
+logger = logging.getLogger(__name__)
 
 
 class BaseCollector(ABC):
@@ -37,44 +39,54 @@ class BaseCollector(ABC):
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Automated Strategy Pattern orchestration. Executes defined strategies
-        sequentially until one succeeds or all fail.
+        Automated Strategy Pattern orchestration. Executes the primary strategy,
+        then fallback strategies sequentially until one succeeds or all fail.
         """
-        strategies = self._get_strategies()
-        
-        for strategy in strategies:
+        # 1. Try Primary Strategy
+        try:
+            results = await self._primary_strategy(client)
+            if not self._is_error_result(results):
+                return results
+            logger.debug(f"Primary strategy returned error/empty, proceeding to fallbacks...")
+        except Exception as e:
+            logger.warning(f"Primary strategy raised exception: {e}")
+
+        # 2. Try Fallback Strategies
+        for strategy in self._fallback_strategies():
             try:
                 results = await strategy(client)
                 if not self._is_error_result(results):
-                    # Success! Return the results immediately
                     return results
-                
-                # If we got an error result, continue to the next fallback strategy
-                strategy_name = strategy.__name__ if hasattr(strategy, '__name__') else "unknown"
-                import logging
-                logging.getLogger(__name__).debug(f"Strategy {strategy_name} returned error/empty, falling back...")
-                
+
+                strategy_name = (
+                    strategy.__name__ if hasattr(strategy, "__name__") else "unknown"
+                )
+                logger.debug(
+                    f"Fallback strategy {strategy_name} returned error/empty, falling back..."
+                )
             except Exception as e:
-                # Catch all strategy failures and move to next fallback
-                strategy_name = strategy.__name__ if hasattr(strategy, '__name__') else "unknown"
-                import logging
-                logging.getLogger(__name__).warning(f"Strategy {strategy_name} raised exception: {e}")
-        
-        # All strategies failed - return the final fallback error
-        return await self._get_fallback_error()
+                strategy_name = (
+                    strategy.__name__ if hasattr(strategy, "__name__") else "unknown"
+                )
+                logger.warning(f"Fallback strategy {strategy_name} raised exception: {e}")
+
+        # 3. All strategies failed - return final error
+        return await self._error_handler()
 
     @abstractmethod
-    def _get_strategies(self) -> List[Any]:
-        """
-        Return an ordered list of async methods (strategies) to execute.
-        Expected order: Primary (API) -> Secondary (Web) -> Tertiary (Logs).
-        """
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Execute the primary (usually API) collection strategy."""
         pass
 
     @abstractmethod
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
-        """
-        Return the ultimate error card(s) to display when all strategies fail.
-        """
+    def _fallback_strategies(
+        self,
+    ) -> List[Callable[[httpx.AsyncClient], Awaitable[List[Dict[str, Any]]]]]:
+        """Return an ordered list of fallback async methods to execute if the primary fails."""
+        pass
+
+    @abstractmethod
+    async def _error_handler(self) -> List[Dict[str, Any]]:
+        """Return the ultimate error card(s) to display when all strategies fail."""
         pass
 

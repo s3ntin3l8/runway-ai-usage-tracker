@@ -152,14 +152,17 @@ class GeminiCollector(OAuthBaseCollector):
             logger.error(f"Failed to refresh Gemini token: {e}")
             return None
 
-    def _get_strategies(self) -> List[Any]:
-        """Return the 2-tier fallback strategies for Gemini."""
+    def _fallback_strategies(self) -> List[Any]:
+        """Return the fallback strategies for Gemini (Logs)."""
         return [
-            self._collect_via_api_with_cache,
             self._collect_via_logs,
         ]
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """API strategy with caching."""
+        return await self._collect_via_api_with_cache(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return final error card context when both API and logs fail."""
         # Check if we have credentials to determine the most helpful error
         creds = await self._get_credentials()

@@ -63,11 +63,15 @@ class KimiCodingCollector(BaseCollector):
         "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
     )
 
-    def _get_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> List[Any]:
         """Return the strategy list for Kimi Coding."""
-        return [self._strategy_api]
+        return []
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect Kimi Coding usage via API."""
+        return await self._strategy_api(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return fallback error when API fails."""
         token = await self._get_auth_token()
         if not token:

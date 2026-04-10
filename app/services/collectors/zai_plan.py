@@ -55,11 +55,15 @@ class ZaiPlanCollector(BaseCollector):
         "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
     ]
 
-    def _get_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> List[Any]:
         """Return the strategy list for zAI Plan."""
-        return [self._strategy_api]
+        return []
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect zAI plan quota limits trying multiple endpoints."""
+        return await self._strategy_api(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return fallback error when all endpoints fail."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":

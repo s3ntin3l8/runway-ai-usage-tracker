@@ -36,15 +36,18 @@ logger = logging.getLogger(__name__)
 
 
 class OpenCodeCollector(BaseCollector):
-    def _get_strategies(self) -> List[Any]:
-        """Return the 3-tier fallback strategies for OpenCode."""
+    def _fallback_strategies(self) -> List[Any]:
+        """Return the fallback strategies for OpenCode (Sidecar, Local DB)."""
         return [
-            self._get_opencode_web,
             self._strategy_sidecar_aggregation,
             self._strategy_local_db_fallback,
         ]
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """OpenCode Web API strategy."""
+        return await self._get_opencode_web(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return empty list on failure (OpenCode is non-critical)."""
         return []
 

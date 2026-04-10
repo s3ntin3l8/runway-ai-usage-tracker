@@ -60,6 +60,16 @@ Distribute the sidecar as a single binary (using PyInstaller or similar) to avoi
 
 ---
 
+## 💻 Desktop Integration
+
+### 6. Menubar / System Tray App
+**Effort:** Medium
+- **Goal:** Real-time visibility without having a browser tab open.
+- **Implementation:** A lightweight Python script (using `pystray` or `rumps`) that polls the local Runway API and displays critical quotas in the system tray.
+- **Dynamic Icons:** Update the tray icon color (Green/Yellow/Red) based on the lowest remaining quota.
+
+---
+
 ## 📝 Documentation & Security
 
 ### 6. Architecture Decision Records (ADRs)

@@ -49,18 +49,19 @@ class GitHubCollector(BaseCollector):
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
 
-    def _get_strategies(self) -> List[Any]:
-        """Return the fallback strategies for GitHub."""
+    def _fallback_strategies(self) -> List[Any]:
+        """Return the fallback strategies for GitHub (Rate Limits)."""
         return [
-            self._strategy_api,
             self._strategy_rate_limit_fallback,
         ]
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Fetch GitHub Copilot quota with caching."""
+        return await self._strategy_api(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return final error card context when both API and fallback fail."""
-        token = credential_provider.get_github_token()
-        if not token:
-            token = await token_cache.get_token("github", "api_key")
+        token = await self._get_token()
 
         if not token:
             return [

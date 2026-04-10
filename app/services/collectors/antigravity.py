@@ -33,11 +33,15 @@ from app.services.collectors.base import BaseCollector
 
 
 class AntigravityCollector(BaseCollector):
-    def _get_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> List[Any]:
         """Return the strategy list for Antigravity."""
-        return [self._strategy_local_file]
+        return []
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect Antigravity quota from local JSON file."""
+        return await self._strategy_local_file(client)
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return empty list on failure (Antigravity is non-critical)."""
         return []
 

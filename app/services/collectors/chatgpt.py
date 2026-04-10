@@ -365,23 +365,14 @@ class ChatGPTCollector(BaseCollector):
                 except:
                     pass
 
-    def _get_strategies(self) -> List[Any]:
-        """Return the 3-tier fallback strategies for ChatGPT."""
+    def _fallback_strategies(self) -> List[Any]:
+        """Return the fallback strategies for ChatGPT (CLI RPC, Local Logs)."""
         return [
-            self._strategy_api,
             self._collect_via_cli_rpc,
             self._strategy_local_logs,
         ]
 
-    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
-        """Return final error card when all strategies fail."""
-        return [
-            error_card(
-                "ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config"
-            )
-        ]
-
-    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Web API / OAuth strategy with caching."""
         # Check API cache
         now = datetime.now(timezone.utc)
@@ -408,6 +399,14 @@ class ChatGPTCollector(BaseCollector):
             self._last_api_fetch = now
             
         return []
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
+        """Return final error card when all strategies fail."""
+        return [
+            error_card(
+                "ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config"
+            )
+        ]
         
 
     async def _fetch_api_data(
