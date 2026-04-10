@@ -50,10 +50,8 @@ class GitHubCollector(BaseCollector):
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
 
     def _fallback_strategies(self) -> List[Any]:
-        """Return the fallback strategies for GitHub (Rate Limits)."""
-        return [
-            self._strategy_rate_limit_fallback,
-        ]
+        """Return the fallback strategies for GitHub (None)."""
+        return []
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Fetch GitHub Copilot quota with caching."""
@@ -136,62 +134,13 @@ class GitHubCollector(BaseCollector):
             self._cached_results = cards
             self._last_fetch = now
             return cards
-                
         except Exception as e:
             logger.debug(f"GitHub Copilot API strategy failed: {e}")
             self._cached_results = []
             self._last_fetch = now
-            
+
         return []
 
-    async def _strategy_rate_limit_fallback(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """Fallback to standard GitHub API rate limits."""
-        # Check cache (all strategies share the same cache)
-        now = datetime.now(timezone.utc)
-        if self._cached_results is not None and self._last_fetch:
-            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
-                return self._cached_results
-
-        token = await self._get_token()
-        if not token:
-            return []
-
-        try:
-            resp = await client.get(
-                "https://api.github.com/rate_limit",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10.0,
-            )
-            if resp.status_code == 200:
-                data = resp.json()["resources"]["core"]
-                rem, lim = data["remaining"], data["limit"]
-                used = lim - rem
-                reset_at = datetime.fromtimestamp(data["reset"], tz=timezone.utc)
-                cards = [{
-                    "service": "GitHub API",
-                    "icon": "🐙",
-                    "remaining": f"{rem:,}",
-                    "unit": "requests",
-                    "reset": human_delta(reset_at),
-                    "health": "good" if rem / lim > 0.3 else "warning",
-                    "pace": "Stable",
-                    "detail": f"{rem}/{lim} [API fallback]",
-                    "used_value": float(used),
-                    "limit_value": float(lim),
-                    "is_unlimited": False,
-                    "unit_type": "requests",
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": "fallback",
-                    "usage_url": "https://github.com/settings/copilot/features",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }]
-                self._cached_results = cards
-                self._last_fetch = datetime.now(timezone.utc)
-                return cards
-        except Exception as e:
-            logger.debug(f"GitHub rate limit fallback failed: {e}")
-            
-        return []
 
     async def _get_token(self) -> Optional[str]:
         """Internal helper to get token from multiple sources."""
