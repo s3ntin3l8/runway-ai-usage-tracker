@@ -843,6 +843,78 @@ class TestAnthropicCollector:
         called_fn = mock_asyncio.to_thread.call_args[0][0]
         assert callable(called_fn), "asyncio.to_thread must be called with a callable"
 
+    def test_tier_mapping_from_creds(self):
+        """Test that user plan is correctly inferred from rate_limit_tier in credentials."""
+        collector = AnthropicCollector()
+        name_map = {"five_hour": "Session Window"}
+        data = {"five_hour": {"utilization": 10.0}}
+
+        # Test Tier 1 -> Pro
+        creds_pro = {"claudeAiOauth": {"rateLimitTier": "tier_1"}}
+        result = collector._parse_oauth_response(data, name_map, creds_pro)
+        assert result[0]["tier"] == "Pro"
+
+        # Test Tier 2 -> Max
+        creds_max = {"claudeAiOauth": {"rateLimitTier": "tier_2"}}
+        result = collector._parse_oauth_response(data, name_map, creds_max)
+        assert result[0]["tier"] == "Max"
+
+        # Test Tier 3 -> Team
+        creds_team = {"claudeAiOauth": {"rateLimitTier": "tier_3"}}
+        result = collector._parse_oauth_response(data, name_map, creds_team)
+        assert result[0]["tier"] == "Team"
+
+        # Test Tier 0 -> Free
+        creds_free = {"claudeAiOauth": {"rateLimitTier": "tier_0"}}
+        result = collector._parse_oauth_response(data, name_map, creds_free)
+        assert result[0]["tier"] == "Free"
+
+        # Fallback to API plan
+        data_with_plan = {"account": {"plan": "plus"}, "five_hour": {"utilization": 10.0}}
+        result = collector._parse_oauth_response(data_with_plan, name_map, None)
+        assert result[0]["tier"] == "Plus"
+
+    @pytest.mark.asyncio
+    async def test_collect_via_cli_pty_success(self):
+        """Test successful parsing of 'claude /usage' output including ANSI codes."""
+        collector = AnthropicCollector()
+        
+        # Mock ANSI-rich output
+        raw_output = (
+            b"\x1b[1mCurrent session\x1b[0m: \x1b[32m12.5%\x1b[0m used (resets in 2h 30m)\n"
+            b"\x1b[1mCurrent week\x1b[0m: \x1b[32m5.0%\x1b[0m used (resets in 4d 12h)\n"
+        )
+        
+        mock_proc = AsyncMock()
+        mock_proc.wait = AsyncMock(return_value=0)
+        mock_proc.returncode = 0
+        
+        mock_cli = AsyncMock()
+        mock_cli.communicate = AsyncMock(return_value=(raw_output, b""))
+        
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            # First call: which claude -> success
+            # Second call: claude -> returns output
+            mock_exec.side_effect = [mock_proc, mock_cli]
+            
+            result = await collector._collect_via_cli_pty()
+            
+        assert len(result) == 2
+        # Check Session card
+        assert "Session Window" in result[0]["service"]
+        assert result[0]["used_value"] == 12.5
+        assert result[0]["remaining"] == "87.5%"
+        assert result[0]["data_source"] == "cli"
+        assert "[CLI PTY]" in result[0]["detail"]
+        
+        # Check Weekly card
+        assert "Weekly Window" in result[1]["service"]
+        assert result[1]["used_value"] == 5.0
+        assert result[1]["remaining"] == "95.0%"
+        assert "4d" in result[1]["reset"]
+
+
+
 
 class TestGeminiCollector:
     """Test suite for Google Gemini collector."""

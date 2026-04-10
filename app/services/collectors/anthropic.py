@@ -44,6 +44,7 @@ Error Handling:
 
 import asyncio
 import os
+import re
 import glob
 import json
 import hashlib
@@ -226,9 +227,16 @@ class AnthropicCollector(OAuthBaseCollector):
             is_error = any(r.get("remaining") == "ERR" for r in web_res)
             if not is_error:
                 return web_res
-            logger.debug(f"Web API failed, falling back to local logs")
+            logger.debug(f"Web API failed, falling back to CLI PTY")
 
-        # 3. Fallback to Enhanced Local Cost Usage
+        # 3. Try CLI PTY (Screen Scraping)
+        if settings.LOCAL_COLLECTOR_ENABLED:
+            cli_res = await self._collect_via_cli_pty()
+            if cli_res:
+                return cli_res
+            logger.debug(f"CLI PTY failed, falling back to local logs")
+
+        # 4. Fallback to Enhanced Local Cost Usage
         if settings.LOCAL_COLLECTOR_ENABLED:
             local_res = await self._get_claude_local_enhanced()
             if local_res:
@@ -242,7 +250,7 @@ class AnthropicCollector(OAuthBaseCollector):
                             r["detail"] += " (API Fallback)"
                 return local_res
 
-        # 4. Final Fallback: Return error with context
+        # 5. Final Fallback: Return error with context
         if credential_provider.get_claude_token():
             return [
                 error_card(
@@ -375,7 +383,8 @@ class AnthropicCollector(OAuthBaseCollector):
                 ]
 
             data = resp.json()
-            return self._parse_oauth_response(data, name_map)
+            creds = await self._get_credentials()
+            return self._parse_oauth_response(data, name_map, creds)
 
         except Exception as e:
             logger.error(f"Claude OAuth collection failed: {e}")
@@ -403,7 +412,7 @@ class AnthropicCollector(OAuthBaseCollector):
         return ""
 
     def _parse_oauth_response(
-        self, data: Dict[str, Any], name_map: Dict[str, str]
+        self, data: Dict[str, Any], name_map: Dict[str, str], creds: Optional[Dict] = None
     ) -> List[Dict[str, Any]]:
         """Parse OAuth API response into quota cards with null-safety."""
         results = []
@@ -412,10 +421,27 @@ class AnthropicCollector(OAuthBaseCollector):
         identity_str = self._extract_identity_from_oauth(data)
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
-        # Extract plan from account data for tier badge
-        account = data.get("account", {})
-        plan = account.get("plan", "")
-        tier = plan.capitalize() if plan else None
+        # Infer plan from rate_limit_tier in credentials (Gold Standard strategy)
+        # Fallback to API plan if creds unavailable or tier missing
+        tier = None
+        if creds:
+            raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
+            if raw_tier:
+                # Map standard Anthropic tiers to human-readable names
+                tier_map = {
+                    "tier_0": "Free",
+                    "tier_1": "Pro",
+                    "tier_2": "Max",
+                    "tier_3": "Team",
+                    "tier_4": "Enterprise",
+                    "tier_5": "Enterprise",
+                }
+                tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
+        
+        if not tier:
+            account = data.get("account", {})
+            plan = account.get("plan", "")
+            tier = plan.capitalize() if plan else None
 
         # Guaranteed keys to process even if null from API
         core_keys = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"]
@@ -707,6 +733,119 @@ class AnthropicCollector(OAuthBaseCollector):
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
+
+        return results
+
+    async def _collect_via_cli_pty(self) -> List[Dict[str, Any]]:
+        """
+        Fetch Claude usage by running the 'claude' CLI and parsing '/usage' output.
+        Matches a robust gold standard fallback strategy.
+        """
+        try:
+            # Check if claude CLI is in path
+            proc = await asyncio.create_subprocess_exec(
+                "which", "claude",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.wait()
+            if proc.returncode != 0:
+                logger.debug("Claude CLI not found in path, skipping PTY fallback")
+                return []
+
+            # Launch claude CLI, send /usage command
+            # We use a shell to piping to avoid complex PTY management if possible
+            # Standard 'claude' CLI handles piped input for commands
+            process = await asyncio.create_subprocess_exec(
+                "claude",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            # Send /usage and wait for output
+            # Note: We append \n to execute. Some versions might need more.
+            stdout, stderr = await process.communicate(input=b"/usage\n")
+            output = self._strip_ansi(stdout.decode(errors="ignore"))
+            
+            if not output or not any(x in output.lower() for x in ["usage", "used", "current"]):
+                # Try alternative if directly piping /usage doesn't work
+                return []
+
+            return self._parse_cli_usage_output(output)
+
+        except Exception as e:
+            logger.debug(f"Claude CLI PTY fallback failed: {e}")
+            return []
+
+    def _strip_ansi(self, text: str) -> str:
+        """Strip ANSI escape codes from string."""
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        return ansi_escape.sub('', text)
+
+    def _parse_cli_usage_output(self, output: str) -> List[Dict[str, Any]]:
+        """Parse the text output of 'claude /usage' into quota cards."""
+        results = []
+        now = datetime.now(timezone.utc)
+
+        # Look for patterns like:
+        # "Current session: 42% used (resets in 2h 15m)"
+        # "Current week: 10% used (resets in 3d 4h)"
+        
+        # Regex for percentage and optional reset time
+        # Example: "42% used", "10% used (resets in 2h)"
+        usage_re = re.compile(
+            r"(Current\s+(?:session|week|window))\s*[:\s-]*\s*(\d+(?:\.\d+)?)\s*%\s*used(?:\s*\(resets\s+in\s+([^)]+)\))?",
+            re.IGNORECASE
+        )
+
+        matches = usage_re.finditer(output)
+        for match in matches:
+            label_raw = match.group(1).strip().title()
+            pct_used = float(match.group(2))
+            reset_str = match.group(3)
+            
+            # Map labels to our standard names
+            label_map = {
+                "Current Session": "Session Window",
+                "Current Week": "Weekly Window",
+                "Current Window": "Session Window"
+            }
+            u_type = label_map.get(label_raw, label_raw)
+            remaining_pct = 100.0 - pct_used
+
+            # Approximate reset_at from "in 2h 15m" etc.
+            reset_at = None
+            if reset_str:
+                # Basic duration parsing (h, m, d)
+                delta = timedelta()
+                d_match = re.search(r'(\d+)\s*d', reset_str)
+                h_match = re.search(r'(\d+)\s*h', reset_str)
+                m_match = re.search(r'(\d+)\s*m', reset_str)
+                
+                if d_match: delta += timedelta(days=int(d_match.group(1)))
+                if h_match: delta += timedelta(hours=int(h_match.group(1)))
+                if m_match: delta += timedelta(minutes=int(m_match.group(1)))
+                
+                if delta.total_seconds() > 0:
+                    reset_at = now + delta
+
+            results.append({
+                "service": f"Claude ({u_type})",
+                "icon": "🟠",
+                "remaining": f"{remaining_pct:.1f}%",
+                "unit": "capacity",
+                "reset": human_delta(reset_at) if reset_at else "Unknown",
+                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                "detail": f"{pct_used:.1f}% used [CLI PTY]",
+                "used_value": pct_used,
+                "limit_value": 100.0,
+                "unit_type": "percent",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "cli",
+                "updated_at": now.isoformat(),
+            })
 
         return results
 
