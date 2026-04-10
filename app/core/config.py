@@ -59,8 +59,8 @@ class Settings:
 
     # GitHub OAuth Settings
     GITHUB_CLIENT_ID: str = os.getenv(
-        "GITHUB_CLIENT_ID", "Ov23liC6f9v0bAcZpXmB"
-    )  # Community default
+        "GITHUB_CLIENT_ID", "Iv1.b507a08c87ecfe98"
+    )  # VS Code official ID (trusted for Device Flow)
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
     # ChatGPT OAuth Settings

@@ -8,7 +8,7 @@ ChatGPT Codex quota collector with OAuth-backed API and local session cache fall
 
 - **Collection Strategy**: OAuth API → Local session cache
 - **Cards**: 1 card (primary window usage)
-- **Authentication:** `CHATGPT_OAUTH_TOKEN` env var OR `~/.codex/auth.json`
+- **Authentication:** `CHATGPT_OAUTH_TOKEN` env var → `~/.codex/auth.json` → Chrome browser cookies
 
 ## Data Sources
 
@@ -16,9 +16,10 @@ ChatGPT Codex quota collector with OAuth-backed API and local session cache fall
 **Endpoint:** `chatgpt.com/backend-api/wham/usage`
 **Auth:** Bearer token
 
-**Token Sources:**
+**Token Sources (priority order):**
 1. `CHATGPT_OAUTH_TOKEN` environment variable
 2. `~/.codex/auth.json` (Codex CLI cache)
+3. Chrome browser cookie (`__Secure-next-auth.session-token`) — auto-exchanged for Bearer token
 
 ### Secondary: Local Session Cache
 **Location:** `~/.codex/sessions/*.jsonl`
@@ -64,9 +65,13 @@ Sidecar extracts token from `~/.codex/auth.json`. See [sidecar documentation](..
 **Fix:**
 1. `export CHATGPT_OAUTH_TOKEN="your-token"`
 2. Or install Codex CLI: `npm install -g @openai/codex && codex auth login`
+3. Or log in to chatgpt.com in Chrome — session cookie is extracted automatically
 
-### API Error (401)
-**Fix:** Token expired - re-authenticate with Codex CLI or extract new token from browser
+### API Error (401/403 on accounts endpoint)
+**Expected:** The `accounts/check` endpoint may return 403 depending on account type — this is non-fatal and usage data is still collected from `wham/usage`.
+
+### API Error (401) on wham/usage
+**Fix:** Token expired - re-authenticate with Codex CLI or set a fresh `CHATGPT_OAUTH_TOKEN`
 
 ## Related Files
 
@@ -78,3 +83,5 @@ Sidecar extracts token from `~/.codex/auth.json`. See [sidecar documentation](..
 ## References
 
 - **Codex CLI:** https://github.com/openai/codex
+
+*Last updated: 2026-04-10*

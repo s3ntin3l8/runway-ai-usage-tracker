@@ -105,10 +105,22 @@ class OAuthBaseCollector(BaseCollector):
             if new_creds:
                 self._persist_credentials(new_creds)
                 self._last_refresh_failure = None
-                return new_creds.get("access_token")
+                # _execute_refresh already updated credential_provider cache;
+                # use _get_current_token to get the fresh token rather than
+                # trying to extract it from the provider-specific creds structure.
+                return await self._get_current_token()
             else:
                 self._last_refresh_failure = datetime.now(timezone.utc)
                 return None
+
+    async def _store_sidecar_token(
+        self, provider_key: str, token: str, refresh_token: Optional[str] = None
+    ):
+        """Store refreshed tokens in the sidecar token cache."""
+        payload: Dict[str, str] = {"oauth_token": token}
+        if refresh_token:
+            payload["refresh_token"] = refresh_token
+        await token_cache.store(provider_key, payload)
 
     # Methods to be implemented or customized by subclasses
     async def _get_current_token(self) -> Optional[str]:

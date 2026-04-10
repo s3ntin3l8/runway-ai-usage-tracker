@@ -49,7 +49,7 @@ Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metric
 | **Claude** | OAuth → Web API → Local logs | 2-5 | `CLAUDE_CODE_OAUTH_TOKEN` (opt) | [📖](docs/collectors/claude.md) |
 | **Gemini** | OAuth API + Local logs | 1-7 | `GEMINI_OAUTH_*` (opt) | [📖](docs/collectors/gemini.md) |
 | **GitHub Copilot** | REST API | 2 | `GITHUB_TOKEN` | [📖](docs/collectors/github.md) |
-| **ChatGPT** | Web API + Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
+| **ChatGPT** | OAuth API → Chrome cookie → Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
 | **zAI API** | REST API (Balance) | 1 | `ZAI_API_KEY` | [📖](docs/collectors/zai_api.md) |
 | **zAI Plan** | REST API (Quotas) | 1-2 | `ZAI_API_KEY` | [📖](docs/collectors/zai_plan.md) |
@@ -70,7 +70,7 @@ Runway follows a **Service-Collector Pattern** with three deployment modes: **St
 ### Ingestion API
 Push metrics from external scripts or remote hosts.
 
-**`POST /api/ingest`** - Submit metrics with HMAC-SHA256 signature
+**`POST /api/ingest`** - Submit metrics with HMAC-SHA256 signature (max 1 MB body)
 
 See [Sidecar Documentation](docs/sidecar.md) for authentication and payload format.
 
@@ -121,4 +121,4 @@ By default, Runway binds to `127.0.0.1` (local only). To access from other devic
 
 MIT License - see [LICENSE](LICENSE) file.
 
-*Built for the 2026 Developer Workflow.*
+*Last updated: 2026-04-10*

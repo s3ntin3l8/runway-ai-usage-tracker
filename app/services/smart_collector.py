@@ -251,7 +251,7 @@ class SmartCollector:
 
         tagged = []
         for card in result:
-            card_copy = copy.deepcopy(card)
+            card_copy = {**card}  # shallow copy sufficient for flat card dicts
             original_detail = card_copy.get("detail", "")
             card_copy["detail"] = f"{original_detail} [Cached {age_str} ago]"
             tagged.append(card_copy)

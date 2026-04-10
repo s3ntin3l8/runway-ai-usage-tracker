@@ -46,6 +46,7 @@ Error Handling:
 - Invalid response: Returns error card
 """
 
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import httpx
@@ -73,7 +74,7 @@ class KimiCodingCollector(BaseCollector):
             List[Dict[str, Any]]: Two quota cards or error
         """
         # Get auth token
-        token = self._get_auth_token()
+        token = await self._get_auth_token()
         if not token:
             return [
                 error_card(
@@ -131,7 +132,7 @@ class KimiCodingCollector(BaseCollector):
                 )
             ]
 
-    def _get_auth_token(self) -> Optional[str]:
+    async def _get_auth_token(self) -> Optional[str]:
         """
         Get authentication token from env var or Chrome cookie.
 
@@ -148,7 +149,7 @@ class KimiCodingCollector(BaseCollector):
             return token
 
         # Priority 2: Chrome cookie
-        return get_kimi_auth_cookie()
+        return await asyncio.to_thread(get_kimi_auth_cookie)
 
     def _parse_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

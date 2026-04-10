@@ -3,7 +3,7 @@ import json
 import logging
 import platform
 import subprocess
-from typing import Optional
+from typing import Optional, Dict
 from app.core.config import settings, get_platform_config_dir
 
 logger = logging.getLogger(__name__)
@@ -45,26 +45,38 @@ class CredentialProvider:
     @staticmethod
     def get_chatgpt_token() -> str:
         """Get ChatGPT OAuth token from env or auth.json."""
+        data = CredentialProvider.get_chatgpt_data()
+        return data.get("access_token", "")
+
+    @staticmethod
+    def get_chatgpt_data() -> Dict[str, str]:
+        """Get full ChatGPT OAuth data from env or auth.json."""
         token = os.getenv("CHATGPT_OAUTH_TOKEN", "")
+        account_id = os.getenv("CHATGPT_ACCOUNT_ID", "")
+        
         if token:
-            return token
+            return {"access_token": token, "account_id": account_id}
 
         # Skip local file access if disabled
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
-            return ""
+            return {}
 
         auth_path = settings.CHATGPT_AUTH_PATH
         if os.path.exists(auth_path):
             try:
                 with open(auth_path, "r") as f:
                     data = json.load(f)
-                    val = data.get("tokens", {}).get("access_token")
-                    if val:
-                        return val
+                    tokens = data.get("tokens", {})
+                    return {
+                        "access_token": tokens.get("access_token", ""),
+                        "refresh_token": data.get("refresh_token", ""),
+                        "account_id": data.get("account_id", ""),
+                        "last_refresh": data.get("last_refresh", ""),
+                    }
             except Exception as e:
                 logger.debug(f"Error reading ChatGPT auth from {auth_path}: {e}")
 
-        return ""
+        return {}
 
     _claude_token_cache: Optional[str] = None
 

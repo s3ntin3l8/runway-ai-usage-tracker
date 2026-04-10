@@ -53,6 +53,20 @@ GitHub Copilot quota collector with tier-aware multi-endpoint strategy.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GITHUB_TOKEN` | Yes | GitHub personal access token with `copilot` scope |
+| `GITHUB_CLIENT_ID` | No | Client ID for OAuth Device Flow (default: `Iv1.b507a08c87ecfe98`) |
+
+## GitHub OAuth Setup
+
+If you prefer to use the interactive "Connect GitHub" flow instead of a static `GITHUB_TOKEN`:
+
+1.  Create a new **OAuth App** at [GitHub Developer Settings](https://github.com/settings/developers).
+2.  Set the **Homepage URL** to any valid URL (e.g., `http://localhost:8765`).
+3.  **IMPORTANT:** Check the box **"Enable Device Flow"**. Without this, the login will return a `404 Not Found` error.
+4.  Copy the **Client ID** and add it to your `.env` file:
+    ```bash
+    GITHUB_CLIENT_ID=your_new_client_id_here
+    ```
+5.  Restart Runway.
 
 ## Sidecar Support
 
@@ -83,3 +97,5 @@ Sidecar uses lighter implementation with `/rate_limit` endpoint only. See [sidec
 
 - **GitHub Copilot:** https://github.com/features/copilot
 - **Token Settings:** https://github.com/settings/tokens
+
+*Last updated: 2026-04-10*

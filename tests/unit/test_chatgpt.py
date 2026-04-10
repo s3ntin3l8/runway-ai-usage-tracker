@@ -185,17 +185,21 @@ class TestChatGPTCollectorDetailed:
 
         with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
             with patch(
-                "app.services.collectors.chatgpt.glob.glob",
-                return_value=["/fake/path/session.jsonl"],
+                "app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc",
+                return_value=[],
             ):
-                with patch("os.path.getmtime", return_value=12345):
-                    with patch("builtins.open", mock_open(read_data=log_content)):
-                        results = await collector.collect(mock_http_client)
+                with patch(
+                    "app.services.collectors.chatgpt.glob.glob",
+                    return_value=["/fake/path/session.jsonl"],
+                ):
+                    with patch("os.path.getmtime", return_value=12345):
+                        with patch("builtins.open", mock_open(read_data=log_content)):
+                            results = await collector.collect(mock_http_client)
 
-                        assert len(results) == 1
-                        assert results[0]["service"] == "ChatGPT Codex"
-                        assert "12.0%" in results[0]["remaining"]
-                        assert results[0]["data_source"] == "cache"
+                            assert len(results) == 1
+                            assert results[0]["service"] == "ChatGPT Codex"
+                            assert "12.0%" in results[0]["remaining"]
+                            assert results[0]["data_source"] == "cache"
 
     @pytest.mark.asyncio
     async def test_user_agent_on_auth_refresh(self, mock_http_client):
@@ -212,3 +216,58 @@ class TestChatGPTCollectorDetailed:
         headers = mock_http_client.get.call_args.kwargs["headers"]
         assert "Mozilla/5.0" in headers["User-Agent"]
         assert "Chrome" in headers["User-Agent"]
+
+    @pytest.mark.asyncio
+    async def test_collect_via_cli_rpc_success(self):
+        """Test successful data collection via codex CLI RPC."""
+        collector = ChatGPTCollector()
+        
+        # We need a process-like object that behaves correctly
+        mock_process = MagicMock()
+        mock_process.stdin = MagicMock()
+        mock_process.stdin.drain = AsyncMock() # Must be awaitable
+        mock_process.stdout = AsyncMock()
+        mock_process.terminate = MagicMock() # Sync mock
+        mock_process.wait = AsyncMock()
+        
+        # Define mock responses for the 3 RPC calls (matching actual CLI output)
+        mock_responses = [
+            # initialize
+            json.dumps({"jsonrpc": "2.0", "id": "1", "result": {"userAgent": "Test"}}).encode() + b"\n",
+            # account/read
+            json.dumps({"jsonrpc": "2.0", "id": "2", "result": {"account": {
+                "email": "test@example.com",
+                "planType": "plus"
+            }}}).encode() + b"\n",
+            # account/rateLimits/read
+            json.dumps({"jsonrpc": "2.0", "id": "3", "result": {"rateLimits": {
+                "primary": {
+                    "usedPercent": 40.0,
+                    "resetsAt": 1744876800
+                },
+                "credits": {
+                    "balance": 15.50,
+                    "unlimited": False
+                }
+            }}}).encode() + b"\n",
+            b"" # End of stream
+        ]
+        
+        mock_process.stdout.readline.side_effect = mock_responses
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            results = await collector._collect_via_cli_rpc()
+            
+            assert len(results) == 3
+            # Check Account card
+            assert results[0]["service"] == "ChatGPT Account"
+            assert results[0]["remaining"] == "PLUS"
+            assert "test@example.com" in results[0]["detail"]
+            # Check Codex card
+            assert results[1]["service"] == "ChatGPT Codex"
+            assert results[1]["remaining"] == "60.0%"
+            assert results[1]["data_source"] == "cli"
+            # Check Credits card
+            assert results[2]["service"] == "ChatGPT Credits"
+            assert results[2]["remaining"] == "$15.50"
+

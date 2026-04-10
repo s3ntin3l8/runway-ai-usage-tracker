@@ -31,6 +31,10 @@ class BaseCollector(ABC):
     returning error cards instead of raising exceptions.
     """
 
+    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
+        """Return True if results are empty or contain an error card."""
+        return not results or any(r.get("remaining") == "ERR" for r in results)
+
     @abstractmethod
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """

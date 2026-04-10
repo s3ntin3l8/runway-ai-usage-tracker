@@ -359,6 +359,43 @@ function calculateUsedPct(item) {
     return null;
 }
 
+const UNLIMITED_GRADIENT = 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)';
+
+/**
+ * Build the progress bar HTML shared by compact and standard card layouts.
+ * @param {boolean} isUnlimited
+ * @param {number} barWidth - 0-100, ignored when isUnlimited
+ * @param {string} barColor - CSS color/gradient for the fill (used when not unlimited)
+ * @param {string} trackClasses - CSS classes for the track wrapper div
+ * @returns {string} HTML string
+ */
+function buildProgressBar(isUnlimited, barWidth, barColor, trackClasses) {
+    const width = isUnlimited ? 100 : barWidth;
+    const bg = isUnlimited ? UNLIMITED_GRADIENT : barColor;
+    const unlimitedClass = isUnlimited ? ' progress-unlimited' : '';
+    return `<div class="${trackClasses}${unlimitedClass}"><div class="progress-fill h-full" style="width:${width}%;background:${bg};"></div></div>`;
+}
+
+/**
+ * Build the main display value (∞, percentage, or raw remaining) for a card.
+ * @param {boolean} isUnlimited
+ * @param {boolean} hasPercentage
+ * @param {number} displayPct
+ * @param {string} remaining - raw remaining string (item.remaining)
+ * @param {boolean} isPlaceholder
+ * @param {string} sizeClass - e.g. 'text-2xl leading-none' or 'text-4xl'
+ * @param {string} [trailing=''] - optional HTML appended after the value span (e.g. unit label)
+ * @returns {string} HTML string
+ */
+function buildMainDisplay(isUnlimited, hasPercentage, displayPct, remaining, isPlaceholder, sizeClass, trailing = '') {
+    const valueClass = isPlaceholder ? 'text-zinc-600' : 'text-zinc-50';
+    if (isUnlimited)
+        return `<span class="${sizeClass} font-black tracking-tighter text-violet-400">∞</span>`;
+    if (hasPercentage)
+        return `<span class="${sizeClass} font-black tracking-tighter ${valueClass}">${displayPct.toFixed(1)}%</span>`;
+    return `<span class="${sizeClass} font-black tracking-tighter ${valueClass}">${escapeHTML(remaining)}</span>${trailing}`;
+}
+
 /**
  * Build an HTML card element for a limit
  * @param {LimitCard} item - The limit card data
@@ -405,14 +442,8 @@ export function buildCard(item) {
 
     // Handle Compact Mode
     if (STATE.compact) {
-        let mainDisplay = '';
-        if (isUnlimited) {
-            mainDisplay = `<span class="text-2xl font-black tracking-tighter text-violet-400 leading-none">∞</span>`;
-        } else if (hasPercentage) {
-            mainDisplay = `<span class="text-2xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'} leading-none">${displayPct.toFixed(1)}%</span>`;
-        } else {
-            mainDisplay = `<span class="text-2xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'} leading-none">${escapeHTML(item.remaining)}</span>`;
-        }
+        const mainDisplay = buildMainDisplay(isUnlimited, hasPercentage, displayPct, item.remaining, isPlaceholder, 'text-2xl leading-none');
+        const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track h-1 mt-auto overflow-hidden rounded-full bg-zinc-800/50');
 
         return `
             <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
@@ -432,9 +463,7 @@ export function buildCard(item) {
                     <span class="text-[9px] text-zinc-500 mono leading-none mb-0.5 truncate max-w-[80px]" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
                 </div>
 
-                <div class="progress-track h-1 mt-auto overflow-hidden rounded-full bg-zinc-800/50 ${isUnlimited ? 'progress-unlimited' : ''}">
-                    <div class="progress-fill h-full" style="width: ${isUnlimited ? 100 : barWidth}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};"></div>
-                </div>
+                ${progressBar}
             </div>
         `;
     }
@@ -446,7 +475,7 @@ export function buildCard(item) {
     let subtitle = '';
     const sourceLabel = formatDataSource(item.data_source);
     if (isUnlimited) {
-        subtitle = `<span class="text-xs text-zinc-500">No usage limit${sourceLabel}</span>`;
+        subtitle = `<span class="text-xs text-zinc-500 truncate">No usage limit${sourceLabel}</span>`;
     } else if (hasPercentage && item.used_value !== null && item.limit_value !== null) {
         const displayValue = STATE.remaining ? Math.max(0, item.limit_value - item.used_value) : item.used_value;
         const formatted = formatUsageValues(
@@ -455,37 +484,19 @@ export function buildCard(item) {
             item.unit_type || 'generic',
             item.currency
         );
-        subtitle = `<span class="text-xs text-zinc-500">${escapeHTML(formatted.used)} of ${escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)} ${displayLabel}${sourceLabel}</span>`;
+        subtitle = `<span class="text-xs text-zinc-500 truncate">${escapeHTML(formatted.used)} of ${escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)} ${displayLabel}${sourceLabel}</span>`;
     } else if (item.detail) {
         // Fallback to detail field
         const escapedDetail = escapeHTML(item.detail);
-        subtitle = `<span class="text-xs text-zinc-600 mono truncate" title="${escapedDetail}">${errorIcon}${escapedDetail}${sourceLabel}</span>`;
+        subtitle = `<span class="text-xs text-zinc-600 mono truncate block" title="${escapedDetail}">${errorIcon}${escapedDetail}${sourceLabel}</span>`;
     }
 
-    // Progress bar with appropriate styling
-    let progressBarClass = 'progress-fill';
-    let progressTrackClass = 'progress-track mt-3';
+    const progressBar = hasPercentage || isUnlimited
+        ? buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track mt-3')
+        : '';
 
-    if (isUnlimited) {
-        progressTrackClass += ' progress-unlimited';
-    }
-
-    const progressBar = hasPercentage || isUnlimited ? `
-        <div class="${progressTrackClass}">
-            <div class="${progressBarClass}" style="width: ${isUnlimited ? 100 : barWidth}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};"></div>
-        </div>` : '';
-
-    // Main display value
-    let mainDisplay = '';
-    if (isUnlimited) {
-        mainDisplay = `<span class="text-4xl font-black tracking-tighter text-violet-400">∞</span>`;
-    } else if (hasPercentage) {
-        mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${displayPct.toFixed(1)}%</span>`;
-    } else {
-        // Fallback to remaining value
-        mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${escapeHTML(item.remaining)}</span>
-                <span class="text-sm font-medium text-zinc-500">${escapeHTML(item.unit)}</span>`;
-    }
+    const unitTrailing = `\n                <span class="text-sm font-medium text-zinc-500">${escapeHTML(item.unit)}</span>`;
+    const mainDisplay = buildMainDisplay(isUnlimited, hasPercentage, displayPct, item.remaining, isPlaceholder, 'text-4xl', unitTrailing);
 
     // For unlimited plans, add unit label next to infinity
     const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${escapeHTML(item.unit || 'Unlimited')}</span>` : '';
@@ -658,6 +669,43 @@ export function buildModalContent(item) {
         <div class="mt-4 flex items-center justify-between px-1">
             <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Consumption Rate</span>
             <span class="text-xs font-bold text-zinc-400 mono">${escapeHTML(item.pace)}</span>
+        </div>
+        ` : ''}
+
+        ${(item.service.toLowerCase().includes('github') || item.service.toLowerCase().includes('copilot')) ? `
+        <div class="mt-6 p-4 rounded-2xl bg-zinc-900/40 border border-zinc-800/60 flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="text-lg">🐙</span>
+                    <span class="text-sm font-bold text-zinc-200 uppercase tracking-tight">GitHub Authentication</span>
+                </div>
+                ${STATE.githubAuth.authenticated ? `
+                    <span class="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-tighter">Connected</span>
+                ` : `
+                    <span class="text-[10px] font-bold text-zinc-500 bg-zinc-800/50 px-2 py-0.5 rounded border border-zinc-700/50 uppercase tracking-tighter">Disconnected</span>
+                `}
+            </div>
+            
+            ${STATE.githubAuth.authenticated ? `
+                <div class="flex items-center justify-between gap-4">
+                    <div class="flex flex-col">
+                        <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Account</span>
+                        <span class="text-sm font-semibold text-zinc-300 mono">${escapeHTML(STATE.githubAuth.account)}</span>
+                    </div>
+                    <button 
+                        onclick="event.stopPropagation(); window.handleGitHubLogout()"
+                        class="px-4 py-2 bg-zinc-800 hover:bg-red-500/10 hover:text-red-400 text-zinc-400 text-[10px] font-bold rounded-lg border border-zinc-700/50 transition-all uppercase tracking-widest"
+                    >Logout</button>
+                </div>
+            ` : `
+                <div class="flex flex-col gap-3">
+                    <p class="text-xs text-zinc-500 leading-relaxed">Connect your GitHub account to fetch live Copilot usage limits directly from the GitHub API.</p>
+                    <button 
+                        onclick="event.stopPropagation(); window.startGitHubLogin()"
+                        class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all uppercase tracking-widest shadow-lg shadow-blue-900/20"
+                    >Connect GitHub</button>
+                </div>
+            `}
         </div>
         ` : ''}
 

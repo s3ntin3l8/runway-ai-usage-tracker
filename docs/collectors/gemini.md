@@ -43,7 +43,7 @@ Google Gemini CLI quota collector with OAuth-backed API and local log fallback.
     "unit_type": "percent",
     "reset_at": "2026-04-08T13:44:00+00:00",
     "data_source": "oauth",
-    "tier": "standard-tier",
+    "tier": "free",              # "free" | "pro" | "ultra"
     "usage_url": "https://one.google.com/settings",
     "updated_at": "2026-04-08T10:30:00+00:00"
 }
@@ -86,3 +86,5 @@ Sidecar extracts OAuth token from `~/.gemini/oauth_creds.json`. See [sidecar doc
 
 - **Gemini:** https://gemini.google.com
 - **Google Cloud:** https://console.cloud.google.com
+
+*Last updated: 2026-04-10*

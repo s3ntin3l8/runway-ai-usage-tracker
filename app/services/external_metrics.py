@@ -38,14 +38,17 @@ class ExternalMetricService:
                 return {}
         return {}
 
+    async def _save_unlocked(self):
+        """Persist metrics to disk. Caller must already hold self._lock."""
+        def sync_save():
+            with open(self.path, "w") as f:
+                json.dump(self.metrics, f, indent=2)
+        await asyncio.to_thread(sync_save)
+
     async def _save(self):
+        """Persist metrics to disk, acquiring the lock internally."""
         async with self._lock:
-
-            def sync_save():
-                with open(self.path, "w") as f:
-                    json.dump(self.metrics, f, indent=2)
-
-            await asyncio.to_thread(sync_save)
+            await self._save_unlocked()
 
     async def update_metrics(self, provider: str, cards: List[LimitCard]):
         now = datetime.now(timezone.utc).isoformat()
@@ -62,7 +65,7 @@ class ExternalMetricService:
 
         async with self._lock:
             self.metrics[provider] = {"timestamp": now, "cards": processed_cards}
-        await self._save()
+            await self._save_unlocked()
 
     async def metrics_update_from_ingest(self, provider: str, cards: List[LimitCard]):
         """Special update for ingest that avoids double-tagging metadata."""
@@ -72,7 +75,7 @@ class ExternalMetricService:
                 "timestamp": now,
                 "cards": [card.model_dump() for card in cards],
             }
-        await self._save()
+            await self._save_unlocked()
 
     def _aggregate_opencode_cards(
         self, opencode_cards: List[Dict[str, Any]]
@@ -224,8 +227,17 @@ class ExternalMetricService:
         all_cards = []
         opencode_cards = []  # Collect all opencode-* cards for aggregation
         now = datetime.now(timezone.utc)
+        STALE_HOURS = 2  # Drop providers silent for more than 2 hours
 
         async with self._lock:
+            stale = [
+                p for p, d in self.metrics.items()
+                if (now - datetime.fromisoformat(d["timestamp"])).total_seconds() > STALE_HOURS * 3600
+            ]
+            for p in stale:
+                del self.metrics[p]
+                logger.info(f"Evicted stale external metrics for provider: {p}")
+
             for provider, data in self.metrics.items():
                 ts = datetime.fromisoformat(data["timestamp"])
                 diff = now - ts

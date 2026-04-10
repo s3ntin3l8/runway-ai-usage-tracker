@@ -155,12 +155,10 @@ class AnthropicCollector(OAuthBaseCollector):
                 )
 
                 # Update sidecar cache
-                await token_cache.store(
+                await self._store_sidecar_token(
                     "anthropic",
-                    {
-                        "oauth_token": new_data["access_token"],
-                        "refresh_token": new_data.get("refresh_token", refresh_token),
-                    },
+                    new_data["access_token"],
+                    new_data.get("refresh_token", refresh_token),
                 )
 
                 # Update credential_provider cache
@@ -207,7 +205,7 @@ class AnthropicCollector(OAuthBaseCollector):
                 async with self._refresh_lock:
                     new_creds = await self._execute_refresh(client)
                     if new_creds:
-                        new_token = new_creds.get("access_token")
+                        new_token = new_creds.get("claudeAiOauth", {}).get("accessToken")
                         self._persist_credentials(new_creds)
                         # Clear cache so retry doesn't use the 401 result
                         self._cached_results = None
@@ -276,7 +274,7 @@ class AnthropicCollector(OAuthBaseCollector):
 
     async def _has_web_cookie(self) -> bool:
         """Check if a web cookie is available without making API calls."""
-        return get_claude_session_cookie() is not None
+        return await asyncio.to_thread(get_claude_session_cookie) is not None
 
     async def _get_claude_oauth_with_cache(self, client: httpx.AsyncClient, token: str):
         """
@@ -525,7 +523,7 @@ class AnthropicCollector(OAuthBaseCollector):
             List[Dict[str, Any]]: Quota cards or empty list if cookie unavailable/failed
         """
         # Extract sessionKey cookie from Chrome
-        session_key = get_claude_session_cookie()
+        session_key = await asyncio.to_thread(get_claude_session_cookie)
         if not session_key:
             logger.debug("No Claude sessionKey cookie found in Chrome")
             return []

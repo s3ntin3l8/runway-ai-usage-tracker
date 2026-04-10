@@ -20,14 +20,6 @@ Query local IDE config files for plan information instead of hardcoded limits (e
 
 Implement abstract methods (`_primary_strategy()`, `_fallback_strategy()`, `_error_handler()`) to enforce 3-tier fallback consistency.
 
-### 9. Docker Multi-Stage Build
-**File:** `Dockerfile`  
-**Effort:** 1-2 hours
-
-Use builder stage to reduce final image size:
-- Install build deps in builder stage
-- Copy only `/opt/venv` to final `python:3.12-slim-bookworm` stage
-
 ### 10. Binary Sidecar Distribution
 **File:** `sidecar/` (build scripts)  
 **Effort:** 1-2 days
@@ -111,7 +103,7 @@ Query usage history for daily/monthly spend tracking, model-specific breakdown.
 Use `watchdog` or `inotify` to watch for quota file changes instead of polling.
 
 #### LSP Protocol Approach
-**Reference:** [CodexBar Implementation](https://github.com/steipete/CodexBar/blob/main/docs/antigravity.md)
+**Reference:** [Robust Strategy Implementation](https://github.com/steipete/CodexBar/blob/main/docs/antigravity.md)
 
 Use active LSP protocol instead of passive file reading:
 1. Detect `language_server_macos` process
@@ -128,4 +120,4 @@ Use active LSP protocol instead of passive file reading:
 
 ---
 
-*Last updated: 2026-04-09*
+*Last updated: 2026-04-10*

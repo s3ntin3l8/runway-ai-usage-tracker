@@ -189,4 +189,4 @@ Runway uses **SmartCollector** for intelligent caching:
 
 See [Sidecar Guide](sidecar.md) for detailed sidecar configuration.
 
-*Last updated: 2026-04-08*
+*Last updated: 2026-04-10*

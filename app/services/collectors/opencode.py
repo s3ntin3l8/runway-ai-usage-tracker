@@ -20,6 +20,7 @@ Local DB Collection:
 
 import os
 import re
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
@@ -52,7 +53,7 @@ class OpenCodeCollector(BaseCollector):
             return web_cards
 
         # 2. Fall back to sidecar aggregation
-        sidecar_cards = external_metric_service.get_opencode_aggregated()
+        sidecar_cards = await external_metric_service.get_opencode_aggregated()
         if sidecar_cards:
             return sidecar_cards
 
@@ -81,7 +82,7 @@ class OpenCodeCollector(BaseCollector):
             List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
         """
         # Check for session cookie (local Chrome or sidecar cache)
-        session_cookie = get_opencode_session_cookie()
+        session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
         # Check token cache from sidecar
         if not session_cookie:
             session_cookie = await token_cache.get_token("opencode", "cookie_session")

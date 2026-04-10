@@ -31,6 +31,7 @@ def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
             ["security", "find-generic-password", "-s", "Chrome Safe Storage", "-w"],
             capture_output=True,
             text=True,
+            timeout=5,
         )
         if result.returncode != 0:
             # Try Edge-specific storage if Chrome fails
@@ -44,6 +45,7 @@ def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
                 ],
                 capture_output=True,
                 text=True,
+                timeout=5,
             )
             if result.returncode != 0:
                 return None
@@ -410,7 +412,7 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
-                except:
+                except Exception:
                     pass
 
     return None
@@ -438,6 +440,11 @@ def get_kimi_auth_cookie() -> Optional[str]:
 def get_chatgpt_session_token() -> Optional[str]:
     """Extract ChatGPT session token from browser cookies."""
     return get_session_cookie("chatgpt.com", "__Secure-next-auth.session-token")
+
+
+def get_chatgpt_device_id() -> Optional[str]:
+    """Extract ChatGPT device ID from browser cookies."""
+    return get_session_cookie("chatgpt.com", "oai-device-id")
 
 
 from app.core.config import settings

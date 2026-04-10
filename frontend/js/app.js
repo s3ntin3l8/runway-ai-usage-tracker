@@ -5,6 +5,7 @@ import { buildCard, buildModalContent, buildGitHubOAuthModal } from './component
 // Auto-refresh timer reference
 let refreshTimer = null;
 let githubPollTimer = null;
+let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting newer data
 
 /**
  * Render quota cards to the grid
@@ -177,30 +178,16 @@ function initUI() {
 async function checkGitHubStatus() {
     const status = await getGitHubOAuthStatus();
     STATE.githubAuth = status;
-    
-    const btn = document.getElementById('connect-github');
-    if (btn) {
-        if (status.authenticated) {
-            btn.innerHTML = `🐙 ${status.account.toUpperCase()}`;
-            btn.title = `Connected as ${status.account}. Click to logout.`;
-            btn.classList.remove('hidden');
-            btn.classList.add('active');
-            btn.onclick = handleGitHubLogout;
-        } else {
-            btn.innerHTML = '🐙 CONNECT';
-            btn.title = 'Connect GitHub for Copilot limits';
-            btn.classList.remove('active');
-            btn.classList.remove('hidden');
-            btn.onclick = startGitHubLogin;
-        }
-    }
 }
+
+// Expose these for onclick handlers in modal
+window.startGitHubLogin = startGitHubLogin;
+window.handleGitHubLogout = handleGitHubLogout;
 
 /**
  * Initiate GitHub OAuth Device Flow
  */
-async function startGitHubLogin() {
-    const container = document.getElementById('modal-container');
+async function startGitHubLogin() {    const container = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
 
     // Show loading modal
@@ -217,14 +204,13 @@ async function startGitHubLogin() {
         document.getElementById('cancel-github-login').onclick = cancelGitHubLogin;
 
         // Start polling
-        let pollCount = 0;
-        const maxPolls = Math.floor(data.expires_in / data.interval);
+        let currentInterval = data.interval;
+        const expireTime = Date.now() + (data.expires_in * 1000);
         
-        if (githubPollTimer) clearInterval(githubPollTimer);
+        if (githubPollTimer) clearTimeout(githubPollTimer);
         
-        githubPollTimer = setInterval(async () => {
-            pollCount++;
-            if (pollCount > maxPolls) {
+        const poll = async () => {
+            if (Date.now() > expireTime) {
                 cancelGitHubLogin();
                 return;
             }
@@ -232,19 +218,22 @@ async function startGitHubLogin() {
             try {
                 const result = await pollGitHubOAuth(data.device_code);
                 if (result.status === 'success') {
-                    clearInterval(githubPollTimer);
                     githubPollTimer = null;
                     closeModal();
                     await checkGitHubStatus();
                     loadData(); // Refresh to show new GitHub limits
-                } else if (result.status === 'slow_down') {
-                    // Adjust interval if GitHub asks (simplified: just wait one more cycle)
-                    pollCount -= 1; 
+                    return;
+                } else if (result.status === 'slow_down' && result.interval) {
+                    currentInterval = result.interval;
                 }
             } catch (err) {
                 console.error("Polling error:", err);
             }
-        }, data.interval * 1000);
+            
+            githubPollTimer = setTimeout(poll, currentInterval * 1000);
+        };
+        
+        githubPollTimer = setTimeout(poll, currentInterval * 1000);
 
     } catch (err) {
         content.innerHTML = buildGitHubOAuthModal(null, err.message);
@@ -254,7 +243,7 @@ async function startGitHubLogin() {
 
 function cancelGitHubLogin() {
     if (githubPollTimer) {
-        clearInterval(githubPollTimer);
+        clearTimeout(githubPollTimer);
         githubPollTimer = null;
     }
     closeModal();
@@ -265,6 +254,22 @@ async function handleGitHubLogout() {
         await logoutGitHub();
         await checkGitHubStatus();
         loadData();
+
+        // If modal is open for a GitHub service, refresh it
+        const content = document.getElementById('modal-content');
+        const container = document.getElementById('modal-container');
+        if (container.classList.contains('active')) {
+            // Find which service was being shown
+            const titleElement = content.querySelector('h2');
+            if (titleElement) {
+                const serviceName = titleElement.textContent;
+                const item = STATE.data.find(d => d.service === serviceName);
+                if (item && (serviceName.toLowerCase().includes('github') || serviceName.toLowerCase().includes('copilot'))) {
+                    content.innerHTML = buildModalContent(item);
+                    document.getElementById('close-modal').onclick = closeModal;
+                }
+            }
+        }
     }
 }
 
@@ -302,6 +307,8 @@ window.toggleService = function (serviceName) {
  * @async
  */
 async function loadData() {
+    const myGeneration = ++loadDataGeneration;
+
     const grid = document.getElementById('grid');
     const loading = document.getElementById('loading');
     const errorBanner = document.getElementById('error-banner');
@@ -319,6 +326,7 @@ async function loadData() {
 
     try {
         const json = await fetchLimits();
+        if (myGeneration !== loadDataGeneration) return; // discard stale response
         STATE.data = json.limits;
         renderGrid();
 
@@ -327,6 +335,7 @@ async function loadData() {
         lastUpdated.classList.remove('hidden');
 
     } catch (err) {
+        if (myGeneration !== loadDataGeneration) return; // discard stale error
         console.error('Failed to fetch limits:', err);
 
         // Extract error message and categorize the error type

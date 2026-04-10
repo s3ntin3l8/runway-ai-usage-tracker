@@ -49,12 +49,6 @@ class GitHubCollector(BaseCollector):
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
 
-    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
-        """Check if results contain an error card."""
-        if not results:
-            return True
-        return any(r.get("remaining") == "ERR" for r in results)
-
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Collect GitHub Copilot quota with caching for free, pro, and enterprise tiers.
@@ -81,11 +75,16 @@ class GitHubCollector(BaseCollector):
                 logger.debug("Using API key from sidecar cache")
 
         if not token:
-            return []
+            return [
+                error_card(
+                    "GitHub Copilot",
+                    "🐙",
+                    "Login required to fetch limits",
+                    error_type="auth_failed",
+                )
+            ]
 
         # Use cached result if available and fresh (check is not None for empty lists)
-        from datetime import timezone
-
         now = datetime.now(timezone.utc)
 
         if self._cached_results is not None and self._last_fetch:
@@ -95,7 +94,7 @@ class GitHubCollector(BaseCollector):
         # Fetch fresh data
         try:
             # Use Copilot internal endpoints for detailed metrics
-            # Mimicking VS Code headers as suggested by CodexBar for better reliability
+            # Mimicking VS Code headers for better reliability, as recommended for robust collection strategies
             headers = {
                 "Authorization": f"token {token}",
                 "X-GitHub-Api-Version": "2025-04-01",

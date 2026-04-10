@@ -64,6 +64,8 @@ async def ingest_metrics(
 
     # 3. Read body and verify signature
     body_bytes = await raw_request.body()
+    if len(body_bytes) > 1 * 1024 * 1024:  # 1 MB sanity limit
+        raise HTTPException(status_code=413, detail="Request body too large")
     expected_sig = hmac.new(
         settings.INGEST_API_KEY.encode(),
         f"{x_timestamp}".encode() + body_bytes,

@@ -89,3 +89,5 @@ Sidecar can extract tokens from `~/.claude/.credentials.json` or macOS keychain.
 
 - **Claude:** https://claude.ai
 - **API Docs:** https://api.anthropic.com
+
+*Last updated: 2026-04-10*

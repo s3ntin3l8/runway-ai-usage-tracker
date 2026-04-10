@@ -71,11 +71,15 @@ MODEL_DISPLAY_NAMES = {
 class GeminiCollector(OAuthBaseCollector):
     def __init__(self):
         """Initialize caching for API results."""
-        # Credentials file path (search multiple locations, default to standard)
+        # Search for credentials in multiple locations
         home = os.path.expanduser("~")
-        credentials_path = settings.GEMINI_OAUTH_PATH or os.path.join(
-            home, ".gemini", "oauth_creds.json"
-        )
+        potential_paths = [
+            settings.GEMINI_OAUTH_PATH,
+            os.path.join(home, ".gemini", "oauth_creds.json"),
+            os.path.join(home, ".config", "gemini", "oauth_creds.json"),
+        ]
+        
+        credentials_path = next((p for p in potential_paths if p and os.path.exists(p)), potential_paths[0])
 
         super().__init__(provider_name="Gemini", credentials_path=credentials_path)
 
@@ -98,8 +102,10 @@ class GeminiCollector(OAuthBaseCollector):
         try:
             creds = await self._get_credentials()
             if creds:
-                expiry_ms = creds.get("expiry_date", 0)
-                return expiry_ms < (time.time() * 1000)
+                expiry_ms = creds.get("expiry_date")
+                if expiry_ms:  # Missing or zero → no expiry info, assume still valid
+                    return expiry_ms < (time.time() * 1000)
+                return False
         except Exception as e:
             logger.debug(f"Could not check Gemini token expiration: {e}")
         return True
@@ -136,9 +142,7 @@ class GeminiCollector(OAuthBaseCollector):
                 )
 
                 # Update sidecar cache
-                await token_cache.store(
-                    "gemini", {"oauth_token": new_data["access_token"]}
-                )
+                await self._store_sidecar_token("gemini", new_data["access_token"])
 
                 return creds
             else:
@@ -149,12 +153,6 @@ class GeminiCollector(OAuthBaseCollector):
         except Exception as e:
             logger.error(f"Failed to refresh Gemini token: {e}")
             return None
-
-    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
-        """Check if results contain an error card."""
-        if not results:
-            return True
-        return any(r.get("remaining") == "ERR" for r in results)
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
@@ -185,8 +183,6 @@ class GeminiCollector(OAuthBaseCollector):
 
         Returns cached result if within TTL to avoid hammering API.
         """
-        from datetime import timezone
-
         now = datetime.now(timezone.utc)
 
         # Check cache - works for both success AND error results (check is not None for empty lists)

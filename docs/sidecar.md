@@ -281,4 +281,4 @@ python3 scripts/sidecar.py --daemon
 
 See [Collector Docs](../docs/collectors/) for provider-specific setup details.
 
-*Last updated: 2026-04-08*
+*Last updated: 2026-04-10*

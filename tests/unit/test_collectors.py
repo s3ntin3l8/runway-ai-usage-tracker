@@ -1019,7 +1019,7 @@ class TestGitHubCollector:
 
     @pytest.mark.asyncio
     async def test_collect_missing_token(self, mock_http_client):
-        """Test that missing GitHub token returns empty list."""
+        """Test that missing GitHub token returns an error card."""
         collector = GitHubCollector()
 
         with patch(
@@ -1028,7 +1028,10 @@ class TestGitHubCollector:
         ):
             result = await collector.collect(mock_http_client)
 
-        assert result == []
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "Login required" in result[0]["detail"]
 
     @pytest.mark.asyncio
     async def test_collect_api_error_caching(self, mock_http_client):
@@ -1148,28 +1151,29 @@ class TestChatGPTCollector:
             mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
             mock_settings.LOCAL_COLLECTOR_ENABLED = True
 
-            with patch("builtins.open", side_effect=FileNotFoundError):
-                with patch(
-                    "app.services.credential_provider.CredentialProvider.get_chatgpt_token",
-                    return_value="test_token",
-                ):
-                    # First call - API fails, no logs
-                    result1 = await collector.collect(mock_http_client)
-                    first_call_count = mock_http_client.get.call_count
+            with patch("app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc", return_value=[]):
+                with patch("builtins.open", side_effect=FileNotFoundError):
+                    with patch(
+                        "app.services.credential_provider.CredentialProvider.get_chatgpt_token",
+                        return_value="test_token",
+                    ):
+                        # First call - API fails, no logs
+                        result1 = await collector.collect(mock_http_client)
+                        first_call_count = mock_http_client.get.call_count
 
-                    # Verify cache was populated (any result)
-                    assert collector._cached_api_results is not None
-                    assert collector._last_api_fetch is not None
+                        # Verify cache was populated (any result)
+                        assert collector._cached_api_results is not None
+                        assert collector._last_api_fetch is not None
 
-                    # Second call with SAME collector instance - should use cache
-                    result2 = await collector.collect(mock_http_client)
+                        # Second call with SAME collector instance - should use cache
+                        result2 = await collector.collect(mock_http_client)
 
-                    # API should not be called again (result was cached)
-                    assert mock_http_client.get.call_count == first_call_count
+                        # API should not be called again (result was cached)
+                        assert mock_http_client.get.call_count == first_call_count
 
-                    # Both results should be error cards (may have slightly different messages)
-                    assert any(r.get("remaining") == "ERR" for r in result1)
-                    assert any(r.get("remaining") == "ERR" for r in result2)
+                        # Both results should be error cards (may have slightly different messages)
+                        assert any(r.get("remaining") == "ERR" for r in result1)
+                        assert any(r.get("remaining") == "ERR" for r in result2)
 
 
 class TestAntigravityCollector:
@@ -1226,7 +1230,8 @@ class TestOpenCodeCollector:
             with patch(
                 "app.services.collectors.opencode.external_metric_service"
             ) as mock_external:
-                mock_external.get_opencode_aggregated.return_value = []
+                # Use AsyncMock for the awaited call
+                mock_external.get_opencode_aggregated = AsyncMock(return_value=[])
 
                 # Mock local DB doesn't exist
                 with patch(

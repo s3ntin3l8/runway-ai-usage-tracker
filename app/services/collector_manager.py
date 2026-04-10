@@ -133,7 +133,7 @@ class CollectorManager:
                 flattened.extend(res)
 
         # Merge external metrics
-        external_results = external_metric_service.get_all_metrics()
+        external_results = await external_metric_service.get_all_metrics()
         flattened.extend(external_results)
 
         logger.info(f"Collected {len(flattened)} total limit cards from all sources")
