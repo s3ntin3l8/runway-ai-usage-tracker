@@ -14,9 +14,10 @@ Extract common collector logic (endpoints, headers, parsing rules) into a shared
 - **Implementation:** Use a "Sidecar Generator" script (`scripts/generate_sidecar.py`) to keep the sidecar zero-dependency while maintaining a single source of truth.
 
 ### 2. Formalize Strategy Pattern
-**File:** `app/services/collectors/base.py`  
-**Effort:** 2-3 hours
-Implement abstract methods (`_primary_strategy()`, `_fallback_strategy()`, `_error_handler()`) to enforce 3-tier fallback consistency across all collectors.
+**Status:** Completed (2026-04-10)
+Implemented the 'Dynamic Strategies' approach in `app/services/collectors/base.py`.
+- **Interface:** Enforced `_primary_strategy()`, `_fallback_strategies()`, and `_error_handler()`.
+- **Benefit:** Standardized 3-tier fallback consistency across all 10 collectors with centralized orchestration.
 
 ### 3. Binary Sidecar Distribution
 **File:** `sidecar/` (build scripts)  
