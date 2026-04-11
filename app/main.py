@@ -3,11 +3,13 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
-from app.api.routes import router as api_router
+from app.api.routes import router as api_router, manager
 from app.core.config import settings
 import os
 import logging
 import sys
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Configure logging
@@ -20,7 +22,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.PROJECT_NAME)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Warm up keychain access if enabled
+    if settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        # Create task to avoid blocking app startup
+        asyncio.create_task(manager._warmup_keychain())
+    yield
+    # Shutdown logic here if needed
+
+app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
 # Cache for dashboard HTML
 _DASHBOARD_HTML_CACHE = None

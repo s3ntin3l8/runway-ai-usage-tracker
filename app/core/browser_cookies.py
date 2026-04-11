@@ -180,8 +180,7 @@ class SafariBinaryCookieParser:
                     cookies.extend(SafariBinaryCookieParser.parse_page(page_data))
             
             # DEBUG: Print all found cookies
-            # for c in cookies:
-            #    print(f"DEBUG SAFARI: {c['domain']} - {c['name']}")
+            # Cleanup
         except Exception:
             pass
         return cookies
