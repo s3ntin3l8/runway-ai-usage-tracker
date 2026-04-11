@@ -66,6 +66,11 @@ def get_keychain_secret(service: str, account: Optional[str] = None, force_refre
     if platform.system() != "Darwin":
         return None
 
+    # Check for prompt mode override (from settings)
+    from app.core.config import settings
+    if settings.KEYCHAIN_PROMPT_MODE == "never" and not force_refresh:
+        return None
+
     cache_key = f"{service}:{account}" if account else service
     
     # 1. Check in-memory cache first (including cached failures)
@@ -81,6 +86,7 @@ def get_keychain_secret(service: str, account: Optional[str] = None, force_refre
     else:
         logger.debug(f"🔄 Bypassing cache for keychain lookup: {service}")
 
+    start_time = time.time()
     try:
         logger.info(f"🔑 Requesting macOS Keychain access for service: {service}...")
         
@@ -101,9 +107,12 @@ def get_keychain_secret(service: str, account: Optional[str] = None, force_refre
             env=env
         )
 
+        duration_ms = int((time.time() - start_time) * 1000)
+        
         if result.returncode == 0:
             secret = result.stdout.strip()
             if secret:
+                logger.debug(f"⏱️ Keychain query for {service} took {duration_ms}ms")
                 with _KEYCHAIN_LOCK:
                     _KEYCHAIN_CACHE[cache_key] = secret
                 return secret
@@ -114,25 +123,32 @@ def get_keychain_secret(service: str, account: Optional[str] = None, force_refre
         cmd_g.append("-g")
         
         result_g = subprocess.run(cmd_g, capture_output=True, text=True, timeout=30, env=env)
+        
+        duration_ms = int((time.time() - start_time) * 1000)
+
         if result_g.returncode == 0:
             output = result_g.stdout + result_g.stderr
             import re
             match = re.search(r'password: "(.*)"', output)
             if match:
                 secret = match.group(1)
+                logger.debug(f"⏱️ Keychain query (-g) for {service} took {duration_ms}ms")
                 with _KEYCHAIN_LOCK:
                     _KEYCHAIN_CACHE[cache_key] = secret
                 return secret
 
         # Log specific reason for failure
         err = result.stderr.strip() or result_g.stderr.strip()
+        if duration_ms > 1000:
+            logger.info(f"⚠️ Slow Keychain query: {duration_ms}ms (Likely user interaction or timeout)")
+
         if "The specified item could not be found" in err:
             logger.debug(f"Keychain service '{service}' not found.")
         elif "User interaction is not allowed" in err:
             logger.warning(f"❌ Keychain access denied: User interaction not allowed for '{service}'.")
         else:
             # Assume any other failure is a user denial or permission issue
-            logger.warning(f"❌ Keychain access denied or failed for {service}")
+            logger.warning(f"❌ Keychain access denied or failed for {service} (Code {result.returncode})")
             _record_denial(service)
             
         # Cache the failure in memory for this session
