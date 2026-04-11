@@ -28,6 +28,7 @@ def chatgpt_usage_response():
     """Mock response for ChatGPT wham/usage endpoint."""
     return {
         "plan_type": "plus",
+        "email": "user@example.com",
         "rate_limit": {
             "primary_window": {
                 "used_percent": 25.5,
@@ -81,8 +82,10 @@ class TestChatGPTCollectorDetailed:
                     # Mock the refresh API call
                     mock_resp = MagicMock(spec=httpx.Response)
                     mock_resp.status_code = 200
+                    mock_resp.headers = {}
                     mock_resp.json.return_value = {"accessToken": refreshed_token}
-                    mock_http_client.get.return_value = mock_resp
+                    # http_request_with_retry uses request()
+                    mock_http_client.request.return_value = mock_resp
 
                     auth = await collector._get_auth_data(mock_http_client)
 
@@ -90,7 +93,7 @@ class TestChatGPTCollectorDetailed:
                     assert auth["source"] == "cookies"
 
                     # Verify refresh URL was called with cookie
-                    call_args = mock_http_client.get.call_args
+                    call_args = mock_http_client.request.call_args
                     assert "api/auth/session" in str(call_args)
                     assert (
                         f"__Secure-next-auth.session-token={session_token}"
@@ -105,8 +108,9 @@ class TestChatGPTCollectorDetailed:
 
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 200
+        mock_resp.headers = {}
         mock_resp.json.return_value = {"accessToken": "t1"}
-        mock_http_client.get.return_value = mock_resp
+        mock_http_client.request.return_value = mock_resp
 
         # Patch EVERYTHING to ensure we hit the cookie path
         with patch.dict("os.environ", {}, clear=True):
@@ -118,13 +122,13 @@ class TestChatGPTCollectorDetailed:
                     # First refresh
                     auth1 = await collector._get_auth_data(mock_http_client)
                     assert auth1["token"] == "t1"
-                    assert mock_http_client.get.call_count == 1
+                    assert mock_http_client.request.call_count == 1
 
                     # Second call immediately - should use in-memory cache
                     auth2 = await collector._get_auth_data(mock_http_client)
                     assert auth2["token"] == "t1"
                     assert auth2["source"] == "cookies_cached"
-                    assert mock_http_client.get.call_count == 1  # No new API call
+                    assert mock_http_client.request.call_count == 1  # No new API call
 
     @pytest.mark.asyncio
     async def test_tier_detection_plus(
@@ -231,12 +235,14 @@ class TestChatGPTCollectorDetailed:
 
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 200
+        mock_resp.headers = {}
         mock_resp.json.return_value = {"accessToken": "new_token"}
-        mock_http_client.get.return_value = mock_resp
+        mock_http_client.request.return_value = mock_resp
 
         await collector._refresh_access_token(mock_http_client, "some_cookie")
 
-        headers = mock_http_client.get.call_args.kwargs["headers"]
+        # http_request_with_retry uses request()
+        headers = mock_http_client.request.call_args.kwargs["headers"]
         assert "Mozilla/5.0" in headers["User-Agent"]
         assert "Chrome" in headers["User-Agent"]
 
@@ -293,4 +299,3 @@ class TestChatGPTCollectorDetailed:
             # Check Credits card
             assert results[2]["service"] == "ChatGPT Credits"
             assert results[2]["remaining"] == "$15.50"
-

@@ -14,9 +14,9 @@ CLAUDE_WEB_API_ORGS_RESPONSE = [
 ]
 
 CLAUDE_WEB_API_USAGE_RESPONSE = {
-    "current_window": {"percentUsed": 45.5, "resetsAt": "2025-04-07T12:00:00Z"},
-    "current_week": {"percentUsed": 62.3, "resetsAt": "2025-04-14T00:00:00Z"},
-    "current_week_sonnet": {"percentUsed": 30.1, "resetsAt": "2025-04-14T00:00:00Z"},
+    "five_hour": {"utilization": 0.455, "resets_at": "2025-04-07T12:00:00Z"},
+    "seven_day": {"utilization": 0.623, "resets_at": "2025-04-14T00:00:00Z"},
+    "seven_day_sonnet": {"utilization": 0.301, "resets_at": "2025-04-14T00:00:00Z"},
 }
 
 GEMINI_QUOTA_RESPONSE = {

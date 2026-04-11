@@ -132,7 +132,9 @@ class ChatGPTCollector(BaseCollector):
     ) -> Optional[Dict[str, str]]:
         """Refresh OAuth token using the OpenAI auth endpoint."""
         try:
-            resp = await client.post(
+            resp = await http_request_with_retry(
+                client,
+                "POST",
                 "https://auth.openai.com/oauth/token",
                 json={
                     "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
@@ -209,7 +211,7 @@ class ChatGPTCollector(BaseCollector):
                 "oai-language": "en-US",
                 "Priority": "u=1, i",
             }
-            resp = await client.get(url, headers=headers, timeout=10)
+            resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("accessToken")

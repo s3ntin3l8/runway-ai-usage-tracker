@@ -17,7 +17,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 
 from app.core.config import settings
-from app.core.utils import PaceCalculator, human_delta
+from app.core.utils import PaceCalculator, human_delta, http_request_with_retry
 from app.core.browser_cookies import get_claude_session_cookie
 
 logger = logging.getLogger(__name__)
@@ -179,8 +179,8 @@ class AnthropicWebMixin:
 
         try:
             # Step 1: Get organization ID
-            orgs_resp = await client.get(
-                "https://claude.ai/api/organizations", headers=headers, timeout=10.0
+            orgs_resp = await http_request_with_retry(
+                client, "GET", "https://claude.ai/api/organizations", headers=headers, timeout=10.0
             )
             if orgs_resp.status_code != 200:
                 logger.debug(f"Claude Web API orgs call failed: {orgs_resp.status_code}")
@@ -200,8 +200,8 @@ class AnthropicWebMixin:
             # Step 2: Get account info for tier/plan
             account_data = None
             try:
-                account_resp = await client.get(
-                    "https://claude.ai/api/account", headers=headers, timeout=10.0
+                account_resp = await http_request_with_retry(
+                    client, "GET", "https://claude.ai/api/account", headers=headers, timeout=10.0
                 )
                 if account_resp.status_code == 200:
                     account_data = account_resp.json()
@@ -209,8 +209,8 @@ class AnthropicWebMixin:
                 logger.debug(f"Could not fetch account info: {e}")
 
             # Step 3: Get usage data
-            usage_resp = await client.get(
-                f"https://claude.ai/api/organizations/{org_id}/usage",
+            usage_resp = await http_request_with_retry(
+                client, "GET", f"https://claude.ai/api/organizations/{org_id}/usage",
                 headers=headers,
                 timeout=10.0,
             )

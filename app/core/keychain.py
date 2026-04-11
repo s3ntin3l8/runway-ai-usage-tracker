@@ -18,8 +18,8 @@ _KEYCHAIN_LOCK = threading.Lock()
 
 def _get_backoff_file() -> Path:
     """Get path to the persistent keychain backoff file."""
-    from app.core.config import settings
-    config_dir = Path(settings.get_platform_config_dir("runway"))
+    from app.core.config import get_platform_config_dir
+    config_dir = Path(get_platform_config_dir("runway"))
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / ".keychain_backoff.json"
 

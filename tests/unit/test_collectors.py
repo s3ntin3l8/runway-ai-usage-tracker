@@ -191,6 +191,7 @@ class TestAnthropicCollector:
         # Mock successful token refresh response
         refresh_response = MagicMock(spec=httpx.Response)
         refresh_response.status_code = 200
+        refresh_response.headers = {}
         refresh_response.json.return_value = {
             "access_token": "new_refreshed_token",
             "refresh_token": "new_refresh_token",
@@ -210,7 +211,9 @@ class TestAnthropicCollector:
                 ],
                 [{"service": "Claude", "remaining": "50%", "data_source": "oauth"}],
             ]
-            mock_http_client.post.return_value = refresh_response
+            
+            # http_request_with_retry uses request()
+            mock_http_client.request.return_value = refresh_response
 
             with patch(
                 "app.services.credential_provider.CredentialProvider.get_claude_token",
@@ -263,28 +266,30 @@ class TestAnthropicCollector:
         """Test fallback to Web API when OAuth fails."""
         collector = AnthropicCollector()
 
-        # Mock OAuth failure (401) - using request() for OAuth
         oauth_response = MagicMock(spec=httpx.Response)
         oauth_response.status_code = 401
+        oauth_response.headers = {}
 
-        # Mock Web API success - using get() for Web API
+        # Mock Web API success
         orgs_response = MagicMock(spec=httpx.Response)
         orgs_response.status_code = 200
+        orgs_response.headers = {}
         orgs_response.json.return_value = mock_claude_web_api_orgs_response
 
-        # Mock account endpoint (optional, called between orgs and usage)
+        # Mock account endpoint
         account_response = MagicMock(spec=httpx.Response)
         account_response.status_code = 200
+        account_response.headers = {}
         account_response.json.return_value = {"tier": "pro"}
 
         usage_response = MagicMock(spec=httpx.Response)
         usage_response.status_code = 200
+        usage_response.headers = {}
         usage_response.json.return_value = mock_claude_web_api_usage_response
 
-        # Mock request for OAuth (first call)
-        mock_http_client.request.return_value = oauth_response
-        # Mock get for Web API calls (orgs, account, usage)
-        mock_http_client.get.side_effect = [
+        # Mock request for all calls (OAuth + Web API)
+        mock_http_client.request.side_effect = [
+            oauth_response,
             orgs_response,
             account_response,
             usage_response,
@@ -310,11 +315,13 @@ class TestAnthropicCollector:
                     ):
                         result = await collector.collect(mock_http_client)
 
-        # Should return Web API results
+        # Should return Web API results (error card removed)
         assert isinstance(result, list)
-        assert len(result) >= 1
+        assert len(result) == 3
+        services = [r["service"] for r in result]
+        assert "Claude (Session Window)" in services
+        assert "Claude (Weekly Window)" in services
         assert any(card.get("data_source") == "web_api" for card in result)
-        assert any("Session" in str(card.get("service", "")) for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_enhanced_local_fallback(self, mock_http_client):
@@ -713,16 +720,20 @@ class TestAnthropicCollector:
         # Mock account endpoint (optional, called between orgs and usage)
         account_response = MagicMock(spec=httpx.Response)
         account_response.status_code = 200
+        account_response.headers = {}
         account_response.json.return_value = {"tier": "pro"}
 
         usage_response = MagicMock(spec=httpx.Response)
         usage_response.status_code = 200
+        usage_response.headers = {}
         usage_response.json.return_value = {
-            "current_window": {"percentUsed": 30.0, "resetsAt": "2025-04-07T12:00:00Z"}
+            "five_hour": {"utilization": 0.3, "resets_at": "2025-04-07T12:00:00Z"},
+            "seven_day": {"utilization": 0.4, "resets_at": "2025-04-14T00:00:00Z"},
+            "seven_day_sonnet": {"utilization": 0.5, "resets_at": "2025-04-14T00:00:00Z"},
         }
 
-        mock_http_client.request.return_value = oauth_response
-        mock_http_client.get.side_effect = [
+        mock_http_client.request.side_effect = [
+            oauth_response,
             org_response,
             account_response,
             usage_response,
@@ -748,13 +759,13 @@ class TestAnthropicCollector:
                         result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
+        assert len(result) == 3
         assert any(card.get("data_source") == "web_api" for card in result)
-        if result and result[0].get("remaining") != "ERR":
-            detail = result[0].get("detail", "")
-            # Identity should be included if present
-            assert (
-                "user@example.com" in detail or "Personal Org" in detail or True
-            )  # May or may not be present
+        
+        # Identity should be included in detail
+        for card in result:
+            detail = card.get("detail", "")
+            assert "user@example.com" in detail or "Personal Org" in detail
 
     def test_parse_oauth_response_boundary_percentages(self):
         """Test boundary percentage handling (0%, 100%)."""
@@ -1044,8 +1055,14 @@ class TestGeminiCollector:
                         # API should not be called again (result was cached)
                         assert mock_request.call_count == first_call_count
 
-                        # Results should be the same (from cache)
-                        assert result1 == result2
+                        # Results should be the same (from cache, ignoring timestamp)
+                        assert len(result1) == len(result2)
+                        for r1, r2 in zip(result1, result2):
+                            r1_copy = r1.copy()
+                            r2_copy = r2.copy()
+                            r1_copy.pop("updated_at", None)
+                            r2_copy.pop("updated_at", None)
+                            assert r1_copy == r2_copy
 
 
 class TestGitHubCollector:
@@ -1105,7 +1122,11 @@ class TestGitHubCollector:
         # Mock API error response (500 error)
         error_response = MagicMock(spec=httpx.Response)
         error_response.status_code = 500
-        mock_http_client.get.return_value = error_response
+        error_response.headers = {}
+        
+        # Use AsyncMock to track calls
+        mock_request = AsyncMock(return_value=error_response)
+        mock_http_client.request = mock_request
 
         with patch(
             "app.services.credential_provider.CredentialProvider.get_github_token",
@@ -1113,7 +1134,7 @@ class TestGitHubCollector:
         ):
             # First call - API fails
             result1 = await collector.collect(mock_http_client)
-            first_call_count = mock_http_client.get.call_count
+            first_call_count = mock_request.call_count
 
             # Verify cache was populated (any result)
             assert collector._cached_results is not None
@@ -1123,10 +1144,16 @@ class TestGitHubCollector:
             result2 = await collector.collect(mock_http_client)
 
             # API should not be called again (result was cached)
-            assert mock_http_client.get.call_count == first_call_count
+            assert mock_request.call_count == first_call_count
 
-            # Results should be the same (from cache)
-            assert result1 == result2
+            # Results should be the same (from cache, ignoring timestamp)
+            assert len(result1) == len(result2)
+            for r1, r2 in zip(result1, result2):
+                r1_copy = r1.copy()
+                r2_copy = r2.copy()
+                r1_copy.pop("updated_at", None)
+                r2_copy.pop("updated_at", None)
+                assert r1_copy == r2_copy
 
 
 class TestChatGPTCollector:

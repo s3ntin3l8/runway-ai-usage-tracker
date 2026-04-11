@@ -98,8 +98,11 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 except Exception as e:
                     logger.debug(f"Failed to extract Client ID from Claude id_token: {e}")
 
+        from app.core.utils import http_request_with_retry
         try:
-            resp = await client.post(
+            resp = await http_request_with_retry(
+                client,
+                "POST",
                 "https://platform.claude.com/v1/oauth/token",
                 json={
                     "grant_type": "refresh_token",

@@ -53,12 +53,18 @@ class TestDecryptMacosCookie:
         encrypted = _make_cbc_cookie(password, plaintext, b"v10")
 
         with patch("subprocess.run") as mock_run:
-            # First call (Chrome) fails, second (Edge) succeeds
-            mock_run.side_effect = [
-                MagicMock(returncode=1),
-                MagicMock(returncode=0, stdout=password + "\n"),
-            ]
-            result = decrypt_macos_cookie(encrypted)
+            with patch("app.core.keychain._record_denial") as mock_deny:
+                # decrypt_macos_cookie calls get_keychain_secret twice (Chrome, then Edge)
+                # each get_keychain_secret can call subprocess.run twice (-w, then -g)
+                # 1. Chrome -w fails
+                # 2. Chrome -g fails
+                # 3. Edge -w succeeds
+                mock_run.side_effect = [
+                    MagicMock(returncode=1, stdout="", stderr="error"),
+                    MagicMock(returncode=1, stdout="", stderr="error"),
+                    MagicMock(returncode=0, stdout=password + "\n", stderr=""),
+                ]
+                result = decrypt_macos_cookie(encrypted)
 
         assert result == plaintext
 
