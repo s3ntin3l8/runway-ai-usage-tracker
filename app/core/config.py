@@ -85,6 +85,9 @@ class Settings:
     GEMINI_OAUTH_CLIENT_SECRET: str = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
     CLAUDE_OAUTH_CLIENT_ID: str = os.getenv("CLAUDE_OAUTH_CLIENT_ID", "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
 
+    # Keychain prompts (always, never)
+    KEYCHAIN_PROMPT_MODE: str = os.getenv("KEYCHAIN_PROMPT_MODE", "always")
+
     # Quota Limits
     CLAUDE_PRO_LIMIT: int = int(os.getenv("CLAUDE_PRO_LIMIT", "2000000"))
     CLAUDE_FREE_LIMIT: int = int(os.getenv("CLAUDE_FREE_LIMIT", "500000"))
