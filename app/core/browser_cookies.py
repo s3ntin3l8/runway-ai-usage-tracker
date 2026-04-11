@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from app.core.config import settings
 from app.core.registry import registry
+from app.core.keychain import get_keychain_secret
 
 # --- Chromium-based (Chrome, Edge) decryption ---
 
@@ -27,32 +28,14 @@ from app.core.registry import registry
 def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
     """Decrypt a cookie value using macOS Keychain."""
     try:
-        import subprocess
-
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", "Chrome Safe Storage", "-w"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode != 0:
+        # Use centralized keychain access with caching
+        password = get_keychain_secret("Chrome Safe Storage")
+        if not password:
             # Try Edge-specific storage if Chrome fails
-            result = subprocess.run(
-                [
-                    "security",
-                    "find-generic-password",
-                    "-s",
-                    "Microsoft Edge Safe Storage",
-                    "-w",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode != 0:
-                return None
+            password = get_keychain_secret("Microsoft Edge Safe Storage")
 
-        password = result.stdout.strip()
+        if not password:
+            return None
         if encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11"):
             import hashlib
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -467,20 +450,5 @@ def get_chatgpt_device_id() -> Optional[str]:
 
 
 def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
-    """Still needed for direct keychain access in sidecar."""
-    if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
-        return None
-
-    if platform.system() != "Darwin":
-        return None
-    try:
-        import subprocess
-
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip() if result.returncode == 0 else None
-    except Exception:
-        return None
+    """Fetch a token directly from macOS Keychain."""
+    return get_keychain_secret(service, account)

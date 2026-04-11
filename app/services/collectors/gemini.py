@@ -44,6 +44,7 @@ import os
 import time
 import asyncio
 import logging
+import base64
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 import httpx
@@ -119,11 +120,34 @@ class GeminiCollector(OAuthBaseCollector):
             logger.warning("No refresh token in Gemini credentials")
             return None
 
+        # Auto-discover client_id from explicit field or id_token if not in settings
+        client_id = settings.GEMINI_OAUTH_CLIENT_ID
+        if not client_id:
+            client_id = creds.get("client_id") or creds.get("clientId")
+            
+        if not client_id and "id_token" in creds:
+            try:
+                # JWT payload is the second part, base64 encoded
+                parts = creds["id_token"].split(".")
+                if len(parts) >= 2:
+                    # Add padding if needed
+                    payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+                    payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+                    client_id = payload.get("azp") or payload.get("aud")
+                    if client_id:
+                        logger.info(f"Auto-discovered Gemini Client ID: {client_id[:10]}...")
+            except Exception as e:
+                logger.debug(f"Failed to extract Client ID from Gemini id_token: {e}")
+
+        if not client_id:
+            logger.warning("Gemini Client ID missing (set GEMINI_OAUTH_CLIENT_ID)")
+            return None
+
         try:
             resp = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
-                    "client_id": settings.GEMINI_OAUTH_CLIENT_ID,
+                    "client_id": client_id,
                     "client_secret": settings.GEMINI_OAUTH_CLIENT_SECRET,
                     "refresh_token": refresh_token,
                     "grant_type": "refresh_token",
@@ -145,7 +169,7 @@ class GeminiCollector(OAuthBaseCollector):
                 return creds
             else:
                 logger.warning(
-                    f"Gemini token refresh failed with status {resp.status_code}"
+                    f"Gemini token refresh failed with status {resp.status_code}: {resp.text[:100]}"
                 )
                 return None
         except Exception as e:
@@ -322,7 +346,7 @@ class GeminiCollector(OAuthBaseCollector):
                             reset_time.replace("Z", "+00:00")
                         )
                         reset_at = reset_dt.isoformat()
-                    except:
+                    except (ValueError, TypeError):
                         pass
 
                 # Determine health based on % used (not remaining)
@@ -393,7 +417,7 @@ class GeminiCollector(OAuthBaseCollector):
                 )
             ]
 
-    async def _collect_via_logs(self) -> List[Dict[str, Any]]:
+    async def _collect_via_logs(self, client: Optional[httpx.AsyncClient] = None) -> List[Dict[str, Any]]:
         """
         Fallback: Parse Gemini usage from local session logs.
 
@@ -407,9 +431,24 @@ class GeminiCollector(OAuthBaseCollector):
         Returns:
             List[Dict[str, Any]]: Single card with token total or empty list if no logs
         """
-        sessions_dir = settings.GEMINI_SESSIONS_DIR
+        # Check multiple potential session log locations in parallel
+        potential_dirs = [
+            settings.GEMINI_SESSIONS_DIR,
+            os.path.expanduser("~/.gemini/tmp/sessions"),
+            os.path.expanduser("~/.gemini/sessions"),
+            os.path.expanduser("~/.gemini/tmp"),
+        ]
+
+        files = []
         try:
-            files = await asyncio.to_thread(glob.glob, f"{sessions_dir}/*.jsonl")
+            existing_dirs = [d for d in potential_dirs if os.path.isdir(d)]
+            if existing_dirs:
+                results = await asyncio.gather(
+                    *[asyncio.to_thread(glob.glob, f"{d}/*.jsonl") for d in existing_dirs]
+                )
+                for found in results:
+                    files.extend(found)
+
             if not files:
                 return []
 

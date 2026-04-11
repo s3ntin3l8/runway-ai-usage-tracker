@@ -221,7 +221,7 @@ class ChatGPTCollector(BaseCollector):
             logger.debug(f"Error refreshing ChatGPT token: {e}")
         return None
 
-    async def _collect_via_cli_rpc(self) -> List[Dict[str, Any]]:
+    async def _collect_via_cli_rpc(self, client: Optional[httpx.AsyncClient] = None) -> List[Dict[str, Any]]:
         """
         Fetch usage data from the codex CLI RPC server.
         Mimics a robust gold standard collection strategy.
@@ -362,7 +362,7 @@ class ChatGPTCollector(BaseCollector):
                 try:
                     process.terminate()
                     await process.wait()
-                except:
+                except (ProcessLookupError, OSError):
                     pass
 
     def _fallback_strategies(self) -> List[Any]:

@@ -183,7 +183,8 @@ class GitHubCollector(BaseCollector):
         if reset_date:
             try:
                 reset_at = datetime.fromisoformat(reset_date.replace("Z", "+00:00"))
-            except: pass
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse GitHub reset date '{reset_date}': {e}")
 
         for key in ["completions", "chat"]:
             if key in quotas:

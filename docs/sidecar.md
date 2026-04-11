@@ -27,7 +27,7 @@ python3 scripts/sidecar.py --daemon
 - **Offline Queue:** Caches metrics locally when server unreachable
 - **Retry Logic:** Exponential backoff for failed pushes
 - **PID File:** Prevents multiple daemon instances
-- **10 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenCode, zAI, Kimi, Antigravity
+- **12 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, zAI, Kimi, Antigravity
 - **HMAC-SHA256 Signing:** Secure payload verification
 
 ## Configuration
@@ -161,6 +161,8 @@ launchctl start com.runway.sidecar
 | **zAI API/Plan** | API key | `ZAI_API_KEY` |
 | **Kimi API** | API key | `KIMI_API_KEY` |
 | **Kimi Coding** | JWT/cookie | `KIMI_AUTH_TOKEN` or Chrome cookie |
+| **OpenRouter** | API key | `OPENROUTER_API_KEY` |
+| **MiniMax** | API key | `MINIMAX_API_KEY` |
 | **Antigravity** | JSON file | `~/.antigravity/state/quota.json` |
 
 ## Deployment Modes

@@ -25,6 +25,8 @@ Running on single machine with coding tools?
 | **zAI Plan** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
 | **Kimi API** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
 | **Kimi Coding** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Sidecar extracts cookie or uses env var |
+| **OpenRouter** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
+| **MiniMax** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
 | **Antigravity** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Sidecar reads local JSON |
 
 **Legend:**
@@ -128,6 +130,8 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
       - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
     restart: unless-stopped
 ```
 
@@ -145,6 +149,8 @@ python3 scripts/sidecar.py \
 | `GITHUB_TOKEN` | ✅ | ✅ | ✅ | GitHub API |
 | `ZAI_API_KEY` | ✅ | ✅ | ✅ | zAI API |
 | `KIMI_API_KEY` | ✅ | ✅ | ✅ | Kimi API |
+| `OPENROUTER_API_KEY` | ✅ | ✅ | ✅ | OpenRouter API |
+| `MINIMAX_API_KEY` | ✅ | ✅ | ✅ | MiniMax API |
 | `INGEST_API_KEY` | Optional | Required | Required | Sidecar auth |
 | `LOCAL_COLLECTOR_ENABLED` | true | true | **false** | Disable in Docker |
 | `LOCAL_CREDENTIAL_SCRAPING_ENABLED` | true | true | **false** | Disable in Docker |
@@ -162,6 +168,8 @@ Runway uses **SmartCollector** for intelligent caching:
 | **ChatGPT** | 10 min | Session-based windows |
 | **OpenCode** | 30 min | Slow-changing usage |
 | **GitHub** | 15 min | Stable quotas |
+| **OpenRouter** | 15 min | Credits (prepaid) |
+| **MiniMax** | 15 min | IDE quotas |
 | **zAI/Kimi** | 15 min | API-based, stable |
 
 ### Features

@@ -6,12 +6,6 @@ This document tracks planned enhancements and architectural recommendations for 
 
 ## 🏗️ Architecture & Core Logic
 
-### 1. Logic Unification (Shared Registry)
-**Status:** Completed (2026-04-10)
-Extracted common collector logic (endpoints, headers, parsing rules) into a shared `registry.json`. 
-- **Infrastructure:** Created `scripts/generate_sidecar.py` to build a zero-dependency sidecar from the registry.
-- **Benefit:** Eliminated logic drift between the server and sidecar; new providers only need a single JSON entry.
-
 ### 3. Binary Sidecar Distribution
 **File:** `sidecar/` (build scripts)  
 **Effort:** 1-2 days
@@ -31,26 +25,6 @@ Distribute the sidecar as a single binary (using PyInstaller or similar) to avoi
 ### 5. Metrics Export & Webhooks
 - **Prometheus/CSV:** Add `/api/limits?format=prometheus` for external monitoring.
 - **Webhooks:** Send Discord/Slack alerts when quotas cross thresholds (e.g., >90% used).
-
----
-
-## 🔌 Collector-Specific Enhancements
-
-### Claude
-- **Query Local Configs:** Move away from defaults and query local IDE config files for specific plan information instead of hardcoded limits.
-
-### Gemini
-- **CLI `/stats` Parsing:** Parse `gemini /stats` CLI output for quota percentages. Would slot between OAuth API and session logs.
-
-### Kimi API
-- **Usage History API:** Query usage history for daily/monthly spend tracking and model-specific breakdowns.
-
-### Antigravity
-- **File Watching:** Use `watchdog` or `inotify` to watch for quota file changes instead of polling.
-- **LSP Protocol Approach:** Use the active LSP protocol instead of passive file reading.
-  1. Detect `language_server_macos` process.
-  2. Probe listening ports with HTTPS POST.
-  3. Call `GetUserStatus` endpoint with CSRF token.
 
 ---
 
@@ -82,6 +56,11 @@ Centralized guide for: expired tokens, 429 rate limits, cookie extraction failur
 ### 8. Advanced Sidecar Authentication
 **Source:** Code Review
 While HMAC signing is implemented, consider adding support for rotating secrets or OIDC-based tokens for high-security Multi-Host deployments.
+
+### 9. Runway Branding for Keychain Access
+**Effort:** Medium
+- **Goal:** Replace the generic "python wants to access..." prompt with a branded "Runway wants to access..." dialog.
+- **Implementation:** Package the application as a signed macOS `.app` bundle using `py2app` or `PyInstaller` with a custom `Info.plist`.
 
 ---
 

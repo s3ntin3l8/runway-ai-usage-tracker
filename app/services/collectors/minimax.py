@@ -14,57 +14,68 @@ class MiniMaxCollector(BaseCollector):
     """
 
     def __init__(self):
-        super().__init__(provider_name="MiniMax")
         self.api_key = settings.MINIMAX_API_KEY
 
-    async def collect(self) -> List[Dict[str, Any]]:
-        """Collect usage data from MiniMax."""
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect usage data from MiniMax via API."""
         if not self.api_key:
             return []
 
-        async with httpx.AsyncClient() as client:
-            try:
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                }
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+            
+            resp = await client.get(
+                "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+                headers=headers,
+                timeout=10
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                results = []
+                now_str = datetime.now(timezone.utc).isoformat()
                 
-                resp = await client.get(
-                    "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
-                    headers=headers,
-                    timeout=10
-                )
+                model_remains = data.get("model_remains", [])
+                for item in model_remains:
+                    name = item.get("model_name", "Unknown")
+                    remains = item.get("remains", 0)
+                    
+                    results.append({
+                        "service": f"MiniMax: {name}",
+                        "icon": "🤖",
+                        "remaining": f"{remains:,}",
+                        "unit": "requests",
+                        "reset": "Coding Plan",
+                        "health": "good" if remains > 100 else "warning" if remains > 20 else "critical",
+                        "pace": "Active",
+                        "detail": f"{name} quota [API]",
+                        "used_value": 0.0, # MiniMax API returns remains
+                        "limit_value": float(remains), # Approximation
+                        "unit_type": "count",
+                        "data_source": "api",
+                        "updated_at": now_str,
+                    })
+                return results
+            else:
+                logger.error(f"MiniMax API error (HTTP {resp.status_code}): {resp.text}")
                 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = []
-                    now_str = datetime.now(timezone.utc).isoformat()
-                    
-                    model_remains = data.get("model_remains", [])
-                    for item in model_remains:
-                        name = item.get("model_name", "Unknown")
-                        remains = item.get("remains", 0)
-                        
-                        results.append({
-                            "service": f"MiniMax: {name}",
-                            "icon": "🤖",
-                            "remaining": f"{remains:,}",
-                            "unit": "requests",
-                            "reset": "Coding Plan",
-                            "health": "good" if remains > 100 else "warning" if remains > 20 else "critical",
-                            "pace": "Active",
-                            "detail": f"{name} quota [API]",
-                            "used_value": 0.0, # MiniMax API returns remains
-                            "limit_value": float(remains), # Approximation
-                            "unit_type": "count",
-                            "data_source": "api",
-                            "updated_at": now_str,
-                        })
-                    return results
-                else:
-                    logger.error(f"MiniMax API error (HTTP {resp.status_code}): {resp.text}")
-                    
-            except Exception as e:
-                logger.error(f"Failed to collect MiniMax usage: {e}")
+        except Exception as e:
+            logger.error(f"Failed to collect MiniMax usage: {e}")
 
         return []
+
+    def _fallback_strategies(self) -> List[Any]:
+        """Return an ordered list of fallback async methods. Currently none for MiniMax."""
+        return []
+
+    async def _error_handler(self) -> List[Dict[str, Any]]:
+        """Return the ultimate error card(s) when all strategies fail."""
+        from app.core.utils import error_card
+        
+        if not self.api_key:
+            return [error_card("MiniMax", "🤖", "Missing MINIMAX_API_KEY", error_type="missing_config")]
+            
+        return [error_card("MiniMax", "🤖", "API connection failed", error_type="api_error")]

@@ -47,6 +47,7 @@ import os
 import re
 import glob
 import json
+import base64
 import hashlib
 import logging
 import time
@@ -69,8 +70,7 @@ from app.services.collectors.oauth_base import OAuthBaseCollector
 
 logger = logging.getLogger(__name__)
 
-# OAuth client ID used by Claude Code CLI (public identifier)
-CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
 
 
 class AnthropicCollector(OAuthBaseCollector):
@@ -140,13 +140,43 @@ class AnthropicCollector(OAuthBaseCollector):
         if not refresh_token:
             return None
 
+        # Auto-discover client_id from credentials JSON or id_token if not specified
+        client_id = settings.CLAUDE_OAUTH_CLIENT_ID
+        if creds:
+            # Check for explicit clientId field in the JSON from keychain
+            oauth_payload = creds.get("claudeAiOauth", {})
+            client_id = (
+                oauth_payload.get("clientId")
+                or oauth_payload.get("client_id")
+                or client_id
+            )
+
+            # Fallback: extract from id_token if available
+            id_token = oauth_payload.get("idToken") or oauth_payload.get("id_token")
+            if (not client_id or client_id == settings.CLAUDE_OAUTH_CLIENT_ID) and id_token:
+                try:
+                    parts = id_token.split(".")
+                    if len(parts) >= 2:
+                        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+                        payload = json.loads(
+                            base64.urlsafe_b64decode(payload_b64).decode("utf-8")
+                        )
+                        token_client_id = payload.get("azp") or payload.get("aud")
+                        if token_client_id:
+                            client_id = token_client_id
+                            logger.info(
+                                f"Auto-discovered Claude Client ID: {client_id[:10]}..."
+                            )
+                except Exception as e:
+                    logger.debug(f"Failed to extract Client ID from Claude id_token: {e}")
+
         try:
             resp = await client.post(
                 "https://platform.claude.com/v1/oauth/token",
                 json={
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
-                    "client_id": CLAUDE_OAUTH_CLIENT_ID,
+                    "client_id": client_id,
                 },
                 headers={
                     "User-Agent": "claude-code/2.1.69",
@@ -175,8 +205,8 @@ class AnthropicCollector(OAuthBaseCollector):
                     new_data.get("refresh_token", refresh_token),
                 )
 
-                # Update credential_provider cache
-                credential_provider._claude_token_cache = new_data["access_token"]
+                # Update credential_provider cache via proper setter
+                credential_provider.update_claude_token(new_data["access_token"])
 
                 return creds
             elif resp.status_code == 400:

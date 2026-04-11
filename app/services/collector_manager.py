@@ -8,7 +8,10 @@ for intelligent caching to reduce API calls while maintaining fresh data.
 import asyncio
 import httpx
 import logging
+import platform
 from typing import List, Dict, Any
+
+from app.core.config import settings
 
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.gemini import GeminiCollector
@@ -64,9 +67,38 @@ class CollectorManager:
 
         self.smart_collectors = []
         self._client = None
+        self._keychain_warmed_up = False
         logger.info(
             f"CollectorManager initialized with {len(self.collector_configs)} collector configs"
         )
+
+    async def _warmup_keychain(self):
+        """
+        Sequentially pre-fetch keychain secrets to avoid multiple prompts appearing simultaneously.
+        Only runs on macOS and if local collection is enabled.
+        """
+        if self._keychain_warmed_up:
+            return
+        if platform.system() != "Darwin" or not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+            self._keychain_warmed_up = True
+            return
+
+        from app.core.keychain import get_keychain_secret
+        
+        # 1. Claude/Anthropic Credentials (if not set in env)
+        if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+            logger.info("Warming up keychain access for Claude (Anthropic)...")
+            await asyncio.to_thread(get_keychain_secret, "Claude Code-credentials")
+
+        # 2. Chrome Safe Storage (for any cookie-based collectors)
+        cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi"]
+        if any(os.getenv(f"{c.upper()}_SESSION_TOKEN") is None for c in cookie_collectors):
+             logger.info("Warming up keychain access for Browser Decryption (Chrome)...")
+             await asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage")
+             # Also Edge as fallback
+             await asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage")
+
+        self._keychain_warmed_up = True
 
     def _lazy_load_collectors(self):
         """Instantiate collectors only when first needed."""
@@ -105,6 +137,11 @@ class CollectorManager:
             List[Dict[str, Any]]: All limit cards from all sources
         """
         self._lazy_load_collectors()
+        
+        # Sequentially warm up keychain access if on macOS to avoid multi-prompt spam
+        # This is done before starting the parallel asyncio tasks.
+        await self._warmup_keychain()
+
         client = await self._get_client()
         try:
             # Run all collectors concurrently with exception handling and per-collector timeouts

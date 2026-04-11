@@ -2,10 +2,10 @@ import os
 import json
 import logging
 import platform
-import subprocess
 from typing import Optional, Dict, List, Any
 from app.core.config import settings
 from app.core.registry import registry
+from app.core.keychain import get_keychain_secret
 
 logger = logging.getLogger(__name__)
 
@@ -88,18 +88,11 @@ class CredentialProvider:
                     if not needs_extraction and mapping:
                         continue
 
-                    cmd = [
-                        "security",
-                        "find-generic-password",
-                        "-s",
-                        rule.get("service"),
-                        "-w",
-                    ]
-                    result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=5
-                    )
-                    if result.returncode == 0:
-                        raw = result.stdout.strip()
+                    # Use centralized keychain access with caching
+                    service = rule.get("service")
+                    raw = get_keychain_secret(service)
+                    
+                    if raw:
                         if rule.get("format") == "json":
                             data = json.loads(raw)
                             for key_path_str, target in mapping.items():
@@ -186,6 +179,11 @@ class CredentialProvider:
         if token:
             cls._claude_token_cache = token
         return token
+
+    @classmethod
+    def update_claude_token(cls, token: str) -> None:
+        """Update the cached Claude token (called after a successful refresh)."""
+        cls._claude_token_cache = token
 
 
 credential_provider = CredentialProvider()

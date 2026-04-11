@@ -3,7 +3,6 @@ import json
 import logging
 from typing import Optional
 import platform
-import subprocess
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -84,6 +83,7 @@ class Settings:
     # OAuth Credentials (from environment)
     GEMINI_OAUTH_CLIENT_ID: str = os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
     GEMINI_OAUTH_CLIENT_SECRET: str = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
+    CLAUDE_OAUTH_CLIENT_ID: str = os.getenv("CLAUDE_OAUTH_CLIENT_ID", "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
 
     # Quota Limits
     CLAUDE_PRO_LIMIT: int = int(os.getenv("CLAUDE_PRO_LIMIT", "2000000"))

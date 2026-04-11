@@ -25,6 +25,8 @@ from app.services.collectors.zai_api import ZaiApiCollector
 from app.services.collectors.zai_plan import ZaiPlanCollector
 from app.services.collectors.kimi_api import KimiApiCollector
 from app.services.collectors.kimi_coding import KimiCodingCollector
+from app.services.collectors.openrouter import OpenRouterCollector
+from app.services.collectors.minimax import MiniMaxCollector
 
 
 class TestAnthropicCollector:
@@ -1603,6 +1605,97 @@ class TestKimiCodingCollector:
         assert result[0]["remaining"] == "ERR"
 
 
+class TestOpenRouterCollector:
+    """Test suite for OpenRouter collector."""
+
+    @pytest.mark.asyncio
+    async def test_collect_success(self, mock_http_client):
+        """Test successful OpenRouter API collection."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            collector = OpenRouterCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = {
+                "data": {
+                    "total_credits": 10.0,
+                    "usage": 2.5
+                }
+            }
+
+            mock_http_client.get.return_value = response
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["service"] == "OpenRouter Credits"
+        assert "$7.50" in result[0]["remaining"]
+        assert result[0]["health"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error(self, mock_http_client):
+        """Test OpenRouter collection with API error."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            collector = OpenRouterCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 500
+            response.text = "Internal Server Error"
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "API connection failed" in result[0]["detail"]
+
+
+class TestMiniMaxCollector:
+    """Test suite for MiniMax collector."""
+
+    @pytest.mark.asyncio
+    async def test_collect_success(self, mock_http_client):
+        """Test successful MiniMax API collection."""
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = {
+                "model_remains": [
+                    {"model_name": "minimax-text-01", "remains": 500}
+                ]
+            }
+
+            mock_http_client.get.return_value = response
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert "MiniMax" in result[0]["service"]
+        assert "500" in result[0]["remaining"]
+        assert result[0]["health"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error(self, mock_http_client):
+        """Test MiniMax collection with API error."""
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 403
+            response.text = "Forbidden"
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "API connection failed" in result[0]["detail"]
+
+
 class TestHttpTimeouts:
     """I2: All collector HTTP calls must pass an explicit timeout."""
 
@@ -1689,3 +1782,35 @@ class TestHttpTimeouts:
             assert (
                 "timeout" in call.kwargs
             ), f"ZAI Plan HTTP call #{i} missing timeout=: {call}"
+
+    @pytest.mark.asyncio
+    async def test_openrouter_collector_passes_timeout(self, mock_http_client):
+        """OpenRouter collector must pass timeout= on its HTTP call."""
+        collector = OpenRouterCollector()
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+        mock_http_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "test_key"
+            await collector.collect(mock_http_client)
+
+        for i, call in enumerate(mock_http_client.get.call_args_list):
+            assert "timeout" in call.kwargs, f"OpenRouter HTTP call #{i} missing timeout=: {call}"
+
+    @pytest.mark.asyncio
+    async def test_minimax_collector_passes_timeout(self, mock_http_client):
+        """MiniMax collector must pass timeout= on its HTTP call."""
+        collector = MiniMaxCollector()
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"model_remains": []}
+        mock_http_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "test_key"
+            await collector.collect(mock_http_client)
+
+        for i, call in enumerate(mock_http_client.get.call_args_list):
+            assert "timeout" in call.kwargs, f"MiniMax HTTP call #{i} missing timeout=: {call}"
