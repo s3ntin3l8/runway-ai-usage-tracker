@@ -6,11 +6,6 @@ This document tracks planned enhancements and architectural recommendations for 
 
 ## 🏗️ Architecture & Core Logic
 
-### 3. Binary Sidecar Distribution
-**File:** `sidecar/` (build scripts)  
-**Effort:** 1-2 days
-Distribute the sidecar as a single binary (using PyInstaller or similar) to avoid Python dependency issues on host machines.
-
 ---
 
 ## 📊 Dashboard & Visualization
@@ -30,11 +25,19 @@ Distribute the sidecar as a single binary (using PyInstaller or similar) to avoi
 
 ## 💻 Desktop Integration
 
-### 6. Menubar / System Tray App
-**Effort:** Medium
-- **Goal:** Real-time visibility without having a browser tab open.
-- **Implementation:** A lightweight Python script (using `pystray` or `rumps`) that polls the local Runway API and displays critical quotas in the system tray.
-- **Dynamic Icons:** Update the tray icon color (Green/Yellow/Red) based on the lowest remaining quota.
+### 6. Native Desktop Sidecar (Binary + Menubar App)
+**Effort:** Large  
+**Goal:** Distribute the sidecar as a true, zero-dependency desktop application that provides real-time visibility without opening a browser tab.
+
+**Implementation Plan (PyInstaller + pystray):**
+1. **GitHub Actions Build Pipeline:** Add `.github/workflows/build-sidecar.yml` to automatically compile `sidecar.py` into native executables using **PyInstaller** (`--windowed` for Mac, `--noconsole` for Windows). 
+   - *Solves:* Python dependency hell for end-users.
+2. **System Tray Integration:** Bake a lightweight UI directly into the sidecar binary using a library like `pystray`.
+   - The tray icon acts as a quick-glance status, dynamically updating its color (Green/Yellow/Red) based on the lowest remaining quota.
+   - Includes a native menu to "Restart", "Check for Updates", or "Open Dashboard".
+3. **Application Branding:** Package the macOS build as a signed `.app` bundle with a custom `Info.plist`.
+   - *Solves:* Replaces the generic OS "Python wants to access your keychain" prompts with a professional "Runway wants to access..." dialog.
+4. **Auto-updating:** The compiled executable checks GitHub releases for a new binary, downloads it, and hot-swaps itself.
 
 ---
 
@@ -57,10 +60,7 @@ Centralized guide for: expired tokens, 429 rate limits, cookie extraction failur
 **Source:** Code Review
 While HMAC signing is implemented, consider adding support for rotating secrets or OIDC-based tokens for high-security Multi-Host deployments.
 
-### 9. Runway Branding for Keychain Access
-**Effort:** Medium
-- **Goal:** Replace the generic "python wants to access..." prompt with a branded "Runway wants to access..." dialog.
-- **Implementation:** Package the application as a signed macOS `.app` bundle using `py2app` or `PyInstaller` with a custom `Info.plist`.
+
 
 ---
 
