@@ -28,6 +28,14 @@ def _make_cbc_cookie(password: str, plaintext: str, prefix: bytes = b"v10") -> b
 
 
 class TestDecryptMacosCookie:
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        """Clear the keychain cache before each test to prevent cross-test pollution."""
+        from app.core.keychain import clear_keychain_cache
+        clear_keychain_cache()
+        yield
+        clear_keychain_cache()
+
     def test_decrypts_v10_cookie_correctly(self):
         password = "test_chrome_password"
         plaintext = "session_token_abc"

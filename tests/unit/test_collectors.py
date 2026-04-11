@@ -57,7 +57,7 @@ class TestAnthropicCollector:
                 mock_settings.CLAUDE_FREE_LIMIT = 500000
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
@@ -93,14 +93,14 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
                         collector, "_get_valid_token", return_value="invalid_token"
                     ):
                         with patch(
-                            "app.services.collectors.anthropic.glob.glob",
+                            "app.services.collectors.anthropic_local.glob.glob",
                             return_value=[],
                         ):
                             result = await collector.collect(mock_http_client)
@@ -130,7 +130,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
@@ -167,7 +167,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value="fake_session",
                 ):
                     with patch.object(
@@ -328,7 +328,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value="sk-ant-session123",
                 ):
                     with patch.object(
@@ -364,7 +364,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
@@ -412,7 +412,7 @@ class TestAnthropicCollector:
                             "builtins.open", mock_open(read_data="".join(log_data))
                         ):
                             with patch(
-                                "app.services.collectors.anthropic.glob.glob",
+                                "app.services.collectors.anthropic_local.glob.glob",
                                 return_value=["/fake/path/test.jsonl"],
                             ):
                                 with patch("os.path.isdir", return_value=True):
@@ -490,7 +490,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
@@ -500,7 +500,7 @@ class TestAnthropicCollector:
                             "builtins.open", mock_open(read_data="".join(log_data))
                         ):
                             with patch(
-                                "app.services.collectors.anthropic.glob.glob",
+                                "app.services.collectors.anthropic_local.glob.glob",
                                 return_value=["/fake/path/test.jsonl"],
                             ):
                                 with patch("os.path.isdir", return_value=True):
@@ -537,7 +537,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
@@ -551,7 +551,7 @@ class TestAnthropicCollector:
                                     collector, "_strategy_cli_pty", return_value=[]
                                 ):
                                     with patch(
-                                        "app.services.collectors.anthropic.glob.glob"
+                                        "app.services.collectors.anthropic_local.glob.glob"
                                     ) as mock_glob:
                                         # Return files from both paths
                                         def glob_side_effect(pattern, **kwargs):
@@ -700,7 +700,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
                 mock_settings.LOCAL_COLLECTOR_ENABLED = False
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value=None,
                 ):
                     with patch.object(
@@ -765,7 +765,7 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                 with patch(
-                    "app.services.collectors.anthropic.get_claude_session_cookie",
+                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
                     return_value="session_key",
                 ):
                     with patch.object(
@@ -841,9 +841,9 @@ class TestAnthropicCollector:
 
         collector = AnthropicCollector()
 
-        with patch("app.services.collectors.anthropic.asyncio") as mock_asyncio:
+        with patch("app.services.collectors.anthropic_local.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = AsyncMock(return_value=None)
-            with patch("app.services.collectors.anthropic.settings") as mock_settings:
+            with patch("app.services.collectors.anthropic_local.settings") as mock_settings:
                 mock_settings.CLAUDE_PRO_LIMIT = 2000000
                 mock_settings.CLAUDE_FREE_LIMIT = 500000
                 mock_settings.CLAUDE_PROJECTS_DIR = ""
