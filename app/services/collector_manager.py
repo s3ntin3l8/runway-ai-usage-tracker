@@ -72,11 +72,6 @@ class CollectorManager:
         logger.info(
             f"CollectorManager initialized with {len(self.collector_configs)} collector configs"
         )
-        
-        # Proactively warm up on startup if enabled - this runs in the main thread
-        # to ensure macOS Keychain prompts can be interactive.
-        if settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
-            asyncio.create_task(self._warmup_keychain())
 
     async def _warmup_keychain(self):
         """

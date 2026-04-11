@@ -3,28 +3,81 @@ import platform
 import threading
 import logging
 import os
+import json
+import time
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
 # Global cache for keychain secrets to avoid multiple macOS prompts during a session
-_KEYCHAIN_CACHE: Dict[str, str] = {}
+# We now also cache failures (None) to avoid prompt-spam in a single session
+_KEYCHAIN_CACHE: Dict[str, Optional[str]] = {}
 _KEYCHAIN_LOCK = threading.Lock()
+
+def _get_backoff_file() -> Path:
+    """Get path to the persistent keychain backoff file."""
+    from app.core.config import settings
+    config_dir = Path(settings.get_platform_config_dir("runway"))
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / ".keychain_backoff.json"
+
+def _is_in_backoff(service: str) -> bool:
+    """Check if a service is currently in a 6-hour denial cooldown."""
+    backoff_file = _get_backoff_file()
+    if not backoff_file.exists():
+        return False
+    
+    try:
+        with open(backoff_file, "r") as f:
+            backoffs = json.load(f)
+        
+        last_denied = backoffs.get(service)
+        if last_denied:
+            denied_dt = datetime.fromisoformat(last_denied)
+            # 6-hour cooldown period (matches Swift logic)
+            if datetime.now(timezone.utc) < denied_dt + timedelta(hours=6):
+                return True
+    except Exception:
+        pass
+    return False
+
+def _record_denial(service: str):
+    """Record a persistent denial timestamp for a service."""
+    backoff_file = _get_backoff_file()
+    try:
+        backoffs = {}
+        if backoff_file.exists():
+            with open(backoff_file, "r") as f:
+                backoffs = json.load(f)
+        
+        backoffs[service] = datetime.now(timezone.utc).isoformat()
+        with open(backoff_file, "w") as f:
+            json.dump(backoffs, f)
+    except Exception:
+        pass
 
 def get_keychain_secret(service: str, account: Optional[str] = None, force_refresh: bool = False) -> Optional[str]:
     """
-    Fetch a secret from the macOS Keychain with in-memory caching.
-    Ensures that the user is only prompted once per unique secret per session.
+    Fetch a secret from the macOS Keychain with in-memory caching and persistent backoff.
+    Ensures that the user is not spammed with prompts if they deny access.
     """
     if platform.system() != "Darwin":
         return None
 
     cache_key = f"{service}:{account}" if account else service
     
+    # 1. Check in-memory cache first (including cached failures)
     if not force_refresh:
         with _KEYCHAIN_LOCK:
             if cache_key in _KEYCHAIN_CACHE:
                 return _KEYCHAIN_CACHE[cache_key]
+                
+        # 2. Check persistent 6-hour backoff (to avoid prompt spam across restarts)
+        if _is_in_backoff(service):
+            logger.debug(f"⏭️ Skipping Keychain prompt for {service} due to active 6-hour backoff")
+            return None
     else:
         logger.debug(f"🔄 Bypassing cache for keychain lookup: {service}")
 
@@ -76,9 +129,15 @@ def get_keychain_secret(service: str, account: Optional[str] = None, force_refre
         if "The specified item could not be found" in err:
             logger.debug(f"Keychain service '{service}' not found.")
         elif "User interaction is not allowed" in err:
-            logger.warning(f"❌ Keychain access denied: User interaction not allowed for '{service}'. Try running in a visible terminal.")
+            logger.warning(f"❌ Keychain access denied: User interaction not allowed for '{service}'.")
         else:
-            logger.warning(f"❌ Keychain lookup failed for {service}: {err}")
+            # Assume any other failure is a user denial or permission issue
+            logger.warning(f"❌ Keychain access denied or failed for {service}")
+            _record_denial(service)
+            
+        # Cache the failure in memory for this session
+        with _KEYCHAIN_LOCK:
+            _KEYCHAIN_CACHE[cache_key] = None
         
         return None
     except Exception as e:
