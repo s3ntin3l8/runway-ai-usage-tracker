@@ -114,7 +114,7 @@ class ExternalMetricService:
         }
 
         for card in opencode_cards:
-            service = card.get("service", "")
+            service = card.get("service_name", "")
             # Extract window type from service name
             window_key = None
             for window_name, key in window_map.items():
@@ -178,7 +178,7 @@ class ExternalMetricService:
 
                 result.append(
                     {
-                        "service": f"OpenCode ({window_labels[window]})",
+                        "service_name": f"OpenCode ({window_labels[window]})",
                         "icon": "⚡",
                         "remaining": f"${remaining:.2f}",
                         "unit": f"${limit:.0f} limit",
@@ -257,7 +257,7 @@ class ExternalMetricService:
                     # Keep non-opencode cards as-is
                     for card in data["cards"]:
                         updated_card = card.copy()
-                        updated_card["service"] += f" ({time_str})"
+                        updated_card["service_name"] += f" ({time_str})"
                         all_cards.append(updated_card)
 
         # Aggregate opencode cards and add to result

@@ -58,19 +58,8 @@ def human_delta(target_dt: Optional[datetime]) -> str:
 
 
 def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
-    return {
-        "service": service,
-        "icon": icon,
-        "remaining": "ERR",
-        "unit": "Check State",
-        "reset": "—",
-        "health": "critical",
-        "pace": "Stopped",
-        "detail": truncate_string(message, 40),
-        "error_type": error_type,
-        "data_source": "error",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    from app.models.builder import LimitCardBuilder
+    return LimitCardBuilder.error(service, icon, message, error_type)
 
 
 def truncate_string(s: Any, limit: int = 40) -> str:

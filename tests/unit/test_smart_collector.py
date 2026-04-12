@@ -40,7 +40,7 @@ class TestSmartCollectorCaching:
     async def test_cache_hit_returns_cached_data(self, mock_collector, mock_client):
         """Test that fresh cache is returned without fetching."""
         # Setup: Pre-populate cache
-        cached_data = [{"service": "Test", "remaining": "100%"}]
+        cached_data = [{"service_name": "Test", "remaining": "100%"}]
         mock_collector.collect.return_value = cached_data
 
         smart = SmartCollector(
@@ -66,8 +66,8 @@ class TestSmartCollectorCaching:
         self, mock_collector, mock_client
     ):
         """Test that expired cache triggers fresh fetch."""
-        cached_data = [{"service": "Test", "remaining": "100%"}]
-        fresh_data = [{"service": "Test", "remaining": "50%"}]
+        cached_data = [{"service_name": "Test", "remaining": "100%"}]
+        fresh_data = [{"service_name": "Test", "remaining": "50%"}]
         mock_collector.collect.side_effect = [cached_data, fresh_data]
 
         smart = SmartCollector(
@@ -93,7 +93,7 @@ class TestSmartCollectorCaching:
     @pytest.mark.asyncio
     async def test_no_cache_always_fetches(self, mock_collector, mock_client):
         """Test that first call always fetches."""
-        data = [{"service": "Test", "remaining": "100%"}]
+        data = [{"service_name": "Test", "remaining": "100%"}]
         mock_collector.collect.return_value = data
 
         smart = SmartCollector(mock_collector, "Test", ttl=600.0, error_retry_delay=0)
@@ -111,7 +111,7 @@ class TestSmartCollectorErrorHandling:
         self, mock_collector, mock_client
     ):
         """Test that fetch errors return cached data instead of error card."""
-        cached_data = [{"service": "Test", "remaining": "100%", "detail": "Fresh"}]
+        cached_data = [{"service_name": "Test", "remaining": "100%", "detail": "Fresh"}]
 
         # First call succeeds, second call fails
         mock_collector.collect.side_effect = [cached_data, Exception("API timeout")]
@@ -134,7 +134,7 @@ class TestSmartCollectorErrorHandling:
         # Second call - fetch fails, should return cached data
         result2 = await smart.collect(mock_client)
         assert len(result2) == 1
-        assert "Test" in result2[0].get("service", "")
+        assert "Test" in result2[0].get("service_name", "")
         assert "[Cached" in result2[0].get("detail", "")  # Tagged as stale
 
     @pytest.mark.asyncio
@@ -151,7 +151,7 @@ class TestSmartCollectorErrorHandling:
         # Should return error card
         assert len(result) == 1
         assert result[0].get("remaining") == "ERR"
-        assert "TestCollector" in result[0].get("service", "")
+        assert "TestCollector" in result[0].get("service_name", "")
 
     @pytest.mark.asyncio
     async def test_consecutive_errors_tracked(self, mock_collector, mock_client):
@@ -187,7 +187,7 @@ class TestSmartCollectorErrorHandling:
     @pytest.mark.asyncio
     async def test_success_resets_error_count(self, mock_collector, mock_client):
         """Test that successful fetch resets error counter."""
-        data = [{"service": "Test", "remaining": "100%"}]
+        data = [{"service_name": "Test", "remaining": "100%"}]
 
         # Fail twice, then succeed
         mock_collector.collect.side_effect = [
@@ -229,7 +229,7 @@ class TestSmartCollectorErrorThreshold:
         # Subsequent calls: should still try to fetch even though cache is stale
         mock_collector.collect.side_effect = [
             Exception("Error"),
-            [{"service": "Recovered", "remaining": "100%"}],
+            [{"service_name": "Recovered", "remaining": "100%"}],
         ]
 
         smart = SmartCollector(
@@ -247,7 +247,7 @@ class TestSmartCollectorErrorThreshold:
         # Since we hit error threshold (1), next call should attempt fresh fetch
         # despite having long TTL (because error_threshold was exceeded)
         result2 = await smart.collect(mock_client)
-        assert "Recovered" in result2[0].get("service", "")
+        assert "Recovered" in result2[0].get("service_name", "")
         assert mock_collector.collect.call_count == 2
 
 
@@ -283,7 +283,7 @@ class TestSmartCollectorCacheTags:
     @pytest.mark.asyncio
     async def test_cache_tagged_with_age(self, mock_collector, mock_client):
         """Test that returned cached data is tagged with age."""
-        data = [{"service": "Test", "remaining": "100%", "detail": "Original detail"}]
+        data = [{"service_name": "Test", "remaining": "100%", "detail": "Original detail"}]
         mock_collector.collect.return_value = data
 
         smart = SmartCollector(
@@ -311,7 +311,7 @@ class TestSmartCollectorStats:
     @pytest.mark.asyncio
     async def test_get_stats_returns_collector_state(self, mock_collector, mock_client):
         """Test that get_stats returns current state."""
-        data = [{"service": "Test", "remaining": "100%"}]
+        data = [{"service_name": "Test", "remaining": "100%"}]
         mock_collector.collect.return_value = data
 
         smart = SmartCollector(
@@ -343,7 +343,7 @@ class TestSmartCollectorIntegration:
         self, mock_collector, mock_client
     ):
         """Test realistic scenario: provider outage and recovery."""
-        good_data = [{"service": "Provider", "remaining": "100%"}]
+        good_data = [{"service_name": "Provider", "remaining": "100%"}]
 
         # Simulate: good -> outage (3 errors) -> recovery
         mock_collector.collect.side_effect = [
@@ -364,7 +364,7 @@ class TestSmartCollectorIntegration:
 
         # First: Success
         r1 = await smart.collect(mock_client)
-        assert "Provider" in r1[0].get("service", "")
+        assert "Provider" in r1[0].get("service_name", "")
 
         # Outage begins
         await asyncio.sleep(0.06)  # Cache expires
@@ -382,5 +382,5 @@ class TestSmartCollectorIntegration:
         # Recovery: Provider comes back online
         await asyncio.sleep(0.02)
         r5 = await smart.collect(mock_client)
-        assert "Provider" in r5[0].get("service", "")
+        assert "Provider" in r5[0].get("service_name", "")
         assert smart.consecutive_errors == 0

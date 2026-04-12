@@ -50,7 +50,7 @@ class TokenCache:
         provider: str,
         tokens: Dict[str, str],
         account_id: Optional[str] = None,
-        account_name: Optional[str] = None,
+        account_label: Optional[str] = None,
     ) -> str:
         """
         Store tokens for a provider and account.
@@ -59,7 +59,7 @@ class TokenCache:
             provider: Provider name (e.g., "anthropic")
             tokens: Dict of token type -> value
             account_id: Explicit account ID (optional)
-            account_name: Human-readable account name (optional)
+            account_label: Human-readable account label (e.g. email) (optional)
 
         Returns:
             str: The account_id used for storage
@@ -71,12 +71,12 @@ class TokenCache:
             if provider not in self._cache:
                 self._cache[provider] = {}
 
-            metadata = {"account_name": account_name}
+            metadata = {"account_label": account_label}
             self._cache[provider][account_id] = (tokens, metadata, time.time())
-            
+
             logger.info(
                 f"Stored tokens for {provider} account {account_id} "
-                f"({account_name or 'unnamed'}): {list(tokens.keys())}"
+                f"({account_label or 'unnamed'}): {list(tokens.keys())}"
             )
             return account_id
 
@@ -88,7 +88,7 @@ class TokenCache:
             if provider in self._cache and account_id in self._cache[provider]:
                 tokens, metadata, timestamp = self._cache[provider][account_id]
                 if name:
-                    metadata["account_name"] = name
+                    metadata["account_label"] = name
                 self._cache[provider][account_id] = (tokens, metadata, timestamp)
                 logger.debug(f"Updated metadata for {provider}:{account_id} -> name={name}")
 
@@ -97,7 +97,7 @@ class TokenCache:
         Get all active accounts for a provider.
 
         Returns:
-            List of dicts with: account_id, tokens, account_name, age
+            List of dicts with: account_id, tokens, account_label, age
         """
         async with self._lock:
             self._clear_expired_unlocked()
@@ -111,7 +111,7 @@ class TokenCache:
                 results.append({
                     "account_id": acc_id,
                     "tokens": tokens,
-                    "account_name": metadata.get("account_name"),
+                    "account_label": metadata.get("account_label"),
                     "age": now - timestamp
                 })
             return results
@@ -175,7 +175,7 @@ class TokenCache:
                 stats[provider] = {
                     acc_id: {
                         "tokens": list(tokens.keys()),
-                        "account_name": metadata.get("account_name"),
+                        "account_label": metadata.get("account_label"),
                         "age_seconds": int(now - ts),
                         "ttl_remaining": int(self._ttl - (now - ts)),
                     }
@@ -185,7 +185,7 @@ class TokenCache:
 
     async def get_all_active_accounts(self) -> List[Tuple[str, str, Optional[str]]]:
         """
-        Get a list of all active (provider, account_id, account_name) tuples.
+        Get a list of all active (provider, account_id, account_label) tuples.
         Useful for CollectorManager discovery.
         """
         async with self._lock:
@@ -193,7 +193,7 @@ class TokenCache:
             results = []
             for provider, accounts in self._cache.items():
                 for acc_id, (_, metadata, _) in accounts.items():
-                    results.append((provider, acc_id, metadata.get("account_name")))
+                    results.append((provider, acc_id, metadata.get("account_label")))
             return results
 
 

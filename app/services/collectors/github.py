@@ -43,9 +43,12 @@ logger = logging.getLogger(__name__)
 
 
 class GitHubCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+    PROVIDER_ID = "github"
+    DEFAULT_WINDOW_TYPE = "monthly"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
         """Initialize orchestrator."""
-        super().__init__(account_id=account_id, account_name=account_name)
+        super().__init__(account_id=account_id, account_label=account_label)
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
@@ -212,7 +215,7 @@ class GitHubCollector(BaseCollector):
         if user_resp.status_code == 200:
             if "limited_user_quotas" in user_data:
                 # Avoid duplicates if v2/token also returned them
-                if not any(c["service"].startswith("Copilot") for c in cards):
+                if not any(c["service_name"].startswith("Copilot") for c in cards):
                     cards.extend(self._parse_limited_quotas(user_data, "• Free Tier"))
 
             # Process snapshots
@@ -244,7 +247,7 @@ class GitHubCollector(BaseCollector):
                 pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
                 identity_suffix = f" · {self._identity}" if getattr(self, "_identity", None) else ""
                 results.append({
-                    "service": f"Copilot ({key.title()})",
+                    "service_name": f"Copilot ({key.title()})",
                     "icon": "🐙",
                     "remaining": f"{val:,}",
                     "unit": (f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"),
@@ -285,7 +288,7 @@ class GitHubCollector(BaseCollector):
                 pct_used = (used_val / ent * 100) if ent > 0 else 0
                 pace = PaceCalculator.estimate_longevity(pct_used, None)
                 results.append({
-                    "service": f"Copilot ({metric})",
+                    "service_name": f"Copilot ({metric})",
                     "icon": "🐙",
                     "remaining": f"{rem:,}",
                     "unit": f"/ {ent:,}",

@@ -94,7 +94,7 @@ class AnthropicWebMixin:
             reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
 
             results.append({
-                "service": f"Claude ({u_type})",
+                "service_name": f"Claude ({u_type})",
                 "icon": "🟠",
                 "remaining": f"{(100 - pct_used):.1f}%",
                 "unit": "capacity",
@@ -120,7 +120,7 @@ class AnthropicWebMixin:
             pct = (total / max_tokens * 100) if max_tokens > 0 else 0
 
             results.append({
-                "service": "Claude (Session Tokens)",
+                "service_name": "Claude (Session Tokens)",
                 "icon": "🪙",
                 "remaining": f"{total:,}",
                 "unit": f"/ {max_tokens:,}",
@@ -139,7 +139,7 @@ class AnthropicWebMixin:
         if cost and cost.get("total_cost_usd", 0) > 0:
             total_cost = cost.get("total_cost_usd")
             results.append({
-                "service": "Claude (Session Cost)",
+                "service_name": "Claude (Session Cost)",
                 "icon": "💰",
                 "remaining": f"${total_cost:.2f}",
                 "unit": "USD",
@@ -300,7 +300,7 @@ class AnthropicWebMixin:
                     pass
 
             results.append({
-                "service": f"Claude ({display_name})",
+                "service_name": f"Claude ({display_name})",
                 "icon": "🟠",
                 "remaining": f"{remaining_pct:.1f}%",
                 "unit": "capacity",
@@ -327,7 +327,7 @@ class AnthropicWebMixin:
                 try:
                     bal = float(bal_val)
                     results.append({
-                        "service": "Claude (Current Balance)",
+                        "service_name": "Claude (Current Balance)",
                         "icon": "💰",
                         "remaining": f"${bal:.2f}",
                         "unit": "USD",
@@ -359,7 +359,7 @@ class AnthropicWebMixin:
             if limit > 0:
                 remaining = max(0.0, limit - spend)
                 results.append({
-                    "service": "Claude (Extra Usage)",
+                    "service_name": "Claude (Extra Usage)",
                     "icon": "💰",
                     "remaining": f"${remaining:.2f}",
                     "unit": "USD",

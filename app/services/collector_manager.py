@@ -125,7 +125,7 @@ class CollectorManager:
                     full_name = f"{name} ({acc_name or acc_id[:6]})"
                     logger.info(f"Spawning dynamic collector for {p_id} account {acc_id}")
                     self.smart_collectors[key] = SmartCollector(
-                        collector=cls(account_id=acc_id, account_name=acc_name),
+                        collector=cls(account_id=acc_id, account_label=acc_name),
                         collector_name=full_name,
                         ttl=ttl
                     )

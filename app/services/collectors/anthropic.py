@@ -34,7 +34,10 @@ class AnthropicCollector(
     Inherits from OAuthBaseCollector for core token logic and mixins for strategies.
     """
 
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+    PROVIDER_ID = "anthropic"
+    DEFAULT_WINDOW_TYPE = "rolling"  # Free tier; Pro/paid windows are tagged per-card
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
         """Initialize orchestrator."""
         # Find credentials via centralized provider
         credentials_path = credential_provider.get_anthropic_credentials_path()
@@ -45,7 +48,7 @@ class AnthropicCollector(
             provider_name="Anthropic",
             credentials_path=credentials_path,
             account_id=account_id,
-            account_name=account_name,
+            account_label=account_label,
         )
 
         # Result caching for API calls
@@ -102,8 +105,8 @@ class AnthropicCollector(
             oauth_results = await self._get_claude_oauth_with_cache(client, token)
             if oauth_results:
                 # Simple deduplication: Prefer OAuth over Statusline for same window
-                seen_services = {r["service"] for r in oauth_results}
-                results = [r for r in results if r["service"] not in seen_services]
+                seen_services = {r["service_name"] for r in oauth_results}
+                results = [r for r in results if r["service_name"] not in seen_services]
                 results.extend(oauth_results)
 
         return results

@@ -22,8 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    PROVIDER_ID = "ollama"
+    DEFAULT_WINDOW_TYPE = "session"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
 
@@ -186,7 +189,7 @@ class OllamaCollector(BaseCollector):
             detail = f"{detail} · {email}"
 
         return {
-            "service": service_name,
+            "service_name": service_name,
             "icon": "🦙",
             "remaining": f"{(100-pct):.1f}%",
             "unit": "remaining",

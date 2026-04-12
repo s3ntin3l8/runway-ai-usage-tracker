@@ -31,6 +31,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
     Intended to be composed into AnthropicCollector.
     """
 
+    PROVIDER_ID = "anthropic"
+    DEFAULT_WINDOW_TYPE = "rolling"
+
     # ──────────────────────────────── Token lifecycle ────────────────────────
 
 
@@ -336,7 +339,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 try:
                     bal = float(usage) if usage is not None else 0.0
                     results.append({
-                        "service": f"Claude ({u_type})",
+                        "service_name": f"Claude ({u_type})",
                         "icon": "💰",
                         "remaining": f"${bal:.2f}",
                         "unit": "USD",
@@ -367,7 +370,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 limit = float(raw_limit)
                 remaining = max(0.0, limit - spend)
                 results.append({
-                    "service": f"Claude ({u_type})",
+                    "service_name": f"Claude ({u_type})",
                     "icon": "💰",
                     "remaining": f"${remaining:.2f}",
                     "unit": "limit",
@@ -399,7 +402,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     pass
 
             results.append({
-                "service": f"Claude ({u_type})",
+                "service_name": f"Claude ({u_type})",
                 "icon": "🟠",
                 "remaining": f"{remaining_pct:.1f}%",
                 "unit": "capacity",

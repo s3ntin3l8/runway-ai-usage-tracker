@@ -975,7 +975,7 @@ class GenericCollector:
                         "security",
                         "find-generic-password",
                         "-s",
-                        rule.get("service"),
+                        rule.get("service_name"),
                         "-w",
                     ]
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -1038,7 +1038,7 @@ class GenericCollector:
                                     pct = (used / limit * 100) if limit > 0 else 0
 
                                     results.append({
-                                        "service": f"{provider_id.capitalize()} ({window_name})",
+                                        "service_name": f"{provider_id.capitalize()} ({window_name})",
                                         "icon": icon,
                                         "remaining": f"${remaining:.2f}" if "$" in q.get("name", "") or "cost" in query_str else f"{remaining}",
                                         "unit": f"{limit} limit",
@@ -1066,7 +1066,7 @@ class GenericCollector:
                                 reset_ts = usage.get("resets_at")
                                 reset_at = datetime.datetime.fromtimestamp(reset_ts, tz=datetime.timezone.utc) if reset_ts else None
                                 results.append({
-                                    "service": f"AG: {m_name}",
+                                    "service_name": f"AG: {m_name}",
                                     "icon": icon,
                                     "remaining": f"{rem:.1f}%",
                                     "unit": "remaining",
@@ -1104,7 +1104,7 @@ class GenericCollector:
                                 pct_used = float(info.get("used_percentage", 0.0))
                                 reset_ts = info.get("resets_at")
                                 results.append({
-                                    "service": f"Claude ({u_type})",
+                                    "service_name": f"Claude ({u_type})",
                                     "icon": icon,
                                     "remaining": f"{(100 - pct_used):.1f}%",
                                     "unit": "capacity",
@@ -1122,7 +1122,7 @@ class GenericCollector:
                                 tokens = ctx.get("total_input_tokens", 0) + ctx.get("total_output_tokens", 0)
                                 max_t = ctx.get("max_tokens", 200000)
                                 results.append({
-                                    "service": "Claude (Session Tokens)",
+                                    "service_name": "Claude (Session Tokens)",
                                     "icon": "🪙",
                                     "remaining": f"{tokens:,}",
                                     "unit": f"/ {max_t:,}",
@@ -1138,7 +1138,7 @@ class GenericCollector:
         # If tokens were extracted, add a hidden token card
         if tokens:
             results.append({
-                "service": name,
+                "service_name": name,
                 "icon": icon,
                 "remaining": "Token",
                 "unit": "oauth" if "oauth_token" in tokens else "api_key",

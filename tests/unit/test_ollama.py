@@ -41,14 +41,14 @@ async def test_ollama_parsing(ollama_html):
     
     assert len(cards) == 2
     
-    session_card = next(c for c in cards if c["service"] == "Ollama Session")
+    session_card = next(c for c in cards if c["service_name"] == "Ollama Session")
     assert session_card["remaining"] == "54.5%"
     assert session_card["used_value"] == 45.5
     assert session_card["tier"] == "pro"
     assert "user@example.com" in session_card["detail"]
     assert session_card["reset_at"] == "2026-04-12T15:00:00+00:00"
 
-    weekly_card = next(c for c in cards if c["service"] == "Ollama Weekly")
+    weekly_card = next(c for c in cards if c["service_name"] == "Ollama Weekly")
     assert weekly_card["remaining"] == "88.0%"
     assert weekly_card["used_value"] == 12.0
     assert weekly_card["tier"] == "pro"
@@ -83,7 +83,7 @@ async def test_ollama_primary_strategy(ollama_html):
                 cards = await collector._primary_strategy(client)
                 
                 assert len(cards) == 2
-                assert cards[0]["service"] == "Ollama Session"
+                assert cards[0]["service_name"] == "Ollama Session"
 
 @pytest.mark.asyncio
 async def test_ollama_cookie_header_selection():

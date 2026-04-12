@@ -83,11 +83,11 @@ class TestCollectorManagerCollection:
         """Test successful collection from multiple sources."""
         # Mock SmartCollectors in a dict
         mock_smart1 = AsyncMock()
-        mock_smart1.collect.return_value = [{"service": "S1", "remaining": "100%"}]
+        mock_smart1.collect.return_value = [{"service_name": "S1", "remaining": "100%"}]
         mock_smart1.collector_name = "C1"
         
         mock_smart2 = AsyncMock()
-        mock_smart2.collect.return_value = [{"service": "S2", "remaining": "50%"}]
+        mock_smart2.collect.return_value = [{"service_name": "S2", "remaining": "50%"}]
         mock_smart2.collector_name = "C2"
         
         manager.smart_collectors = {
@@ -99,13 +99,13 @@ class TestCollectorManagerCollection:
         with patch.object(manager, "_sync_collectors", new_callable=AsyncMock):
             # Mock external metrics
             with patch("app.services.collector_manager.external_metric_service.get_all_metrics", new_callable=AsyncMock) as mock_external:
-                mock_external.return_value = [{"service": "Ext", "remaining": "OK"}]
+                mock_external.return_value = [{"service_name": "Ext", "remaining": "OK"}]
                 
                 # Run collection
                 results = await manager.collect_all()
                 
                 assert len(results) == 3
-                services = [r["service"] for r in results]
+                services = [r["service_name"] for r in results]
                 assert "S1" in services
                 assert "S2" in services
                 assert "Ext" in services
@@ -134,7 +134,7 @@ class TestCollectorManagerCollection:
     async def test_collect_all_handles_exceptions(self, manager):
         """Test that exceptions in one collector don't crash everything."""
         mock_smart1 = AsyncMock()
-        mock_smart1.collect.return_value = [{"service": "OK"}]
+        mock_smart1.collect.return_value = [{"service_name": "OK"}]
         
         mock_smart2 = AsyncMock()
         mock_smart2.collect.side_effect = Exception("Unexpected failure")
@@ -152,4 +152,4 @@ class TestCollectorManagerCollection:
                 
                 # Should have the one successful result
                 assert len(results) == 1
-                assert results[0]["service"] == "OK"
+                assert results[0]["service_name"] == "OK"

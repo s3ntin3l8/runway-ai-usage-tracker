@@ -37,7 +37,7 @@ def test_security():
         "provider": "malicious-sidecar",
         "metrics": [
             {
-                "service": "<script>alert('XSS_SERVICE')</script>",
+                "service_name": "<script>alert('XSS_SERVICE')</script>",
                 "icon": "☣️",
                 "remaining": "100%",
                 "unit": "tokens",
@@ -68,7 +68,7 @@ def test_security():
     data = resp.json()
     found = False
     for card in data.get("limits", []):
-        if "XSS_SERVICE" in card["service"]:
+        if "XSS_SERVICE" in card["service_name"]:
             found = True
             print(f"Found Card: {card['service']}")
 

@@ -68,8 +68,8 @@ class TestAnthropicCollector:
         # Should return cards for each quota window
         assert isinstance(result, list)
         assert len(result) >= 1
-        assert all("service" in card for card in result)
-        assert any("Session" in str(card.get("service", "")) for card in result)
+        assert all("service_name" in card for card in result)
+        assert any("Session" in str(card.get("service_name", "")) for card in result)
 
     @pytest.mark.asyncio
     async def test_refresh_token_lookup_is_scoped_to_account(self, mock_http_client):
@@ -174,7 +174,7 @@ class TestAnthropicCollector:
                         with patch.object(
                             collector,
                             "_get_claude_via_web_api",
-                            return_value=[{"service": "Fallback", "data_source": "web_api"}],
+                            return_value=[{"service_name": "Fallback", "data_source": "web_api"}],
                         ):
                             # First call - OAuth gets 429 with 60s Retry-After.
                             # http_request_with_retry will abort retries because 60s > 10s cap.
@@ -213,7 +213,7 @@ class TestAnthropicCollector:
         # Should return 6 cards: 4 standard quota windows + Balance + Extra Usage
         assert len(result) == 6
         
-        services = {c["service"]: c for c in result}
+        services = {c["service_name"]: c for c in result}
         assert "Claude (Session Window)" in services
         assert "Claude (Current Balance)" in services
         assert "Claude (Extra Usage)" in services
@@ -280,12 +280,12 @@ class TestAnthropicCollector:
                 mock_get_oauth.side_effect = [
                 [
                     {
-                        "service": "Claude Pro",
+                        "service_name": "Claude Pro",
                         "remaining": "ERR",
                         "detail": "Expired/Invalid Token (OAuth)",
                     }
                 ],
-                [{"service": "Claude", "remaining": "50%", "data_source": "oauth"}],
+                [{"service_name": "Claude", "remaining": "50%", "data_source": "oauth"}],
             ]
             
             # http_request_with_retry uses request()
@@ -394,7 +394,7 @@ class TestAnthropicCollector:
         # Should return Web API results (error card removed)
         assert isinstance(result, list)
         assert len(result) == 3
-        services = [r["service"] for r in result]
+        services = [r["service_name"] for r in result]
         assert "Claude (Session Window)" in services
         assert "Claude (Weekly Window)" in services
         assert any(card.get("data_source") == "web_api" for card in result)
@@ -481,7 +481,7 @@ class TestAnthropicCollector:
         # Should return local log results
         assert isinstance(result, list)
         assert len(result) == 1
-        assert "Claude Pro" in str(result[0].get("service", ""))
+        assert "Claude Pro" in str(result[0].get("service_name", ""))
         assert "Local Logs" in str(result[0].get("detail", ""))
         # Should sum all token types: (1000+500+2000+100) + (500+200+0+0) = 4300
         assert "4,300" in str(result[0].get("detail", "")) or "4300" in str(
@@ -973,14 +973,14 @@ class TestAnthropicCollector:
             
         assert len(result) == 2
         # Check Session card
-        assert "Session Window" in result[0]["service"]
+        assert "Session Window" in result[0]["service_name"]
         assert result[0]["used_value"] == 12.5
         assert result[0]["remaining"] == "87.5%"
         assert result[0]["data_source"] == "cli"
         assert "[CLI PTY]" in result[0]["detail"]
         
         # Check Weekly card
-        assert "Weekly Window" in result[1]["service"]
+        assert "Weekly Window" in result[1]["service_name"]
         assert result[1]["used_value"] == 5.0
         assert result[1]["remaining"] == "95.0%"
         assert "4d" in result[1]["reset"]
@@ -1051,7 +1051,7 @@ class TestGeminiCollector:
         assert len(result) <= len(mock_gemini_quota_response["buckets"])
         # Check that service name contains model identifier (either display name or raw model ID)
         assert any(
-            name in str(result[0].get("service", "")) for name in ["Gemini", "gemini"]
+            name in str(result[0].get("service_name", "")) for name in ["Gemini", "gemini"]
         )
         # Verify health field exists
         assert "health" in result[0]
@@ -1232,7 +1232,7 @@ class TestGitHubCollector:
             result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
-        assert any("Copilot" in str(card.get("service", "")) for card in result)
+        assert any("Copilot" in str(card.get("service_name", "")) for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_missing_token(self, mock_http_client):
@@ -1389,7 +1389,7 @@ class TestChatGPTCollector:
 
         assert isinstance(result, list)
         assert len(result) == 1
-        assert "Codex" in str(result[0].get("service", ""))
+        assert "Codex" in str(result[0].get("service_name", ""))
         assert "PLUS" in str(result[0].get("detail", ""))
         assert "%" in str(result[0].get("remaining", ""))
 
@@ -1479,7 +1479,7 @@ class TestAntigravityCollector:
 
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all("AG:" in card.get("service", "") for card in result)
+        assert all("AG:" in card.get("service_name", "") for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_missing_file(self, mock_http_client):
@@ -1536,18 +1536,18 @@ class TestAntigravityCollector:
                     result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
-        assert len(result) == 2, f"Expected 2 cards, got {len(result)}: {[c['service'] for c in result]}"
-        
+        assert len(result) == 2, f"Expected 2 cards, got {len(result)}: {[c['service_name'] for c in result]}"
+
         # Check quota card
-        quota_cards = [c for c in result if "claude" in c["service"].lower()]
-        assert len(quota_cards) == 1, f"Quota card for 'claude' not found in {[c['service'] for c in result]}"
+        quota_cards = [c for c in result if "claude" in c["service_name"].lower()]
+        assert len(quota_cards) == 1, f"Quota card for 'claude' not found in {[c['service_name'] for c in result]}"
         assert quota_cards[0]["remaining"] == "50.0%"
         
         # Check credits card
-        credit_cards = [c for c in result if "credits" in c["service"].lower()]
+        credit_cards = [c for c in result if "credits" in c["service_name"].lower()]
         assert len(credit_cards) == 1, "Credits card not found"
         assert credit_cards[0]["remaining"] == "854"
-        assert credit_cards[0]["service"] == "AG: Google AI Credits"
+        assert credit_cards[0]["service_name"] == "AG: Google AI Credits"
         assert credit_cards[0]["icon"] == "💰"
         assert credit_cards[0]["unit"] == "credits"
 
@@ -1602,7 +1602,7 @@ class TestZaiApiCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service"] == "zAI API"
+        assert result[0]["service_name"] == "zAI API"
         assert "¥125.45" in result[0]["remaining"]
         assert result[0]["health"] == "good"
 
@@ -1616,7 +1616,7 @@ class TestZaiApiCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert "zAI" in result[0]["service"]
+        assert "zAI" in result[0]["service_name"]
         assert result[0]["remaining"] == "ERR"
         assert "Missing/Invalid Key" in result[0]["detail"]
 
@@ -1670,7 +1670,7 @@ class TestZaiPlanCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service"] == "zAI Plan (Tokens)"
+        assert result[0]["service_name"] == "zAI Plan (Tokens)"
         assert "550,000" in result[0]["remaining"]  # 1M - 450K
         assert result[0]["health"] == "good"  # 45% used is still good
 
@@ -1708,8 +1708,8 @@ class TestZaiPlanCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 2
-        assert any("Tokens" in card["service"] for card in result)
-        assert any("Time" in card["service"] for card in result)
+        assert any("Tokens" in card["service_name"] for card in result)
+        assert any("Time" in card["service_name"] for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_no_auth(self, mock_http_client):
@@ -1743,7 +1743,7 @@ class TestKimiApiCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service"] == "Kimi API"
+        assert result[0]["service_name"] == "Kimi API"
         assert "$8.75" in result[0]["remaining"]
         assert result[0]["health"] == "good"
 
@@ -1757,7 +1757,7 @@ class TestKimiApiCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert "Kimi API" in result[0]["service"]
+        assert "Kimi API" in result[0]["service_name"]
         assert result[0]["remaining"] == "ERR"
         assert "Missing/Invalid Key" in result[0]["detail"]
 
@@ -1822,8 +1822,8 @@ class TestKimiCodingCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 2
-        assert any("Weekly" in card["service"] for card in result)
-        assert any("5h" in card["service"] for card in result)
+        assert any("Weekly" in card["service_name"] for card in result)
+        assert any("5h" in card["service_name"] for card in result)
         assert any("Moderato" in card["detail"] for card in result)
 
     @pytest.mark.asyncio
@@ -1902,7 +1902,7 @@ class TestOpenRouterCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service"] == "OpenRouter Credits"
+        assert result[0]["service_name"] == "OpenRouter Credits"
         assert "$7.50" in result[0]["remaining"]
         assert result[0]["health"] == "good"
 
@@ -1947,7 +1947,7 @@ class TestMiniMaxCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert "MiniMax" in result[0]["service"]
+        assert "MiniMax" in result[0]["service_name"]
         assert "500" in result[0]["remaining"]
         assert result[0]["health"] == "good"
 

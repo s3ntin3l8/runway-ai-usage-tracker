@@ -43,14 +43,14 @@ async def test_identity_promotion(cache):
     
     # Check initial state
     accs = await cache.get_accounts("anthropic")
-    assert accs[0]["account_name"] is None
+    assert accs[0]["account_label"] is None
     
     # Promote identity
     await cache.update_account_metadata("anthropic", "acc_1", name="user@example.com")
     
     # Verify promotion
     accs = await cache.get_accounts("anthropic")
-    assert accs[0]["account_name"] == "user@example.com"
+    assert accs[0]["account_label"] == "user@example.com"
 
 @pytest.mark.asyncio
 async def test_cache_expiration(cache):

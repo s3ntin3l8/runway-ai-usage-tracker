@@ -47,9 +47,12 @@ from app.services.collectors.base import BaseCollector
 
 
 class ZaiPlanCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
     """Collector for zAI Plan quota limits (tokens and time windows)."""
+
+    PROVIDER_ID = "zai_plan"
+    DEFAULT_WINDOW_TYPE = "monthly"
 
     # API endpoints in priority order
     API_ENDPOINTS = [
@@ -216,7 +219,7 @@ class ZaiPlanCollector(BaseCollector):
         )
 
         return {
-            "service": service,
+            "service_name": service,
             "icon": "📊",
             "remaining": remaining_str,
             "unit": unit,

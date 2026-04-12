@@ -57,9 +57,12 @@ from app.services.collectors.base import BaseCollector
 
 
 class KimiCodingCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
     """Collector for Kimi Coding IDE quotas (weekly + rate limits)."""
+
+    PROVIDER_ID = "kimi_coding"
+    DEFAULT_WINDOW_TYPE = "weekly"
 
     API_ENDPOINT = (
         "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
@@ -151,7 +154,7 @@ class KimiCodingCollector(BaseCollector):
             # If authorized (200 OK) but no usages, it usually means no coding usage yet
             return [
                 {
-                    "service": "Kimi Coding",
+                    "service_name": "Kimi Coding",
                     "icon": "🌙",
                     "remaining": "100%",
                     "unit": "quota",
@@ -230,7 +233,7 @@ class KimiCodingCollector(BaseCollector):
             tier = self._detect_tier(limit)
 
             return {
-                "service": "Kimi Coding (Weekly)",
+                "service_name": "Kimi Coding (Weekly)",
                 "icon": "🌙",
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",
@@ -283,7 +286,7 @@ class KimiCodingCollector(BaseCollector):
             window_label = f"{duration // 60}h" if duration >= 60 else f"{duration}m"
 
             return {
-                "service": f"Kimi Coding ({window_label})",
+                "service_name": f"Kimi Coding ({window_label})",
                 "icon": "⏱️",
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",

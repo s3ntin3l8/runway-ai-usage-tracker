@@ -206,7 +206,7 @@ class SmartCollector:
             if result:
                 # DEBUG: log all sources
                 # for r in result:
-                    # logger.info(f"DEBUG CARD: {r['service']} source={r.get('data_source')}")
+                    # logger.info(f"DEBUG CARD: {r['service_name']} source={r.get('data_source')}")
                 self._mark_success(result)
                 return copy.deepcopy(result)
             else:

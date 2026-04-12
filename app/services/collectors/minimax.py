@@ -13,8 +13,11 @@ class MiniMaxCollector(BaseCollector):
     Uses: https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains
     """
 
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    PROVIDER_ID = "minimax"
+    DEFAULT_WINDOW_TYPE = "monthly"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
         self.api_key = settings.MINIMAX_API_KEY
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
@@ -45,7 +48,7 @@ class MiniMaxCollector(BaseCollector):
                     remains = item.get("remains", 0)
                     
                     results.append({
-                        "service": f"MiniMax: {name}",
+                        "service_name": f"MiniMax: {name}",
                         "icon": "🤖",
                         "remaining": f"{remains:,}",
                         "unit": "requests",

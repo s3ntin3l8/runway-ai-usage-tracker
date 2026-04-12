@@ -27,9 +27,12 @@ from app.services.collectors.base import BaseCollector
 
 
 class ZaiApiCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
     """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
+
+    PROVIDER_ID = "zai_api"
+    DEFAULT_WINDOW_TYPE = "monthly"
 
     def _fallback_strategies(self) -> List[Any]:
         """Return the strategy list for zAI API."""
@@ -71,7 +74,7 @@ class ZaiApiCollector(BaseCollector):
 
             return [
                 {
-                    "service": "zAI API",
+                    "service_name": "zAI API",
                     "icon": "🌐",
                     "remaining": f"¥{bal:.2f}",
                     "unit": "balance",
