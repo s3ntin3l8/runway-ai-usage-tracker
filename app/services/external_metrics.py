@@ -49,10 +49,15 @@ class ExternalMetricService:
 
         Debounced: skips the write if one happened within the last
         _DEBOUNCE_INTERVAL seconds, unless force=True (used for eviction).
+        When skipped, schedules a deferred flush so the pending state is not
+        lost if the app idles before the next natural write.
         """
         now = time.time()
         if not force and now - self._last_save_time < _DEBOUNCE_INTERVAL:
-            self._pending_save = True
+            if not self._pending_save:
+                self._pending_save = True
+                remaining = _DEBOUNCE_INTERVAL - (now - self._last_save_time)
+                asyncio.create_task(self._flush_after(remaining))
             return
         def sync_save():
             with open(self.path, "w") as f:
@@ -60,6 +65,13 @@ class ExternalMetricService:
         await asyncio.to_thread(sync_save)
         self._last_save_time = now
         self._pending_save = False
+
+    async def _flush_after(self, delay: float):
+        """Flush any pending save after the debounce window expires."""
+        await asyncio.sleep(delay)
+        async with self._lock:
+            if self._pending_save:
+                await self._save_unlocked(force=True)
 
     async def _save(self):
         """Persist metrics to disk, acquiring the lock internally."""

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.utils import safe_write_json
 from app.services.credential_provider import credential_provider
 
 logger = logging.getLogger(__name__)

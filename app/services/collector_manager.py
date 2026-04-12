@@ -175,23 +175,31 @@ class CollectorManager:
         Implements a single-flight pattern: if a collection cycle is already
         in progress, concurrent callers wait for it and share the same result
         instead of triggering redundant parallel collections.
+
+        The lock is held only for the brief check/register of the Future so
+        that followers can immediately join the in-flight work rather than
+        blocking behind it.
         """
         async with self._collect_lock:
             if self._collect_future is not None and not self._collect_future.done():
-                # A collection is already running — join it
+                # A collection is already running — grab the future and join it
                 future = self._collect_future
+                is_leader = False
             else:
-                # Start a new collection cycle
-                loop = asyncio.get_event_loop()
-                future = loop.create_future()
+                # Register a new future before releasing the lock so any
+                # concurrent callers that arrive now will find it and wait
+                future = asyncio.get_event_loop().create_future()
                 self._collect_future = future
+                is_leader = True
+        # Lock released; only the leader drives the collection
 
-                try:
-                    result = await self._do_collect()
-                    future.set_result(result)
-                except Exception as e:
-                    future.set_exception(e)
-                    raise
+        if is_leader:
+            try:
+                result = await self._do_collect()
+                future.set_result(result)
+            except Exception as e:
+                future.set_exception(e)
+                raise
 
         return await future
 
