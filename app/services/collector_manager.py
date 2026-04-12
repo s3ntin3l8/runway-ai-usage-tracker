@@ -104,8 +104,13 @@ class CollectorManager:
              tasks.append(asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage"))
 
         if tasks:
-            # Wait for all prompts to be dismissed (or timeout)
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Sequentially wait for all prompts to be dismissed (or timeout)
+            # This avoids overlapping UI prompts on macOS.
+            for task in tasks:
+                try:
+                    await task
+                except Exception as e:
+                    logger.debug(f"Keychain warmup task failed: {e}")
 
         self._keychain_warmed_up = True
 

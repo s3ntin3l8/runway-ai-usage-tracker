@@ -84,3 +84,15 @@ async def test_ollama_primary_strategy(ollama_html):
                 
                 assert len(cards) == 2
                 assert cards[0]["service"] == "Ollama Session"
+
+@pytest.mark.asyncio
+async def test_ollama_cookie_header_selection():
+    collector = OllamaCollector()
+    
+    # Test that it finds __Secure-session if others are missing
+    with patch("app.services.collectors.ollama.get_session_cookies") as mock_get:
+        mock_get.side_effect = lambda domain, name: ["val"] if name == "__Secure-session" else []
+        with patch.object(settings, "OLLAMA_SESSION_TOKEN", ""):
+            header = collector._get_cookie_header()
+            assert header == "__Secure-session=val"
+            assert mock_get.call_count > 1 # Should have tried previous names

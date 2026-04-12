@@ -5,6 +5,10 @@ Supports macOS, Windows, and Linux.
 
 This script attempts to locate all possible Chrome cookie databases, query for cookies,
 and test the OS-specific decryption mechanisms.
+
+Chrome 127+ on macOS/Windows enforces App-Bound Encryption (ABE), which ties the
+decryption key to Chrome's own app bundle. This script will detect ABE and report
+actionable workarounds if standard decryption fails.
 """
 
 import os
@@ -121,8 +125,9 @@ def debug_chrome_extraction():
         logger.info(f"Testing Profile: {profile_dir.name} ({browser_name})")
         logger.info(f"Database Path: {db_path}")
         
-        # Check Local State for this profile (Windows style key storage on Mac?)
+        # Check Local State for ABE status
         local_state_path = profile_dir.parent / "Local State"
+        abe_suspected = False
         if local_state_path.exists():
             logger.info(f"Found 'Local State' file at {local_state_path}")
             try:
@@ -130,6 +135,9 @@ def debug_chrome_extraction():
                     ls_data = json.load(f)
                     has_crypt = "os_crypt" in ls_data
                     logger.debug(f"Local State contains 'os_crypt' section: {has_crypt}")
+                    if not has_crypt and sys_os == "Darwin":
+                        logger.warning("⚠️  No 'os_crypt' in Local State — App-Bound Encryption (ABE) likely active")
+                        abe_suspected = True
             except Exception:
                 pass
 
@@ -161,8 +169,12 @@ def debug_chrome_extraction():
             logger.info(f"Found {len(rows)} encrypted cookies for testing.")
             
             decryption_success = False
+            abe_confirmed = False
             for host_key, name, encrypted_value in rows:
                 prefix = encrypted_value[:3] if len(encrypted_value) >= 3 else b"UNK"
+                # v20 prefix = App-Bound Encrypted (Chrome 127+ Windows/Mac confirmed ABE)
+                if encrypted_value[:3] == b"v20":
+                    abe_confirmed = True
                 logger.debug(f"Attempting to decrypt cookie '{name}' (prefix: {prefix!r}) for domain '{host_key}'...")
                 
                 decrypted = decrypt_chromium_cookie(encrypted_value, db_path)
@@ -178,6 +190,14 @@ def debug_chrome_extraction():
                 success_count += 1
             else:
                 logger.error(f"❌ FAILED: Could not decrypt any cookies in {profile_dir.name}")
+                # Provide a specific diagnosis
+                if abe_confirmed:
+                    logger.error("   Cause: v20 prefix detected — App-Bound Encryption (ABE) is ACTIVE")
+                elif abe_suspected:
+                    logger.error("   Cause: ABE suspected (no os_crypt in Local State, standard key derivation blocked)")
+                else:
+                    logger.error("   Cause: Unknown — Keychain key may be wrong or cookies use a different format")
+                _print_abe_workaround(sys_os)
                     
             conn.close()
             
@@ -191,7 +211,37 @@ def debug_chrome_extraction():
                 except Exception: pass
 
     logger.info("=" * 50)
-    logger.info(f"Check Complete. Successfully verified {success_count}/{len(all_targets)} profiles.")
+    if success_count == 0:
+        logger.error(f"Check Complete. Successfully verified {success_count}/{len(all_targets)} profiles.")
+        logger.error("Chrome cookie decryption is NOT working on this system.")
+        logger.error("See docs/troubleshooting.md for workarounds.")
+    else:
+        logger.info(f"Check Complete. Successfully verified {success_count}/{len(all_targets)} profiles. ✅")
+
+
+def _print_abe_workaround(sys_os: str):
+    """Print a targeted workaround message depending on platform."""
+    logger.warning("")
+    logger.warning("  ─── App-Bound Encryption (ABE) Workarounds ───")
+    if sys_os == "Darwin":
+        logger.warning("  1. [Recommended] Use Safari — no encryption, works out of the box.")
+        logger.warning("     Log into claude.ai / opencode.ai in Safari and Runway will find the cookies.")
+        logger.warning("  2. [Dev only] Disable ABE in Chrome:")
+        logger.warning("       defaults write com.google.Chrome ApplicationBoundEncryptionEnabled -bool false")
+        logger.warning("       defaults write com.microsoft.Edge ApplicationBoundEncryptionEnabled -bool false")
+        logger.warning("     Fully quit Chrome/Edge and relaunch. Re-enable after testing.")
+        logger.warning("  3. Use environment variables instead:")
+        logger.warning("       export CLAUDE_CODE_OAUTH_TOKEN=<token>")
+        logger.warning("       export OLLAMA_SESSION_TOKEN=<token>")
+    else:  # Windows / Linux
+        logger.warning("  1. [Recommended] Use Firefox — no ABE, cookies are accessible directly.")
+        logger.warning("     Log into claude.ai / opencode.ai in Firefox and Runway will find the cookies.")
+        logger.warning("  2. Use environment variables instead:")
+        logger.warning("       set CLAUDE_CODE_OAUTH_TOKEN=<token>")
+        logger.warning("       set OLLAMA_SESSION_TOKEN=<token>")
+    logger.warning("  See docs/troubleshooting.md for full details.")
+    logger.warning("")
+
 
 if __name__ == "__main__":
     debug_chrome_extraction()

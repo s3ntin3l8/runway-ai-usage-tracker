@@ -39,6 +39,8 @@ class OllamaCollector(BaseCollector):
             "ollama_session",
             "__Host-ollama_session",
             "__Secure-next-auth.session-token",
+            "__Secure-session",
+            "access-token",
         ]
         
         for name in possible_names:
