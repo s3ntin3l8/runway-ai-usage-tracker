@@ -150,8 +150,8 @@ class LimitCardBuilder:
         Catches schema errors at construction time, not at the API endpoint.
         """
         # Validate through Pydantic — raises ValidationError on schema violations
-        LimitCard(**self._data)
-        return dict(self._data)
+        card = LimitCard(**self._data)
+        return card.model_dump(exclude_none=False)
 
     # ─── Convenience factory methods ───────────────────────────────────────────
 
@@ -165,7 +165,7 @@ class LimitCardBuilder:
         provider_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Build a standardised error card dict."""
-        from app.core.utils import truncate_string
+        from app.core.strings import truncate_string
         b = (
             cls(service_name, icon, "ERR", "Check State")
             .set_health("critical")

@@ -21,7 +21,7 @@ window.switchView = function(viewId) {
     document.getElementById(`nav-${viewId}`).classList.add('active');
     
     // Load data for the view
-    if (viewId === 'dashboard') loadData();
+    if (viewId === 'dashboard' && STATE.data.length === 0) loadData();
     if (viewId === 'history') loadHistory();
     if (viewId === 'settings') loadSettings();
 }
@@ -50,7 +50,7 @@ async function loadHistory() {
                 <tbody class="text-zinc-300">
         `;
         
-        history.slice(0, 50).forEach(s => {
+        history.slice(0, 100).forEach(s => {
             const date = new Date(s.timestamp).toLocaleString();
             const usage = s.used_value !== null ? `${s.used_value.toLocaleString()} / ${s.limit_value?.toLocaleString() || '∞'} ${s.unit_type}` : '—';
             html += `
@@ -538,3 +538,39 @@ document.addEventListener('DOMContentLoaded', () => {
     initUI();
     loadData();
 });
+
+window.handleResetProvider = async function(provider, accountId) {
+    const ev = window.event;
+    const btn = ev ? ev.target : null;
+    const originalText = btn ? btn.innerText : 'RETRY';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'RESETTING...';
+    }
+    
+    try {
+        const query = accountId && accountId !== 'default' ? `?account_id=${accountId}` : '';
+        const resp = await fetch(`/api/reset/${provider}${query}`, { method: 'POST' });
+        if (!resp.ok) throw new Error('Reset failed');
+        
+        if (btn) btn.innerText = 'SUCCESS!';
+        setTimeout(() => {
+            const modalContainer = document.getElementById('modal-container');
+            modalContainer.classList.remove('active');
+            loadData();
+        }, 1000);
+    } catch (err) {
+        if (btn) {
+            btn.innerText = 'ERROR';
+            btn.classList.add('bg-red-500');
+        }
+        alert('Failed to reset provider: ' + err.message);
+        setTimeout(() => {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = originalText;
+                btn.classList.remove('bg-red-500');
+            }
+        }, 2000);
+    }
+}

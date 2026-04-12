@@ -150,3 +150,7 @@ class BaseCollector(ABC):
     async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return the error card(s) when all strategies fail."""
         pass
+
+    async def reset(self):
+        """Reset collector state (e.g., terminal failures). Subclasses should override if needed."""
+        pass

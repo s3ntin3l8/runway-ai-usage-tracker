@@ -149,6 +149,9 @@ class Settings:
     LOCAL_CREDENTIAL_SCRAPING_ENABLED: bool = (
         os.getenv("LOCAL_CREDENTIAL_SCRAPING_ENABLED", "true").lower() == "true"
     )
+    BROWSER_PREFERENCE: str = os.getenv(
+        "BROWSER_PREFERENCE", "safari,chrome,chromium,edge,firefox"
+    )
 
     # Network settings
     APP_HOST: str = os.getenv(

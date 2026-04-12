@@ -56,18 +56,9 @@ def human_delta(target_dt: Optional[datetime]) -> str:
     hours = (seconds % 86400) // 3600
     return f"{days}d {hours}h"
 
-
 def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
     from app.models.builder import LimitCardBuilder
     return LimitCardBuilder.error(service, icon, message, error_type)
-
-
-def truncate_string(s: Any, limit: int = 40) -> str:
-    """Standardize string truncation with ellipsis."""
-    str_val = str(s)
-    if len(str_val) <= limit:
-        return str_val
-    return str_val[: limit - 3] + "..."
 
 
 def extract_token_regex(detail: str, prefix: str) -> Optional[str]:

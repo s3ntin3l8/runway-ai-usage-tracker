@@ -16,10 +16,13 @@ node_modules/
 tasks.md
 task.md
 diagnose.py
+
+# AI config
 .gemini/
 .claude/
 .codex/
 .anthropic/
+.codex
 
 # Local data and logs
 *.jsonl

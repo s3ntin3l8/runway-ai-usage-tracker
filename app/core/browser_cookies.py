@@ -320,110 +320,156 @@ class SafariBinaryCookieParser:
 
 
 def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
-    """Get all potential paths to Cookies databases for all supported browsers."""
+    """Get all potential paths to Cookies databases for all supported browsers.
+    Respects BROWSER_PREFERENCE from config.
+    """
     system = platform.system()
     home = Path.home()
-    results = []  # List of { 'browser': str, 'type': 'sqlite'|'binary', 'path': Path }
-
-    # 1. Safari (PRIORITY on Darwin as it is unencrypted)
-    if system == "Darwin":
+    
+    # Discovery functions for each browser type
+    def discover_safari():
+        if system != "Darwin":
+            return []
         safari_paths = [
             home / "Library/Cookies/Cookies.binarycookies",
             home / "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
         ]
-        for p in safari_paths:
-            if p and p.exists():
-                results.append({"browser": "Safari", "type": "safari", "path": p})
+        return [{"browser": "Safari", "type": "safari", "path": p} for p in safari_paths if p.exists()]
 
-    # 2. Chrome / Chromium / Edge (Chromium-based)
-    chromium_variants = [
-        {
-            "name": "Chrome",
-            "darwin": "Google/Chrome",
-            "linux": [".config/google-chrome"],
-            "win": "Google/Chrome/User Data",
-        },
-        {
-            "name": "Chromium",
-            "darwin": "Chromium",
-            "linux": [".config/chromium"],
-            "win": "Chromium/User Data",
-        },
-        {
-            "name": "Edge",
-            "darwin": "Microsoft Edge",
-            "linux": [
-                ".config/microsoft-edge",
-                ".config/microsoft-edge-beta",
-                ".config/microsoft-edge-dev",
-            ],
-            "win": "Microsoft/Edge/User Data",
-        },
-    ]
-
-    for variant in chromium_variants:
-        base_dirs = []
-        if system == "Darwin":
-            base_dirs.append(home / "Library/Application Support" / variant["darwin"])
-        elif system == "Windows":
-            local_app_data = os.getenv("LOCALAPPDATA")
-            base_dirs.append(
-                Path(local_app_data) / variant["win"]
-                if local_app_data
-                else home / "AppData/Local" / variant["win"]
-            )
-        else:  # Linux
-            for l_path in variant["linux"]:
-                base_dirs.append(home / l_path)
-                base_dirs.append(
-                    home
-                    / "snap"
-                    / variant["name"].lower().replace(" ", "-")
-                    / "common"
-                    / l_path
-                )
-
-        profiles = [
-            "Default",
-            "Profile 1",
-            "Profile 2",
-            "Profile 3",
-            "Profile 4",
-            "Profile 5",
+    def discover_chromium():
+        results = []
+        chromium_variants = [
+            {
+                "name": "Chrome",
+                "darwin": "Google/Chrome",
+                "linux": [".config/google-chrome"],
+                "win": "Google/Chrome/User Data",
+            },
+            {
+                "name": "Chromium",
+                "darwin": "Chromium",
+                "linux": [".config/chromium"],
+                "win": "Chromium/User Data",
+            },
+            {
+                "name": "Edge",
+                "darwin": "Microsoft Edge",
+                "linux": [
+                    ".config/microsoft-edge",
+                    ".config/microsoft-edge-beta",
+                    ".config/microsoft-edge-dev",
+                ],
+                "win": "Microsoft/Edge/User Data",
+            },
         ]
-        for base in base_dirs:
+
+        for variant in chromium_variants:
+            base_dirs = []
+            if system == "Darwin":
+                base_dirs.append(home / "Library/Application Support" / variant["darwin"])
+            elif system == "Windows":
+                local_app_data = os.getenv("LOCALAPPDATA")
+                base_dirs.append(
+                    Path(local_app_data) / variant["win"]
+                    if local_app_data
+                    else home / "AppData/Local" / variant["win"]
+                )
+            else:  # Linux
+                for l_path in variant["linux"]:
+                    base_dirs.append(home / l_path)
+                    base_dirs.append(
+                        home
+                        / "snap"
+                        / variant["name"].lower().replace(" ", "-")
+                        / "common"
+                        / l_path
+                    )
+
+            profiles = [
+                "Default",
+                "Profile 1",
+                "Profile 2",
+                "Profile 3",
+                "Profile 4",
+                "Profile 5",
+            ]
+            for base in base_dirs:
+                if not base.exists():
+                    continue
+                for profile in profiles:
+                    for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
+                        p = base / rel
+                        if p.exists():
+                            results.append(
+                                {"browser": variant["name"], "type": "chromium", "path": p}
+                            )
+        return results
+
+    def discover_firefox():
+        results = []
+        ff_bases = []
+        if system == "Darwin":
+            ff_bases.append(home / "Library/Application Support/Firefox/Profiles")
+        elif system == "Windows":
+            ff_bases.append(home / "AppData/Roaming/Mozilla/Firefox/Profiles")
+        else:  # Linux
+            ff_bases.append(home / ".mozilla/firefox")
+            ff_bases.append(home / "snap/firefox/common/.mozilla/firefox")
+
+        for base in ff_bases:
             if not base.exists():
                 continue
-            for profile in profiles:
-                for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
-                    p = base / rel
-                    if p.exists():
-                        results.append(
-                            {"browser": variant["name"], "type": "chromium", "path": p}
-                        )
+            for p in base.glob("*.default*"):
+                cookie_sqlite = p / "cookies.sqlite"
+                if cookie_sqlite.exists():
+                    results.append(
+                        {"browser": "Firefox", "type": "firefox", "path": cookie_sqlite}
+                    )
+        return results
 
-    # 3. Firefox
-    ff_bases = []
-    if system == "Darwin":
-        ff_bases.append(home / "Library/Application Support/Firefox/Profiles")
-    elif system == "Windows":
-        ff_bases.append(home / "AppData/Roaming/Mozilla/Firefox/Profiles")
-    else:  # Linux
-        ff_bases.append(home / ".mozilla/firefox")
-        ff_bases.append(home / "snap/firefox/common/.mozilla/firefox")
+    # Apply preference ordering
+    pref_str = settings.BROWSER_PREFERENCE.lower()
+    prefs = [p.strip() for p in pref_str.split(",") if p.strip()]
+    
+    # Lazy-loaded cache for chromium variants to avoid redundant discovery calls
+    _cached_chromium_results = None
+    def get_chromium(name: str):
+        nonlocal _cached_chromium_results
+        if _cached_chromium_results is None:
+            _cached_chromium_results = discover_chromium()
+        return [r for r in _cached_chromium_results if r["browser"] == name]
 
-    for base in ff_bases:
-        if not base.exists():
-            continue
-        # Firefox uses randomized profile names
-        for p in base.glob("*.default*"):
-            cookie_sqlite = p / "cookies.sqlite"
-            if cookie_sqlite.exists():
-                results.append(
-                    {"browser": "Firefox", "type": "firefox", "path": cookie_sqlite}
-                )
+    # Map of browser names to discovery functions
+    discovery_map = {
+        "safari": discover_safari,
+        "chrome": lambda: get_chromium("Chrome"),
+        "chromium": lambda: get_chromium("Chromium"),
+        "edge": lambda: get_chromium("Edge"),
+        "firefox": discover_firefox
+    }
+    
+    ordered_results = []
+    seen_browsers = set()
+    
+    # 1. Process preferred browsers in order
+    for pref in prefs:
+        if pref in discovery_map and pref not in seen_browsers:
+            res = discovery_map[pref]()
+            ordered_results.extend(res)
+            seen_browsers.add(pref)
+            # For chromium variants, mark them all as seen if 'chrome' or 'edge' is used
+            if pref in ["chrome", "chromium", "edge"]:
+                # Actually, let's keep it granular.
+                pass
 
-    return results
+    # 2. Add remaining browsers in default OS order
+    default_order = ["safari", "chrome", "chromium", "edge", "firefox"]
+    for browser in default_order:
+        if browser not in seen_browsers:
+            res = discovery_map[browser]()
+            ordered_results.extend(res)
+            
+    return ordered_results
 
 
 def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]:

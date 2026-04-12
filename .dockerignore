@@ -83,6 +83,7 @@ external_metrics.json
 .claude/
 .codex/
 .anthropic/
+.codex
 
 # Performance comparisons
 docs/comparison/
