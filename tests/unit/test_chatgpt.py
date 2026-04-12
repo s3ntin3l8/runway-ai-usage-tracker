@@ -150,7 +150,7 @@ class TestChatGPTCollectorDetailed:
 
             # Consolidated into a single usage card
             assert len(results) == 1
-            assert results[0]["service"] == "ChatGPT Codex"
+            assert results[0]["service_name"] == "ChatGPT Codex"
             assert "PLUS" in results[0]["detail"]
 
     @pytest.mark.asyncio
@@ -192,8 +192,8 @@ class TestChatGPTCollectorDetailed:
             results = await collector.collect(mock_http_client)
             
             # Should have the Codex card with PLUS tier
-            assert any(r["service"] == "ChatGPT Codex" for r in results)
-            codex_card = next(r for r in results if r["service"] == "ChatGPT Codex")
+            assert any(r["service_name"] == "ChatGPT Codex" for r in results)
+            codex_card = next(r for r in results if r["service_name"] == "ChatGPT Codex")
             assert codex_card["tier"] == "plus"
 
     @pytest.mark.asyncio
@@ -224,7 +224,7 @@ class TestChatGPTCollectorDetailed:
                             results = await collector.collect(mock_http_client)
 
                             assert len(results) == 1
-                            assert results[0]["service"] == "ChatGPT Codex"
+                            assert results[0]["service_name"] == "ChatGPT Codex"
                             assert "12.0%" in results[0]["remaining"]
                             assert results[0]["data_source"] == "cache"
 
@@ -289,13 +289,13 @@ class TestChatGPTCollectorDetailed:
             
             assert len(results) == 3
             # Check Account card
-            assert results[0]["service"] == "ChatGPT Account"
+            assert results[0]["service_name"] == "ChatGPT Account"
             assert results[0]["remaining"] == "PLUS"
             assert "test@example.com" in results[0]["detail"]
             # Check Codex card
-            assert results[1]["service"] == "ChatGPT Codex"
+            assert results[1]["service_name"] == "ChatGPT Codex"
             assert results[1]["remaining"] == "60.0%"
             assert results[1]["data_source"] == "cli"
             # Check Credits card
-            assert results[2]["service"] == "ChatGPT Credits"
+            assert results[2]["service_name"] == "ChatGPT Credits"
             assert results[2]["remaining"] == "$15.50"

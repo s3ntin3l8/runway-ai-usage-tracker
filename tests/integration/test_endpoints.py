@@ -45,7 +45,7 @@ class TestLimitsEndpoint:
         with patch.object(manager, "collect_all") as mock_collect:
             mock_collect.return_value = [
                 {
-                    "service": "Claude Pro",
+                    "service_name": "Claude Pro",
                     "icon": "🟠",
                     "remaining": "45.5%",
                     "unit": "capacity",
@@ -55,7 +55,7 @@ class TestLimitsEndpoint:
                     "detail": "45.5% used [OAuth]",
                 },
                 {
-                    "service": "GitHub Copilot",
+                    "service_name": "GitHub Copilot",
                     "icon": "🐙",
                     "remaining": "450/500",
                     "unit": "requests",
@@ -84,7 +84,7 @@ class TestLimitsEndpoint:
             # Some collectors succeed, some fail (collector failures handled internally)
             mock_collect.return_value = [
                 {
-                    "service": "Claude Pro",
+                    "service_name": "Claude Pro",
                     "icon": "🟠",
                     "remaining": "50%",
                     "unit": "capacity",
@@ -94,7 +94,7 @@ class TestLimitsEndpoint:
                     "detail": "API: OAuth",
                 },
                 {
-                    "service": "GitHub API",
+                    "service_name": "GitHub API",
                     "icon": "🐙",
                     "remaining": "ERR",
                     "unit": "request",
@@ -172,7 +172,7 @@ class TestIngestEndpoint:
             "provider": "claude",
             "metrics": [
                 {
-                    "service": "Claude Pro",
+                    "service_name": "Claude Pro",
                     "icon": "🟠",
                     "remaining": "60%",
                     "unit": "capacity",
@@ -245,7 +245,7 @@ class TestIngestEndpoint:
             "provider": "anthropic",
             "metrics": [
                 {
-                    "service": "Claude Pro",
+                    "service_name": "Claude Pro",
                     "icon": "🟠",
                     "remaining": "Token",
                     "unit": "oauth",
@@ -382,7 +382,7 @@ class TestResponseValidation:
         from app.models.schemas import LimitCard
 
         valid_card = {
-            "service": "Claude Pro",
+            "service_name": "Claude Pro",
             "icon": "🟠",
             "remaining": "45%",
             "unit": "capacity",
@@ -394,7 +394,7 @@ class TestResponseValidation:
 
         # Should validate successfully
         card = LimitCard(**valid_card)
-        assert card.service == "Claude Pro"
+        assert card.service_name == "Claude Pro"
         assert card.remaining == "45%"
 
     @pytest.mark.asyncio
@@ -404,7 +404,7 @@ class TestResponseValidation:
         from pydantic import ValidationError
 
         invalid_card = {
-            "service": "Claude Pro",
+            "service_name": "Claude Pro",
             # Missing required fields like 'icon', 'remaining', 'reset', etc.
         }
 

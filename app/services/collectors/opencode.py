@@ -36,8 +36,12 @@ logger = logging.getLogger(__name__)
 
 
 class OpenCodeCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    PROVIDER_ID = "opencode"
+    DEFAULT_WINDOW_TYPE = "rolling"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
+
     def _fallback_strategies(self) -> List[Any]:
         """Return the fallback strategies for OpenCode (Sidecar, Local DB)."""
         return [
@@ -242,7 +246,7 @@ class OpenCodeCollector(BaseCollector):
             reset_at = now + timedelta(seconds=reset_sec)
 
             cards.append({
-                "service": service_name,
+                "service_name": service_name,
                 "icon": "⚡",
                 "remaining": f"${remaining:.2f}",
                 "unit": f"${limit:.0f} limit",
@@ -339,7 +343,7 @@ class OpenCodeCollector(BaseCollector):
 
                     cards.append(
                         {
-                            "service": f"OpenCode ({window_labels[window]})",
+                            "service_name": f"OpenCode ({window_labels[window]})",
                             "icon": "⚡",
                             "remaining": f"${remaining:.2f}",
                             "unit": f"${limit:.0f} limit",

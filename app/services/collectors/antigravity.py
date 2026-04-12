@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class AntigravityCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    PROVIDER_ID = "antigravity"
+    DEFAULT_WINDOW_TYPE = "session"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
 
     def _fallback_strategies(self) -> List[Any]:
         """Return the strategy list for Antigravity."""
@@ -63,7 +66,7 @@ class AntigravityCollector(BaseCollector):
                     for cards in probe_results:
                         if isinstance(cards, list):
                             for card in cards:
-                                svc_key = f"{card['service']}_{card['remaining']}"
+                                svc_key = f"{card['service_name']}_{card['remaining']}"
                                 if svc_key not in seen_services:
                                     results.append(card)
                                     seen_services.add(svc_key)
@@ -140,7 +143,7 @@ class AntigravityCollector(BaseCollector):
         if email and self.account_id:
             from app.services.token_cache import token_cache
             asyncio.create_task(token_cache.update_account_metadata("antigravity", self.account_id, name=email))
-            self.account_name = email
+            self.account_label = email
 
         plan_info = user_status.get("planStatus", {}).get("planInfo", {})
         plan = plan_info.get("planName", "Standard")
@@ -157,7 +160,7 @@ class AntigravityCollector(BaseCollector):
             rem_pct = float(rem_frac) * 100
             
             results.append({
-                "service": f"AG: {service_name}",
+                "service_name": f"AG: {service_name}",
                 "icon": "🛸",
                 "remaining": f"{rem_pct:.1f}%",
                 "unit": "capacity",
@@ -184,7 +187,7 @@ class AntigravityCollector(BaseCollector):
             display_name = name_map.get(c_type, c_type.replace("_", " ").title())
             
             results.append({
-                "service": f"AG: {display_name}",
+                "service_name": f"AG: {display_name}",
                 "icon": "💰",
                 "remaining": amount,
                 "unit": "credits",
@@ -207,7 +210,7 @@ class AntigravityCollector(BaseCollector):
             for name, usage in data.get("models", {}).items():
                 rem = usage.get("remaining_percent", 0.0)
                 res.append({
-                    "service": f"AG: {name}",
+                    "service_name": f"AG: {name}",
                     "icon": "🛸",
                     "remaining": f"{rem:.1f}%",
                     "unit": "remaining",

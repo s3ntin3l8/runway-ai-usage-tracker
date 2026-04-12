@@ -14,8 +14,11 @@ class OpenRouterCollector(BaseCollector):
     Uses: https://openrouter.ai/api/v1/credits
     """
 
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
-        super().__init__(account_id=account_id, account_name=account_name)
+    PROVIDER_ID = "openrouter"
+    DEFAULT_WINDOW_TYPE = "monthly"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+        super().__init__(account_id=account_id, account_label=account_label)
 
     async def _get_api_key(self) -> Optional[str]:
         """Discovery API key from cache or settings."""
@@ -56,7 +59,7 @@ class OpenRouterCollector(BaseCollector):
                     remaining = max(0, total_credits - usage)
                     
                     return [{
-                        "service": "OpenRouter Credits",
+                        "service_name": "OpenRouter Credits",
                         "icon": "🚀",
                         "remaining": f"${remaining:.2f}",
                         "unit": "USD",

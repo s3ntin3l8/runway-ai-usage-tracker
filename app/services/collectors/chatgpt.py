@@ -22,9 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 class ChatGPTCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+    PROVIDER_ID = "chatgpt"
+    DEFAULT_WINDOW_TYPE = "daily"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
         """Initialize orchestrator."""
-        super().__init__(account_id=account_id, account_name=account_name)
+        super().__init__(account_id=account_id, account_label=account_label)
         self._cached_api_results = None
         self._last_api_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
@@ -257,7 +260,7 @@ class ChatGPTCollector(BaseCollector):
                 email = account.get("email", "Unknown")
                 
                 cards.append({
-                    "service": "ChatGPT Account",
+                    "service_name": "ChatGPT Account",
                     "icon": "💬",
                     "remaining": tier.upper(),
                     "unit": "tier",
@@ -277,7 +280,7 @@ class ChatGPTCollector(BaseCollector):
                 reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
                 
                 cards.append({
-                    "service": "ChatGPT Codex",
+                    "service_name": "ChatGPT Codex",
                     "icon": "💬",
                     "remaining": f"{(100-pct):.1f}%",
                     "unit": "remaining",
@@ -298,7 +301,7 @@ class ChatGPTCollector(BaseCollector):
             if credits:
                 balance = credits.get("balance", 0.0)
                 cards.append({
-                    "service": "ChatGPT Credits",
+                    "service_name": "ChatGPT Credits",
                     "icon": "💰",
                     "remaining": f"${balance:.2f}",
                     "unit": "USD",
@@ -385,7 +388,7 @@ class ChatGPTCollector(BaseCollector):
             # Identity Promotion
             if email and self.account_id:
                 asyncio.create_task(token_cache.update_account_metadata("chatgpt", self.account_id, name=email))
-                self.account_name = email
+                self.account_label = email
 
             primary = data.get("rate_limit", {}).get("primary_window", {})
             if primary:
@@ -394,7 +397,7 @@ class ChatGPTCollector(BaseCollector):
                 reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
 
                 return [{
-                    "service": "ChatGPT Codex",
+                    "service_name": "ChatGPT Codex",
                     "icon": "💬",
                     "remaining": f"{(100-pct):.1f}%",
                     "unit": "remaining",
@@ -430,7 +433,7 @@ class ChatGPTCollector(BaseCollector):
             reset_at = datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc) if "resets_at" in usage else None
 
             return [{
-                "service": "ChatGPT Codex",
+                "service_name": "ChatGPT Codex",
                 "icon": "💬",
                 "remaining": f"{(100-pct):.1f}%",
                 "unit": "remaining",

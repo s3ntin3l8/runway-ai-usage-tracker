@@ -64,7 +64,7 @@ function getPaceIcon(pace) {
 
 /**
  * @typedef {Object} LimitCard
- * @property {string} service - Service name (e.g., "Claude Pro")
+ * @property {string} service_name - Service name (e.g., "Claude Pro")
  * @property {string} icon - Emoji icon representing the service
  * @property {string} remaining - Remaining capacity (number, percentage, or "ERR")
  * @property {string} unit - Unit of measurement (e.g., "tokens / 5h", "capacity", "%")
@@ -437,7 +437,7 @@ export function buildCard(item) {
     }
 
     const isPlaceholder = item.health === 'unknown';
-    const isDisabled = STATE.disabledServices.includes(item.service);
+    const isDisabled = STATE.disabledServices.includes(item.service_name);
     if (isDisabled && !STATE.showHidden) return '';
 
     // Handle Compact Mode
@@ -446,11 +446,11 @@ export function buildCard(item) {
         const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track h-1 mt-auto overflow-hidden rounded-full bg-zinc-800/50');
 
         return `
-            <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
+            <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="text-base leading-none">${escapeHTML(item.icon)}</span>
-                        <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-tight truncate">${escapeHTML(item.service)}</span>
+                        <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-tight truncate">${escapeHTML(item.service_name)}</span>
                     </div>
                     <div class="dot ${h.dot} shrink-0"></div>
                 </div>
@@ -522,13 +522,13 @@ export function buildCard(item) {
     ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(resetDisplay)}</span>`;
 
     return `
-        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
+        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
             <!-- Header row -->
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                     <div class="flex flex-col">
-                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service)}</span>
+                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service_name)}</span>
                         ${getTierBadge(item.tier)}
                     </div>
                 </div>
@@ -578,7 +578,7 @@ export function buildModalContent(item) {
     }
 
     const usedPct = calculateUsedPct(item);
-    const isDisabled = STATE.disabledServices.includes(item.service);
+    const isDisabled = STATE.disabledServices.includes(item.service_name);
 
     const formatted = formatUsageValues(
         item.used_value,
@@ -604,7 +604,7 @@ export function buildModalContent(item) {
                 <div class="flex items-center gap-3">
                     <span class="text-3xl">${escapeHTML(item.icon)}</span>
                     <div>
-                        <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service)}</h2>
+                        <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service_name)}</h2>
                         <div class="flex items-center gap-2 mt-0.5">
                             <span class="text-xs font-bold ${h.badge} mono uppercase tracking-widest">${h.label}</span>
                             ${getTierBadge(item.tier)}
@@ -654,7 +654,7 @@ export function buildModalContent(item) {
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                <span class="text-sm font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_name || 'Default')}">${escapeHTML(item.account_name || 'Default')}</span>
+                <span class="text-sm font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
@@ -676,7 +676,7 @@ export function buildModalContent(item) {
         </div>
         ` : ''}
 
-        ${(item.service.toLowerCase().includes('github') || item.service.toLowerCase().includes('copilot')) ? `
+        ${(item.service_name.toLowerCase().includes('github') || item.service_name.toLowerCase().includes('copilot')) ? `
         <div class="mt-6 p-4 rounded-2xl bg-zinc-900/40 border border-zinc-800/60 flex flex-col gap-3">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -719,7 +719,7 @@ export function buildModalContent(item) {
                 <span class="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Hide if not in use</span>
             </div>
             <button 
-                onclick="event.stopPropagation(); window.toggleService('${escapeHTML(item.service)}')"
+                onclick="event.stopPropagation(); window.toggleService('${escapeHTML(item.service_name)}')"
                 class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${!isDisabled ? 'bg-blue-600' : 'bg-zinc-700'}"
             >
                 <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${!isDisabled ? 'translate-x-5' : 'translate-x-0'}"></span>

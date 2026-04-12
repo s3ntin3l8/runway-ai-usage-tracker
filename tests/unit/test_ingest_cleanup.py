@@ -40,7 +40,7 @@ class TestIngestCleanup(unittest.TestCase):
             "provider": "anthropic-laptop",
             "metrics": [
                 {
-                    "service": "Claude Pro",
+                    "service_name": "Claude Pro",
                     "icon": "🟠",
                     "remaining": "Token",
                     "unit": "oauth",
@@ -68,7 +68,7 @@ class TestIngestCleanup(unittest.TestCase):
             "provider": "anthropic-laptop",
             "metrics": [
                 {
-                    "service": "Claude Pro",
+                    "service_name": "Claude Pro",
                     "remaining": "Token",
                     "unit": "oauth",
                     "detail": "oauth_token:SECRET_TOKEN [Sidecar]",

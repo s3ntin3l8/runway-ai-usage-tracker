@@ -23,16 +23,20 @@ class BaseCollector(ABC):
     Now supports multi-account isolation.
     """
 
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+    # Subclasses override these to auto-populate Phase 0B fields on every card.
+    PROVIDER_ID: str = "unknown"
+    DEFAULT_WINDOW_TYPE: str = "unknown"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
         """
         Initialize BaseCollector.
 
         Args:
             account_id: Unique identifier for the account (None for default/ENV)
-            account_name: Human-readable account name (e.g. email)
+            account_label: Human-readable account label (e.g. email)
         """
         self.account_id = account_id
-        self.account_name = account_name
+        self.account_label = account_label
 
     def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
         """Return True if results are empty or contain an error card."""
@@ -65,7 +69,7 @@ class BaseCollector(ABC):
             logger.error(f"Collector {self.__class__.__name__} failed: {e}")
             return self._tag_results([
                 {
-                    "service": "Collector Error",
+                    "service_name": "Collector Error",
                     "icon": "⚠️",
                     "remaining": "ERR",
                     "unit": "fail",
@@ -79,13 +83,13 @@ class BaseCollector(ABC):
     def _tag_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Add account identifiers to every card in the result list.
-        Also attempts to discover account_name if it is missing by scanning card details.
+        Also attempts to discover account_label if it is missing by scanning card details.
         """
         if not results:
             return []
         
-        # 1. Try to discover account_name if missing
-        if not self.account_name:
+        # 1. Try to discover account_label if missing
+        if not self.account_label:
             import re
             for card in results:
                 detail = card.get("detail", "")
@@ -95,32 +99,39 @@ class BaseCollector(ABC):
                 # Looks for email-like strings or "org: ..." patterns
                 match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", detail)
                 if match:
-                    self.account_name = match.group(1)
+                    self.account_label = match.group(1)
                     break
                 
                 # Fallback to org pattern or standalone username after separator (·)
                 org_match = re.search(r"org:\s*([^\s·\[\]|]+)", detail)
                 if org_match:
-                    self.account_name = f"org: {org_match.group(1)}"
+                    self.account_label = f"org: {org_match.group(1)}"
                     break
                 
                 # Standalone username after a dot/separator e.g. "· username"
                 user_match = re.search(r"·\s*([a-zA-Z0-9_-]+)$", detail)
                 if user_match:
-                    self.account_name = user_match.group(1)
+                    self.account_label = user_match.group(1)
                     break
 
         # 2. Tag cards
         for card in results:
             if "account_id" not in card:
                 card["account_id"] = self.account_id
-            if "account_name" not in card or not card["account_name"]:
-                card["account_name"] = self.account_name or "Default"
-            
-            # Final fallback: if account_name is still None/empty, set to "Default"
-            if not card["account_name"]:
-                card["account_name"] = "Default"
-                
+            if "account_label" not in card or not card.get("account_label"):
+                card["account_label"] = self.account_label or "Default"
+
+            # Final fallback: if account_label is still None/empty, set to "Default"
+            if not card["account_label"]:
+                card["account_label"] = "Default"
+
+            # Phase 0B: inject provider_id and window_type from class constants
+            if "provider_id" not in card or not card.get("provider_id"):
+                card["provider_id"] = self.PROVIDER_ID
+            if "window_type" not in card or card.get("window_type") == "unknown":
+                if self.DEFAULT_WINDOW_TYPE != "unknown":
+                    card["window_type"] = self.DEFAULT_WINDOW_TYPE
+
         return results
 
     @abstractmethod

@@ -35,7 +35,10 @@ MODEL_DISPLAY_NAMES = {
 
 
 class GeminiCollector(OAuthBaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+    PROVIDER_ID = "gemini"
+    DEFAULT_WINDOW_TYPE = "daily"
+
+    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
         """Initialize caching for API results."""
         # Search for credentials via centralized provider
         credentials_path = credential_provider.get_gemini_credentials_path()
@@ -48,7 +51,7 @@ class GeminiCollector(OAuthBaseCollector):
             provider_name="Gemini",
             credentials_path=credentials_path,
             account_id=account_id,
-            account_name=account_name,
+            account_label=account_label,
         )
 
         self._cached_results = None
@@ -343,7 +346,7 @@ class GeminiCollector(OAuthBaseCollector):
                     limit_val = 100.0
 
                 results.append({
-                    "service": display_name,
+                    "service_name": display_name,
                     "icon": "🔵",
                     "remaining": f"{percent_used}%",
                     "unit": "used",
@@ -399,7 +402,7 @@ class GeminiCollector(OAuthBaseCollector):
 
             total = await asyncio.to_thread(process_logs, files)
             return [{
-                "service": "Gemini CLI (Logs)",
+                "service_name": "Gemini CLI (Logs)",
                 "icon": "🔵",
                 "remaining": f"{total:,}",
                 "unit": "tokens (24h)",

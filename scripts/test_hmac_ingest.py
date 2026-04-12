@@ -48,7 +48,7 @@ def main():
     # 1. Valid request
     metrics = [
         {
-            "service": "Test Service",
+            "service_name": "Test Service",
             "icon": "🧪",
             "remaining": "100%",
             "unit": "capacity",

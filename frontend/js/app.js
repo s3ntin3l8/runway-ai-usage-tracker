@@ -263,7 +263,7 @@ async function handleGitHubLogout() {
             const titleElement = content.querySelector('h2');
             if (titleElement) {
                 const serviceName = titleElement.textContent;
-                const item = STATE.data.find(d => d.service === serviceName);
+                const item = STATE.data.find(d => d.service_name === serviceName);
                 if (item && (serviceName.toLowerCase().includes('github') || serviceName.toLowerCase().includes('copilot'))) {
                     content.innerHTML = buildModalContent(item);
                     document.getElementById('close-modal').onclick = closeModal;
@@ -292,7 +292,7 @@ window.toggleService = function (serviceName) {
     renderGrid();
 
     // Update modal content if it's open
-    const item = STATE.data.find(d => d.service === serviceName);
+    const item = STATE.data.find(d => d.service_name === serviceName);
     if (item) {
         document.getElementById('modal-content').innerHTML = buildModalContent(item);
         // Re-attach close listener
@@ -380,7 +380,7 @@ function getErrorType(err) {
  * @param {string} serviceName - Name of the service to show
  */
 function openModal(serviceName) {
-    const item = STATE.data.find(d => d.service === serviceName);
+    const item = STATE.data.find(d => d.service_name === serviceName);
     if (!item) return;
 
     const container = document.getElementById('modal-container');

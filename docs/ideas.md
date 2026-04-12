@@ -11,7 +11,7 @@ This document defines the implementation roadmap for Runway's first stable relea
 These are strict prerequisites for everything else. No DB code, no history UI, no fleet management until both are complete.
 
 ### 0A. Unified `LimitCardBuilder` Pattern
-**Effort:** Small | **Status:** High Priority
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 Recent 500 errors were caused by manual dictionary construction missing mandatory Pydantic fields (`icon`, `reset`, `pace`).
 
@@ -21,7 +21,7 @@ Recent 500 errors were caused by manual dictionary construction missing mandator
 ---
 
 ### 0B. Clean Schema & Metadata Promotion
-**Effort:** Medium | **Status:** High Priority
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-12)
 
 Move high-value metadata currently "hidden" in the unstructured `detail` string or the `metadata` dict into dedicated, top-level fields on `LimitCard` and `IngestRequest`.
 

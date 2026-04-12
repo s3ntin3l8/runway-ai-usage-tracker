@@ -26,9 +26,9 @@ class OAuthBaseCollector(BaseCollector):
         provider_name: str,
         credentials_path: str,
         account_id: Optional[str] = None,
-        account_name: Optional[str] = None,
+        account_label: Optional[str] = None,
     ):
-        super().__init__(account_id=account_id, account_name=account_name)
+        super().__init__(account_id=account_id, account_label=account_label)
         self.provider_name = provider_name
         self._credentials_path = credentials_path
         self._token_lock = asyncio.Lock()

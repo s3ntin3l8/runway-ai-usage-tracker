@@ -97,26 +97,30 @@ async def ingest_metrics(
         )
 
         if is_token_only:
-            # Extract tokens and provider_id from metadata
-            if card.metadata:
-                provider_id = card.metadata.get("provider_id")
-                if provider_id:
-                    acc_id = card.metadata.get("account_id")
-                    acc_name = card.metadata.get("account_name")
-                    
-                    provider_tokens = {}
+            # Extract provider/account identifiers: prefer top-level fields, fall back to metadata
+            provider_id = card.provider_id or (card.metadata.get("provider_id") if card.metadata else None)
+            if provider_id:
+                acc_id = card.account_id or (card.metadata.get("account_id") if card.metadata else None)
+                acc_label = card.account_label or (card.metadata.get("account_label") if card.metadata else None)
+
+                provider_tokens = {}
+                if card.metadata:
                     for key, val in card.metadata.items():
                         # Store tokens but skip the provider/account identifiers
-                        if key not in ("provider_id", "account_id", "account_name") and (
-                            key in ("oauth_token", "refresh_token", "api_key") 
+                        if key not in ("provider_id", "account_id", "account_label") and (
+                            key in ("oauth_token", "refresh_token", "api_key")
                             or key.startswith("cookie_")
                         ):
                             provider_tokens[key] = val
-                    
-                    if provider_tokens:
-                        tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_name))
-                        logger.debug(f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {request.provider}")
+
+                if provider_tokens:
+                    tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_label))
+                    logger.debug(f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {request.provider}")
             continue
+
+        # Propagate sidecar_id from the request to each card (if not already set)
+        if request.sidecar_id and not card.sidecar_id:
+            card.sidecar_id = request.sidecar_id
 
         # Keep actual data cards
         local_cards.append(card)

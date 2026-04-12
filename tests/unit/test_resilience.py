@@ -17,7 +17,7 @@ class MockCollector(BaseCollector):
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         return [
-            {"service": "Mock", "detail": "original", "metadata": {"nested": "value"}}
+            {"service_name": "Mock", "detail": "original", "metadata": {"nested": "value"}}
         ]
 
     async def _error_handler(self) -> List[Dict[str, Any]]:
@@ -113,7 +113,7 @@ class TestCollectorResilience:
         # Should catch OSError/OverflowError and return "Unknown"
         card = collector._parse_limit(limit_data, "Test Plan")
         assert card["reset"] == "Unknown"
-        assert card["service"] == "zAI Plan (Tokens)"
+        assert card["service_name"] == "zAI Plan (Tokens)"
 
         # Negative timestamp
         limit_data["nextResetTime"] = -1

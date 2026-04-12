@@ -89,7 +89,7 @@ class CredentialProvider:
                         continue
 
                     # Use centralized keychain access with caching
-                    service = rule.get("service")
+                    service = rule.get("service_name")
                     raw = get_keychain_secret(service)
                     
                     if raw:

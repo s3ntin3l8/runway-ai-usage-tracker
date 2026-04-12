@@ -119,7 +119,7 @@ class AnthropicLocalMixin:
                     reset_at = now + delta
 
             results.append({
-                "service": f"Claude ({u_type})",
+                "service_name": f"Claude ({u_type})",
                 "icon": "🟠",
                 "remaining": f"{remaining_pct:.1f}%",
                 "unit": "capacity",
@@ -251,7 +251,7 @@ class AnthropicLocalMixin:
         reset_at = (oldest + timedelta(hours=5)) if oldest else None
 
         return [{
-            "service": "Claude Pro",
+            "service_name": "Claude Pro",
             "icon": "🟠",
             "remaining": f"{remaining:,}",
             "unit": "tokens / 5h",
