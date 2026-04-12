@@ -250,6 +250,15 @@ class CollectorManager:
             ]
         }
 
+    async def reset_collector(self, provider_id: str, account_id: Optional[str] = None):
+        """Reset internal state for specific collector(s)."""
+        target_prefix = f"{provider_id}:"
+        
+        for key, sc in self.smart_collectors.items():
+            if key.startswith(target_prefix):
+                if account_id is None or key == f"{provider_id}:{account_id}":
+                    await sc.reset()
+
 
 # Global instance
 collector_manager = CollectorManager()

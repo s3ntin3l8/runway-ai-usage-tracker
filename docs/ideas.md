@@ -189,12 +189,12 @@ A 15-minute background loop ensuring data is captured even when the UI is closed
 
 ---
 
-## Phase 2 — Quick Wins
+## Phase 2 — Quick Wins ✅ Complete (2026-04-12)
 
 These items are parallelizable with each other and can be worked on alongside Phase 1. They are low-effort, high-impact improvements.
 
 ### 2A. In-UI Credential & Cookie Health Indicators
-**Effort:** Small | **Status:** New
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 Surface the credential source and health state directly on each quota card in the dashboard.
 
@@ -206,7 +206,7 @@ Surface the credential source and health state directly on each quota card in th
 ---
 
 ### 2B. Collector Health Status Endpoint
-**Effort:** Small | **Status:** New
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 `SmartCollector` already implements a `get_stats()` method returning cache age, consecutive error count, last error message, and TTL for every collector. This data is only visible in debug logs.
 
@@ -216,7 +216,7 @@ Surface the credential source and health state directly on each quota card in th
 ---
 
 ### 2C. OAuth Terminal Failure Reset
-**Effort:** Small | **Status:** New
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 In `OAuthBaseCollector`, the `_terminal_failure = True` flag (set on `invalid_grant` responses) permanently disables OAuth refresh for that collector's lifetime. The only recovery path is a server restart.
 
@@ -226,7 +226,7 @@ In `OAuthBaseCollector`, the `_terminal_failure = True` flag (set on `invalid_gr
 ---
 
 ### 2D. Sidecar Clock Skew Detection
-**Effort:** Small | **Status:** New
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 The ingest endpoint silently rejects payloads where `|server_time - sidecar_timestamp| > 300s` with a generic 401. If a remote machine has drifted NTP, the sidecar will fail silently.
 
@@ -236,7 +236,7 @@ The ingest endpoint silently rejects payloads where `|server_time - sidecar_time
 ---
 
 ### 2E. Browser Preference Ordering
-**Effort:** Small | **Status:** New
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 `get_all_browser_cookies_paths()` returns browsers in a hardcoded order: Safari first on macOS, then Chrome/Chromium/Edge, then Firefox. The first browser with a matching cookie wins, meaning a stale Safari session silently shadows an active Firefox or Chrome session.
 

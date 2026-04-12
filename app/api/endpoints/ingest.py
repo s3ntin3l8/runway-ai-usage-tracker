@@ -50,15 +50,23 @@ async def ingest_metrics(
             status_code=401, detail="Missing HMAC signature or timestamp"
         )
 
-    # 2. Check timestamp (5-minute window)
+    # 2. Check timestamp (5-minute window for past, 60s for future drift)
     try:
         ts = float(x_timestamp)
         now = time.time()
-        if abs(now - ts) > 300:
+        skew = now - ts
+        if skew < -60 or skew > 300:
             logger.warning(
-                f"Ingest attempt with expired timestamp: {abs(now - ts):.0f}s difference"
+                f"Ingest attempt with rejected timestamp: {skew:.0f}s difference"
             )
-            raise HTTPException(status_code=401, detail="Request timestamp expired")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "timestamp_expired" if skew > 0 else "timestamp_future",
+                    "skew_seconds": round(skew, 1),
+                    "message": "Clock skew detected. Please check NTP sync on the sidecar machine."
+                }
+            )
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid X-Timestamp format")
 

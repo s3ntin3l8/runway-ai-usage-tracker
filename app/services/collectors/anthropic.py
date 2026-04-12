@@ -115,3 +115,9 @@ class AnthropicCollector(
         """Return final error card."""
         from app.core.utils import error_card
         return [error_card("Claude (Anthropic)", "🟠", "No authentication found", error_type="missing_config")]
+
+    async def reset(self):
+        """Reset terminal failure and backoff state."""
+        self._terminal_failure = False
+        self._refresh_backoff_seconds = 30
+        logger.info(f"Reset Anthropic collector state for account {self.account_id or 'default'}")

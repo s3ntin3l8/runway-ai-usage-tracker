@@ -266,7 +266,6 @@ class SmartCollector:
             tagged.append(card_copy)
 
         return tagged
-
     def get_stats(self) -> Dict[str, Any]:
         """
         Get internal state statistics for monitoring/debugging.
@@ -296,3 +295,12 @@ class SmartCollector:
                 "error_retry_delay": self.error_retry_delay,
             },
         }
+
+    async def reset(self):
+        """Reset the collector and its wrapper state."""
+        self.consecutive_errors = 0
+        self.last_error_message = None
+        self.last_fetch_time = None
+        self.last_result = None  # Clear cache to force fresh fetch
+        await self.collector.reset()
+        logger.info(f"SmartCollector {self.collector_name} reset.")

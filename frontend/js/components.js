@@ -456,9 +456,12 @@ export function buildCard(item) {
                 </div>
 
                 <div class="flex items-end justify-between gap-1 mt-1">
-                    <div class="flex items-baseline gap-1">
-                        ${mainDisplay}
-                        ${!isUnlimited && hasPercentage ? `<span class="text-[8px] font-bold text-zinc-500 uppercase">${displayLabel}</span>` : ''}
+                    <div class="flex flex-col min-w-0">
+                        <div class="flex items-baseline gap-1">
+                            ${mainDisplay}
+                            ${!isUnlimited && hasPercentage ? `<span class="text-[8px] font-bold text-zinc-500 uppercase">${displayLabel}</span>` : ''}
+                        </div>
+                        <span class="text-[8px] mono truncate opacity-50 uppercase">${item.data_source || ''}</span>
                     </div>
                     <span class="text-[9px] text-zinc-500 mono leading-none mb-0.5 truncate max-w-[80px]" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
                 </div>
@@ -592,6 +595,14 @@ export function buildModalContent(item) {
     const resetTime = item.reset_at ? new Date(item.reset_at).toLocaleString() : 'Never';
     const updatedTime = formatRelativeTime(item.updated_at);
 
+    const isAuthFailed = item.error_type === 'auth_failed';
+    const retryButton = isAuthFailed ? `
+        <button 
+            onclick="event.stopPropagation(); window.handleResetProvider('${escapeHTML(item.provider_id)}', '${escapeHTML(item.account_id)}')"
+            class="mt-4 w-full py-3 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-xl transition-all uppercase tracking-widest shadow-lg shadow-amber-900/20"
+        >Retry Authentication</button>
+    ` : '';
+
     const linkButton = item.usage_url ? `
         <a href="${escapeHTML(item.usage_url)}" target="_blank" rel="noopener noreferrer" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400" title="Open usage page">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
@@ -666,6 +677,11 @@ export function buildModalContent(item) {
         <div class="mt-6 p-4 rounded-2xl bg-black/40 border border-zinc-800/60">
             <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-2">Technical Summary</span>
             <p class="text-xs text-zinc-400 mono leading-relaxed break-all">${escapeHTML(item.detail)}</p>
+            ${item.detail.includes('App-Bound Encryption') ? `
+                <div class="mt-3 p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                    <p class="text-[10px] text-blue-300">💡 <strong>Tip:</strong> Chrome 127+ uses App-Bound Encryption. Try using <strong>Safari</strong> or set credentials via environment variables.</p>
+                </div>
+            ` : ''}
         </div>
         ` : ''}
 
@@ -675,6 +691,8 @@ export function buildModalContent(item) {
             <span class="text-xs font-bold text-zinc-400 mono">${escapeHTML(item.pace)}</span>
         </div>
         ` : ''}
+
+        ${retryButton}
 
         ${(item.service_name.toLowerCase().includes('github') || item.service_name.toLowerCase().includes('copilot')) ? `
         <div class="mt-6 p-4 rounded-2xl bg-zinc-900/40 border border-zinc-800/60 flex flex-col gap-3">
