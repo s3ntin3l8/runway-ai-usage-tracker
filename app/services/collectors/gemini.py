@@ -368,6 +368,11 @@ class GeminiCollector(OAuthBaseCollector):
                 percent_remaining = int(remaining_fraction * 100)
                 percent_used = 100 - percent_remaining
 
+                # Optional absolute quota fields
+                quota_limit = bucket.get("quotaLimit")
+                quota_remaining = bucket.get("quotaRemaining")
+                token_type = bucket.get("tokenType", "units").lower()
+
                 # Parse reset time
                 reset_at = None
                 reset_dt = None
@@ -395,6 +400,21 @@ class GeminiCollector(OAuthBaseCollector):
                     percent_used, reset_dt if reset_at else None
                 )
 
+                # Format detail string: prioritized absolute counts if available
+                if quota_limit is not None and quota_remaining is not None:
+                    detail_text = (
+                        f"{percent_remaining}% remaining | "
+                        f"{quota_remaining:,} / {quota_limit:,} {token_type} left"
+                    )
+                    used_val = float(quota_limit - quota_remaining)
+                    limit_val = float(quota_limit)
+                    u_type = token_type
+                else:
+                    detail_text = f"{percent_remaining}% remaining | Model: {model_id}"
+                    used_val = float(percent_used)
+                    limit_val = 100.0
+                    u_type = "percent"
+
                 results.append(
                     {
                         "service": display_name,
@@ -404,11 +424,11 @@ class GeminiCollector(OAuthBaseCollector):
                         "reset": reset_at,  # Frontend will format this ISO timestamp
                         "health": health,
                         "pace": pace,
-                        "detail": f"{percent_remaining}% remaining | Model: {model_id}",
-                        "used_value": float(percent_used),
-                        "limit_value": 100.0,
+                        "detail": detail_text,
+                        "used_value": used_val,
+                        "limit_value": limit_val,
                         "is_unlimited": False,
-                        "unit_type": "percent",
+                        "unit_type": u_type,
                         "reset_at": reset_at,
                         "data_source": "oauth",
                         "tier": tier,

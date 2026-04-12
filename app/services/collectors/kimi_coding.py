@@ -98,8 +98,11 @@ class KimiCodingCollector(BaseCollector):
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                    "Referer": "https://www.kimi.com/",
+                    "Origin": "https://www.kimi.com",
                 },
-                json={},
+                json={"scope": ["FEATURE_CODING"]},
                 timeout=10.0,
             )
 
@@ -143,10 +146,20 @@ class KimiCodingCollector(BaseCollector):
         """
         usages = data.get("usages", [])
         if not usages:
+            # If authorized (200 OK) but no usages, it usually means no coding usage yet
             return [
-                error_card(
-                    "Kimi Coding", "🌙", "No Usage Data", error_type="parse_error"
-                )
+                {
+                    "service": "Kimi Coding",
+                    "icon": "🌙",
+                    "remaining": "100%",
+                    "unit": "quota",
+                    "reset": "Weekly",
+                    "health": "good",
+                    "pace": "Stable",
+                    "detail": "No usage recorded yet",
+                    "data_source": "api",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
             ]
 
         # Get first FEATURE_CODING usage or first available

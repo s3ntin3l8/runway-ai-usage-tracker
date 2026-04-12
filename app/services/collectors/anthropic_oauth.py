@@ -326,10 +326,64 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             usage = data.get(key)
             if usage is None:
                 usage = {"utilization": 0.0, "resets_at": None}
+
+            u_type = name_map.get(key, key.replace("_", " ").title())
+            
+            # 1. Handle Balance/Currency fields (Prepaid or Specific Balance)
+            if key in ["current_balance", "available_balance", "balance", "credits"]:
+                try:
+                    bal = float(usage) if usage is not None else 0.0
+                    results.append({
+                        "service": f"Claude ({u_type})",
+                        "icon": "💰",
+                        "remaining": f"${bal:.2f}",
+                        "unit": "USD",
+                        "reset": "Prepaid",
+                        "health": "good" if bal > 5.0 else "warning",
+                        "pace": "Manual Top-up",
+                        "detail": f"Current Balance: ${bal:.2f} [OAuth]{identity_suffix}",
+                        "used_value": 0.0,
+                        "limit_value": bal,
+                        "unit_type": "currency",
+                        "data_source": "oauth",
+                        "tier": tier,
+                        "usage_url": "https://claude.ai/settings/usage",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                except (ValueError, TypeError):
+                    pass
+                continue
+
             if not isinstance(usage, dict):
                 continue
 
-            u_type = name_map.get(key, key.replace("_", " ").title())
+            # 2. Handle Spend/Limit windows (Overage/Spent)
+            raw_spend = usage.get("spend")
+            raw_limit = usage.get("limit")
+            if raw_limit is not None and float(raw_limit) > 0:
+                spend = float(raw_spend) if raw_spend is not None else 0.0
+                limit = float(raw_limit)
+                remaining = max(0.0, limit - spend)
+                results.append({
+                    "service": f"Claude ({u_type})",
+                    "icon": "💰",
+                    "remaining": f"${remaining:.2f}",
+                    "unit": "limit",
+                    "reset": "Monthly",
+                    "health": "good" if remaining > 5.0 else "warning",
+                    "pace": "Flexible",
+                    "detail": f"Spent: ${spend:.2f} / ${limit:.2f} [OAuth]{identity_suffix}",
+                    "used_value": spend,
+                    "limit_value": limit,
+                    "unit_type": "currency",
+                    "data_source": "oauth",
+                    "tier": tier,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+                continue
+
+            # 3. Handle Standard Percentage windows
             raw_utilization = usage.get("utilization")
             pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
             remaining_pct = 100.0 - pct_used

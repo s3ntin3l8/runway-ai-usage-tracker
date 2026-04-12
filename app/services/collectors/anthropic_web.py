@@ -311,7 +311,36 @@ class AnthropicWebMixin:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
 
-        # Extra usage / overage
+        # 2. Balance / Prepaid Credits (New)
+        balance_keys = ["current_balance", "available_balance", "balance", "credits"]
+        for b_key in balance_keys:
+            bal_val = data.get(b_key)
+            if bal_val is not None:
+                try:
+                    bal = float(bal_val)
+                    results.append({
+                        "service": "Claude (Current Balance)",
+                        "icon": "💰",
+                        "remaining": f"${bal:.2f}",
+                        "unit": "USD",
+                        "reset": "Prepaid",
+                        "health": "good" if bal > 5.0 else "warning",
+                        "pace": "Manual Top-up",
+                        "detail": f"Credits: ${bal:.2f} [Web API]{identity_suffix}",
+                        "used_value": 0.0,
+                        "limit_value": bal,
+                        "unit_type": "currency",
+                        "data_source": "web_api",
+                        "tier": tier,
+                        "usage_url": "https://claude.ai/settings/usage",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    # Found a balance, break to avoid duplicates if multiple keys exist
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+        # 3. Extra usage / overage (Fixed formatting)
         extra_data = data.get("extra_usage") or data.get("overage")
         if extra_data and isinstance(extra_data, dict):
             raw_spend = extra_data.get("spend")
@@ -320,17 +349,20 @@ class AnthropicWebMixin:
             limit = float(raw_limit) if raw_limit is not None else 0.0
 
             if limit > 0:
-                pct_used = (spend / limit) * 100
-                remaining_pct = 100.0 - pct_used
+                remaining = max(0.0, limit - spend)
                 results.append({
                     "service": "Claude (Extra Usage)",
-                    "icon": "🟠",
-                    "remaining": f"${remaining_pct:.0f}%",
-                    "unit": "spend",
+                    "icon": "💰",
+                    "remaining": f"${remaining:.2f}",
+                    "unit": "USD",
                     "reset": "Monthly",
-                    "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+                    "health": "good" if remaining > 5.0 else "warning",
                     "pace": "Sustainable",
                     "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
+                    "used_value": spend,
+                    "limit_value": limit,
+                    "unit_type": "currency",
+                    "data_source": "web_api",
                     "tier": tier,
                     "usage_url": "https://claude.ai/settings/usage",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
