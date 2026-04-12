@@ -5,7 +5,7 @@ import logging
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.utils import safe_write_json
@@ -34,7 +34,7 @@ class DeviceFlowStatusResponse(BaseModel):
 
 @router.get("/init", response_model=DeviceFlowInitResponse)
 @limiter.limit("5/minute")
-async def init_device_flow(request: Request):
+async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
     """Step 1: Get the device code and user code from GitHub."""
     async with httpx.AsyncClient() as client:
         try:
@@ -77,7 +77,7 @@ async def init_device_flow(request: Request):
 
 @router.post("/poll")
 @limiter.limit("5/minute")
-async def poll_device_flow(request: Request, body: DeviceFlowPollRequest):
+async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> Dict[str, Any]:
     """Step 2: Poll for the access token."""
     async with httpx.AsyncClient() as client:
         try:
@@ -126,7 +126,7 @@ async def poll_device_flow(request: Request, body: DeviceFlowPollRequest):
 
 
 @router.get("/status", response_model=DeviceFlowStatusResponse)
-async def get_status():
+async def get_status() -> DeviceFlowStatusResponse:
     """Check if GitHub is authenticated."""
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:
@@ -152,7 +152,7 @@ async def get_status():
 
 
 @router.post("/logout")
-async def logout():
+async def logout() -> Dict[str, str]:
     """Clear the stored GitHub token."""
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:

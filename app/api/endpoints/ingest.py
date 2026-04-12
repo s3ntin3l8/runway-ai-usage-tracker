@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Header, Request
 from datetime import datetime, timezone
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 import hmac
 import hashlib
 import time
@@ -19,7 +19,7 @@ async def ingest_metrics(
     raw_request: Request,
     x_signature: str = Header(None, alias="X-Signature"),
     x_timestamp: str = Header(None, alias="X-Timestamp"),
-):
+) -> Dict[str, Any]:
     """
     Ingest metrics from sidecar with HMAC-SHA256 signature verification.
 

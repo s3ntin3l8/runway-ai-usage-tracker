@@ -21,7 +21,7 @@ router.include_router(status_router, prefix="/status", tags=["status"])
 
 @router.get("/limits")
 @limiter.limit("10/minute")
-async def fetch_all_limits(request: Request):
+async def fetch_all_limits(request: Request) -> Dict[str, Any]:
     """Fetch all AI service usage limits."""
     results = await manager.collect_all()
 

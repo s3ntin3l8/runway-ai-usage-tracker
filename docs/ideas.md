@@ -245,12 +245,12 @@ The ingest endpoint silently rejects payloads where `|server_time - sidecar_time
 
 ---
 
-## Phase 3 — Architecture Health
+## Phase 3 — Architecture Health ✅ Complete (2026-04-12)
 
 Refactoring and cleanup to reduce technical debt before building advanced features on top.
 
 ### 3A. Modular Collector Orchestrators (Mixin Pattern)
-**Effort:** Medium | **Status:** In Progress (Anthropic ✅, ChatGPT ⏳, Gemini ⏳)
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-12)
 
 Apply the successful Anthropic refactoring pattern (separating `oauth`, `web`, and `local` into mixins) to ChatGPT and Gemini.
 
@@ -259,7 +259,7 @@ Apply the successful Anthropic refactoring pattern (separating `oauth`, `web`, a
 ---
 
 ### 3B. Centralized Identity & Metadata Extraction
-**Effort:** Small | **Status:** New
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 **Depends on:** 3A (modular refactoring should land first so the extraction logic has clean boundaries)
 
 Collectors currently have duplicated logic for extracting emails from JWT `id_token` payloads or parsing identities from raw detail strings.

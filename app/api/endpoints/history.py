@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session, select, desc
 from app.core.db import get_session
 from app.models.db import UsageSnapshot
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from app.core.rate_limit import limiter
 
@@ -17,7 +17,7 @@ async def get_usage_history(
     days: int = Query(default=7, ge=1, le=90),
     limit: int = Query(default=50, ge=1, le=500),
     session: Session = Depends(get_session)
-):
+) -> List[Dict[str, Any]]:
     """Fetch usage history snapshots."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
     
