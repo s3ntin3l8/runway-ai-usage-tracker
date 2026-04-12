@@ -226,13 +226,11 @@ def _print_abe_workaround(sys_os: str):
     if sys_os == "Darwin":
         logger.warning("  1. [Recommended] Use Safari — no encryption, works out of the box.")
         logger.warning("     Log into claude.ai / opencode.ai in Safari and Runway will find the cookies.")
-        logger.warning("  2. [Dev only] Disable ABE in Chrome:")
-        logger.warning("       defaults write com.google.Chrome ApplicationBoundEncryptionEnabled -bool false")
-        logger.warning("       defaults write com.microsoft.Edge ApplicationBoundEncryptionEnabled -bool false")
-        logger.warning("     Fully quit Chrome/Edge and relaunch. Re-enable after testing.")
-        logger.warning("  3. Use environment variables instead:")
+        logger.warning("  2. Use environment variables instead:")
         logger.warning("       export CLAUDE_CODE_OAUTH_TOKEN=<token>")
         logger.warning("       export OLLAMA_SESSION_TOKEN=<token>")
+        logger.warning("  Note: 'defaults write ApplicationBoundEncryptionEnabled' does NOT work")
+        logger.warning("        on macOS Chrome 127+ — it is a Windows-only policy.")
     else:  # Windows / Linux
         logger.warning("  1. [Recommended] Use Firefox — no ABE, cookies are accessible directly.")
         logger.warning("     Log into claude.ai / opencode.ai in Firefox and Runway will find the cookies.")

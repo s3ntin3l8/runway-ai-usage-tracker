@@ -61,25 +61,16 @@ relevant cookie value for the provider's domain.
 
 #### macOS
 
-No admin rights required. Uses macOS user preferences (`defaults`).
+> ❌ **Does not work on Chrome/Edge 127+ on macOS.**
+>
+> The `ApplicationBoundEncryptionEnabled` preference is a **Windows-only enterprise policy**.
+> On macOS, Chrome accepts the value silently but its cookie encryption ignores it entirely.
+> There is currently no supported way to disable macOS cookie encryption from outside
+> Chrome's process for Chrome 127+.
 
-**Chrome:**
-```bash
-# Disable (then fully quit and relaunch Chrome)
-defaults write com.google.Chrome ApplicationBoundEncryptionEnabled -bool false
-
-# Re-enable when done
-defaults delete com.google.Chrome ApplicationBoundEncryptionEnabled
-```
-
-**Edge:**
-```bash
-# Disable
-defaults write com.microsoft.Edge ApplicationBoundEncryptionEnabled -bool false
-
-# Re-enable
-defaults delete com.microsoft.Edge ApplicationBoundEncryptionEnabled
-```
+If you need Chrome specifically, the only options are:
+- Use environment variables (see above)
+- Use a different browser (Safari is the recommended macOS alternative)
 
 #### Windows
 

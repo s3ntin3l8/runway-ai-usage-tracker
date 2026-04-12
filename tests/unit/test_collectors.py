@@ -157,6 +157,50 @@ class TestAnthropicCollector:
                             assert mock_http_client.request.call_count == 1
 
     @pytest.mark.asyncio
+    async def test_collect_anthropic_with_paid_usage(self, mock_http_client):
+        """Test Claude collection with prepaid balance and overage spend limits."""
+        collector = AnthropicCollector()
+
+        # Mock OAuth response with balance and spend limit
+        mock_paid_data = {
+            "five_hour": {"utilization": 25.0, "resets_at": "2025-04-12T15:00:00Z"},
+            "current_balance": 15.75,
+            "extra_usage": {"spend": 2.50, "limit": 20.00}
+        }
+        
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_paid_data
+        mock_http_client.request.return_value = mock_response
+
+        with patch("app.services.collectors.anthropic.settings") as mock_settings:
+            mock_settings.LOCAL_COLLECTOR_ENABLED = False
+            
+            with patch.object(collector, "_get_valid_token", return_value="test_token"):
+                result = await collector.collect(mock_http_client)
+
+        # Should return 6 cards: 4 standard quota windows + Balance + Extra Usage
+        assert len(result) == 6
+        
+        services = {c["service"]: c for c in result}
+        assert "Claude (Session Window)" in services
+        assert "Claude (Current Balance)" in services
+        assert "Claude (Extra Usage)" in services
+
+        # Check Balance card
+        bal_card = services["Claude (Current Balance)"]
+        assert bal_card["remaining"] == "$15.75"
+        assert bal_card["unit"] == "USD"
+        assert bal_card["icon"] == "💰"
+
+        # Check Extra Usage card
+        extra_card = services["Claude (Extra Usage)"]
+        assert extra_card["remaining"] == "$17.50"  # 20.00 - 2.50
+        assert extra_card["unit"] == "limit"
+        assert "Spent: $2.50" in extra_card["detail"]
+
+
+    @pytest.mark.asyncio
     async def test_collect_oauth_success_clears_backoff(
         self, mock_http_client, mock_anthropic_oauth_response
     ):
@@ -985,6 +1029,70 @@ class TestGeminiCollector:
         assert call_count[0] == 2  # Should make 2 API calls
 
     @pytest.mark.asyncio
+    async def test_collect_api_with_absolute_quota(self, mock_http_client):
+        """Test Gemini API collection with absolute quota fields (quotaLimit, quotaRemaining)."""
+        collector = GeminiCollector()
+
+        # Mock responses
+        tier_response = MagicMock(spec=httpx.Response)
+        tier_response.status_code = 200
+        tier_response.json.return_value = {
+            "currentTier": {"id": "standard-tier", "name": "Gemini Code Assist"},
+            "cloudaicompanionProject": "test-project-123",
+        }
+
+        quota_response = MagicMock(spec=httpx.Response)
+        quota_response.status_code = 200
+        quota_response.json.return_value = {
+            "buckets": [
+                {
+                    "modelId": "gemini-1.5-pro",
+                    "remainingFraction": 0.85,
+                    "resetTime": "2025-04-08T00:00:00Z",
+                    "quotaLimit": 1000,
+                    "quotaRemaining": 850,
+                    "tokenType": "REQUEST",
+                }
+            ]
+        }
+
+        async def mock_request(*args, **kwargs):
+            if "loadCodeAssist" in args[1]:
+                return tier_response
+            return quota_response
+
+        mock_http_client.request = mock_request
+
+        with patch("app.services.collectors.gemini.settings") as mock_settings:
+            mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
+            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
+            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+
+            with patch(
+                "builtins.open",
+                mock_open(
+                    read_data=json.dumps(
+                        {"access_token": "token", "expiry_date": 9999999999999}
+                    )
+                ),
+            ):
+                with patch(
+                    "app.services.collectors.gemini.os.path.exists", return_value=True
+                ):
+                    result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        card = result[0]
+        # Primary remaining should still be %
+        assert card["remaining"] == "15%" # 100 - (0.85*100)
+        # Detail should contain absolute numbers
+        assert "850 / 1,000 request left" in card["detail"]
+        # used_value and limit_value should be absolute
+        assert card["used_value"] == 150.0 # 1000 - 850
+        assert card["limit_value"] == 1000.0
+        assert card["unit_type"] == "request"
+
+    @pytest.mark.asyncio
     async def test_collect_missing_credentials(self, mock_http_client):
         """Test graceful handling when credentials file missing."""
         collector = GeminiCollector()
@@ -1291,6 +1399,63 @@ class TestAntigravityCollector:
         # Should return empty list
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_collect_lsp_with_credits(self, mock_http_client):
+        """Test Antigravity collection from LSP including AI credits."""
+        collector = AntigravityCollector()
+        
+        mock_response_data = {
+            "userStatus": {
+                "email": "test@example.com",
+                "planStatus": {"planInfo": {"planName": "Pro"}},
+                "cascadeModelConfigData": {
+                    "clientModelConfigs": [
+                        {
+                            "label": "claude-3-opus",
+                            "quotaInfo": {"remainingFraction": 0.5, "resetTime": 1744876800}
+                        }
+                    ]
+                },
+                "userTier": {
+                    "name": "Pro",
+                    "availableCredits": [
+                        {
+                            "creditType": "GOOGLE_ONE_AI",
+                            "creditAmount": "854"
+                        }
+                    ]
+                }
+            }
+        }
+
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_response_data
+        mock_http_client.post.return_value = mock_resp
+
+        # Mock LSP detection to return a PID
+        with patch.object(collector, "_detect_lsp_proc_info", return_value={9999: ["token"]}):
+            with patch.object(collector, "_find_listening_ports", return_value=[5000]):
+                with patch("app.services.collectors.antigravity.settings") as mock_settings:
+                    mock_settings.LOCAL_COLLECTOR_ENABLED = True
+                    result = await collector.collect(mock_http_client)
+
+        assert isinstance(result, list)
+        assert len(result) == 2, f"Expected 2 cards, got {len(result)}: {[c['service'] for c in result]}"
+        
+        # Check quota card
+        quota_cards = [c for c in result if "claude" in c["service"].lower()]
+        assert len(quota_cards) == 1, f"Quota card for 'claude' not found in {[c['service'] for c in result]}"
+        assert quota_cards[0]["remaining"] == "50.0%"
+        
+        # Check credits card
+        credit_cards = [c for c in result if "credits" in c["service"].lower()]
+        assert len(credit_cards) == 1, "Credits card not found"
+        assert credit_cards[0]["remaining"] == "854"
+        assert credit_cards[0]["service"] == "AG: Google AI Credits"
+        assert credit_cards[0]["icon"] == "💰"
+        assert credit_cards[0]["unit"] == "credits"
+
 
 class TestOpenCodeCollector:
     """Test suite for OpenCode collector."""
@@ -1565,6 +1730,25 @@ class TestKimiCodingCollector:
         assert any("Weekly" in card["service"] for card in result)
         assert any("5h" in card["service"] for card in result)
         assert any("Moderato" in card["detail"] for card in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_empty_usage(self, mock_http_client):
+        """Test Kimi Coding collection with empty usage response."""
+        collector = KimiCodingCollector()
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {}
+
+        mock_http_client.post.return_value = response
+
+        with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
+            mock_settings.KIMI_AUTH_TOKEN = "jwt_token_here"
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert "No usage recorded yet" in result[0]["detail"]
+        assert result[0]["remaining"] == "100%"
 
     @pytest.mark.asyncio
     async def test_collect_no_auth(self, mock_http_client):

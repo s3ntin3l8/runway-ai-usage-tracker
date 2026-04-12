@@ -269,6 +269,42 @@ class AntigravityCollector(BaseCollector):
                 "data_source": "lsp",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
+        # Parse AI Credits
+        user_tier = user_status.get("userTier", {})
+        credits_list = user_tier.get("availableCredits", [])
+        
+        for cred in credits_list:
+            cred_type = cred.get("creditType", "UNKNOWN")
+            amount_str = cred.get("creditAmount", "0")
+            
+            try:
+                amount = float(amount_str)
+            except (ValueError, TypeError):
+                amount = 0.0
+
+            # Mapping for credit types
+            if cred_type == "GOOGLE_ONE_AI":
+                label = "Google AI Credits"
+            else:
+                # Fallback: SNAKE_CASE to Title Case
+                label = cred_type.replace("_", " ").title() + " Credits"
+            
+            results.append({
+                "service": f"AG: {label}",
+                "icon": "💰",
+                "remaining": f"{amount:,.0f}",
+                "unit": "credits",
+                "reset": "Prepaid",
+                "health": "good" if amount >= 100 else "warning",
+                "pace": "Stable",
+                "detail": f"{label} balance [LSP]",
+                "used_value": 0.0,
+                "limit_value": amount,
+                "unit_type": "generic",
+                "data_source": "lsp",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "tier": plan,
+            })
 
         return results
 
