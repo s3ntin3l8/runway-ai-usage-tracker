@@ -70,3 +70,20 @@ export async function logoutGitHub() {
     if (!resp.ok) throw new Error('Logout failed');
     return await resp.json();
 }
+
+/**
+ * History & Settings
+ */
+
+export async function fetchHistory(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const resp = await fetch(`/api/history/?${query}`);
+    if (!resp.ok) throw new Error('Failed to fetch history');
+    return await resp.json();
+}
+
+export async function fetchSettings() {
+    const resp = await fetch('/api/settings/');
+    if (!resp.ok) throw new Error('Failed to fetch settings');
+    return await resp.json();
+}

@@ -131,6 +131,14 @@ class Settings:
         "OPENCODE_DB_PATH",
         os.path.join(get_platform_data_dir("opencode"), "opencode.db"),
     )
+    # Database & Persistence Settings
+    DATABASE_PATH: str = os.getenv(
+        "DATABASE_PATH",
+        os.path.join(get_platform_config_dir("usage-tracker"), "runway.db"),
+    )
+    DATABASE_URL: str = f"sqlite:///{DATABASE_PATH}"
+    DB_ENCRYPTION_KEY: Optional[str] = os.getenv("DB_ENCRYPTION_KEY")
+
     EXTERNAL_METRICS_PATH: str = os.getenv(
         "EXTERNAL_METRICS_PATH",
         os.path.join(get_platform_config_dir("usage-tracker"), "external_metrics.json"),

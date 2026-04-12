@@ -1,4 +1,4 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal } from './components.js';
 
@@ -6,6 +6,109 @@ import { buildCard, buildModalContent, buildGitHubOAuthModal } from './component
 let refreshTimer = null;
 let githubPollTimer = null;
 let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting newer data
+
+/**
+ * View Management
+ */
+window.switchView = function(viewId) {
+    // Hide all views
+    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    // Show selected view
+    document.getElementById(`view-${viewId}`).classList.remove('hidden');
+    
+    // Update nav links
+    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+    document.getElementById(`nav-${viewId}`).classList.add('active');
+    
+    // Load data for the view
+    if (viewId === 'dashboard') loadData();
+    if (viewId === 'history') loadHistory();
+    if (viewId === 'settings') loadSettings();
+}
+
+async function loadHistory() {
+    const container = document.getElementById('history-content');
+    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
+    
+    try {
+        const history = await fetchHistory();
+        if (!history || history.length === 0) {
+            container.innerHTML = '<p class="text-zinc-500 italic">No history snapshots found yet.</p>';
+            return;
+        }
+        
+        let html = `
+            <table class="w-full text-left mono text-xs">
+                <thead class="text-zinc-500 border-b border-zinc-800">
+                    <tr>
+                        <th class="py-3 px-2">Time (UTC)</th>
+                        <th class="py-3 px-2">Service</th>
+                        <th class="py-3 px-2">Usage</th>
+                        <th class="py-3 px-2">Source</th>
+                    </tr>
+                </thead>
+                <tbody class="text-zinc-300">
+        `;
+        
+        history.slice(0, 50).forEach(s => {
+            const date = new Date(s.timestamp).toLocaleString();
+            const usage = s.used_value !== null ? `${s.used_value.toLocaleString()} / ${s.limit_value?.toLocaleString() || '∞'} ${s.unit_type}` : '—';
+            html += `
+                <tr class="border-b border-zinc-900/50 hover:bg-zinc-800/20">
+                    <td class="py-3 px-2 text-zinc-500">${date}</td>
+                    <td class="py-3 px-2 font-bold">${s.service_name} <span class="text-[10px] opacity-50 font-normal">(${s.provider_id})</span></td>
+                    <td class="py-3 px-2">${usage}</td>
+                    <td class="py-3 px-2 opacity-60">${s.data_source}</td>
+                </tr>
+            `;
+        });
+        
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<p class="text-red-400">Failed to load history: ${err.message}</p>`;
+    }
+}
+
+async function loadSettings() {
+    const container = document.getElementById('settings-content');
+    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading settings...</p>';
+    
+    try {
+        const s = await fetchSettings();
+        container.innerHTML = `
+            <div class="space-y-4">
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400">Run Mode</span>
+                    <span class="text-zinc-100 mono bg-zinc-800 px-2 py-0.5 rounded text-xs">${s.run_mode}</span>
+                </div>
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400">Host / Port</span>
+                    <span class="text-zinc-100 mono text-sm">${s.app_host}:${s.app_port}</span>
+                </div>
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400">Local Collectors</span>
+                    <span class="${s.local_collector_enabled ? 'text-green-400' : 'text-zinc-500'} mono text-sm">${s.local_collector_enabled ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400">Credential Scraping</span>
+                    <span class="${s.local_credential_scraping ? 'text-green-400' : 'text-zinc-500'} mono text-sm">${s.local_credential_scraping ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400">Database Encryption</span>
+                    <span class="${s.encryption_enabled ? 'text-green-400' : 'text-yellow-500'} mono text-sm">${s.encryption_enabled ? '✅ Active' : '🔓 Plaintext'}</span>
+                </div>
+                ${!s.encryption_enabled ? '<p class="text-[10px] text-yellow-600 italic">Set DB_ENCRYPTION_KEY env var to secure your snapshots.</p>' : ''}
+            </div>
+            
+            <div class="mt-8 p-4 bg-blue-900/20 border border-blue-800/30 rounded-xl text-xs text-blue-300 leading-relaxed">
+                <strong>Tip:</strong> You can still use <code class="bg-blue-900/40 px-1 rounded">.env</code> for core configuration. This UI will eventually allow real-time changes.
+            </div>
+        `;
+    } catch (err) {
+        container.innerHTML = `<p class="text-red-400">Failed to load settings: ${err.message}</p>`;
+    }
+}
 
 /**
  * Render quota cards to the grid

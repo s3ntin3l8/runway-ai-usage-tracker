@@ -21,13 +21,18 @@
     <div class="relative max-w-7xl mx-auto px-6 py-10 md:px-12 md:py-14">
 
         <!-- Header -->
-        <header class="mb-12 flex flex-col sm:flex-row sm:items-end justify-between gap-6">
+        <header class="mb-12 flex flex-col sm:flex-row sm:items-end justify-between gap-6 border-b border-zinc-800/50 pb-8">
             <div>
-                <div class="flex items-center gap-3 mb-2">
+                <div class="flex items-center gap-3 mb-4">
                     <div class="w-2 h-8 rounded-full bg-gradient-to-b from-blue-400 to-violet-500"></div>
                     <h1 class="text-3xl font-black tracking-tight text-zinc-50">Runway</h1>
                 </div>
-                <p class="text-zinc-500 text-sm uppercase tracking-widest font-medium ml-5">Live AI Subscription Limits</p>
+                
+                <nav class="flex items-center gap-6 ml-5">
+                    <button onclick="switchView('dashboard')" class="nav-link active" id="nav-dashboard">Dashboard</button>
+                    <button onclick="switchView('history')" class="nav-link" id="nav-history">History</button>
+                    <button onclick="switchView('settings')" class="nav-link" id="nav-settings">Settings</button>
+                </nav>
             </div>
 
             <div class="flex flex-col items-end gap-3 ml-5 sm:ml-0">
@@ -46,25 +51,51 @@
             </div>
         </header>
 
-        <!-- Loading skeletons -->
-        <div id="loading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 hidden">
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-            <div class="skeleton h-48 glass-panel rounded-2xl"></div>
-        </div>
+        <!-- View Containers -->
+        <main id="view-container">
+            <!-- Dashboard View -->
+            <section id="view-dashboard" class="view">
+                <!-- Loading skeletons -->
+                <div id="loading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 hidden">
+                    <div class="skeleton h-48 glass-panel rounded-2xl"></div>
+                    <div class="skeleton h-48 glass-panel rounded-2xl"></div>
+                    <div class="skeleton h-48 glass-panel rounded-2xl"></div>
+                    <div class="skeleton h-48 glass-panel rounded-2xl"></div>
+                </div>
 
-        <!-- Error banner -->
-        <div id="error-banner" class="hidden p-4 bg-red-950/40 border border-red-800/50 text-red-400 rounded-xl mono text-sm mb-6">
-            > Connection refused. Make sure <strong class="text-red-300">uvicorn app.main:app</strong> is running.
-        </div>
+                <!-- Error banner -->
+                <div id="error-banner" class="hidden p-4 bg-red-950/40 border border-red-800/50 text-red-400 rounded-xl mono text-sm mb-6">
+                    > Connection refused.
+                </div>
 
-        <!-- Grid -->
-        <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+                <!-- Grid -->
+                <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+            </section>
+
+            <!-- History View -->
+            <section id="view-history" class="view hidden">
+                <div class="glass-panel rounded-3xl p-8">
+                    <h2 class="text-xl font-bold text-zinc-100 mb-6 flex items-center gap-2">
+                        <span class="text-blue-400">🕒</span> Usage History
+                    </h2>
+                    <div id="history-content" class="overflow-x-auto">
+                        <p class="text-zinc-500 italic">No history data found.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings View -->
+            <section id="view-settings" class="view hidden">
+                <div class="glass-panel rounded-3xl p-8 max-w-2xl mx-auto">
+                    <h2 class="text-xl font-bold text-zinc-100 mb-6 flex items-center gap-2">
+                        <span class="text-violet-400">⚙️</span> Settings
+                    </h2>
+                    <div id="settings-content" class="space-y-6">
+                        <!-- Settings will be injected here -->
+                    </div>
+                </div>
+            </section>
+        </main>
 
         <!-- Footer -->
         <footer class="mt-14 text-center text-xs text-zinc-700 mono">

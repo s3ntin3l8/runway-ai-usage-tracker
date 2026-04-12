@@ -262,6 +262,7 @@ class SmartCollector:
             card_copy = copy.deepcopy(card)
             original_detail = card_copy.get("detail", "")
             card_copy["detail"] = f"{original_detail} [Cached {age_str} ago]"
+            card_copy["data_source"] = "cache"
             tagged.append(card_copy)
 
         return tagged

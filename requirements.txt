@@ -16,3 +16,5 @@ pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 pytest-timeout>=2.2.0
 slowapi==0.1.9
+cryptography==46.0.7
+sqlmodel==0.0.38

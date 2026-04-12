@@ -116,8 +116,8 @@ class BaseCollector(ABC):
 
         # 2. Tag cards
         for card in results:
-            if "account_id" not in card:
-                card["account_id"] = self.account_id
+            if "account_id" not in card or not card.get("account_id"):
+                card["account_id"] = self.account_id or "default"
             if "account_label" not in card or not card.get("account_label"):
                 card["account_label"] = self.account_label or "Default"
 

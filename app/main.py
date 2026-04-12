@@ -8,12 +8,15 @@ from slowapi import _rate_limit_exceeded_handler
 from app.api.routes import router as api_router, manager
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.db import init_db
+from app.services.poller import poller
 import os
 import logging
 import sys
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+
 
 # Configure logging
 logging.basicConfig(
@@ -29,13 +32,19 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Warm up keychain access if enabled
+    # Startup: Initialize DB and Start Poller
+    init_db()
+    poller.start()
+
+    # Warm up keychain access if enabled
     if settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
         # Create task to avoid blocking app startup
         asyncio.create_task(manager._warmup_keychain())
     yield
     # Shutdown logic
+    await poller.stop()
     await manager.close()
+
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 app.state.limiter = limiter

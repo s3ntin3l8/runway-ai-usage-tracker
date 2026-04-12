@@ -101,12 +101,12 @@ Fixes identified during the pre-1.0 codebase audit. Mostly trivial-effort items 
 
 ---
 
-## Phase 1 — Stateful Core
+## Phase 1 — Stateful Core ✅ Complete (2026-04-12)
 
 The foundational shift from a purely stateless monitor to a stateful local-first application.
 
 ### 1A. SQLite Usage History
-**Effort:** Large | **Status:** Architecture Approved (April 2026)
+**Effort:** Large | **Status:** ✅ Complete (2026-04-12)
 **Depends on:** Phase 0 (both 0A and 0B must be complete)
 
 A "Max Variant" schema capturing universal metrics (cost, tokens) and provider-specific JSON metadata for deep-dive trends. Uses **SQLite** and **SQLModel**.
@@ -171,17 +171,19 @@ Compaction runs as part of the background polling loop (see Phase 4, #4C). Compa
 ---
 
 ### 1B. Settings UI
-**Effort:** Medium
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-12)
 
 *   **Top Navbar:** Dashboard | History | Settings — replaces/augments `.env` configuration.
 *   **Machine-Key Encryption:** Securing API keys in the local DB using `cryptography.fernet`.
 
-> Fernet keys are derived from the host machine. If Runway is migrated to a new machine, the encryption key must be explicitly exported and re-imported. Document the key export/import procedure in an ADR before shipping this feature.
+> **Key management strategy:** Runway reads the encryption key from the `DB_ENCRYPTION_KEY` env var. If unset, encryption is skipped and the DB stores values in plaintext (acceptable for local-only deployments). Document the setup requirement in the README and `.env.example`.
+>
+> **Migration:** The key travels with the DB — back it up alongside the database file. No CLI tooling needed; it's just an env var.
 
 ---
 
 ### 1C. Passive Background Polling
-**Effort:** Small
+**Effort:** Small | **Status:** ✅ Complete (2026-04-12)
 
 A 15-minute background loop ensuring data is captured even when the UI is closed, synchronized via TTL caches. This is the write path that feeds `usage_snapshots`.
 
@@ -376,7 +378,7 @@ Distribute the sidecar as a zero-dependency desktop application (PyInstaller) wi
 Formally document key architectural decisions:
 *   Transition to stateful local-first design.
 *   Environment vs. UI-based credential management.
-*   Fernet key export/import procedure for machine migration.
+*   Fernet encryption via `DB_ENCRYPTION_KEY` env var; plaintext fallback when unset.
 *   `window_type` enum definitions and provider mappings.
 
 ### Troubleshooting & Setup Guide
