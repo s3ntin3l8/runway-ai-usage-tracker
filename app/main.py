@@ -3,8 +3,11 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 from app.api.routes import router as api_router, manager
 from app.core.config import settings
+from app.core.rate_limit import limiter
 import os
 import logging
 import sys
@@ -31,9 +34,12 @@ async def lifespan(app: FastAPI):
         # Create task to avoid blocking app startup
         asyncio.create_task(manager._warmup_keychain())
     yield
-    # Shutdown logic here if needed
+    # Shutdown logic
+    await manager.close()
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Cache for dashboard HTML
 _DASHBOARD_HTML_CACHE = None
@@ -53,7 +59,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception caught: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal Server Error", "message": str(exc)},
+        content={"detail": "Internal Server Error"},
     )
 
 

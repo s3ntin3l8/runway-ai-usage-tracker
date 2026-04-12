@@ -2,6 +2,7 @@ import json
 import os
 import logging
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 from app.core.config import settings
@@ -10,12 +11,17 @@ from app.models.schemas import LimitCard
 logger = logging.getLogger(__name__)
 
 
+_DEBOUNCE_INTERVAL = 30.0  # seconds between disk flushes
+
+
 class ExternalMetricService:
     def __init__(self):
         self.path = settings.EXTERNAL_METRICS_PATH
         self._ensure_dir()
         self.metrics: Dict[str, Dict[str, Any]] = self._load()
         self._lock = asyncio.Lock()
+        self._last_save_time: float = 0.0
+        self._pending_save: bool = False
 
     def _ensure_dir(self):
         dir_path = os.path.dirname(self.path)
@@ -38,12 +44,22 @@ class ExternalMetricService:
                 return {}
         return {}
 
-    async def _save_unlocked(self):
-        """Persist metrics to disk. Caller must already hold self._lock."""
+    async def _save_unlocked(self, force: bool = False):
+        """Persist metrics to disk. Caller must already hold self._lock.
+
+        Debounced: skips the write if one happened within the last
+        _DEBOUNCE_INTERVAL seconds, unless force=True (used for eviction).
+        """
+        now = time.time()
+        if not force and now - self._last_save_time < _DEBOUNCE_INTERVAL:
+            self._pending_save = True
+            return
         def sync_save():
             with open(self.path, "w") as f:
                 json.dump(self.metrics, f, indent=2)
         await asyncio.to_thread(sync_save)
+        self._last_save_time = now
+        self._pending_save = False
 
     async def _save(self):
         """Persist metrics to disk, acquiring the lock internally."""
@@ -237,6 +253,8 @@ class ExternalMetricService:
             for p in stale:
                 del self.metrics[p]
                 logger.info(f"Evicted stale external metrics for provider: {p}")
+            if stale:
+                await self._save_unlocked(force=True)
 
             for provider, data in self.metrics.items():
                 ts = datetime.fromisoformat(data["timestamp"])

@@ -161,8 +161,7 @@ class ChatGPTCollector(BaseCollector):
             existing["last_refresh"] = datetime.now(timezone.utc).isoformat()
 
             # Write back
-            with open(auth_path, "w") as f:
-                json.dump(existing, f, indent=2)
+            safe_write_json(auth_path, existing)
             logger.info(f"Updated ChatGPT OAuth tokens in {auth_path}")
         except Exception as e:
             logger.debug(f"Failed to persist refreshed ChatGPT token: {e}")
@@ -337,9 +336,6 @@ class ChatGPTCollector(BaseCollector):
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Web API / OAuth strategy."""
         now = datetime.now(timezone.utc)
-        if self._cached_api_results is not None and self._last_api_fetch:
-            if (now - self._last_api_fetch).total_seconds() < self._cache_ttl:
-                return self._cached_api_results
 
         auth = await self._get_auth_data(client)
         token = auth.get("token")
@@ -350,13 +346,9 @@ class ChatGPTCollector(BaseCollector):
 
         try:
             cards = await self._fetch_api_data(client, token, account_id, auth.get("source", "oauth"))
-            self._cached_api_results = cards
-            self._last_api_fetch = now
             return cards
         except Exception as e:
             logger.debug(f"ChatGPT Web API failed: {e}")
-            self._cached_api_results = []
-            self._last_api_fetch = now
         return []
 
     async def _error_handler(self) -> List[Dict[str, Any]]:

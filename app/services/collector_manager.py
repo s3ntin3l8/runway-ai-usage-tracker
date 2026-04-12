@@ -11,7 +11,8 @@ import httpx
 import logging
 import os
 import platform
-from typing import List, Dict, Any, Tuple
+import time
+from typing import List, Dict, Any, Optional, Tuple
 
 from app.core.config import settings
 from app.services.token_cache import token_cache
@@ -46,6 +47,7 @@ class CollectorManager:
 
     def __init__(self):
         """Initialize collector registry."""
+        self._sync_lock = asyncio.Lock()
         # Registry of available collector classes and their default settings
         self.collector_registry = {
             "anthropic": (AnthropicCollector, "Claude (Anthropic)", 60),
@@ -67,6 +69,9 @@ class CollectorManager:
         self.smart_collectors: Dict[str, SmartCollector] = {}
         self._client = None
         self._keychain_warmed_up = False
+        self._last_sync_time: float = 0.0
+        self._collect_lock = asyncio.Lock()
+        self._collect_future: Optional[asyncio.Future] = None
         
         logger.info(
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
@@ -101,44 +106,56 @@ class CollectorManager:
         self._keychain_warmed_up = True
 
     async def _sync_collectors(self):
-        """Synchronize active SmartCollectors with discovered accounts."""
-        # 1. Ensure Default/Static collectors are present
-        for p_id, (cls, name, ttl) in self.collector_registry.items():
-            key = f"{p_id}:default"
-            if key not in self.smart_collectors:
-                logger.info(f"Spawning default collector for {p_id}")
-                self.smart_collectors[key] = SmartCollector(
-                    collector=cls(),
-                    collector_name=name,
-                    ttl=ttl
-                )
+        """Synchronize active SmartCollectors with discovered accounts.
 
-        # 2. Discover active dynamic collectors from TokenCache
-        active_accounts = await token_cache.get_all_active_accounts()
-        active_keys = set()
-        for p_id, acc_id, acc_name in active_accounts:
-            if p_id in self.collector_registry:
-                cls, name, ttl = self.collector_registry[p_id]
-                key = f"{p_id}:{acc_id}"
-                active_keys.add(key)
+        Throttled to run at most once every 60 seconds to avoid redundant
+        TokenCache lookups on every /api/limits request.
+        """
+        if time.time() - self._last_sync_time < 60.0:
+            return
+        async with self._sync_lock:
+            # Re-check inside lock to avoid double-sync when multiple requests
+            # are waiting on the lock simultaneously.
+            if time.time() - self._last_sync_time < 60.0:
+                return
+            # 1. Ensure Default/Static collectors are present
+            for p_id, (cls, name, ttl) in self.collector_registry.items():
+                key = f"{p_id}:default"
                 if key not in self.smart_collectors:
-                    full_name = f"{name} ({acc_name or acc_id[:6]})"
-                    logger.info(f"Spawning dynamic collector for {p_id} account {acc_id}")
+                    logger.info(f"Spawning default collector for {p_id}")
                     self.smart_collectors[key] = SmartCollector(
-                        collector=cls(account_id=acc_id, account_label=acc_name),
-                        collector_name=full_name,
+                        collector=cls(),
+                        collector_name=name,
                         ttl=ttl
                     )
 
-        # 3. Prune collectors whose accounts disappeared from the token cache
-        stale_keys = [
-            key
-            for key in self.smart_collectors
-            if not key.endswith(":default") and key not in active_keys
-        ]
-        for key in stale_keys:
-            logger.info(f"Removing stale collector for {key}")
-            self.smart_collectors.pop(key, None)
+            # 2. Discover active dynamic collectors from TokenCache
+            active_accounts = await token_cache.get_all_active_accounts()
+            active_keys = set()
+            for p_id, acc_id, acc_name in active_accounts:
+                if p_id in self.collector_registry:
+                    cls, name, ttl = self.collector_registry[p_id]
+                    key = f"{p_id}:{acc_id}"
+                    active_keys.add(key)
+                    if key not in self.smart_collectors:
+                        full_name = f"{name} ({acc_name or acc_id[:6]})"
+                        logger.info(f"Spawning dynamic collector for {p_id} account {acc_id}")
+                        self.smart_collectors[key] = SmartCollector(
+                            collector=cls(account_id=acc_id, account_label=acc_name),
+                            collector_name=full_name,
+                            ttl=ttl
+                        )
+
+            # 3. Prune collectors whose accounts disappeared from the token cache
+            stale_keys = [
+                key
+                for key in self.smart_collectors
+                if not key.endswith(":default") and key not in active_keys
+            ]
+            for key in stale_keys:
+                logger.info(f"Removing stale collector for {key}")
+                self.smart_collectors.pop(key, None)
+            self._last_sync_time = time.time()
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create a persistent httpx client."""
@@ -146,18 +163,48 @@ class CollectorManager:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
+    async def close(self):
+        """Close the persistent httpx client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+
     async def collect_all(self) -> List[Dict[str, Any]]:
         """
         Collect all limits across all active accounts.
+
+        Implements a single-flight pattern: if a collection cycle is already
+        in progress, concurrent callers wait for it and share the same result
+        instead of triggering redundant parallel collections.
         """
+        async with self._collect_lock:
+            if self._collect_future is not None and not self._collect_future.done():
+                # A collection is already running — join it
+                future = self._collect_future
+            else:
+                # Start a new collection cycle
+                loop = asyncio.get_event_loop()
+                future = loop.create_future()
+                self._collect_future = future
+
+                try:
+                    result = await self._do_collect()
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+                    raise
+
+        return await future
+
+    async def _do_collect(self) -> List[Dict[str, Any]]:
+        """Execute one collection cycle across all active collectors."""
         # Ensure we have collectors for all current accounts
         await self._sync_collectors()
-        
+
         # Warm up keychain access if on macOS
         await self._warmup_keychain()
 
         client = await self._get_client()
-        
+
         active_keys = list(self.smart_collectors.keys())
         tasks = [
             asyncio.wait_for(self.smart_collectors[key].collect(client), timeout=25.0)
@@ -198,3 +245,4 @@ class CollectorManager:
 
 # Global instance
 collector_manager = CollectorManager()
+manager = collector_manager

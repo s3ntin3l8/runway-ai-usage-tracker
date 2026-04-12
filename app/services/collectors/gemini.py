@@ -160,8 +160,8 @@ class GeminiCollector(OAuthBaseCollector):
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """API strategy with caching."""
-        return await self._collect_via_api_with_cache(client)
+        """API strategy."""
+        return await self._collect_via_api(client)
 
     async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return final error card context when both API and logs fail."""
@@ -183,32 +183,6 @@ class GeminiCollector(OAuthBaseCollector):
             )
         ]
 
-
-    async def _collect_via_api_with_cache(
-        self, client: httpx.AsyncClient
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch Gemini quota with caching (cache both success and errors).
-        """
-        now = datetime.now(timezone.utc)
-
-        # Check cache
-        if self._cached_results is not None and self._last_fetch:
-            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
-                return self._cached_results
-
-        # Fetch fresh data
-        results = await self._collect_via_api(client)
-
-        # Cache results: 5m for success, 60s for errors/empty
-        if results and not self._is_error_result(results):
-            self._cached_results = results
-            self._last_fetch = now
-        else:
-            self._cached_results = results
-            self._last_fetch = now - timedelta(seconds=(self._cache_ttl - 60))
-
-        return results
 
     async def _collect_via_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
@@ -282,6 +256,22 @@ class GeminiCollector(OAuthBaseCollector):
             results = []
             seen_classes = set()
 
+            # Try to discover email from id_token for identity promotion
+            email = None
+            creds = await self._get_credentials()
+            if creds and "id_token" in creds:
+                try:
+                    import base64
+                    import json
+                    parts = creds["id_token"].split(".")
+                    if len(parts) >= 2:
+                        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+                        payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+                        email = payload.get("email")
+                except Exception:
+                    pass
+            identity_suffix = f" · {email}" if email else ""
+
             for bucket in buckets:
                 model_id = bucket.get("modelId", "Unknown")
                 if "flash-lite" in model_id:
@@ -320,21 +310,6 @@ class GeminiCollector(OAuthBaseCollector):
 
                 health = "good" if percent_used < 50 else "warning" if percent_used < 80 else "critical"
                 pace = PaceCalculator.estimate_longevity(percent_used, reset_dt)
-
-                # Try to discover email from id_token for identity promotion
-                email = None
-                creds = await self._get_credentials()
-                if creds and "id_token" in creds:
-                    try:
-                        parts = creds["id_token"].split(".")
-                        if len(parts) >= 2:
-                            payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                            payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
-                            email = payload.get("email")
-                    except Exception:
-                        pass
-
-                identity_suffix = f" · {email}" if email else ""
 
                 if quota_limit is not None and quota_remaining is not None:
                     detail_text = f"{percent_remaining}% remaining | {quota_remaining:,} / {quota_limit:,} {token_type} left{identity_suffix}"

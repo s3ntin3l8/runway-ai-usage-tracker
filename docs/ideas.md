@@ -61,13 +61,13 @@ Move high-value metadata currently "hidden" in the unstructured `detail` string 
 
 ---
 
-## Phase 0.5 — Hardening
+## Phase 0.5 — Hardening ✅ Complete (2026-04-12)
 
 Fixes identified during the pre-1.0 codebase audit. Mostly trivial-effort items that improve security, stability, and performance. Can be executed in parallel with Phase 0 work.
 
 > Full audit details: see `codebase_audit.md` in project artifacts.
 
-### Security Fixes
+### Security Fixes ✅ Complete (2026-04-12)
 
 | ID | Fix | Effort | File |
 |:---|:---|:---|:---|
@@ -78,7 +78,7 @@ Fixes identified during the pre-1.0 codebase audit. Mostly trivial-effort items 
 | **S5** | Replace raw `open()` with `safe_write_json()` in ChatGPT token persistence | Trivial | `chatgpt.py` |
 | **S6** | Make `CORS_ORIGINS` configurable via env var, derive defaults from `APP_HOST`/`APP_PORT` | Small | `config.py` |
 
-### Stability Fixes
+### Stability Fixes ✅ Complete (2026-04-12)
 
 | ID | Fix | Effort | File |
 |:---|:---|:---|:---|
@@ -90,7 +90,7 @@ Fixes identified during the pre-1.0 codebase audit. Mostly trivial-effort items 
 | **T6** | Use `copy.deepcopy()` in `SmartCollector._tag_as_cached()` to protect nested `metadata` dicts | Trivial | `smart_collector.py` |
 | **T7** | Change Dockerfile `HEALTHCHECK` from `/api/limits` to `/api/health` (matches docker-compose) | Trivial | `Dockerfile` |
 
-### Performance Fixes
+### Performance Fixes ✅ Complete (2026-04-12)
 
 | ID | Fix | Effort | File |
 |:---|:---|:---|:---|

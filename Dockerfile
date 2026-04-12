@@ -61,8 +61,8 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8765
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8765/api/limits || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8765/api/health || exit 1
 
 # Run application
 CMD ["python", "-m", "app.main"]

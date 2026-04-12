@@ -3,10 +3,11 @@ import os
 import json
 import logging
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.services.credential_provider import credential_provider
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ class DeviceFlowStatusResponse(BaseModel):
 
 
 @router.get("/init", response_model=DeviceFlowInitResponse)
-async def init_device_flow():
+@limiter.limit("5/minute")
+async def init_device_flow(request: Request):
     """Step 1: Get the device code and user code from GitHub."""
     async with httpx.AsyncClient() as client:
         try:
@@ -73,7 +75,8 @@ async def init_device_flow():
 
 
 @router.post("/poll")
-async def poll_device_flow(request: DeviceFlowPollRequest):
+@limiter.limit("5/minute")
+async def poll_device_flow(request: Request, body: DeviceFlowPollRequest):
     """Step 2: Poll for the access token."""
     async with httpx.AsyncClient() as client:
         try:
@@ -81,7 +84,7 @@ async def poll_device_flow(request: DeviceFlowPollRequest):
                 "https://github.com/login/oauth/access_token",
                 data={
                     "client_id": settings.GITHUB_CLIENT_ID,
-                    "device_code": request.device_code,
+                    "device_code": body.device_code,
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 },
                 headers={
@@ -172,8 +175,7 @@ async def save_token(data: dict):
     }
 
     def _write():
-        with open(settings.GITHUB_OAUTH_PATH, "w") as f:
-            json.dump(token_data, f, indent=2)
+        safe_write_json(settings.GITHUB_OAUTH_PATH, token_data)
 
     await asyncio.to_thread(_write)
     logger.info(f"GitHub OAuth token saved to {settings.GITHUB_OAUTH_PATH}")

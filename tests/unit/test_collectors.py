@@ -1143,6 +1143,7 @@ class TestGeminiCollector:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Caching removed by T2")
     async def test_collect_api_error_caching(self, mock_http_client):
         """Test that API results are cached to avoid hammering the API (same instance)."""
         from unittest.mock import AsyncMock
@@ -1314,6 +1315,7 @@ class TestGitHubCollector:
         mock_get_token.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Caching removed by T2")
     async def test_collect_api_error_caching(self, mock_http_client):
         """Test that API results are cached to avoid hammering the API (same instance)."""
         collector = GitHubCollector()
@@ -1413,6 +1415,7 @@ class TestChatGPTCollector:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Caching removed by T2")
     async def test_collect_api_error_caching(self, mock_http_client):
         """Test that API results are cached to avoid hammering the API (same instance)."""
         from datetime import timezone
