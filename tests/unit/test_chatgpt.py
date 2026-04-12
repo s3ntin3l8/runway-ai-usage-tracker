@@ -76,7 +76,7 @@ class TestChatGPTCollectorDetailed:
         with patch.dict("os.environ", {}, clear=True):
             with patch("os.path.exists", return_value=False):
                 with patch(
-                    "app.services.collectors.chatgpt.get_chatgpt_session_token",
+                    "app.services.collectors.chatgpt_auth.get_chatgpt_session_token",
                     return_value=session_token,
                 ):
                     # Mock the refresh API call
@@ -116,7 +116,7 @@ class TestChatGPTCollectorDetailed:
         with patch.dict("os.environ", {}, clear=True):
             with patch("os.path.exists", return_value=False):
                 with patch(
-                    "app.services.collectors.chatgpt.get_chatgpt_session_token",
+                    "app.services.collectors.chatgpt_auth.get_chatgpt_session_token",
                     return_value=session_token,
                 ):
                     # First refresh
@@ -216,7 +216,7 @@ class TestChatGPTCollectorDetailed:
                 return_value=[],
             ):
                 with patch(
-                    "app.services.collectors.chatgpt.glob.glob",
+                    "app.services.collectors.chatgpt_local.glob.glob",
                     return_value=["/fake/path/session.jsonl"],
                 ):
                     with patch("os.path.getmtime", return_value=12345):

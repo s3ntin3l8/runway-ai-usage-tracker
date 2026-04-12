@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 import re
 import asyncio
 import random
@@ -8,8 +8,43 @@ import logging
 import os
 import json
 import tempfile
+import base64
 
 logger = logging.getLogger(__name__)
+
+
+class IdentityExtractor:
+    """Helper for extracting user identity from various sources (JWT, logs, etc.)"""
+
+    @staticmethod
+    def extract_jwt_payload(token: str) -> Dict[str, Any]:
+        """Robustly decode JWT payload without external libraries."""
+        try:
+            parts = token.split(".")
+            if len(parts) < 2:
+                return {}
+
+            payload_b64 = parts[1]
+            # Fix padding
+            padding = len(payload_b64) % 4
+            if padding:
+                payload_b64 += "=" * (4 - padding)
+
+            return json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+        except Exception:
+            return {}
+
+    @classmethod
+    def get_email_from_jwt(cls, token: str) -> Optional[str]:
+        """Extract email claim from JWT payload."""
+        payload = cls.extract_jwt_payload(token)
+        return payload.get("email")
+
+    @classmethod
+    def get_client_id_from_jwt(cls, token: str) -> Optional[str]:
+        """Extract azp or aud claim from JWT payload."""
+        payload = cls.extract_jwt_payload(token)
+        return payload.get("azp") or payload.get("aud")
 
 
 class PaceCalculator:

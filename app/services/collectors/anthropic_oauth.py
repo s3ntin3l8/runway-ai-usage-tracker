@@ -83,19 +83,11 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             # Fallback: decode id_token JWT to find authorized party
             id_token = oauth_payload.get("idToken") or oauth_payload.get("id_token")
             if (not client_id or client_id == settings.CLAUDE_OAUTH_CLIENT_ID) and id_token:
-                try:
-                    parts = id_token.split(".")
-                    if len(parts) >= 2:
-                        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                        payload = json.loads(
-                            base64.urlsafe_b64decode(payload_b64).decode("utf-8")
-                        )
-                        token_client_id = payload.get("azp") or payload.get("aud")
-                        if token_client_id:
-                            client_id = token_client_id
-                            logger.info(f"Auto-discovered Claude Client ID: {client_id[:10]}...")
-                except Exception as e:
-                    logger.debug(f"Failed to extract Client ID from Claude id_token: {e}")
+                from app.core.utils import IdentityExtractor
+                token_client_id = IdentityExtractor.get_client_id_from_jwt(id_token)
+                if token_client_id:
+                    client_id = token_client_id
+                    logger.info(f"Auto-discovered Claude Client ID: {client_id[:10]}...")
 
         from app.core.utils import http_request_with_retry
         try:

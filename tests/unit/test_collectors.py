@@ -1038,10 +1038,10 @@ class TestGeminiCollector:
                 ),
             ):
                 with patch(
-                    "app.services.collectors.gemini.os.path.exists", return_value=True
+                    "app.services.collectors.gemini_oauth.os.path.exists", return_value=True
                 ):
                     with patch(
-                        "app.services.collectors.gemini.time.time", return_value=1000
+                        "app.services.collectors.gemini_oauth.time.time", return_value=1000
                     ):
                         result = await collector.collect(mock_http_client)
 
@@ -1095,7 +1095,7 @@ class TestGeminiCollector:
 
         mock_http_client.request = mock_request
 
-        with patch("app.services.collectors.gemini.settings") as mock_settings:
+        with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
             mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
             mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
@@ -1109,7 +1109,7 @@ class TestGeminiCollector:
                 ),
             ):
                 with patch(
-                    "app.services.collectors.gemini.os.path.exists", return_value=True
+                    "app.services.collectors.gemini_oauth.os.path.exists", return_value=True
                 ):
                     result = await collector.collect(mock_http_client)
 
@@ -1129,13 +1129,13 @@ class TestGeminiCollector:
         """Test graceful handling when credentials file missing."""
         collector = GeminiCollector()
 
-        with patch("app.services.collectors.gemini.settings") as mock_settings:
+        with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/missing.json"
             mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
             mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with patch(
-                "app.services.collectors.gemini.os.path.exists", return_value=False
+                "app.services.collectors.gemini_oauth.os.path.exists", return_value=False
             ):
                 result = await collector.collect(mock_http_client)
 
@@ -1177,10 +1177,10 @@ class TestGeminiCollector:
                 ),
             ):
                 with patch(
-                    "app.services.collectors.gemini.os.path.exists", return_value=True
+                    "app.services.collectors.gemini_oauth.os.path.exists", return_value=True
                 ):
                     with patch(
-                        "app.services.collectors.gemini.time.time", return_value=1000
+                        "app.services.collectors.gemini_oauth.time.time", return_value=1000
                     ):
                         # First call - API fails
                         result1 = await collector.collect(mock_http_client)
@@ -1404,7 +1404,7 @@ class TestChatGPTCollector:
         mock_response.status_code = 500
         mock_http_client.get.return_value = mock_response
 
-        with patch("app.services.collectors.chatgpt.settings") as mock_settings:
+        with patch("app.services.collectors.chatgpt_auth.settings") as mock_settings:
             mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
             mock_settings.LOCAL_COLLECTOR_ENABLED = True
 
@@ -1431,7 +1431,7 @@ class TestChatGPTCollector:
         error_response.status_code = 429
         mock_http_client.get.return_value = error_response
 
-        with patch("app.services.collectors.chatgpt.settings") as mock_settings:
+        with patch("app.services.collectors.chatgpt_auth.settings") as mock_settings:
             mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
             mock_settings.LOCAL_COLLECTOR_ENABLED = True
 
