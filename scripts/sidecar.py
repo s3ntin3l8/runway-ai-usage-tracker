@@ -364,6 +364,29 @@ __REGISTRY__ = {
                     "mapping": {
                         "value": "cookie_session"
                     }
+                },
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "ollama.com",
+                        ".ollama.com"
+                    ],
+                    "name": "__Secure-session",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
+                },
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "ollama.com",
+                        ".ollama.com",
+                        "signin.ollama.com"
+                    ],
+                    "name": "access-token",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
                 }
             ]
         }

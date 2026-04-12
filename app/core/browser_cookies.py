@@ -25,17 +25,21 @@ from app.core.keychain import get_keychain_secret
 
 logger = logging.getLogger(__name__)
 
+# Module-level flag to avoid spamming the ABE warning on every cookie attempt
+_abe_warning_logged: bool = False
+
 # --- Chromium-based (Chrome, Edge) decryption ---
 
 
 def decrypt_macos_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
     """Decrypt a cookie value using macOS Keychain."""
+    global _abe_warning_logged
     try:
         # Use centralized keychain access with caching
-        password = get_keychain_secret("Chrome Safe Storage", force_refresh=True)
+        password = get_keychain_secret("Chrome Safe Storage")
         if not password:
             # Try Edge-specific storage if Chrome fails
-            password = get_keychain_secret("Microsoft Edge Safe Storage", force_refresh=True)
+            password = get_keychain_secret("Microsoft Edge Safe Storage")
 
         if not password:
             return None
@@ -54,6 +58,18 @@ def decrypt_macos_cookie(encrypted_value: bytes, db_path: Optional[Path] = None)
                 decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
                 pad_len = decrypted[-1]
                 if pad_len < 1 or pad_len > 16:
+                    # Invalid padding almost always means App-Bound Encryption (ABE).
+                    # Chrome 127+ derives the key inside its own app bundle, so the
+                    # Keychain password alone is no longer sufficient.
+                    if not _abe_warning_logged:
+                        _abe_warning_logged = True
+                        logger.warning(
+                            "⚠️  Chrome cookie decryption failed — App-Bound Encryption (ABE) "
+                            "is likely active (Chrome/Edge 127+). "
+                            "Use Safari (macOS) or set credentials via environment variables. "
+                            "Run: python3 scripts/debug_chrome_cookies.py  "
+                            "See: docs/troubleshooting.md"
+                        )
                     return None
                 return decrypted[:-pad_len].decode("utf-8")
             except Exception:
@@ -499,6 +515,15 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
                         logger.info(f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}")
                         conn.close()
                         return results
+                    else:
+                        # Rows existed but none could be decrypted — almost certainly ABE.
+                        logger.warning(
+                            f"⚠️  Found {len(rows)} '{cookie_name}' cookie(s) in {browser_name} "
+                            f"but could not decrypt them. "
+                            f"App-Bound Encryption (ABE) is likely blocking access on Chrome/Edge 127+. "
+                            f"Try Safari instead, or set credentials via environment variables. "
+                            f"See: docs/troubleshooting.md"
+                        )
 
             elif b_type == "firefox":
                 query = "SELECT name, value FROM moz_cookies WHERE host LIKE ?"
