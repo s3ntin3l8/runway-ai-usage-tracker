@@ -26,12 +26,15 @@ Error Handling:
 import re
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from app.core.config import settings
 from app.core.utils import PaceCalculator, human_delta
 from app.services.collectors.base import BaseCollector
+
+logger = logging.getLogger(__name__)
 
 
 class AntigravityCollector(BaseCollector):
@@ -136,6 +139,7 @@ class AntigravityCollector(BaseCollector):
                     resp = await client.post(url, headers=headers, json=payload, timeout=0.5)
                     
                     if resp.status_code == 200:
+                        logger.info(f"✅ Antigravity LSP connected on port {port}")
                         data = resp.json()
                         return self._parse_lsp_response(data)
                     elif resp.status_code in (401, 403):

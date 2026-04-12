@@ -20,6 +20,8 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
     ],
 )
+# Silence noisy httpx logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
