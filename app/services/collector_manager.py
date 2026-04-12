@@ -96,7 +96,7 @@ class CollectorManager:
             tasks.append(asyncio.to_thread(get_keychain_secret, "Claude Code-credentials"))
 
         # 2. Chrome Safe Storage (for any cookie-based collectors)
-        cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi"]
+        cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi", "ollama"]
         if any(os.getenv(f"{c.upper()}_SESSION_TOKEN") is None for c in cookie_collectors):
              logger.info("Warming up keychain access for Browser Decryption (Chrome)...")
              tasks.append(asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage"))

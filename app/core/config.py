@@ -68,6 +68,7 @@ class Settings:
     # Claude OAuth Settings
     CLAUDE_CODE_OAUTH_TOKEN: str = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    OLLAMA_SESSION_TOKEN: str = os.getenv("OLLAMA_SESSION_TOKEN", "")
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     MINIMAX_API_KEY: str = os.getenv("MINIMAX_API_KEY", "")
     OPENCODE_GO_API_KEY: str = os.getenv("OPENCODE_GO_API_KEY", "")

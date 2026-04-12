@@ -2,6 +2,7 @@ import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.collectors.ollama import OllamaCollector
+from app.core.config import settings
 
 @pytest.fixture
 def ollama_html():
@@ -57,14 +58,15 @@ async def test_ollama_parsing(ollama_html):
 async def test_ollama_no_auth():
     collector = OllamaCollector()
     
-    with patch("app.services.collectors.ollama.get_cookie_from_registry", return_value=None):
-        client = AsyncMock(spec=httpx.AsyncClient)
-        results = await collector.collect(client)
-        
-        # BaseCollector should call _error_handler if primary returns empty list and no fallbacks
-        assert len(results) == 1
-        assert results[0]["remaining"] == "ERR"
-        assert "Not logged in" in results[0]["detail"]
+    with patch("app.services.collectors.ollama.get_session_cookies", return_value=[]):
+        with patch.object(settings, "OLLAMA_SESSION_TOKEN", ""):
+            client = AsyncMock(spec=httpx.AsyncClient)
+            results = await collector.collect(client)
+            
+            # BaseCollector should call _error_handler if primary returns empty list and no fallbacks
+            assert len(results) == 1
+            assert results[0]["remaining"] == "ERR"
+            assert "Not logged in" in results[0]["detail"]
 
 @pytest.mark.asyncio
 async def test_ollama_primary_strategy(ollama_html):
@@ -74,10 +76,11 @@ async def test_ollama_primary_strategy(ollama_html):
     mock_resp.status_code = 200
     mock_resp.text = ollama_html
     
-    with patch("app.services.collectors.ollama.get_cookie_from_registry", return_value="fake_cookie"):
-        with patch("app.services.collectors.ollama.http_request_with_retry", AsyncMock(return_value=mock_resp)):
-            client = AsyncMock(spec=httpx.AsyncClient)
-            cards = await collector._primary_strategy(client)
-            
-            assert len(cards) == 2
-            assert cards[0]["service"] == "Ollama Session"
+    with patch("app.services.collectors.ollama.get_session_cookies", return_value=["fake_cookie"]):
+        with patch.object(settings, "OLLAMA_SESSION_TOKEN", ""):
+            with patch("app.services.collectors.ollama.http_request_with_retry", AsyncMock(return_value=mock_resp)):
+                client = AsyncMock(spec=httpx.AsyncClient)
+                cards = await collector._primary_strategy(client)
+                
+                assert len(cards) == 2
+                assert cards[0]["service"] == "Ollama Session"

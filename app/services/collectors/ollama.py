@@ -14,8 +14,9 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 import httpx
 from app.services.collectors.base import BaseCollector
-from app.core.browser_cookies import get_cookie_from_registry
+from app.core.browser_cookies import get_session_cookies
 from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,32 +26,80 @@ class OllamaCollector(BaseCollector):
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
 
+    def _get_cookie_header(self) -> Optional[str]:
+        """Combine session cookies (including chunked ones) into a header string."""
+        # 1. Check environment variable first
+        env_token = settings.OLLAMA_SESSION_TOKEN
+        if env_token:
+            return f"session={env_token}"
+
+        # 2. Check browser cookies for various possible names
+        possible_names = [
+            "session",
+            "ollama_session",
+            "__Host-ollama_session",
+            "__Secure-next-auth.session-token",
+        ]
+        
+        for name in possible_names:
+            # get_session_cookies returns a list (handles chunked .0, .1, etc.)
+            cookies = get_session_cookies("ollama.com", name)
+            if cookies:
+                # Join chunked cookies: "name=val0; name.0=val0; name.1=val1..."
+                # Actually NextAuth typically uses the base name for the first chunk if small,
+                # or name.0, name.1 if large.
+                # The Swift code joins them with "; "
+                header_parts = []
+                if len(cookies) == 1:
+                    header_parts.append(f"{name}={cookies[0]}")
+                else:
+                    for i, val in enumerate(cookies):
+                        header_parts.append(f"{name}.{i}={val}")
+                
+                return "; ".join(header_parts)
+        
+        return None
+
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Scrape Ollama settings page."""
-        cookie_val = get_cookie_from_registry("ollama")
-        if not cookie_val:
+        cookie_header = self._get_cookie_header()
+        if not cookie_header:
             return []
 
+        # Enhanced stealth headers to mimic a real browser
         headers = {
-            "Cookie": f"session={cookie_val}",  # Default to 'session', but many names work
+            "Cookie": cookie_header,
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "max-age=0",
             "Referer": "https://ollama.com",
+            "Sec-Ch-Ua": '"Not(A:Bar";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"macOS"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
         }
 
-        # Try multiple cookie names if the first one doesn't work? 
-        # Actually the registry maps all possible names to 'cookie_session'.
-        # We'll try a few common ones in the header just in case.
-        headers["Cookie"] = f"session={cookie_val}; ollama_session={cookie_val}; __Host-ollama_session={cookie_val}; __Secure-next-auth.session-token={cookie_val}"
-
         try:
-            resp = await http_request_with_retry(client, "GET", self.target_url, headers=headers, timeout=15)
+            # CRITICAL: set follow_redirects=True as Ollama often redirects to www. or /
+            resp = await http_request_with_retry(
+                client, 
+                "GET", 
+                self.target_url, 
+                headers=headers, 
+                timeout=15,
+                follow_redirects=True
+            )
             if resp.status_code == 200:
                 return self._parse_html(resp.text)
             elif resp.status_code in (401, 403):
                 logger.debug("Ollama auth failed (401/403)")
             else:
-                logger.debug(f"Ollama fetch failed with status {resp.status_code}")
+                logger.debug(f"Ollama fetch failed with status {resp.status_code} at {resp.url}")
         except Exception as e:
             logger.debug(f"Ollama fetch error: {e}")
 
@@ -74,7 +123,6 @@ class OllamaCollector(BaseCollector):
             email = email_match.group(1).strip()
 
         # 3. Parse Usage Blocks
-        # The Swift code finds the label, then takes 800 chars after it.
         session_block = self._get_usage_block(["Session usage", "Hourly usage"], html)
         weekly_block = self._get_usage_block(["Weekly usage"], html)
 

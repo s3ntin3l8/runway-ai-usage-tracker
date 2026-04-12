@@ -57,7 +57,8 @@ __REGISTRY__ = {
                     "format": "json",
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
-                        "claudeAiOauth.refreshToken": "refresh_token"
+                        "claudeAiOauth.refreshToken": "refresh_token",
+                        "claudeAiOauth.clientId": "client_id"
                     }
                 },
                 {
@@ -66,14 +67,17 @@ __REGISTRY__ = {
                     "format": "json",
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
-                        "claudeAiOauth.refreshToken": "refresh_token"
+                        "claudeAiOauth.refreshToken": "refresh_token",
+                        "claudeAiOauth.clientId": "client_id"
                     }
                 },
                 {
                     "type": "cookie",
                     "domains": [
                         "anthropic.com",
-                        "claude.ai"
+                        ".anthropic.com",
+                        "claude.ai",
+                        ".claude.ai"
                     ],
                     "name": "sessionKey",
                     "mapping": {
@@ -168,7 +172,9 @@ __REGISTRY__ = {
                     ],
                     "format": "json",
                     "mapping": {
-                        "access_token": "oauth_token"
+                        "access_token": "oauth_token",
+                        "client_id": "client_id",
+                        "clientId": "client_id"
                     }
                 }
             ]
@@ -258,9 +264,10 @@ __REGISTRY__ = {
                 {
                     "type": "cookie",
                     "domains": [
-                        "opencode.ai"
+                        "opencode.ai",
+                        ".opencode.ai"
                     ],
-                    "name": "session",
+                    "name": "auth",
                     "mapping": {
                         "value": "cookie_session"
                     }
@@ -300,6 +307,63 @@ __REGISTRY__ = {
                         "~/.antigravity/state/quota.json",
                         "{{DATA_DIR:antigravity}}/state/quota.json"
                     ]
+                }
+            ]
+        },
+        "ollama": {
+            "name": "Ollama Cloud",
+            "icon": "\ud83e\udd99",
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "OLLAMA_SESSION_TOKEN",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
+                },
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "ollama.com",
+                        ".ollama.com"
+                    ],
+                    "name": "session",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
+                },
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "ollama.com",
+                        ".ollama.com"
+                    ],
+                    "name": "ollama_session",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
+                },
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "ollama.com",
+                        ".ollama.com"
+                    ],
+                    "name": "__Host-ollama_session",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
+                },
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "ollama.com",
+                        ".ollama.com"
+                    ],
+                    "name": "__Secure-next-auth.session-token",
+                    "mapping": {
+                        "value": "cookie_session"
+                    }
                 }
             ]
         }

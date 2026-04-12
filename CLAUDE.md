@@ -5,6 +5,7 @@ Runway is a local-first, stateless monitoring tool for AI provider quotas.
 ## Architecture
 - **Three Modes**: Standalone, Multi-Host (Sidecar), and Docker (Sidecar required).
 - **The Docker Rule**: DO NOT use native desktop UI/keychains in code; use ENV or sidecar-fed data.
+- **Cookie-Based Collectors**: Providers like Claude, ChatGPT, and Ollama require browser cookies. In Docker, you MUST provide these via environment variables (e.g., `OLLAMA_SESSION_TOKEN`).
 
 ## Essential Commands
 - **Setup**: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`

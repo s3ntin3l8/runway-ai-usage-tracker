@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # --- Chromium-based (Chrome, Edge) decryption ---
 
 
-def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
+def decrypt_macos_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
     """Decrypt a cookie value using macOS Keychain."""
     try:
         # Use centralized keychain access with caching
@@ -63,8 +63,82 @@ def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
         return None
 
 
-def decrypt_windows_cookie(encrypted_value: bytes) -> Optional[str]:
-    """Decrypt a cookie value using Windows DPAPI."""
+def _get_windows_master_key(db_path: Path) -> Optional[bytes]:
+    """Extract and decrypt the master key for Windows Chrome/Edge."""
+    try:
+        import json
+        import base64
+        import ctypes
+        from ctypes import wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", wintypes.DWORD),
+                ("pbData", ctypes.POINTER(wintypes.BYTE)),
+            ]
+
+        # Locate Local State file by navigating up from db_path to User Data
+        local_state_path = None
+        current = db_path.parent
+        for _ in range(4):
+            test_path = current / "Local State"
+            if test_path.exists():
+                local_state_path = test_path
+                break
+            current = current.parent
+            if current == current.parent:
+                break
+        
+        if not local_state_path:
+            return None
+
+        with open(local_state_path, "r", encoding="utf-8") as f:
+            local_state = json.load(f)
+        
+        encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+        # Prefix "DPAPI" is 5 bytes
+        encrypted_key = encrypted_key[5:]
+
+        crypt32 = ctypes.windll.crypt32
+        blob_in = DATA_BLOB()
+        blob_in.cbData = len(encrypted_key)
+        blob_in.pbData = ctypes.cast(encrypted_key, ctypes.POINTER(wintypes.BYTE))
+        blob_out = DATA_BLOB()
+
+        if crypt32.CryptUnprotectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            master_key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+            return master_key
+        return None
+    except Exception as e:
+        logger.debug(f"Error extracting Windows master key: {e}")
+        return None
+
+
+def decrypt_windows_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
+    """Decrypt a cookie value using Windows DPAPI or AES-GCM with Master Key."""
+    if not encrypted_value:
+        return None
+
+    # Modern Chrome (v10/v20) uses AES-GCM
+    if (encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11") or encrypted_value.startswith(b"v20")) and db_path:
+        master_key = _get_windows_master_key(db_path)
+        if not master_key:
+            return None
+        
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            nonce = encrypted_value[3:15]
+            ciphertext = encrypted_value[15:]
+            aesgcm = AESGCM(master_key)
+            decrypted = aesgcm.decrypt(nonce, ciphertext, None)
+            return decrypted.decode("utf-8")
+        except Exception:
+            return None
+
+    # Legacy DPAPI
     try:
         import ctypes
         from ctypes import wintypes
@@ -87,12 +161,12 @@ def decrypt_windows_cookie(encrypted_value: bytes) -> Optional[str]:
             buffer = ctypes.string_at(blob_out.pbData, blob_out.cbData)
             ctypes.windll.kernel32.LocalFree(blob_out.pbData)
             return buffer.decode("utf-8")
-        return None
     except Exception:
-        return None
+        pass
+    return None
 
 
-def decrypt_linux_cookie(encrypted_value: bytes) -> Optional[str]:
+def decrypt_linux_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
     """Decrypt a cookie value on Linux (Chromium)."""
     try:
         try:
@@ -144,15 +218,15 @@ def decrypt_linux_cookie(encrypted_value: bytes) -> Optional[str]:
         return None
 
 
-def decrypt_chromium_cookie(encrypted_value: bytes) -> Optional[str]:
+def decrypt_chromium_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
     """Decrypt a Chromium-based cookie value based on the current platform."""
     system = platform.system()
     if system == "Darwin":
-        return decrypt_macos_cookie(encrypted_value)
+        return decrypt_macos_cookie(encrypted_value, db_path)
     elif system == "Windows":
-        return decrypt_windows_cookie(encrypted_value)
+        return decrypt_windows_cookie(encrypted_value, db_path)
     else:
-        return decrypt_linux_cookie(encrypted_value)
+        return decrypt_linux_cookie(encrypted_value, db_path)
 
 
 # --- Safari Binary Cookies Parser ---
@@ -337,24 +411,31 @@ def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
 
 
 def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]:
+    """Search for a single session cookie (legacy wrapper)."""
+    cookies = get_session_cookies(domain_substring, cookie_name)
+    return cookies[0] if cookies else None
+
+
+def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: bool = True) -> List[str]:
     """
-    Search for a session cookie across all supported browsers.
+    Search for one or more session cookies (supporting chunked NextAuth tokens).
 
     Args:
-        domain_substring: String to match host_key (e.g., 'claude.ai', 'opencode.ai')
-        cookie_name: Precise name of the cookie (e.g., 'sessionKey', 'session')
+        domain_substring: String to match host_key (e.g., 'claude.ai')
+        cookie_name: Base name of the cookie.
+        allow_prefix: If True, also matches cookies with .0, .1, etc. suffixes.
 
     Returns:
-        The decrypted/parsed cookie value, or None if not found.
+        List of decrypted/parsed cookie values.
     """
     if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
-        return None
+        return []
 
     targets = get_all_browser_cookies_paths()
     if not targets:
-        return None
+        return []
 
-    logger.info(f"🍪 Searching for {cookie_name} cookie in domain {domain_substring}...")
+    logger.info(f"🍪 Searching for {cookie_name} cookies in domain {domain_substring}...")
     for target in targets:
         path = target["path"]
         b_type = target["type"]
@@ -363,16 +444,21 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
         if not os.path.exists(path):
             continue
 
-        logger.info(f"🔎 Checking {browser_name} database at {path}...")
-
         # Safari (Binary)
         if b_type == "safari":
             try:
                 cookies = SafariBinaryCookieParser.parse_file(path)
+                found = []
                 for c in cookies:
-                    if domain_substring in c["domain"] and c["name"] == cookie_name:
-                        logger.info(f"✅ Found {cookie_name} cookie for {domain_substring} in Safari")
-                        return c["value"]
+                    if domain_substring in c["domain"]:
+                        if c["name"] == cookie_name or (allow_prefix and c["name"].startswith(f"{cookie_name}.")):
+                            found.append(c)
+                
+                if found:
+                    # Sort by name to handle .0, .1, .2 order
+                    found.sort(key=lambda x: x["name"])
+                    logger.info(f"✅ Found {len(found)} {cookie_name} cookies in Safari")
+                    return [c["value"] for c in found]
             except Exception as e:
                 logger.info(f"❌ Safari parsing error: {e}")
             continue
@@ -388,35 +474,51 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
             cursor = conn.cursor()
 
             if b_type == "chromium":
-                cursor.execute(
-                    "SELECT encrypted_value FROM cookies WHERE host_key LIKE ? AND name = ?",
-                    (f"%{domain_substring}%", cookie_name),
-                )
-                row = cursor.fetchone()
-                if row:
-                    logger.info(f"📦 Found encrypted {cookie_name} cookie in {browser_name}")
-                    decrypted = decrypt_chromium_cookie(row[0])
-                    if decrypted:
-                        logger.info(f"✅ Successfully decrypted {cookie_name} cookie from {browser_name}")
-                        conn.close()
-                        return decrypted
-                    else:
-                        logger.warning(f"⚠️ Failed to decrypt {cookie_name} cookie from {browser_name} (Keychain permission issue)")
+                query = "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE ?"
+                params = [f"%{domain_substring}%"]
+                
+                if allow_prefix:
+                    query += " AND (name = ? OR name LIKE ?)"
+                    params.extend([cookie_name, f"{cookie_name}.%"])
                 else:
-                    logger.info(f"◽ Cookie {cookie_name} not found in {browser_name} for {domain_substring}")
+                    query += " AND name = ?"
+                    params.append(cookie_name)
+
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                if rows:
+                    # Sort by name
+                    rows.sort(key=lambda x: x[0])
+                    results = []
+                    for name, enc_val in rows:
+                        decrypted = decrypt_chromium_cookie(enc_val, path)
+                        if decrypted:
+                            results.append(decrypted)
+                    
+                    if results:
+                        logger.info(f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}")
+                        conn.close()
+                        return results
 
             elif b_type == "firefox":
-                # Firefox schema: host, name, value
-                cursor.execute(
-                    "SELECT value FROM moz_cookies WHERE host LIKE ? AND name = ?",
-                    (f"%{domain_substring}%", cookie_name),
-                )
-                row = cursor.fetchone()
-                if row:
-                    logger.info(f"✅ Found {cookie_name} cookie for {domain_substring} in Firefox")
-                    val = row[0]
+                query = "SELECT name, value FROM moz_cookies WHERE host LIKE ?"
+                params = [f"%{domain_substring}%"]
+                
+                if allow_prefix:
+                    query += " AND (name = ? OR name LIKE ?)"
+                    params.extend([cookie_name, f"{cookie_name}.%"])
+                else:
+                    query += " AND name = ?"
+                    params.append(cookie_name)
+
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                if rows:
+                    rows.sort(key=lambda x: x[0])
+                    logger.info(f"✅ Found {len(rows)} {cookie_name} cookies in Firefox")
+                    vals = [r[1] for r in rows]
                     conn.close()
-                    return val
+                    return vals
 
             conn.close()
         except Exception as e:
@@ -429,7 +531,7 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
                 except Exception:
                     pass
 
-    return None
+    return []
 
 
 # --- Registry-aware functions ---
