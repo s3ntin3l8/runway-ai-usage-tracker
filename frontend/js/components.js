@@ -1354,7 +1354,7 @@ export function buildProviderSparklineStrip(history, activeProviders) {
                      style="border-color:${isActive ? color : '#27272a'};"
                      onclick="toggleHistoryProvider('${escapeHTMLAttr(pid)}')">
             <div class="flex items-center justify-between gap-2 mb-1.5">
-                <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">${escapeHTML(icon)} ${escapeHTML(pid)}</span>
+                <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">${icon} ${escapeHTML(pid)}</span>
                 ${sparkSVG}
             </div>
             <div class="flex items-baseline gap-1">

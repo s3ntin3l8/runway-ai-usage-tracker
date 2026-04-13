@@ -90,7 +90,7 @@ function renderHistoryFromCache() {
         html += `<tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
             <td class="py-2 px-2 text-zinc-600">${date}</td>
             <td class="py-2 px-2 text-zinc-500">${escapeHTML(s.provider_id || '—')}</td>
-            <td class="py-2 px-2 font-medium text-zinc-300">${escapeHTML(s.service_name)}</td>
+            <td class="py-2 px-2 font-medium text-zinc-300">${escapeHTML(s.service_name || '—')}</td>
             <td class="py-2 px-2 text-right font-bold text-zinc-400">${usage}</td>
         </tr>`;
     });
