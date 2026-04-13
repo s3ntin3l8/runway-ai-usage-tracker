@@ -1,4 +1,4 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
@@ -59,7 +59,7 @@ window.toggleHistoryProvider = function(pid) {
 window.setHistoryDays = function(days) {
     historyState.days = days;
     document.querySelectorAll('#history-range-btns .toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', parseInt(btn.dataset.days) === days);
+        btn.classList.toggle('active', parseFloat(btn.dataset.days) === days);
     });
     updateCsvHref();
     loadHistory();
@@ -311,7 +311,7 @@ function renderGrid() {
     }
 
     // Provider cards use a responsive grid (not provider sections)
-    grid.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${html}</div>`;
+    grid.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">${html}</div>`;
     document.getElementById('footer-count').textContent = count;
 }
 
@@ -361,6 +361,11 @@ function renderFilterPills() {
         pills.push(`<button class="pill${active === v ? ' pill-active' : ''}" onclick="setFilter('${escapeHTMLAttr(v)}')">${escapeHTML(v)}</button>`);
     });
     container.innerHTML = pills.join('');
+
+    // Show "Source" dimension button only when sidecars exist
+    const hasSidecars = STATE.data.some(i => i.sidecar_id);
+    const sidecarBtn = document.getElementById('dim-btn-sidecar');
+    if (sidecarBtn) sidecarBtn.classList.toggle('hidden', !hasSidecars);
 
     // Highlight active dimension button
     document.querySelectorAll('.dim-btn').forEach(btn => {
@@ -692,6 +697,21 @@ function closeModal() {
     container.classList.remove('active');
     document.body.style.overflow = '';
 }
+
+window.forceRefresh = async function() {
+    const btn = document.getElementById('refresh-btn');
+    const icon = document.getElementById('refresh-icon');
+    if (btn) btn.disabled = true;
+    if (icon) icon.style.animation = 'spin 1s linear infinite';
+    try {
+        await forceCollect();
+    } catch (e) {
+        console.warn('Force collect error (server may be restarting):', e.message);
+    }
+    await loadData();
+    if (btn) btn.disabled = false;
+    if (icon) icon.style.animation = '';
+};
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {

@@ -1098,16 +1098,16 @@ export function buildProviderSummaryCard(providerId, items) {
     // Account labels
     const accounts = [...new Set(items.map(i => i.account_label).filter(Boolean))];
     const accountHTML = accounts.length === 1
-        ? `<div class="text-[9px] text-zinc-500 mt-0.5">${escapeHTML(accounts[0])}</div>`
+        ? `<div class="text-[10px] text-zinc-500 mt-0.5">${escapeHTML(accounts[0])}</div>`
         : accounts.length > 1
         ? `<div class="flex flex-wrap gap-1 mt-1">${accounts.map(a =>
-            `<span class="text-[8px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded">${escapeHTML(a)}</span>`
+            `<span class="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded">${escapeHTML(a)}</span>`
           ).join('')}</div>`
         : '';
 
     // Health badge (CRIT / WARN / GOOD / UNLM)
     const badgeLabels = { critical: 'CRIT', warning: 'WARN', good: 'GOOD', unlimited: 'UNLM', unknown: '——' };
-    const healthBadgeHTML = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded border ${h.badge} border-current/30">${badgeLabels[worst.health] || '——'}</span>`;
+    const healthBadgeHTML = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${h.badge} border-current/30">${badgeLabels[worst.health] || '——'}</span>`;
 
     // Segmented bar (per-service health counts)
     const barCounts = { critical: 0, warning: 0, good: 0, unlimited: 0 };
@@ -1126,35 +1126,35 @@ export function buildProviderSummaryCard(providerId, items) {
             pct = (item.used_value / item.limit_value) * 100;
         }
         const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
-        const rowTier = item.tier ? `<span class="text-[7px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 mr-0.5">${escapeHTML(item.tier.toUpperCase().slice(0,3))}</span>` : '';
-        return `<div class="flex justify-between items-center text-[9px]">
+        const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30">${escapeHTML(item.tier.toUpperCase().slice(0,3))}</span>` : '';
+        return `<div class="flex justify-between items-center text-[10px] py-0.5">
             <span class="flex items-center gap-1.5 min-w-0">
                 <span class="dot ${dot} flex-shrink-0" style="width:6px;height:6px;"></span>
                 <span class="text-zinc-300 truncate">${escapeHTML(item.service_name)}</span>
             </span>
-            <span class="flex items-center gap-1 text-zinc-500 flex-shrink-0 ml-2">${rowTier}${display}</span>
+            <span class="flex items-center gap-1.5 text-zinc-500 flex-shrink-0 ml-2">${rowTier}<span>${display}</span></span>
         </div>`;
     }).join('');
 
     return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
-        <div class="p-4">
+        <div class="p-5">
             <div class="flex justify-between items-start mb-1">
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">${icon} ${escapeHTML(providerId)}</span>
+                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${icon} ${escapeHTML(providerId)}</span>
                         ${tierBadgeHTML}
                     </div>
                     ${accountHTML}
                 </div>
                 <div class="ml-2 flex-shrink-0">${healthBadgeHTML}</div>
             </div>
-            <div class="text-3xl font-black ${worstColor} leading-none mt-2">${worstDisplay}</div>
-            <div class="text-[9px] text-zinc-500 mt-1">${escapeHTML(worst.service_name)} · worst</div>
+            <div class="text-4xl font-black ${worstColor} leading-none mt-3">${worstDisplay}</div>
+            <div class="text-[10px] text-zinc-500 mt-1.5">${escapeHTML(worst.service_name)} · worst</div>
         </div>
-        <div class="border-t border-zinc-800/50 bg-black/20 px-4 py-3">
-            <div class="h-0.5 rounded-full overflow-hidden flex gap-0.5 mb-2.5">${barSegments}</div>
-            <div class="space-y-1.5">${breakdownRows}</div>
+        <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5">
+            <div class="h-0.5 rounded-full overflow-hidden flex gap-0.5 mb-3">${barSegments}</div>
+            <div class="space-y-1">${breakdownRows}</div>
         </div>
     </div>`;
 }

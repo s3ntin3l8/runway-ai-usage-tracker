@@ -116,7 +116,7 @@ class ChatGPTLocalMixin:
                         "remaining": f"{(100 - pct):.1f}%",
                         "unit": "remaining",
                         "reset": human_delta(reset_at),
-                        "health": "good" if pct < 80 else "warning",
+                        "health": "critical" if pct >= 90 else ("warning" if pct >= 80 else "good"),
                         "pace": PaceCalculator.estimate_longevity(pct, reset_at),
                         "detail": f"{pct:.1f}% used [CLI RPC]",
                         "used_value": pct,

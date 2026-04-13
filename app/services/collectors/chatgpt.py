@@ -31,7 +31,7 @@ class ChatGPTCollector(
     """
 
     PROVIDER_ID = "chatgpt"
-    DEFAULT_WINDOW_TYPE = "daily"
+    DEFAULT_WINDOW_TYPE = "weekly"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
