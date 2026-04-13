@@ -704,28 +704,28 @@ export function buildModalContent(item) {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
-                <span class="text-lg font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
+                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
+                <span class="text-2xl font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
-                <span class="text-lg font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
+                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
+                <span class="text-2xl font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
-                <span class="text-lg font-semibold text-zinc-200 mono">${resetTime}</span>
+                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
+                <span class="text-2xl font-semibold text-zinc-200 mono">${resetTime}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
-                <span class="text-lg font-bold ${sourceColor} mono">● ${sourceLabel}</span>
+                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
+                <span class="text-2xl font-bold ${sourceColor} mono">● ${sourceLabel}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                <span class="text-lg font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
+                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Account</span>
+                <span class="text-2xl font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
-                <span class="text-lg font-semibold text-zinc-200 mono">${updatedTime}</span>
+                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
+                <span class="text-2xl font-semibold text-zinc-200 mono">${updatedTime}</span>
             </div>
         </div>
 
