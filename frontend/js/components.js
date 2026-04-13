@@ -1276,21 +1276,21 @@ export function buildProviderModal(providerId, items, history) {
         return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4">
             <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
-                    <div class="text-sm font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
+                    <div class="text-base font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
                     <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        <span class="text-[10px] font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
+                        <span class="text-xs font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
-                        ${sourceLabel ? `<span class="text-[10px] text-zinc-500">${sourceLabel}</span>` : ''}
-                        ${paceIcon ? `<span class="text-sm">${paceIcon}</span>` : ''}
-                        ${item.pace ? `<span class="text-[10px] text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
+                        ${sourceLabel ? `<span class="text-xs text-zinc-500">${sourceLabel}</span>` : ''}
+                        ${paceIcon ? `<span class="text-base">${paceIcon}</span>` : ''}
+                        ${item.pace ? `<span class="text-xs text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
                     </div>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <span class="text-sm text-zinc-400">${trendArrow}</span>
+                    <span class="text-base text-zinc-400">${trendArrow}</span>
                     ${sparkSVG}
                 </div>
             </div>
-            <div class="flex justify-between text-xs text-zinc-400 mb-2">
+            <div class="flex justify-between text-sm text-zinc-400 mb-2">
                 <span class="font-medium">${usageText}</span>
                 <span>${resetText}</span>
             </div>
@@ -1304,7 +1304,7 @@ export function buildProviderModal(providerId, items, history) {
         <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
             <div>
                 <div class="text-xl font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
-                <div class="text-xs text-zinc-500 mt-1">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
+                <div class="text-sm text-zinc-500 mt-1">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
             </div>
             <button id="close-modal" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none mt-0.5 w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
         </div>
