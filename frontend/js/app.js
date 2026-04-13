@@ -1,6 +1,6 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar } from './components.js';
 import { updateCharts, setChartView as _setChartView, destroyCharts } from './charts.js';
 
 function escapeHTML(str) {
@@ -220,20 +220,26 @@ function renderGrid() {
         groups.get(key).push(item);
     });
 
-    // Sort provider sections alphabetically; __other__ always last
-    const sorted = [...groups.keys()].sort((a, b) =>
-        a === '__other__' ? 1 : b === '__other__' ? -1 : a.localeCompare(b)
-    );
+    // Sort: providers with worst health first, then alphabetically
+    const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
+    const sorted = [...groups.keys()].sort((a, b) => {
+        if (a === '__other__') return 1;
+        if (b === '__other__') return -1;
+        const aWorst = Math.max(...(groups.get(a).map(i => HEALTH_SEVERITY[i.health] || 0)));
+        const bWorst = Math.max(...(groups.get(b).map(i => HEALTH_SEVERITY[i.health] || 0)));
+        if (bWorst !== aWorst) return bWorst - aWorst;
+        return a.localeCompare(b);
+    });
 
     let html = '';
     let count = 0;
     for (const key of sorted) {
         const items = groups.get(key);
         try {
-            html += buildProviderSection(key, items);
+            html += buildProviderSummaryCard(key, items);
             count += items.length;
         } catch (e) {
-            console.error('Failed to render provider section:', key, e);
+            console.error('Failed to render provider card:', key, e);
         }
     }
 
@@ -241,9 +247,39 @@ function renderGrid() {
         html = '<p class="text-zinc-500 text-sm text-center py-8">No cards match active filters.</p>';
     }
 
-    grid.innerHTML = html;
+    // Provider cards use a responsive grid (not provider sections)
+    grid.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${html}</div>`;
     document.getElementById('footer-count').textContent = count;
 }
+
+/**
+ * Open the provider drill-down modal. Fetches 7d history for sparklines.
+ * Full implementation added in Task 4.
+ * @param {string} providerId
+ */
+window.openProviderModal = async function(providerId) {
+    const items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
+    if (!items.length) return;
+
+    const container = document.getElementById('modal-container');
+    const content = document.getElementById('modal-content');
+
+    // Show loading state immediately
+    content.innerHTML = `<div class="p-8 text-center text-zinc-500 text-sm animate-pulse">Loading ${escapeHTMLAttr(providerId)}…</div>`;
+    container.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    document.getElementById('modal-backdrop').onclick = closeModal;
+
+    // Placeholder — full implementation in Task 4
+    content.innerHTML = `<div class="p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold text-zinc-100">${escapeHTMLAttr(providerId)}</h2>
+            <button id="close-modal" onclick="closeModal()" class="text-zinc-500 hover:text-zinc-300">✕</button>
+        </div>
+        <p class="text-zinc-500 text-sm">${items.length} service(s) — full modal in Task 4</p>
+    </div>`;
+    document.getElementById('close-modal').onclick = closeModal;
+};
 
 function renderFilterPills() {
     const container = document.getElementById('filter-pills');
