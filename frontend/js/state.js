@@ -18,11 +18,16 @@ export const STATE = {
     githubAuth: { authenticated: false, account: null },
     data: [],
     // Dashboard context filter
-    activeFilter: JSON.parse(localStorage.getItem('runway_active_filter') || 'null'),
-    // { dimension: 'sidecar_id'|'account_label', value: 'string' } | null
+    activeFilter: (() => {
+        const stored = JSON.parse(localStorage.getItem('runway_active_filter') || 'null');
+        // Discard stale filters with old dimensions (e.g. 'window_type' from pre-redesign)
+        if (stored && !['account_label', 'sidecar_id', 'window_type'].includes(stored.dimension)) return null;
+        return stored;
+    })(),
+    // { dimension: 'sidecar_id'|'account_label'|'window_type', value: 'string' } | null
     filterDimension: (() => {
         const stored = localStorage.getItem('runway_filter_dimension');
-        return ['account_label', 'sidecar_id'].includes(stored) ? stored : 'account_label';
+        return ['account_label', 'sidecar_id', 'window_type'].includes(stored) ? stored : 'account_label';
     })()
 };
 
