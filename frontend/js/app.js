@@ -1,6 +1,7 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr } from './components.js';
+import { updateCharts, setChartView as _setChartView, destroyCharts } from './charts.js';
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -72,10 +73,17 @@ async function loadHistory() {
         
         html += '</tbody></table>';
         container.innerHTML = html;
+        updateCharts(history, STATE.chartView || 'bar');
     } catch (err) {
+        destroyCharts();
         container.innerHTML = `<p class="text-red-400">Failed to load history: ${err.message}</p>`;
     }
 }
+
+window.setChartView = function(view) {
+    STATE.chartView = view;
+    _setChartView(view);
+};
 
 async function loadSettings() {
     const container = document.getElementById('settings-content');
