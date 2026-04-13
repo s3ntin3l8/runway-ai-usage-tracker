@@ -80,6 +80,6 @@ class WebhookConfig(SQLModel, table=True):
     provider_id: str  # provider name e.g. "anthropic", or "*" for global
     threshold_pct: float  # 0.0–100.0, e.g. 90.0
     url: str  # Discord or Slack incoming webhook URL
-    channel: str  # "discord" or "slack"
+    channel: str  # "discord" or "slack" — validated by CRUD API at ingestion
     active: bool = Field(default=True)
     last_fired_at: Optional[datetime] = Field(default=None)  # None = reset/ready to fire

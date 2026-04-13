@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from sqlmodel import Session, select
 from app.models.db import WebhookConfig
 from app.models.schemas import LimitCard
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +14,12 @@ _HYSTERESIS = 0.85  # reset alert when usage drops below threshold * 0.85
 async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     """
     Check all active webhook configs against current card values.
-    Fires when used_pct >= threshold and last_fired_at is None.
-    Resets last_fired_at when usage drops below threshold * _HYSTERESIS.
+
+    For each config:
+    - Fire when ANY matched card has used_pct >= threshold and last_fired_at is None.
+    - Reset last_fired_at only when ALL matched cards are below threshold * _HYSTERESIS.
+    - Cards in the dead zone (hysteresis ≤ used_pct < threshold) neither fire nor reset.
+
     Provider-specific configs are evaluated before global '*' configs.
     """
     configs = session.exec(
@@ -41,27 +44,36 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
             else:
                 matched = card_by_provider.get(config.provider_id, [])
 
+            # Two-pass: categorise all cards before mutating state
+            breaching: list[tuple[LimitCard, float]] = []
+            all_recovered = True  # true until we find a card above hysteresis
+
             for card in matched:
                 if card.used_value is None or card.limit_value is None or card.limit_value == 0:
                     continue
 
                 used_pct = (card.used_value / card.limit_value) * 100.0
 
-                # Reset: usage recovered below hysteresis band
-                if used_pct < config.threshold_pct * _HYSTERESIS:
-                    if config.last_fired_at is not None:
-                        config.last_fired_at = None
-                        session.add(config)
-                    continue
+                if used_pct >= config.threshold_pct:
+                    breaching.append((card, used_pct))
+                    all_recovered = False
+                elif used_pct >= config.threshold_pct * _HYSTERESIS:
+                    # Dead zone: above hysteresis but below threshold — hold state
+                    all_recovered = False
 
-                # Fire: threshold crossed and no active breach recorded
-                if used_pct >= config.threshold_pct and config.last_fired_at is None:
-                    try:
-                        await _fire_webhook(client, config, card, used_pct)
-                        config.last_fired_at = datetime.now(timezone.utc)
-                        session.add(config)
-                    except Exception as e:
-                        logger.error(f"Webhook delivery failed for config {config.id}: {e}")
+            # Reset: every card has recovered below hysteresis
+            if all_recovered and config.last_fired_at is not None:
+                config.last_fired_at = None
+                session.add(config)
+            # Fire: at least one card is breaching and no active breach recorded
+            elif breaching and config.last_fired_at is None:
+                card, used_pct = max(breaching, key=lambda x: x[1])
+                try:
+                    await _fire_webhook(client, config, card, used_pct)
+                    config.last_fired_at = datetime.now(timezone.utc)
+                    session.add(config)
+                except Exception as e:
+                    logger.error(f"Webhook delivery failed for config {config.id}: {e}")
 
     session.commit()
 
