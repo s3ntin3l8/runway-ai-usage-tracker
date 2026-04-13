@@ -1299,3 +1299,70 @@ export function buildProviderModal(providerId, items, history) {
         <div class="space-y-3 max-h-[60vh] overflow-y-auto pr-1">${serviceRows}</div>
     </div>`;
 }
+
+/**
+ * Build the per-provider sparkline summary strip for the History tab.
+ * @param {Array} history - raw history snapshots
+ * @param {Set|null} activeProviders - Set of active provider IDs (null = all active)
+ * @returns {string} HTML string
+ */
+export function buildProviderSparklineStrip(history, activeProviders) {
+    if (!history || history.length === 0) return '';
+
+    // Group history by provider
+    const byProvider = new Map();
+    for (const s of history) {
+        if (typeof s.used_value !== 'number' || !isFinite(s.used_value)) continue;
+        const pid = s.provider_id || 'unknown';
+        if (!byProvider.has(pid)) byProvider.set(pid, []);
+        byProvider.get(pid).push(s);
+    }
+
+    if (byProvider.size === 0) return '';
+
+    const PROVIDER_HEX = {
+        anthropic: '#f59e0b', gemini: '#3b82f6', github: '#8b5cf6',
+        chatgpt: '#10b981', opencode: '#06b6d4', openrouter: '#ec4899',
+        minimax: '#14b8a6', ollama: '#94a3b8',
+    };
+
+    const cards = [...byProvider.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([pid, snaps]) => {
+        const icon = PROVIDER_ICONS[pid] || '🔧';
+        const color = PROVIDER_HEX[pid] || '#64748b';
+        const isActive = !activeProviders || activeProviders.has(pid);
+
+        // Build daily average series
+        const byDay = new Map();
+        for (const s of snaps) {
+            const day = s.timestamp.slice(0, 10);
+            if (!byDay.has(day)) byDay.set(day, { sum: 0, count: 0 });
+            const b = byDay.get(day);
+            b.sum += s.used_value;
+            b.count += 1;
+        }
+        const points = [...byDay.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([, b]) => ({ value: b.sum / b.count }));
+
+        const sparkSVG = buildSparklineSVG(points, color, 56, 24);
+        const trendArrow = getTrendArrow(points);
+        const latestValue = points.length > 0 ? points[points.length - 1].value.toFixed(0) : '—';
+        const trendColor = trendArrow === '↑' ? 'text-red-400' : trendArrow === '↓' ? 'text-green-400' : 'text-zinc-400';
+        const activeOpacity = isActive ? '' : 'opacity-40';
+
+        return `<div class="glass-panel border rounded-xl p-3 cursor-pointer select-none hover:opacity-90 transition-all ${activeOpacity}"
+                     style="border-color:${isActive ? color : '#27272a'};"
+                     onclick="toggleHistoryProvider('${escapeHTMLAttr(pid)}')">
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+                <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">${escapeHTML(icon)} ${escapeHTML(pid)}</span>
+                ${sparkSVG}
+            </div>
+            <div class="flex items-baseline gap-1">
+                <span class="text-sm font-black text-zinc-100">${latestValue}</span>
+                <span class="text-[10px] ${trendColor} font-bold">${trendArrow}</span>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">${cards}</div>`;
+}

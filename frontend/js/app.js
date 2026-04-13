@@ -1,6 +1,6 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, setChartView as _setChartView, destroyCharts } from './charts.js';
 
 function escapeHTML(str) {
@@ -8,6 +8,14 @@ function escapeHTML(str) {
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return str.replace(/[&<>"']/g, m => map[m]);
 }
+
+// History tab state
+const historyState = {
+    days: 7,
+    activeProviders: null, // null = all; Set<string> when filtering
+    metric: 'percent',     // 'percent' | 'tokens' | 'cost'
+};
+let _historyCache = [];
 
 // Auto-refresh timer reference
 let refreshTimer = null;
@@ -34,47 +42,73 @@ window.switchView = function(viewId) {
     if (viewId === 'fleet') loadFleet();
 }
 
+window.toggleHistoryProvider = function(pid) {
+    if (!historyState.activeProviders) {
+        // All active → select only this one
+        historyState.activeProviders = new Set([pid]);
+    } else if (historyState.activeProviders.has(pid)) {
+        historyState.activeProviders.delete(pid);
+        if (historyState.activeProviders.size === 0) historyState.activeProviders = null;
+    } else {
+        historyState.activeProviders.add(pid);
+    }
+    renderHistoryFromCache();
+};
+
+function renderHistoryFromCache() {
+    const history = _historyCache;
+    // Sparkline strip (all providers, shows active state)
+    const stripEl = document.getElementById('history-sparkline-strip');
+    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(history, historyState.activeProviders);
+
+    // Filter history for chart + table
+    let filtered = history;
+    if (historyState.activeProviders) {
+        filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
+    }
+    updateCharts(filtered, historyState.metric);
+
+    // Table
+    const container = document.getElementById('history-content');
+    if (!filtered || filtered.length === 0) {
+        container.innerHTML = '<p class="text-zinc-500 italic">No history data found.</p>';
+        return;
+    }
+    let html = `<table class="w-full text-left mono text-[11px]">
+        <thead class="text-zinc-600 border-b border-zinc-800/50">
+            <tr>
+                <th class="py-2 px-2">Time (UTC)</th>
+                <th class="py-2 px-2">Provider</th>
+                <th class="py-2 px-2">Service</th>
+                <th class="py-2 px-2 text-right">Usage</th>
+            </tr>
+        </thead>
+        <tbody class="text-zinc-400">`;
+    filtered.slice(0, 50).forEach(s => {
+        const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const usage = s.used_value !== null ? `${s.used_value.toLocaleString()}${s.unit_type === 'percent' ? '%' : ''}` : '—';
+        html += `<tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
+            <td class="py-2 px-2 text-zinc-600">${date}</td>
+            <td class="py-2 px-2 text-zinc-500">${escapeHTML(s.provider_id || '—')}</td>
+            <td class="py-2 px-2 font-medium text-zinc-300">${escapeHTML(s.service_name)}</td>
+            <td class="py-2 px-2 text-right font-bold text-zinc-400">${usage}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
 async function loadHistory() {
     const container = document.getElementById('history-content');
     container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
-    
+
     try {
-        const history = await fetchHistory();
-        if (!history || history.length === 0) {
-            container.innerHTML = '<p class="text-zinc-500 italic">No history snapshots found yet.</p>';
-            return;
-        }
-        
-        let html = `
-            <table class="w-full text-left mono text-[11px]">
-                <thead class="text-zinc-600 border-b border-zinc-800/50">
-                    <tr>
-                        <th class="py-2 px-2">Time (UTC)</th>
-                        <th class="py-2 px-2">Service</th>
-                        <th class="py-2 px-2 text-right">Usage</th>
-                    </tr>
-                </thead>
-                <tbody class="text-zinc-400">
-        `;
-        
-        history.slice(0, 50).forEach(s => {
-            const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-            const usage = s.used_value !== null ? `${s.used_value.toLocaleString()}${s.unit_type === 'percent' ? '%' : ''}` : '—';
-            html += `
-                <tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
-                    <td class="py-2 px-2 text-zinc-600">${date}</td>
-                    <td class="py-2 px-2 font-medium text-zinc-300">${s.service_name}</td>
-                    <td class="py-2 px-2 text-right font-bold text-zinc-400">${usage}</td>
-                </tr>
-            `;
-        });
-        
-        html += '</tbody></table>';
-        container.innerHTML = html;
-        updateCharts(history);
+        const history = await fetchHistory({ days: historyState.days, limit: 500 });
+        _historyCache = history || [];
+        renderHistoryFromCache();
     } catch (err) {
         destroyCharts();
-        container.innerHTML = `<p class="text-red-400">Failed to load history: ${err.message}</p>`;
+        container.innerHTML = `<p class="text-red-400">Failed to load history: ${escapeHTML(err.message)}</p>`;
     }
 }
 
