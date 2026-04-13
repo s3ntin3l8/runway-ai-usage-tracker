@@ -1020,8 +1020,7 @@ export function buildHealthBar(data) {
     for (const item of data) {
         if (counts[item.health] !== undefined) counts[item.health]++;
     }
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    if (total === 0) return '';
+    if (data.length === 0) return '';
 
     const tiles = [
         { key: 'critical',  label: 'Critical',  textColor: 'text-red-400',    border: 'border-red-900/50',    bg: 'bg-red-950/20'    },
@@ -1039,7 +1038,7 @@ export function buildHealthBar(data) {
 
     const barSegments = tiles
         .filter(t => counts[t.key] > 0)
-        .map(t => `<div style="flex:${counts[t.key]};background:${BAR_HEX[t.key]};border-radius:2px;"></div>`)
+        .map(t => `<div style="flex:${counts[t.key]};background:${BAR_HEX[t.key]};"></div>`)
         .join('');
 
     return `<div class="mb-6">
