@@ -18,13 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fleet Registry & Token Health (Phase 4)**: Improved fleet management, status tracking for multi-host deployments, and real-time health checks for cached credentials.
 - **Instant-Cache Serving (Phase 4)**: Optimized poller and collector management for faster dashboard loading.
 - **Modernized CI/CD Infrastructure**:
-    - Integrated **Ruff** for lightning-fast linting and code formatting.
-    - Integrated **Mypy** for static type analysis across the core application.
-    - Added **Safety** for automated dependency vulnerability scanning.
-    - Added **Hadolint** for Dockerfile linting.
-    - Added **Frontend Check** to verify CSS builds in pipeline.
+    - Integrated **Ruff** for linting and formatting, **Mypy** for type analysis.
+    - Added **pip-audit** for dependency vulnerability scanning (no API key required).
+    - Added **Hadolint** for Dockerfile linting and **Frontend Check** for CSS builds.
+    - Added **Dependabot** for automated weekly updates (actions, pip, npm).
+    - Added **Codecov** integration with coverage thresholds (63% project, 70% patch).
+    - Added concurrency groups (cancel stale PR runs) and job timeouts.
+    - Added **Makefile** with `install`, `dev`, `test`, `lint`, `format`, `css`, `sidecar`, `clean` targets.
     - Implemented `pyproject.toml` for centralized tool configuration.
     - Reorganized `.gitignore` and `.dockerignore` for better repository hygiene.
+- **Test Coverage**: Added 82 new tests (317 total); coverage improved from 65% → 69%.
+    - New: `test_token_refresher.py`, `test_builder.py`, `test_utils.py`.
+    - Fixed 4 stale patch targets broken by the `oauth_base` refactor.
 
 ### Changed
 - Refined Dashboard UI with glassmorphism aesthetics and improved interactive feedback.
