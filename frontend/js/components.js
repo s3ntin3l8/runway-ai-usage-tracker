@@ -1087,12 +1087,12 @@ export function buildProviderSummaryCard(providerId, items) {
         ? '∞'
         : worstPct != null
         ? `${worstPct.toFixed(1)}%`
-        : escapeHTML(worst.remaining || '—');
+        : escapeHTML(String(worst.remaining ?? '—'));
 
     const worstColor = worst.is_unlimited ? 'text-violet-400' : h.badge || 'text-zinc-50';
 
     // Tier badge (first item's tier — same account = same tier)
-    const tier = items[0]?.tier;
+    const tier = worst.tier;
     const tierBadgeHTML = tier ? getTierBadge(tier) : '';
 
     // Account labels
@@ -1125,7 +1125,7 @@ export function buildProviderSummaryCard(providerId, items) {
         if (!item.is_unlimited && item.used_value != null && item.limit_value > 0) {
             pct = (item.used_value / item.limit_value) * 100;
         }
-        const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(item.remaining || '—');
+        const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
         const rowTier = item.tier ? `<span class="text-[7px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 mr-0.5">${escapeHTML(item.tier.toUpperCase().slice(0,3))}</span>` : '';
         return `<div class="flex justify-between items-center text-[9px]">
             <span class="flex items-center gap-1.5 min-w-0">
