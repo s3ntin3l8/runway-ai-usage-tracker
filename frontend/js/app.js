@@ -353,7 +353,7 @@ function renderFilterPills() {
     if (!container) return;
 
     const dim = STATE.filterDimension;
-    const WINDOW_ORDER = ['session', 'weekly', 'biweekly', 'monthly', 'prepaid', 'unknown'];
+    const WINDOW_ORDER = ['session', 'daily', 'weekly', 'biweekly', 'monthly', 'prepaid', 'unknown'];
     const rawValues = [...new Set(STATE.data.map(i => i[dim]).filter(Boolean))];
     const values = dim === 'window_type'
         ? rawValues.sort((a, b) => {
