@@ -285,7 +285,7 @@ class AnthropicWebMixin:
                 or account_data.get("subscription")
                 or ""
             )
-            logger.debug(f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}")
+            logger.warning(f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}")
         if not plan and org_data:
             # Org response sometimes has plan/capabilities info
             plan = (
@@ -296,7 +296,7 @@ class AnthropicWebMixin:
                 or ""
             )
             if plan:
-                logger.debug(f"Anthropic tier from org_data: plan={plan!r}")
+                logger.warning(f"Anthropic tier from org_data: plan={plan!r}")
         tier = plan.capitalize() if plan else None
 
         # All four core windows — show even if API returns null (mirrors OAuth path behaviour)

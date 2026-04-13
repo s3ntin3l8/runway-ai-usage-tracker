@@ -75,7 +75,7 @@ function getTierBadge(tier) {
         classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50';
     }
 
-    return `<span class="text-[8px] font-bold px-1 py-0.5 rounded border leading-none uppercase tracking-tighter self-start ${classes}">${escapeHTML(tier)}</span>`;
+    return `<span class="text-[8px] font-bold px-1 py-0.5 rounded border leading-none uppercase tracking-tighter ${classes}">${escapeHTML(tier)}</span>`;
 }
 
 /**
@@ -272,11 +272,12 @@ function formatResetDisplay(resetAt) {
             return formatHumanDelta(date);
         }
 
-        // If <= 24h, show local time (like "Resets at 10:43")
+        // If <= 24h, show local time (like "Resets at 10:43 UTC")
         const timeStr = date.toLocaleTimeString(undefined, {
             hour: '2-digit',
             minute: '2-digit',
-            hour12: undefined
+            hour12: undefined,
+            timeZoneName: 'short'
         });
         return `Resets at ${timeStr}`;
     } catch (e) {
@@ -568,40 +569,43 @@ export function buildCard(item) {
         : '';
 
     return `
-        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl overflow-hidden relative flex flex-col cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
             ${sourceBadge}
-            <!-- Header row -->
-            <div class="flex items-start justify-between gap-2">
-                <div class="flex items-center gap-2 min-w-0">
-                    <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
-                    <div class="flex flex-col">
-                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service_name)}</span>
-                        ${getTierBadge(item.tier)}
+            <!-- Top zone -->
+            <div class="p-5 flex flex-col gap-3 flex-1">
+                <!-- Header row -->
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
+                        <div class="flex flex-col">
+                            <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service_name)}</span>
+                            ${getTierBadge(item.tier)}
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <div class="dot ${h.dot}"></div>
+                        <span class="text-xs font-bold ${h.badge} mono">${h.label}</span>
                     </div>
                 </div>
-                <div class="flex items-center gap-1.5 shrink-0">
-                    <div class="dot ${h.dot}"></div>
-                    <span class="text-xs font-bold ${h.badge} mono">${h.label}</span>
-                </div>
-            </div>
 
-            ${progressBar}
+                ${progressBar}
 
-            <!-- Main value with pace icon -->
-            <div class="mt-1">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-baseline gap-1.5 flex-wrap">
-                        ${mainDisplay}${unitLabel}
-                    </div>
-                    ${paceIcon}
-                </div>
+                <!-- Main value with pace icon -->
                 <div class="mt-1">
-                    ${subtitle}
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-baseline gap-1.5 flex-wrap">
+                            ${mainDisplay}${unitLabel}
+                        </div>
+                        ${paceIcon}
+                    </div>
+                    <div class="mt-1">
+                        ${subtitle}
+                    </div>
                 </div>
             </div>
 
-            <!-- Reset footer -->
-            <div class="mt-auto pt-3 border-t border-zinc-800/60 flex items-center justify-between">
+            <!-- Reset footer (bottom zone with distinct bg) -->
+            <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5 flex items-center justify-between">
                 <span class="text-xs text-zinc-600 mono font-medium">RESETS</span>
                 ${resetElement}
             </div>
@@ -676,7 +680,7 @@ export function buildModalContent(item) {
             
             <div class="mt-6 flex flex-col gap-2">
                 <div class="flex items-baseline justify-between">
-                    <span class="text-5xl font-black tracking-tighter text-zinc-50">
+                    <span class="text-6xl font-black tracking-tighter text-zinc-50">
                         ${isUnlimited ? '∞' : (usedPct ? usedPct.toFixed(1) + '%' : escapeHTML(item.remaining))}
                     </span>
                     <span class="text-sm font-bold text-zinc-500 mono uppercase">${isUnlimited ? 'Unlimited Capacity' : 'Used Capacity'}</span>
@@ -693,27 +697,27 @@ export function buildModalContent(item) {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
-                <span class="text-sm font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
+                <span class="text-base font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
-                <span class="text-sm font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
+                <span class="text-base font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
-                <span class="text-sm font-semibold text-zinc-200 mono">${resetTime}</span>
+                <span class="text-base font-semibold text-zinc-200 mono">${resetTime}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
-                <span class="text-sm font-bold ${sourceColor} mono">● ${sourceLabel}</span>
+                <span class="text-base font-bold ${sourceColor} mono">● ${sourceLabel}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                <span class="text-sm font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
+                <span class="text-base font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
-                <span class="text-sm font-semibold text-zinc-200 mono">${updatedTime}</span>
+                <span class="text-base font-semibold text-zinc-200 mono">${updatedTime}</span>
             </div>
         </div>
 

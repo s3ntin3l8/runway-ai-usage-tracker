@@ -266,9 +266,18 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             ]
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
-        """Extract account identity string from OAuth API response."""
+        """Extract account identity string from OAuth API response or credentials file."""
         if not data:
             return ""
+
+        # .claude.json credentials structure: oauthAccount.emailAddress
+        oauth_account = data.get("oauthAccount", {})
+        if oauth_account:
+            email = oauth_account.get("emailAddress", "") or oauth_account.get("email", "")
+            if email:
+                return email
+
+        # OAuth API response structure: account.email / account.organization
         account = data.get("account", {})
         email = account.get("email", "")
         org = account.get("organization", "")
