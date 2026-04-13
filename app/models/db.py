@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from sqlmodel import SQLModel, Field, create_engine, Session, select
 import json
 
@@ -43,3 +43,30 @@ class UsageSnapshot(SQLModel, table=True):
     def raw_metadata(self, value: Dict[str, Any]):
         """Encrypt and serialize metadata."""
         self.raw_metadata_json = encryption_service.encrypt_json(value)
+
+
+class SidecarRegistry(SQLModel, table=True):
+    """Persistent registry of known sidecars that have sent data."""
+    __tablename__ = "sidecar_registry"
+
+    sidecar_id: str = Field(primary_key=True)
+    hostname: Optional[str] = None          # socket.gethostname() from sidecar
+    custom_name: Optional[str] = None       # User-assigned display name
+    tags_json: Optional[str] = Field(default=None)  # JSON array stored as string
+    last_seen: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), index=True
+    )
+    first_seen: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    last_ip: Optional[str] = None
+    error_count: int = Field(default=0)
+    ingest_count: int = Field(default=0)
+
+    @property
+    def tags(self) -> List[str]:
+        return json.loads(self.tags_json) if self.tags_json else []
+
+    @tags.setter
+    def tags(self, value: List[str]):
+        self.tags_json = json.dumps(value)

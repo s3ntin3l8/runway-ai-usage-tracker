@@ -31,6 +31,7 @@
                 <nav class="flex items-center gap-6 ml-5">
                     <button onclick="switchView('dashboard')" class="nav-link active" id="nav-dashboard">Dashboard</button>
                     <button onclick="switchView('history')" class="nav-link" id="nav-history">History</button>
+                    <button onclick="switchView('fleet')" class="nav-link" id="nav-fleet">Fleet</button>
                     <button onclick="switchView('settings')" class="nav-link" id="nav-settings">Settings</button>
                 </nav>
             </div>
@@ -68,8 +69,19 @@
                     > Connection refused.
                 </div>
 
-                <!-- Grid -->
-                <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+                <!-- Context filter bar -->
+                <div id="filter-bar" class="mb-5 flex flex-col gap-2">
+                    <div class="flex gap-2 items-center">
+                        <span class="text-[10px] text-zinc-600 uppercase tracking-wide">Filter by</span>
+                        <button class="dim-btn" data-dim="sidecar_id" onclick="setFilterDimension('sidecar_id')">Source</button>
+                        <button class="dim-btn" data-dim="account_label" onclick="setFilterDimension('account_label')">Account</button>
+                        <button class="dim-btn" data-dim="window_type" onclick="setFilterDimension('window_type')">Window</button>
+                    </div>
+                    <div id="filter-pills" class="flex flex-wrap gap-1.5"></div>
+                </div>
+
+                <!-- Grid (provider-grouped, no fixed grid classes — JS handles layout per section) -->
+                <div id="grid"></div>
             </section>
 
             <!-- History View -->
@@ -84,6 +96,19 @@
                 </div>
             </section>
 
+            <!-- Fleet View -->
+            <section id="view-fleet" class="view hidden">
+                <div class="mb-6">
+                    <h2 class="text-xl font-bold text-zinc-100 flex items-center gap-2">
+                        <span class="text-violet-400">🖥️</span> Sidecar Fleet
+                    </h2>
+                    <p class="text-xs text-zinc-600 mt-1">Sidecars that have sent at least one ingest payload to this server.</p>
+                </div>
+                <div id="fleet-content">
+                    <!-- Fleet cards will be injected here -->
+                </div>
+            </section>
+
             <!-- Settings View -->
             <section id="view-settings" class="view hidden">
                 <div class="glass-panel rounded-3xl p-8 max-w-2xl mx-auto">
@@ -93,6 +118,7 @@
                     <div id="settings-content" class="space-y-6">
                         <!-- Settings will be injected here -->
                     </div>
+                    <div id="settings-extra"></div>
                 </div>
             </section>
         </main>

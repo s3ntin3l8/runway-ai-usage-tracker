@@ -76,6 +76,9 @@ class Settings:
     KIMI_API_KEY: str = os.getenv("KIMI_API_KEY", "")
     KIMI_AUTH_TOKEN: str = os.getenv("KIMI_AUTH_TOKEN", "")
     INGEST_API_KEY: str = os.getenv("INGEST_API_KEY", DEFAULT_INGEST_API_KEY)
+    # Optional key to protect mutation endpoints (PATCH/DELETE sidecars, token refresh).
+    # If unset, mutation endpoints are open (local-first default).
+    ADMIN_API_KEY: Optional[str] = os.getenv("ADMIN_API_KEY") or None
 
     @property
     def INGEST_API_KEY_IS_INSECURE_DEFAULT(self) -> bool:

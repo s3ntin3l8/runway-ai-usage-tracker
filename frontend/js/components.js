@@ -18,6 +18,45 @@ function escapeHTML(str) {
 }
 
 /**
+ * Escapes a value for safe use inside an HTML attribute (e.g. onclick="setFilter('...')")
+ * Escapes single quotes and backslashes only — output is safe to wrap in single quotes.
+ * @param {string} str
+ * @returns {string}
+ */
+export function escapeHTMLAttr(str) {
+    if (!str) return '';
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+const PROVIDER_ICONS = {
+    anthropic: '🟠', gemini: '✨', github: '🐙', chatgpt: '🤖',
+    openrouter: '🚀', opencode: '⚡', ollama: '🦙', minimax: '💎',
+    kimi_api: '🌊', kimi_coding: '💻', zai_api: '🔮', zai_plan: '📋',
+    antigravity: '🪐',
+};
+
+/**
+ * Build HTML for a provider section grouping multiple cards
+ * @param {string} providerId - Provider identifier or '__other__'
+ * @param {Array} items - Limit card data items for this provider
+ * @returns {string} HTML string for the provider section
+ */
+export function buildProviderSection(providerId, items) {
+    const title = providerId === '__other__' ? 'Other' : providerId;
+    const icon = PROVIDER_ICONS[providerId] || '🔧';
+    const cards = items.map(buildCard).filter(Boolean).join('');
+    if (!cards) return '';
+    return `<div class="provider-section mb-8">
+        <div class="flex items-center gap-2 mb-3 pb-2 border-b border-zinc-800/40">
+            <span>${icon}</span>
+            <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${escapeHTML(title)}</h3>
+            <span class="text-[10px] text-zinc-600 mono">${items.length}</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${cards}</div>
+    </div>`;
+}
+
+/**
  * Returns a styled tier badge based on the tier name
  * @param {string} tier - Tier name (Free, Pro, Team, etc.)
  * @returns {string} HTML for the badge, or empty string if no tier
@@ -524,8 +563,13 @@ export function buildCard(item) {
         </div>
     ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(resetDisplay)}</span>`;
 
+    const sourceBadge = item.sidecar_id
+        ? `<div class="source-badge" title="${escapeHTML(item.sidecar_id)}">${escapeHTML(item.sidecar_id[0].toUpperCase())}</div>`
+        : '';
+
     return `
         <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+            ${sourceBadge}
             <!-- Header row -->
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
@@ -825,4 +869,125 @@ export function buildGitHubOAuthModal(data, error = null) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Build HTML for the token health panel in Settings
+ * @param {Array} tokens - Array of token health objects from /api/v1/system/token-health
+ * @returns {string} HTML string for the panel
+ */
+export function buildTokenHealthPanel(tokens) {
+    if (!tokens || tokens.length === 0) {
+        return `<div class="mt-8 pt-6 border-t border-zinc-800/80">
+            <h3 class="text-sm font-bold text-zinc-300 mb-3 flex items-center gap-2"><span>🔑</span> Token Health</h3>
+            <p class="text-xs text-zinc-600 italic">No active credentials in cache.</p>
+        </div>`;
+    }
+
+    const STATUS_STYLES = {
+        valid:    { badge: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'VALID' },
+        expiring: { badge: 'text-amber-400 bg-amber-500/10 border-amber-500/20', label: 'EXPIRING' },
+        expired:  { badge: 'text-red-400 bg-red-500/10 border-red-500/20', label: 'EXPIRED' },
+        unknown:  { badge: 'text-zinc-500 bg-zinc-800/50 border-zinc-700/50', label: 'UNKNOWN' },
+    };
+
+    const rows = tokens.map(t => {
+        const s = STATUS_STYLES[t.status] || STATUS_STYLES.unknown;
+        const label = t.account_label || t.account_id;
+        const types = (t.token_types || []).map(k => `<span class="tag-pill">${escapeHTML(k)}</span>`).join('');
+        const expiryStr = t.expires_at
+            ? new Date(t.expires_at).toLocaleString()
+            : t.ttl_remaining_seconds > 0
+            ? `cache TTL ${t.ttl_remaining_seconds}s`
+            : '';
+
+        const refreshBtn = (t.can_refresh && t.status !== 'valid') ? `
+            <button onclick="window.refreshToken('${escapeHTMLAttr(t.provider)}', '${escapeHTMLAttr(t.account_id)}')"
+                    class="text-[9px] font-bold px-2 py-0.5 rounded border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-all uppercase tracking-wider">
+                REFRESH
+            </button>` : '';
+
+        return `
+        <div class="flex items-center justify-between gap-2 py-3 border-b border-zinc-800/40 last:border-0">
+            <div class="flex flex-col min-w-0">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-zinc-200 mono">${escapeHTML(t.provider)}</span>
+                    <span class="text-[10px] text-zinc-500">${escapeHTML(label)}</span>
+                </div>
+                <div class="flex flex-wrap gap-1 mt-1">${types}</div>
+                ${expiryStr ? `<span class="text-[10px] text-zinc-600 mono mt-0.5">${escapeHTML(expiryStr)}</span>` : ''}
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+                ${refreshBtn}
+                <span class="text-[9px] font-bold px-2 py-0.5 rounded border ${s.badge} uppercase tracking-wider">${s.label}</span>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div class="mt-8 pt-6 border-t border-zinc-800/80">
+        <h3 class="text-sm font-bold text-zinc-300 mb-3 flex items-center gap-2"><span>🔑</span> Token Health</h3>
+        <div>${rows}</div>
+    </div>`;
+}
+
+/**
+ * Build HTML for the fleet view showing all registered sidecars
+ * @param {Array} sidecars - Array of sidecar registry objects
+ * @returns {string} HTML string for the fleet view
+ */
+export function buildFleetView(sidecars) {
+    if (!sidecars || sidecars.length === 0) {
+        return `<div class="empty-state text-center py-16 text-zinc-600 text-sm">No sidecars registered yet. Start a sidecar to see it here.</div>`;
+    }
+
+    const rows = sidecars.map(s => {
+        const now = Date.now();
+        const lastSeen = s.last_seen ? new Date(s.last_seen) : null;
+        const ageMs = lastSeen ? now - lastSeen.getTime() : Infinity;
+        let dotClass, dotTitle;
+        if (ageMs < 30 * 60 * 1000) {
+            dotClass = 'dot-good'; dotTitle = 'Active (seen < 30m ago)';
+        } else if (ageMs < 2 * 60 * 60 * 1000) {
+            dotClass = 'dot-warning'; dotTitle = 'Idle (seen < 2h ago)';
+        } else {
+            dotClass = 'dot-unknown'; dotTitle = 'Stale';
+        }
+
+        const displayName = s.custom_name || s.hostname || s.sidecar_id;
+        const tags = (s.tags || []).map(t => `<span class="tag-pill">${escapeHTML(t)}</span>`).join('');
+        const lastSeenStr = lastSeen ? lastSeen.toLocaleString() : '—';
+
+        return `
+        <div class="glass-panel rounded-2xl p-5 flex flex-col gap-3" data-sidecar="${escapeHTML(s.sidecar_id)}">
+            <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div class="dot ${dotClass}" title="${dotTitle}"></div>
+                    <div class="flex flex-col min-w-0">
+                        <span class="fleet-name text-sm font-bold text-zinc-100 truncate cursor-pointer hover:text-violet-300 transition-colors"
+                              onclick="window.editSidecarName('${escapeHTMLAttr(s.sidecar_id)}')"
+                              title="Click to rename">${escapeHTML(displayName)}</span>
+                        <span class="text-[10px] text-zinc-600 mono truncate">${escapeHTML(s.sidecar_id)}</span>
+                    </div>
+                </div>
+                <button onclick="window.deleteSidecar('${escapeHTMLAttr(s.sidecar_id)}')"
+                        class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                        title="Remove sidecar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
+                </button>
+            </div>
+            <div class="flex flex-wrap gap-1 items-center">
+                ${tags}
+                <button onclick="window.addSidecarTag('${escapeHTMLAttr(s.sidecar_id)}')"
+                        class="text-[9px] font-bold text-zinc-600 hover:text-violet-400 px-1.5 py-0.5 rounded border border-dashed border-zinc-700 hover:border-violet-500/50 transition-all">+ TAG</button>
+            </div>
+            <div class="pt-2 border-t border-zinc-800/60 grid grid-cols-2 gap-2 text-[10px] text-zinc-500 mono">
+                <div><span class="text-zinc-600">LAST SEEN</span><br/>${escapeHTML(lastSeenStr)}</div>
+                <div><span class="text-zinc-600">INGESTS</span><br/>${s.ingest_count ?? 0}</div>
+                <div><span class="text-zinc-600">IP</span><br/>${escapeHTML(s.last_ip || '—')}</div>
+                <div><span class="text-zinc-600">ERRORS</span><br/>${s.error_count ?? 0}</div>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${rows}</div>`;
 }

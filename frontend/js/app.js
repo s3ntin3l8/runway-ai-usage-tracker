@@ -1,6 +1,12 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr } from './components.js';
+
+function escapeHTML(str) {
+    if (!str) return '';
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return str.replace(/[&<>"']/g, m => map[m]);
+}
 
 // Auto-refresh timer reference
 let refreshTimer = null;
@@ -24,6 +30,7 @@ window.switchView = function(viewId) {
     if (viewId === 'dashboard' && STATE.data.length === 0) loadData();
     if (viewId === 'history') loadHistory();
     if (viewId === 'settings') loadSettings();
+    if (viewId === 'fleet') loadFleet();
 }
 
 async function loadHistory() {
@@ -105,36 +112,165 @@ async function loadSettings() {
                 <strong>Tip:</strong> You can still use <code class="bg-blue-900/40 px-1 rounded">.env</code> for core configuration. This UI will eventually allow real-time changes.
             </div>
         `;
+        // Append token health panel
+        try {
+            const health = await fetchTokenHealth();
+            const extra = document.getElementById('settings-extra');
+            if (extra) extra.innerHTML = buildTokenHealthPanel(health.tokens);
+        } catch (err) {
+            // Non-critical — silently skip if token health unavailable
+            console.warn('Token health unavailable:', err.message);
+        }
     } catch (err) {
         container.innerHTML = `<p class="text-red-400">Failed to load settings: ${err.message}</p>`;
     }
 }
 
+window.refreshToken = async function(provider, accountId) {
+    try {
+        const d = await postTokenRefresh(provider, accountId);
+        if (d.status === 'refreshed') loadSettings();
+        else alert('Refresh reported non-success: ' + JSON.stringify(d));
+    } catch (err) {
+        alert('Token refresh failed: ' + err.message);
+    }
+};
+
+async function loadFleet() {
+    const container = document.getElementById('fleet-content');
+    if (!container) return;
+    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading fleet...</p>';
+    try {
+        const data = await fetchFleet();
+        container.innerHTML = buildFleetView(data.sidecars);
+    } catch (err) {
+        container.innerHTML = `<p class="text-red-400">Failed to load fleet: ${escapeHTML(err.message)}</p>`;
+    }
+}
+
+window.editSidecarName = async function(sidecarId) {
+    const newName = prompt('Enter a custom name for this sidecar:', '');
+    if (newName === null) return; // cancelled
+    try {
+        await patchSidecar(sidecarId, { custom_name: newName.trim() || null });
+        loadFleet();
+    } catch (err) {
+        alert('Failed to rename: ' + err.message);
+    }
+};
+
+window.addSidecarTag = async function(sidecarId) {
+    const tag = prompt('Enter a tag for this sidecar:');
+    if (!tag || !tag.trim()) return;
+    try {
+        // Fetch current tags first, then append
+        const fleet = await fetchFleet();
+        const sidecar = fleet.sidecars.find(s => s.sidecar_id === sidecarId);
+        const tags = [...(sidecar?.tags || []), tag.trim()];
+        await patchSidecar(sidecarId, { tags });
+        loadFleet();
+    } catch (err) {
+        alert('Failed to add tag: ' + err.message);
+    }
+};
+
+window.deleteSidecar = async function(sidecarId) {
+    if (!confirm(`Remove sidecar "${sidecarId}" from the registry?`)) return;
+    try {
+        await deleteSidecarAPI(sidecarId);
+        loadFleet();
+    } catch (err) {
+        alert('Failed to delete: ' + err.message);
+    }
+};
+
 /**
  * Render quota cards to the grid
- * Builds HTML from STATE.data and populates the grid element
- * Gracefully handles individual card rendering errors
+ * Builds HTML from STATE.data and populates the grid element.
+ * Cards are grouped by provider_id and filtered by the active context filter.
  */
+function applyFilters(data) {
+    const f = STATE.activeFilter;
+    return data.filter(item => {
+        if (f && item[f.dimension] !== f.value) return false;
+        const isDisabled = STATE.disabledServices.includes(item.service_name);
+        return !isDisabled || STATE.showHidden;
+    });
+}
+
 function renderGrid() {
     const grid = document.getElementById('grid');
+
+    const visible = applyFilters(STATE.data);
+
+    // Group by provider_id; cards without a provider_id go to '__other__'
+    const groups = new Map();
+    visible.forEach(item => {
+        const key = item.provider_id || '__other__';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+    });
+
+    // Sort provider sections alphabetically; __other__ always last
+    const sorted = [...groups.keys()].sort((a, b) =>
+        a === '__other__' ? 1 : b === '__other__' ? -1 : a.localeCompare(b)
+    );
+
     let html = '';
     let count = 0;
-
-    STATE.data.forEach(item => {
+    for (const key of sorted) {
+        const items = groups.get(key);
         try {
-            const cardHtml = buildCard(item);
-            if (cardHtml) {
-                html += cardHtml;
-                count++;
-            }
+            html += buildProviderSection(key, items);
+            count += items.length;
         } catch (e) {
-            console.error("Failed to render card for:", item, e);
+            console.error('Failed to render provider section:', key, e);
         }
-    });
+    }
+
+    if (!html) {
+        html = '<p class="text-zinc-500 text-sm text-center py-8">No cards match active filters.</p>';
+    }
 
     grid.innerHTML = html;
     document.getElementById('footer-count').textContent = count;
 }
+
+function renderFilterPills() {
+    const container = document.getElementById('filter-pills');
+    if (!container) return;
+
+    const dim = STATE.filterDimension;
+    const values = [...new Set(STATE.data.map(i => i[dim]).filter(Boolean))].sort();
+    const active = STATE.activeFilter?.value;
+
+    const pills = [`<button class="pill${!active ? ' pill-active' : ''}" onclick="setFilter(null)">All</button>`];
+    values.forEach(v => {
+        pills.push(`<button class="pill${active === v ? ' pill-active' : ''}" onclick="setFilter('${escapeHTMLAttr(v)}')">${escapeHTML(v)}</button>`);
+    });
+    container.innerHTML = pills.join('');
+
+    // Highlight active dimension button
+    document.querySelectorAll('.dim-btn').forEach(btn => {
+        btn.classList.toggle('dim-btn-active', btn.dataset.dim === dim);
+    });
+}
+
+window.setFilter = function(value) {
+    STATE.activeFilter = value ? { dimension: STATE.filterDimension, value } : null;
+    localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
+    renderFilterPills();
+    renderGrid();
+};
+
+window.setFilterDimension = function(dim) {
+    STATE.filterDimension = dim;
+    STATE.activeFilter = null;
+    localStorage.setItem('runway_filter_dimension', dim);
+    localStorage.removeItem('runway_active_filter');
+    renderFilterPills();
+    renderGrid();
+};
 
 /**
  * Toggle a configuration option in the global state
@@ -431,6 +567,7 @@ async function loadData() {
         const json = await fetchLimits();
         if (myGeneration !== loadDataGeneration) return; // discard stale response
         STATE.data = json.limits;
+        renderFilterPills();
         renderGrid();
 
         const now = new Date();

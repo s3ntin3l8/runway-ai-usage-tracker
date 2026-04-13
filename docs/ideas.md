@@ -245,7 +245,7 @@ The ingest endpoint silently rejects payloads where `|server_time - sidecar_time
 
 ---
 
-## Phase 3 — Architecture Health ✅ Complete (2026-04-13) ✅ Complete (2026-04-12)
+## Phase 3 — Architecture Health ✅ Complete (2026-04-13)
 
 Refactoring and cleanup to reduce technical debt before building advanced features on top.
 
@@ -281,52 +281,46 @@ Move all existing routes under a `/api/v1/` prefix to establish a stable integra
 
 ---
 
-## Phase 4 — Platform Evolution
+## Phase 4 — Platform Evolution ✅ Complete (2026-04-13)
 
 Features that build on the stateful core to deliver the full Runway experience.
 
 ### 4A. Context-Aware Dashboard Reorganization
-**Effort:** Medium | **Status:** Architecture Approved (April 2026)
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-13)
 **Depends on:** Phase 0 (`provider_id` must be a top-level field)
 
-As the number of providers, sidecars, and multi-account configurations grows, the flat grid will be reorganized into a structured hierarchy.
-
-*   **Grouping by Provider (Sectioned Grid):** Transition from a single flat grid to horizontal sections grouped by `provider_id`, each with its own header and logo.
-*   **Context Filters:** Segmented control pills at the top of the dashboard (e.g., `[All]`, `[Work]`, `[Personal Laptop]`, `[Alice's Account]`) to instantly filter visible cards based on sidecar tags or account profiles.
-*   **Visual Badging & Avatars:** Elegant corner badges or tiny avatars to identify card sources (e.g., a laptop icon for a specific sidecar, or an initial for a user account) without breaking the glassmorphism aesthetic.
+*   **Grouping by Provider (Sectioned Grid):** Cards grouped by `provider_id` under collapsible section headers with provider icons and card counts.
+*   **Context Filter Pills:** Dimension picker (Source / Account / Window) above the grid with auto-generated pills from live data. Active filter persists across page reloads via `localStorage`.
+*   **Source Badge:** Small circular initial badge on each card showing the originating `sidecar_id`.
 
 ---
 
 ### 4B. Sidecar Fleet Management
-**Effort:** Medium | **Status:** Planned
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-13)
 **Depends on:** Phase 1 (SQLite for config storage), Phase 0 (`sidecar_id` field)
 
-*   **Sidecar Registry:** A UI overview of all remote machines sending data to the central Runway instance.
-*   **Centralized Remote Configuration:** Control which APIs and log files each sidecar monitors from the Runway Settings UI. Sidecars pull their specific configuration profile from the server upon connection.
-*   **Environment/Project Tagging:** Allow users to assign tags to sidecars (e.g., `Work_Laptop`, `Personal_Desktop`) to enable history filtering and accurate cost center reporting.
-*   **Advanced Auth:** Support for rotating secrets or OIDC-based tokens for high-security multi-host deployments.
+*   **Persistent Registry:** `sidecar_registry` SQLite table auto-registers sidecars on first ingest. Tracks `last_seen`, `first_seen`, `ingest_count`, `last_ip`, `error_count`.
+*   **Fleet UI Tab:** Cards per sidecar with activity status dot (green/amber/grey by last-seen recency), tag pills, custom name inline-edit, and delete.
+*   **CRUD API:** `GET/PATCH/DELETE /api/v1/fleet/sidecars/{id}` with optional `ADMIN_API_KEY` guard.
 
 ---
 
 ### 4C. Background Refresh & "Instant-Cache" Serving
-**Effort:** Medium | **Status:** Future
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-13)
 **Depends on:** Phase 1 (SQLite)
 
-The current poll cycle is blocking; the UI waits for the backend to finish collecting everything.
-
-*   **Background Loop:** Move active collection into a persistent background task. This loop also runs the data retention compaction (see Phase 1A retention policy).
-*   **Instant Respond:** The `/api/limits` endpoint returns the current state of the in-memory registry instantly, while the background task handles slow API/Web calls and pushes updates.
-
-> **Critical design constraint:** The background task writes to the DB **and** updates the in-memory registry. The `/api/limits` endpoint reads **only** from the registry (never from the DB). DB writes must be asynchronous so a slow disk write never blocks card serving. If this separation is lost, the endpoint devolves into a DB query on every request.
+*   **In-Memory Registry:** `manager._registry` holds the latest card snapshot. `_do_collect()` is the single authoritative write path — startup, poller, and fallback all update it through `collect_all()`.
+*   **Instant Respond:** `GET /api/v1/usage/limits` reads from the registry without ever triggering a collection. Falls back to `collect_all()` only when the registry is empty (first request before startup completes).
 
 ---
 
 ### 4D. Token Health & Proactive Refresh
-**Effort:** Medium
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-13)
 
-A "Health Dashboard" within settings showing exact expiry times for cookies/OAuth tokens. Includes a proactive background service to renew sessions before they expire.
+*   **Token Health Panel:** Settings page section listing all cached credentials with `valid` / `expiring` / `expired` / `unknown` status badges and ISO expiry timestamps derived from JWT `exp` claims.
+*   **One-Click Refresh:** "REFRESH" button appears when `can_refresh && status !== 'valid'`. Calls `POST /api/v1/system/token-health/refresh/{provider}/{account_id}` — supported for Anthropic and Gemini OAuth.
 
-> Token refresh is only feasible for OAuth tokens (can be refreshed via API) and Safari/Firefox cookies. Chrome 127+ enforces App-Bound Encryption on macOS, making Chrome cookie renewal impossible. Scope this to OAuth + Safari/Firefox only.
+> Token refresh is only feasible for OAuth tokens. Chrome 127+ enforces App-Bound Encryption, making Chrome cookie renewal impossible. Scope remains OAuth + Safari/Firefox only.
 
 ---
 
@@ -442,13 +436,14 @@ The `SmartCollector` wrapper manages the lifecycle of data fetching:
 
 These items must be completed before tagging v1.0, regardless of which phase they fall under:
 
-- [ ] All Phase 0 + 0.5 items complete
-- [ ] Phase 1A (SQLite) functional with retention policy
-- [ ] **API Versioning:** Prefix all routes with `/api/v1/` before going public — avoids painful migration later
+- [x] All Phase 0 + 0.5 items complete
+- [x] Phase 1A (SQLite) functional with retention policy
+- [x] **API Versioning:** All routes under `/api/v1/` ✅ (Phase 3C)
+- [x] **Single-Flight Collection (P1):** Request coalescing via `_collect_future` + instant registry ✅ (Phase 4C)
+- [x] All 🔴 High severity audit items resolved (S1, S2, T1) ✅
 - [ ] **Structured Logging:** Add JSON logging formatter option (`LOG_FORMAT=json`) for Docker/production deployments
-- [ ] **Single-Flight Collection (P1):** Request coalescing on `/api/limits` — correctness issue under concurrent load
 - [ ] **Pydantic Settings (A1):** Refactor `Settings` to extend `pydantic_settings.BaseSettings` for type-safe env var handling
-- [ ] All 🔴 High severity audit items resolved (S1, S2, T1)
+- [ ] **Data Retention Compaction:** Background job to downsample snapshots older than 30 days (see Phase 1A retention policy)
 
 ---
 
@@ -461,4 +456,4 @@ These items must be completed before tagging v1.0, regardless of which phase the
 | **Usage Alerts & Budget Caps** | User-defined thresholds (e.g., "alert me when Claude usage exceeds $50/month") stored in SQLite, evaluated by the background loop. |
 | **Multi-User Mode** | Multiple Runway users sharing a single server (team deployment). Requires auth layer + per-user account isolation. |
 
-*Last updated: 2026-04-12*
+*Last updated: 2026-04-13*
