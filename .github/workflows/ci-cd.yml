@@ -30,7 +30,7 @@ jobs:
       - name: Install linting dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pip-audit detect-secrets
+          pip install ruff mypy pip-audit detect-secrets types-PyYAML
           pip install -r requirements.txt
       - name: Lint and format check with ruff
         run: ruff check . && ruff format --check .
