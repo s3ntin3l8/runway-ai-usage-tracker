@@ -1,7 +1,7 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
-import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
+import { STATE, HEALTH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
-import { updateCharts, setChartView as _setChartView, destroyCharts } from './charts.js';
+import { updateCharts, destroyCharts } from './charts.js';
 
 function escapeHTML(str) {
     if (!str) return '';
