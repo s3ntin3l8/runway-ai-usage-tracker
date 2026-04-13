@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
 from sqlmodel.pool import StaticPool
@@ -96,4 +97,58 @@ def test_patch_nonexistent_webhook(client):
 
 def test_delete_nonexistent_webhook(client):
     response = client.delete("/api/v1/system/webhooks/9999")
+    assert response.status_code == 404
+
+
+def test_test_endpoint_sends_payload(client):
+    """Test endpoint fires a webhook and returns status=sent."""
+    create_resp = client.post("/api/v1/system/webhooks", json={
+        "provider_id": "anthropic", "threshold_pct": 90.0,
+        "url": "https://discord.example.com/hook", "channel": "discord",
+    })
+    webhook_id = create_resp.json()["id"]
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        response = client.post(f"/api/v1/system/webhooks/{webhook_id}/test")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "sent"}
+
+
+def test_test_endpoint_returns_502_on_delivery_failure(client):
+    """Test endpoint returns 502 when webhook delivery fails."""
+    create_resp = client.post("/api/v1/system/webhooks", json={
+        "provider_id": "anthropic", "threshold_pct": 90.0,
+        "url": "https://discord.example.com/hook", "channel": "discord",
+    })
+    webhook_id = create_resp.json()["id"]
+
+    import httpx as _httpx
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock(side_effect=_httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        ))
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        response = client.post(f"/api/v1/system/webhooks/{webhook_id}/test")
+
+    assert response.status_code == 502
+
+
+def test_test_endpoint_404_on_nonexistent(client):
+    """Test endpoint returns 404 for unknown webhook id."""
+    response = client.post("/api/v1/system/webhooks/9999/test")
     assert response.status_code == 404

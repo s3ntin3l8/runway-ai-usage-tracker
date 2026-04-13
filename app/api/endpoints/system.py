@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Literal
 import time
 import logging
 import httpx
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -97,14 +97,14 @@ async def refresh_token(
 
 class _WebhookCreate(BaseModel):
     provider_id: str
-    threshold_pct: float
+    threshold_pct: float = Field(ge=0.0, le=100.0)
     url: str
-    channel: str  # "discord" or "slack"
+    channel: Literal["discord", "slack"]
     active: bool = True
 
 
 class _WebhookUpdate(BaseModel):
-    threshold_pct: Optional[float] = None
+    threshold_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
     url: Optional[str] = None
     active: Optional[bool] = None
 
@@ -128,8 +128,12 @@ async def list_webhooks(session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("/webhooks", status_code=201)
+@limiter.limit("10/minute")
 async def create_webhook(
-    body: _WebhookCreate, session: Session = Depends(get_session)
+    request: Request,
+    body: _WebhookCreate,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
 ) -> dict:
     """Create a webhook alert configuration."""
     config = WebhookConfig(**body.model_dump())
@@ -140,10 +144,13 @@ async def create_webhook(
 
 
 @router.patch("/webhooks/{webhook_id}")
+@limiter.limit("10/minute")
 async def update_webhook(
+    request: Request,
     webhook_id: int,
     body: _WebhookUpdate,
     session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
 ) -> dict:
     """Update a webhook alert configuration."""
     config = session.get(WebhookConfig, webhook_id)
@@ -157,7 +164,13 @@ async def update_webhook(
 
 
 @router.delete("/webhooks/{webhook_id}", status_code=204)
-async def delete_webhook(webhook_id: int, session: Session = Depends(get_session)) -> None:
+@limiter.limit("10/minute")
+async def delete_webhook(
+    request: Request,
+    webhook_id: int,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> None:
     """Delete a webhook alert configuration."""
     config = session.get(WebhookConfig, webhook_id)
     if not config:
@@ -167,10 +180,12 @@ async def delete_webhook(webhook_id: int, session: Session = Depends(get_session
 
 
 @router.post("/webhooks/{webhook_id}/test")
+@limiter.limit("5/minute")
 async def test_webhook(
     request: Request,
     webhook_id: int,
     session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
 ) -> dict:
     """Fire a test payload to the webhook URL immediately."""
     config = session.get(WebhookConfig, webhook_id)
