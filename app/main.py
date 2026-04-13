@@ -33,14 +33,21 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DB and Start Poller
+    # Startup: Initialize DB
     init_db()
+
+    # Pre-populate in-memory registry so the first /limits request is instant
+    try:
+        logger.info("Pre-populating card registry on startup...")
+        initial_cards = await manager.collect_all()
+        # Registry updated inside _do_collect; just log the count here.
+        logger.info(f"Registry pre-populated with {len(initial_cards)} cards")
+    except Exception as e:
+        logger.warning(f"Startup collection failed — registry empty until first poll: {e}")
+
+    # Start background poller (keeps registry fresh every 15 min)
     poller.start()
 
-    # Warm up keychain access if enabled
-    if settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
-        # Create task to avoid blocking app startup
-        asyncio.create_task(manager._warmup_keychain())
     yield
     # Shutdown logic
     await poller.stop()

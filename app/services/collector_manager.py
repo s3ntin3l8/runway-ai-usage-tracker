@@ -72,6 +72,8 @@ class CollectorManager:
         self._last_sync_time: float = 0.0
         self._collect_lock = asyncio.Lock()
         self._collect_future: Optional[asyncio.Future] = None
+        # In-memory registry: latest snapshot of all cards (populated by poller + startup)
+        self._registry: List[Dict[str, Any]] = []
         
         logger.info(
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
@@ -240,7 +242,14 @@ class CollectorManager:
         flattened.extend(external_results)
 
         logger.info(f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts")
+        # Update registry atomically inside _do_collect so all callers (startup,
+        # poller, fallback) share one authoritative write path.
+        self._registry = flattened
         return flattened
+
+    def get_registry_snapshot(self) -> List[Dict[str, Any]]:
+        """Return current in-memory card registry. Never blocks."""
+        return list(self._registry)  # shallow copy prevents external mutation
 
     def get_collector_stats(self) -> Dict[str, Any]:
         """Get flattened statistics for all active collectors."""

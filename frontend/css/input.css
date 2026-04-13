@@ -497,3 +497,68 @@ body.bright-mode .nav-link:hover { color: #18181b; }
 body.bright-mode .nav-link.active { color: #18181b; }
 
 .view.hidden { display: none; }
+
+/* ============================================
+   PHASE 4A — FILTER PILLS & DIMENSION BUTTONS
+   ============================================ */
+
+.pill {
+    padding: 3px 12px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(39,39,42,0.6);
+    border: 1px solid rgba(63,63,70,0.5);
+    color: #a1a1aa;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.pill:hover { border-color: rgba(139,92,246,0.5); color: #c4b5fd; }
+.pill-active { background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.5); color: #c4b5fd; }
+
+.dim-btn {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #52525b;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+.dim-btn:hover { color: #d4d4d8; }
+.dim-btn-active { color: #e4e4e7; }
+
+/* Source badge — absolute-positioned on top-right of card */
+.source-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(139,92,246,0.2);
+    border: 1px solid rgba(139,92,246,0.4);
+    color: #a78bfa;
+    font-size: 7px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+/* ============================================
+   PHASE 4B — FLEET VIEW
+   ============================================ */
+
+.tag-pill {
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 9px;
+    font-weight: 700;
+    background: rgba(139,92,246,0.12);
+    border: 1px solid rgba(139,92,246,0.3);
+    color: #a78bfa;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}

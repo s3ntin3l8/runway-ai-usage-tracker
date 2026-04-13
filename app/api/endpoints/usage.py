@@ -15,8 +15,12 @@ router = APIRouter()
 @router.get("/limits")
 @limiter.limit("10/minute")
 async def fetch_all_limits(request: Request) -> Dict[str, Any]:
-    """Fetch all AI service usage limits."""
-    results = await manager.collect_all()
+    """Fetch all AI service usage limits from the in-memory registry."""
+    results = manager.get_registry_snapshot()
+    if not results:
+        # Bootstrap fallback: registry not yet populated (first request races startup)
+        # _do_collect() updates manager._registry, so no external write needed here.
+        results = await manager.collect_all()
 
     # Validate and serialize with None values included
     limit_cards = [LimitCard(**item) for item in results]

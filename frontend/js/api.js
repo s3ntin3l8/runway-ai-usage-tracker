@@ -93,3 +93,53 @@ export async function fetchStatus() {
     if (!resp.ok) throw new Error('Failed to fetch collector status');
     return await resp.json();
 }
+
+/**
+ * Fleet / Sidecar Registry
+ */
+
+export async function fetchFleet() {
+    const resp = await fetch('/api/v1/fleet/sidecars');
+    if (!resp.ok) throw new Error('Failed to fetch fleet');
+    return await resp.json();
+}
+
+export async function patchSidecar(sidecarId, body) {
+    const resp = await fetch(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`Failed to update sidecar: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function deleteSidecarAPI(sidecarId) {
+    const resp = await fetch(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
+        method: 'DELETE',
+    });
+    if (!resp.ok) throw new Error(`Failed to delete sidecar: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+/**
+ * Token Health
+ */
+
+export async function fetchTokenHealth() {
+    const resp = await fetch('/api/v1/system/token-health');
+    if (!resp.ok) throw new Error('Failed to fetch token health');
+    return await resp.json();
+}
+
+export async function postTokenRefresh(provider, accountId) {
+    const resp = await fetch(
+        `/api/v1/system/token-health/refresh/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
+        { method: 'POST' }
+    );
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+}

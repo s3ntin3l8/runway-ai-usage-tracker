@@ -17,7 +17,11 @@ export const STATE = {
     refreshInterval: localStorage.getItem('runway_refresh_interval') || 'off',
     brightMode: localStorage.getItem('runway_bright_mode') === 'true',
     githubAuth: { authenticated: false, account: null },
-    data: []
+    data: [],
+    // Dashboard context filter
+    activeFilter: JSON.parse(localStorage.getItem('runway_active_filter') || 'null'),
+    // { dimension: 'sidecar_id'|'account_label'|'window_type', value: 'string' } | null
+    filterDimension: localStorage.getItem('runway_filter_dimension') || 'sidecar_id'
 };
 
 /**

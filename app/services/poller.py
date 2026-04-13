@@ -51,7 +51,8 @@ class BackgroundPoller:
         """Execute a single collection and snapshot cycle."""
         logger.info("Starting scheduled background collection...")
         cards = await manager.collect_all()
-        
+        # Registry is updated inside _do_collect; no external write needed here.
+
         if not cards:
             logger.debug("No metrics collected during background poll.")
             return

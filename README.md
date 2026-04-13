@@ -4,7 +4,7 @@
 
 # Runway — AI Subscription Limits Dashboard
 
-**Runway** is a local-first, stateless monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack. Everything aggregated into a single, high-performance glassmorphism dashboard.
+**Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, high-performance glassmorphism dashboard with persistent history and fleet management.
 
 ![Runway Dashboard](assets/dashboard.png)
 
@@ -13,7 +13,12 @@
 - **12 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, and more
 - **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
 - **Smart Caching**: Per-collector TTL (5-30 min) reduces API calls while keeping data fresh
-- **Sidecar Ingestion**: Push metrics from external hosts via `POST /api/ingest`
+- **Instant Serving**: `/limits` returns from an in-memory registry — never blocks on collection
+- **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling
+- **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
+- **Fleet Management**: Persistent registry of all sidecars with custom names, tags, and activity tracking
+- **Token Health**: Settings panel shows OAuth/cookie expiry status with one-click refresh for supported providers
+- **Sidecar Ingestion**: Push metrics from external hosts via `POST /api/v1/fleet/ingest`
 - **Resilient Rendering**: Individual API failures show "Error Cards" instead of breaking the dashboard
 - **Docker Ready**: Headless-first architecture for containerized environments
 
@@ -26,7 +31,7 @@
 git clone <repository-url> && cd runway
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-```
+
 # 2. Configure (add your API keys)
 cp .env.example .env
 
@@ -65,51 +70,86 @@ Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metric
 
 ## Architecture
 
-Runway follows a **Service-Collector Pattern** with three deployment modes: **Standalone** (single machine), **Multi-Host** (main + sidecars), and **Docker** (sidecars only). 
+Runway follows a **Service-Collector Pattern** with three deployment modes: **Standalone** (single machine), **Multi-Host** (main + sidecars), and **Docker** (sidecars only).
 
 👉 **[Full Deployment Guide](docs/deployment-modes.md)** with mode compatibility matrix and Docker Compose examples
 
 ## API Reference
 
-### Ingestion API
-Push metrics from external scripts or remote hosts.
+All API routes are under `/api/v1/`.
 
-**`POST /api/ingest`** - Submit metrics with HMAC-SHA256 signature (max 1 MB body)
+### Usage
 
-See [Sidecar Documentation](docs/sidecar.md) for authentication and payload format.
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/v1/usage/limits` | All current quota cards (instant, from in-memory registry) |
+| `GET` | `/api/v1/usage/history` | Usage history snapshots (params: `provider_id`, `account_id`, `days`, `limit`) |
+| `POST` | `/api/v1/usage/reset/{provider}` | Clear terminal failure state for a provider |
 
-### Health API
-Monitor collector status and cache states.
+### Fleet / Ingestion
 
-**`GET /api/health`** - System health and collector statistics
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/v1/fleet/ingest` | Push metrics from a sidecar (HMAC-SHA256 signed) |
+| `GET` | `/api/v1/fleet/sidecars` | List all registered sidecars |
+| `PATCH` | `/api/v1/fleet/sidecars/{id}` | Update sidecar custom name or tags |
+| `DELETE` | `/api/v1/fleet/sidecars/{id}` | Remove sidecar from registry |
+
+### System
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/v1/system/health` | Liveness check |
+| `GET` | `/api/v1/system/status` | Collector cache states and error counts |
+| `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration |
+| `GET` | `/api/v1/system/token-health` | OAuth/cookie expiry status for all credentials |
+| `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh |
+
+See [Sidecar Documentation](docs/sidecar.md) for ingest authentication and payload format.
 
 ### LimitCard Schema
 
 ```typescript
 interface LimitCard {
   // Core display fields
-  service: string;        // Provider name (e.g., "Claude Pro")
-  icon: string;           // Unicode emoji
-  remaining: string;      // Remaining quota (e.g., "85%", "$12.50")
-  unit: string;           // Unit description (e.g., "tokens", "/ 100")
-  reset: string;          // Human-readable reset (e.g., "in 4h 23m")
-  health: string;         // "good" | "warning" | "critical"
-  pace: string;           // "Stable" | "Moderate Burn" | "Fast Burn"
-  detail: string;         // Additional context
+  service_name: string;     // Provider name (e.g., "Claude Pro")
+  icon: string;             // Unicode emoji
+  remaining: string;        // Remaining quota (e.g., "85%", "$12.50")
+  unit: string;             // Unit description (e.g., "tokens", "/ 100")
+  reset: string;            // Human-readable reset (e.g., "in 4h 23m")
+  health: string;           // "good" | "warning" | "critical"
+  pace: string;             // "Stable" | "Moderate Burn" | "Fast Burn"
+  detail: string;           // Additional context
 
-  // Extended fields
-  used_value?: number;    // Raw used amount
-  limit_value?: number;   // Raw limit amount
+  // Identity & routing
+  provider_id?: string;     // Platform key (e.g., "anthropic", "gemini")
+  account_id?: string;      // Unique account hash/ID
+  account_label?: string;   // Human-readable identity (email, org)
+  sidecar_id?: string;      // Originating host; null = local collection
+  model_id?: string;        // Specific model; null = aggregate snapshot
+
+  // Usage data
+  used_value?: number;      // Raw used amount
+  limit_value?: number;     // Raw limit amount
   is_unlimited?: boolean;
-  unit_type?: string;     // "currency" | "tokens" | "requests" | "percent"
-  currency?: string;      // "USD" | "EUR" | "CNY"
-  reset_at?: string;      // ISO 8601 timestamp for tooltip
-  data_source?: string;   // "oauth" | "web_api" | "local" | "api"
-  tier?: string;          // "Free" | "Pro" | "Enterprise"
-  usage_url?: string;     // Link to provider usage page
-  updated_at?: string;    // ISO 8601 timestamp
+  unit_type?: string;       // "currency" | "tokens" | "requests" | "percent"
+  currency?: string;        // "USD" | "EUR" | "CNY"
+  window_type?: string;     // "daily" | "weekly" | "monthly" | "session" | "rolling" | "unknown"
+
+  // Metadata
+  reset_at?: string;        // ISO 8601 timestamp for tooltip
+  data_source?: string;     // "oauth" | "web_api" | "local" | "api" | "cache"
+  tier?: string;            // "Free" | "Pro" | "Enterprise"
+  usage_url?: string;       // Link to provider usage page
+  updated_at?: string;      // ISO 8601 timestamp
 }
 ```
+
+## Optional Security
+
+**`ADMIN_API_KEY`** — When set, mutation endpoints (`PATCH`/`DELETE` sidecars, token refresh) require an `X-Admin-Key` header. Unset by default (local-first, single-user).
+
+**`DB_ENCRYPTION_KEY`** — Fernet key for encrypting sensitive metadata in SQLite. Unset = plaintext (acceptable for local deployments). Back up this key alongside the database file.
 
 ## Network Access
 
@@ -125,4 +165,4 @@ By default, Runway binds to `127.0.0.1` (local only). To access from other devic
 
 MIT License - see [LICENSE](LICENSE) file.
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-04-13*
