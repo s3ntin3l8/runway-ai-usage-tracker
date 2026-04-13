@@ -225,8 +225,8 @@ function renderGrid() {
     const sorted = [...groups.keys()].sort((a, b) => {
         if (a === '__other__') return 1;
         if (b === '__other__') return -1;
-        const aWorst = Math.max(...(groups.get(a).map(i => HEALTH_SEVERITY[i.health] || 0)));
-        const bWorst = Math.max(...(groups.get(b).map(i => HEALTH_SEVERITY[i.health] || 0)));
+        const aWorst = groups.get(a).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
+        const bWorst = groups.get(b).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
         if (bWorst !== aWorst) return bWorst - aWorst;
         return a.localeCompare(b);
     });
@@ -265,7 +265,7 @@ window.openProviderModal = async function(providerId) {
     const content = document.getElementById('modal-content');
 
     // Show loading state immediately
-    content.innerHTML = `<div class="p-8 text-center text-zinc-500 text-sm animate-pulse">Loading ${escapeHTMLAttr(providerId)}…</div>`;
+    content.innerHTML = `<div class="p-8 text-center text-zinc-500 text-sm animate-pulse">Loading ${escapeHTML(providerId)}…</div>`;
     container.classList.add('active');
     document.body.style.overflow = 'hidden';
     document.getElementById('modal-backdrop').onclick = closeModal;
@@ -273,7 +273,7 @@ window.openProviderModal = async function(providerId) {
     // Placeholder — full implementation in Task 4
     content.innerHTML = `<div class="p-6">
         <div class="flex justify-between items-center mb-4">
-            <h2 class="text-lg font-bold text-zinc-100">${escapeHTMLAttr(providerId)}</h2>
+            <h2 class="text-lg font-bold text-zinc-100">${escapeHTML(providerId)}</h2>
             <button id="close-modal" onclick="closeModal()" class="text-zinc-500 hover:text-zinc-300">✕</button>
         </div>
         <p class="text-zinc-500 text-sm">${items.length} service(s) — full modal in Task 4</p>
