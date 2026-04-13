@@ -324,55 +324,22 @@ Features that build on the stateful core to deliver the full Runway experience.
 
 ---
 
-## Phase 5 — Polish & Scale
+## Phase 5 — Polish & Scale ✅ Complete (2026-04-13)
 
-Features that enhance the experience but aren't required for a functional 1.0.
+5A, 5B, and 5C are shipped. 5D (Native Desktop) is deferred to Post-1.0.
 
 ### 5A. Chart.js Visualizations ✅ Complete (2026-04-13)
-**Effort:** Medium
-**Depends on:** Phase 1 (history data)
 
-Replace static cards with interactive time-series charts showing financial burn rates, token volume trends, and comparative provider usage. Filtering by `model_id`, `provider_id`, `sidecar_id`, and `tier` requires all Phase 0 schema fields to be populated.
-
-> When plotting burn rates, the `window_type` enum is essential for normalizing data across providers with different reset windows (daily vs. monthly vs. rolling).
-
----
+Stacked bar + line charts on the History tab. Per-provider color palette, dashed limit reference lines, bar/line toggle. Powered by Chart.js (CDN) via `frontend/js/charts.js`.
 
 ### 5B. Metrics Export & Webhooks ✅ Complete (2026-04-13)
-**Effort:** Medium
-**Depends on:** Phase 1 (history data)
 
-*   **CSV Expense Reporting:** A "Download CSV" button on the History page for formatted expense reports (tax write-offs, employer reimbursement).
-*   **Prometheus:** Add `/api/limits?format=prometheus` for external monitoring integrations.
-*   **Webhooks:** Send Discord/Slack alerts when quotas cross critical thresholds (e.g., >90% used).
-
----
+*   **CSV Export:** `GET /api/v1/usage/history?format=csv` — streaming response, "Download CSV" button on History tab inherits active filters.
+*   **Webhooks:** Discord/Slack alerts when quotas cross configurable thresholds. `webhook_configs` table, breach detection service with 15% hysteresis band, CRUD API at `/api/v1/system/webhooks`, Settings UI section.
 
 ### 5C. Intelligent Polling & Power Efficiency ✅ Complete (2026-04-13)
-**Effort:** Medium
-**Depends on:** Phase 4C (Background Refresh)
 
-*   **Dynamic Backoff ("Sleep Mode"):** Automatically detect user inactivity and drop polling frequency to once every 2 hours.
-    *   **Inactivity definition:** Raw quota percentage unchanged AND no new API calls detected via log/local sources AND `updated_at` timestamp drift exceeds threshold. Checking only raw numbers is insufficient — a stable quota with active usage would falsely trigger sleep mode.
-*   **Instant Wake:** Snaps back to high-frequency polling when fresh usage is detected or the UI is opened.
-
----
-
-### 5D. Native Desktop Sidecar (Binary + Menubar App)
-**Effort:** Large
-
-Distribute the sidecar as a zero-dependency desktop application (PyInstaller) with real-time visibility and configuration.
-
-*   **OS-Native Desktop Notifications:** Leverages macOS/Windows notification centers for critical quota limits or expired browser sessions.
-*   **Hybrid Operation (GUI & Headless):**
-    *   **Desktop Mode:** System tray icon (Windows) or Menubar app (macOS) with a right-click menu showing connection status, last sync, and a "Settings..." option.
-    *   **Headless Mode:** Auto-detects environments without a display or uses `--headless` to run as a pure background daemon.
-*   **Lightweight Configuration:**
-    *   **GUI Settings:** Uses `tkinter` for a zero-dependency native dialog. Must detect `tkinter` availability at runtime and fall back to interactive CLI prompts for headless/Docker environments — `tkinter` is not a guaranteed dependency (broken on macOS system Python, absent in Alpine Docker).
-    *   **Unified Config:** Reads settings from `~/.runway/sidecar.json`, CLI flags, or environment variables (`RUNWAY_URL`, `INGEST_API_KEY`).
-*   **Deployment & Persistence:**
-    *   **Linux Systemd:** One-line install script to register the headless binary as a `systemd` service.
-    *   **Auto-Update:** Checks GitHub releases for new binaries. Downloads to a staging path, verifies checksum, replaces the old binary on next startup via a launcher script. Never hot-swaps a running binary.
+Composite-hash dormancy tracking per `(provider_id, account_id)`. Drops to 2h polling after 3 consecutive identical polls. Snaps back to 15min on any quota change.
 
 ---
 
@@ -428,7 +395,7 @@ The `SmartCollector` wrapper manages the lifecycle of data fetching:
 | **2** | 2A–2E (Health UI, Status API, OAuth Reset, Clock Skew, Browser Pref) | Quick wins — parallelizable |
 | **3** | 3A (Modular Refactoring), 3B (Centralized Identity) | Architecture health |
 | **4** | 4A (Dashboard Reorg), 4B (Fleet Mgmt), 4C (Background Refresh), 4D (Token Health) | Platform evolution |
-| **5** | 5A (Charts), 5B (Export/Webhooks), 5C (Smart Polling), 5D (Native Desktop) | Polish & scale |
+| **5** | 5A (Charts), 5B (Export/Webhooks), 5C (Smart Polling) ✅ | Polish & scale |
 
 ---
 
@@ -451,9 +418,10 @@ These items must be completed before tagging v1.0, regardless of which phase the
 
 | Feature | Description |
 |:---|:---|
+| **5D: Native Desktop Sidecar** | PyInstaller binary with system tray (Windows) / menubar (macOS), systemd service install, auto-update via GitHub releases. |
 | **Server-Sent Events (SSE)** | Replace frontend polling with push-based updates. Natural fit with Phase 4C background refresh — eliminates the "poll → collect → respond" cycle. |
 | **Per-Provider Refresh** | Allow the frontend to request a refresh for a single provider instead of triggering all collectors. |
-| **Usage Alerts & Budget Caps** | User-defined thresholds (e.g., "alert me when Claude usage exceeds $50/month") stored in SQLite, evaluated by the background loop. |
+| **Prometheus Export** | Add `/api/v1/usage/limits?format=prometheus` for external monitoring integrations. |
 | **Multi-User Mode** | Multiple Runway users sharing a single server (team deployment). Requires auth layer + per-user account isolation. |
 
 *Last updated: 2026-04-13*
