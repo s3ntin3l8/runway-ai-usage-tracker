@@ -1,6 +1,6 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar } from './components.js';
 import { updateCharts, setChartView as _setChartView, destroyCharts } from './charts.js';
 
 function escapeHTML(str) {
@@ -199,6 +199,12 @@ function applyFilters(data) {
         const isDisabled = STATE.disabledServices.includes(item.service_name);
         return !isDisabled || STATE.showHidden;
     });
+}
+
+function renderHealthBar() {
+    const el = document.getElementById('health-bar');
+    if (!el) return;
+    el.innerHTML = buildHealthBar(STATE.data);
 }
 
 function renderGrid() {
@@ -511,6 +517,7 @@ async function loadData() {
         STATE.data = json.limits;
         renderFilterPills();
         renderGrid();
+        renderHealthBar();
 
         const now = new Date();
         lastUpdated.textContent = `Updated ${now.toLocaleTimeString()}`;

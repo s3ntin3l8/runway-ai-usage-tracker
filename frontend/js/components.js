@@ -1009,3 +1009,41 @@ export function buildFleetView(sidecars) {
 
     return `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${rows}</div>`;
 }
+
+/**
+ * Build the top health overview bar (4 stat tiles + proportional bar).
+ * @param {Array} data - Full array of LimitCard items from STATE.data
+ * @returns {string} HTML string
+ */
+export function buildHealthBar(data) {
+    const counts = { critical: 0, warning: 0, good: 0, unlimited: 0 };
+    for (const item of data) {
+        if (counts[item.health] !== undefined) counts[item.health]++;
+    }
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total === 0) return '';
+
+    const tiles = [
+        { key: 'critical',  label: 'Critical',  textColor: 'text-red-400',    border: 'border-red-900/50',    bg: 'bg-red-950/20'    },
+        { key: 'warning',   label: 'Warning',   textColor: 'text-amber-400',  border: 'border-amber-900/50', bg: 'bg-amber-950/20'  },
+        { key: 'good',      label: 'Good',      textColor: 'text-green-400',  border: 'border-green-900/50', bg: 'bg-green-950/20'  },
+        { key: 'unlimited', label: 'Unlimited', textColor: 'text-violet-400', border: 'border-violet-900/50',bg: 'bg-violet-950/20' },
+    ];
+    const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6' };
+
+    const tilesHTML = tiles.map(t => `
+        <div class="glass-panel ${t.border} ${t.bg} rounded-xl p-3 text-center${counts[t.key] === 0 ? ' opacity-30' : ''}">
+            <div class="text-3xl font-black ${t.textColor} leading-none">${counts[t.key]}</div>
+            <div class="text-[9px] text-zinc-500 uppercase tracking-widest mt-1.5">${t.label}</div>
+        </div>`).join('');
+
+    const barSegments = tiles
+        .filter(t => counts[t.key] > 0)
+        .map(t => `<div style="flex:${counts[t.key]};background:${BAR_HEX[t.key]};border-radius:2px;"></div>`)
+        .join('');
+
+    return `<div class="mb-6">
+        <div class="grid grid-cols-4 gap-3 mb-2">${tilesHTML}</div>
+        <div class="h-1.5 rounded-full overflow-hidden flex gap-0.5">${barSegments}</div>
+    </div>`;
+}
