@@ -1,12 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import time
 import logging
+import httpx
+
+from pydantic import BaseModel
+from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
+from app.models.db import WebhookConfig
+from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
 from app.services.token_health import token_health_service
 from app.services.token_cache import token_cache
@@ -84,3 +91,112 @@ async def refresh_token(
     except Exception as e:
         logger.error(f"Token refresh failed for {provider}/{account_id}: {e}")
         raise HTTPException(status_code=502, detail="Upstream token refresh failed")
+
+
+# --- Webhook alert configuration ---
+
+class _WebhookCreate(BaseModel):
+    provider_id: str
+    threshold_pct: float
+    url: str
+    channel: str  # "discord" or "slack"
+    active: bool = True
+
+
+class _WebhookUpdate(BaseModel):
+    threshold_pct: Optional[float] = None
+    url: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@router.get("/webhooks")
+async def list_webhooks(session: Session = Depends(get_session)) -> dict:
+    """List all webhook alert configurations."""
+    configs = session.exec(select(WebhookConfig)).all()
+    return {"webhooks": [
+        {
+            "id": c.id,
+            "provider_id": c.provider_id,
+            "threshold_pct": c.threshold_pct,
+            "url": c.url,
+            "channel": c.channel,
+            "active": c.active,
+            "last_fired_at": c.last_fired_at.isoformat() if c.last_fired_at else None,
+        }
+        for c in configs
+    ]}
+
+
+@router.post("/webhooks", status_code=201)
+async def create_webhook(
+    body: _WebhookCreate, session: Session = Depends(get_session)
+) -> dict:
+    """Create a webhook alert configuration."""
+    config = WebhookConfig(**body.model_dump())
+    session.add(config)
+    session.commit()
+    session.refresh(config)
+    return {"id": config.id}
+
+
+@router.patch("/webhooks/{webhook_id}")
+async def update_webhook(
+    webhook_id: int,
+    body: _WebhookUpdate,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Update a webhook alert configuration."""
+    config = session.get(WebhookConfig, webhook_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    for key, value in body.model_dump(exclude_none=True).items():
+        setattr(config, key, value)
+    session.add(config)
+    session.commit()
+    return {"status": "updated"}
+
+
+@router.delete("/webhooks/{webhook_id}", status_code=204)
+async def delete_webhook(webhook_id: int, session: Session = Depends(get_session)) -> None:
+    """Delete a webhook alert configuration."""
+    config = session.get(WebhookConfig, webhook_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    session.delete(config)
+    session.commit()
+
+
+@router.post("/webhooks/{webhook_id}/test")
+async def test_webhook(
+    request: Request,
+    webhook_id: int,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Fire a test payload to the webhook URL immediately."""
+    config = session.get(WebhookConfig, webhook_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+
+    from app.services.webhooks import _fire_webhook
+    test_card = LimitCard(
+        service_name="Test Alert",
+        icon="T",
+        remaining="5%",
+        unit="tokens",
+        reset="monthly",
+        health="warning",
+        pace="high",
+        detail="",
+        provider_id=config.provider_id if config.provider_id != "*" else "test",
+        account_id="test-account",
+        account_label="Test Account",
+        used_value=config.threshold_pct + 5,
+        limit_value=100.0,
+        data_source="test",
+    )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await _fire_webhook(client, config, test_card, config.threshold_pct + 5)
+        return {"status": "sent"}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Webhook delivery failed: {e}")

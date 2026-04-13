@@ -149,6 +149,21 @@ class BackgroundPoller:
                 session.commit()
                 logger.info(f"Background poll complete. Snapshotted {len(cards)} metrics.")
 
+        # Fire webhook alerts for any threshold breaches
+        try:
+            from app.services.webhooks import check_and_fire
+            limit_cards = []
+            for card_dict in cards:
+                try:
+                    limit_cards.append(LimitCard(**card_dict))
+                except Exception:
+                    pass
+            if limit_cards:
+                with Session(engine) as webhook_session:
+                    await check_and_fire(limit_cards, webhook_session)
+        except Exception as e:
+            logger.error(f"Webhook check failed (non-fatal): {e}")
+
         # Daily compaction (every 96 polls ≈ 24h)
         self._poll_count += 1
         if self._poll_count % _COMPACTION_INTERVAL_POLLS == 0:
