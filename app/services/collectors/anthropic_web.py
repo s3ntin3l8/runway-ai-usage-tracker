@@ -276,7 +276,7 @@ class AnthropicWebMixin:
         identity_str = self._extract_identity_from_web(org_data) if org_data else ""
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
-        # Try multiple keys — the account API may use 'plan', 'account_type', or 'subscription'
+        # Try multiple sources for tier — account API, org data, then give up
         plan = ""
         if account_data:
             plan = (
@@ -286,18 +286,33 @@ class AnthropicWebMixin:
                 or ""
             )
             logger.debug(f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}")
+        if not plan and org_data:
+            # Org response sometimes has plan/capabilities info
+            plan = (
+                org_data.get("plan")
+                or org_data.get("subscription")
+                or org_data.get("account_type")
+                or org_data.get("membership", {}).get("billing_type")
+                or ""
+            )
+            if plan:
+                logger.debug(f"Anthropic tier from org_data: plan={plan!r}")
         tier = plan.capitalize() if plan else None
 
+        # All four core windows — show even if API returns null (mirrors OAuth path behaviour)
         window_map = {
-            "session": ("Session Window", "five_hour"),
-            "weekly": ("Weekly Window", "seven_day"),
-            "sonnet": ("Sonnet Weekly", "seven_day_sonnet"),
-            "opus": ("Opus Weekly", "seven_day_opus"),
+            "five_hour": "Session Window",
+            "seven_day": "Weekly Window",
+            "seven_day_sonnet": "Sonnet Weekly",
+            "seven_day_opus": "Opus Weekly",
         }
 
-        for window_key, (display_name, api_key) in window_map.items():
+        for api_key, display_name in window_map.items():
             window_data = data.get(api_key)
-            if not window_data or not isinstance(window_data, dict):
+            # If key is absent entirely, synthesize a null entry so the window still appears
+            if window_data is None:
+                window_data = {"utilization": None, "resetsAt": None}
+            if not isinstance(window_data, dict):
                 continue
 
             # Web API uses "utilization" (0.0 to 1.0) or "percentUsed" (0 to 100)

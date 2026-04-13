@@ -1126,13 +1126,13 @@ export function buildProviderSummaryCard(providerId, items) {
             pct = (item.used_value / item.limit_value) * 100;
         }
         const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
-        const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30">${escapeHTML(item.tier.toUpperCase().slice(0,3))}</span>` : '';
-        return `<div class="flex justify-between items-center text-[10px] py-0.5">
+        const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 flex-shrink-0">${escapeHTML(item.tier.toUpperCase().slice(0,3))}</span>` : '';
+        return `<div class="flex justify-between items-center text-xs py-0.5">
             <span class="flex items-center gap-1.5 min-w-0">
                 <span class="dot ${dot} flex-shrink-0" style="width:6px;height:6px;"></span>
                 <span class="text-zinc-300 truncate">${escapeHTML(item.service_name)}</span>
             </span>
-            <span class="flex items-center gap-1.5 text-zinc-500 flex-shrink-0 ml-2">${rowTier}<span>${display}</span></span>
+            <span class="flex items-center gap-1.5 text-zinc-500 flex-shrink-0 ml-2">${rowTier}<span class="mono text-right" style="min-width:2.5rem">${display}</span></span>
         </div>`;
     }).join('');
 
@@ -1150,7 +1150,7 @@ export function buildProviderSummaryCard(providerId, items) {
                 <div class="ml-2 flex-shrink-0">${healthBadgeHTML}</div>
             </div>
             <div class="text-4xl font-black ${worstColor} leading-none mt-3">${worstDisplay}</div>
-            <div class="text-[10px] text-zinc-500 mt-1.5">${escapeHTML(worst.service_name)} · worst</div>
+            <div class="text-xs text-zinc-500 mt-1.5">${escapeHTML(worst.service_name)} · worst</div>
         </div>
         <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5">
             <div class="h-0.5 rounded-full overflow-hidden flex gap-0.5 mb-3">${barSegments}</div>

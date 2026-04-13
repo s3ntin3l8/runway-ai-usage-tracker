@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 class GitHubCollector(BaseCollector):
     PROVIDER_ID = "github"
-    DEFAULT_WINDOW_TYPE = "monthly"
+    DEFAULT_WINDOW_TYPE = "biweekly"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""

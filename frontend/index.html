@@ -107,7 +107,7 @@
                     </div>
                     <div id="history-sparkline-strip"></div>
                     <div id="chart-empty" class="hidden text-zinc-500 italic text-sm py-8 text-center">No data for selected range.</div>
-                    <div id="chart-wrap"><canvas id="chart-usage" height="200"></canvas></div>
+                    <div id="chart-wrap"><canvas id="chart-usage" height="300"></canvas></div>
                 </div>
 
                 <!-- Header + CSV download -->
@@ -167,7 +167,7 @@
     <!-- Modal Backdrop & Content -->
     <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 opacity-0 pointer-events-none transition-all duration-300">
         <div id="modal-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div id="modal-content" class="relative w-full max-w-2xl glass-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 transition-all duration-300 overflow-hidden">
+        <div id="modal-content" class="relative w-full max-w-4xl glass-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 transition-all duration-300 overflow-hidden max-h-[90vh] overflow-y-auto">
             <!-- Content will be injected here -->
         </div>
     </div>

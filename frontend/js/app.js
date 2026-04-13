@@ -311,7 +311,7 @@ function renderGrid() {
     }
 
     // Provider cards use a responsive grid (not provider sections)
-    grid.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">${html}</div>`;
+    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 gap-5">${html}</div>`;
     document.getElementById('footer-count').textContent = count;
 }
 

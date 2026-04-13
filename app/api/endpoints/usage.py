@@ -57,7 +57,7 @@ async def get_usage_history(
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
-    days: int = Query(default=7, ge=1, le=90),
+    days: float = Query(default=7.0, ge=0.01, le=90.0),
     limit: int = Query(default=50, ge=1, le=500),
     export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
