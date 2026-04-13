@@ -3,7 +3,6 @@ FROM node:20-slim AS frontend-builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY tailwind.config.js ./
 COPY frontend/ ./frontend/
 RUN npm run build:css
 
@@ -36,7 +35,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application code
 COPY app/ ./app/
-COPY scripts/ ./scripts/
 COPY frontend/ ./frontend/
 
 # Copy built CSS from frontend-builder stage
