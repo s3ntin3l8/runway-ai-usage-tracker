@@ -328,7 +328,7 @@ Features that build on the stateful core to deliver the full Runway experience.
 
 Features that enhance the experience but aren't required for a functional 1.0.
 
-### 5A. Chart.js Visualizations
+### 5A. Chart.js Visualizations ✅ Complete (2026-04-13)
 **Effort:** Medium
 **Depends on:** Phase 1 (history data)
 
@@ -338,7 +338,7 @@ Replace static cards with interactive time-series charts showing financial burn 
 
 ---
 
-### 5B. Metrics Export & Webhooks
+### 5B. Metrics Export & Webhooks ✅ Complete (2026-04-13)
 **Effort:** Medium
 **Depends on:** Phase 1 (history data)
 
@@ -348,7 +348,7 @@ Replace static cards with interactive time-series charts showing financial burn 
 
 ---
 
-### 5C. Intelligent Polling & Power Efficiency
+### 5C. Intelligent Polling & Power Efficiency ✅ Complete (2026-04-13)
 **Effort:** Medium
 **Depends on:** Phase 4C (Background Refresh)
 
