@@ -61,14 +61,13 @@ from app.services.collectors.base import BaseCollector
 class KimiCodingCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+
     """Collector for Kimi Coding IDE quotas (weekly + rate limits)."""
 
     PROVIDER_ID = "kimi_coding"
     DEFAULT_WINDOW_TYPE = "weekly"
 
-    API_ENDPOINT = (
-        "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
-    )
+    API_ENDPOINT = "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
 
     def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for Kimi Coding."""
@@ -120,7 +119,6 @@ class KimiCodingCollector(BaseCollector):
             return self._parse_response(data)
         except (httpx.RequestError, ValueError, KeyError, TypeError):
             return []
-
 
     async def _get_auth_token(self) -> str | None:
         """
@@ -200,11 +198,7 @@ class KimiCodingCollector(BaseCollector):
         return (
             cards
             if cards
-            else [
-                error_card(
-                    "Kimi Coding", "🌙", "No Quota Data", error_type="parse_error"
-                )
-            ]
+            else [error_card("Kimi Coding", "🌙", "No Quota Data", error_type="parse_error")]
         )
 
     def _parse_weekly_quota(self, detail: dict[str, Any]) -> dict[str, Any] | None:
@@ -240,11 +234,7 @@ class KimiCodingCollector(BaseCollector):
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",
                 "reset": reset_delta,
-                "health": (
-                    "good"
-                    if pct_used < 50
-                    else "warning" if pct_used < 80 else "critical"
-                ),
+                "health": ("good" if pct_used < 50 else "warning" if pct_used < 80 else "critical"),
                 "pace": tier,
                 "detail": f"{used} used · {tier}",
                 "used_value": float(used),
@@ -293,16 +283,8 @@ class KimiCodingCollector(BaseCollector):
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",
                 "reset": reset_delta,
-                "health": (
-                    "good"
-                    if pct_used < 70
-                    else "warning" if pct_used < 90 else "critical"
-                ),
-                "pace": (
-                    "Stable"
-                    if pct_used < 50
-                    else "High" if pct_used < 80 else "Critical"
-                ),
+                "health": ("good" if pct_used < 70 else "warning" if pct_used < 90 else "critical"),
+                "pace": ("Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical"),
                 "detail": f"{used} used · Rate limit window",
                 "used_value": float(used),
                 "limit_value": float(limit),

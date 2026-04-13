@@ -51,6 +51,7 @@ from app.services.collectors.base import BaseCollector
 class ZaiPlanCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+
     """Collector for zAI Plan quota limits (tokens and time windows)."""
 
     PROVIDER_ID = "zai_plan"
@@ -75,9 +76,7 @@ class ZaiPlanCollector(BaseCollector):
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
             return [
-                error_card(
-                    "zAI Plan", "📊", "Missing/Invalid Key", error_type="missing_config"
-                )
+                error_card("zAI Plan", "📊", "Missing/Invalid Key", error_type="missing_config")
             ]
         return [error_card("zAI Plan", "📊", "API Unavailable", error_type="api_error")]
 
@@ -96,9 +95,8 @@ class ZaiPlanCollector(BaseCollector):
                         return result
             except Exception:
                 continue
-        
-        return []
 
+        return []
 
     async def _fetch_quota(
         self, client: httpx.AsyncClient, key: str, endpoint: str
@@ -133,11 +131,7 @@ class ZaiPlanCollector(BaseCollector):
         limits = plan_data.get("limits", [])
 
         if not limits:
-            return [
-                error_card(
-                    "zAI Plan", "📊", "No Limits Found", error_type="parse_error"
-                )
-            ]
+            return [error_card("zAI Plan", "📊", "No Limits Found", error_type="parse_error")]
 
         cards = []
         for limit in limits:
@@ -147,9 +141,7 @@ class ZaiPlanCollector(BaseCollector):
 
         return cards if cards else None
 
-    def _parse_limit(
-        self, limit: dict[str, Any], plan_name: str
-    ) -> dict[str, Any] | None:
+    def _parse_limit(self, limit: dict[str, Any], plan_name: str) -> dict[str, Any] | None:
         """
         Parse a single limit entry into a card.
 
@@ -217,7 +209,9 @@ class ZaiPlanCollector(BaseCollector):
         unit_type = (
             "tokens"
             if limit_type == "TOKENS_LIMIT"
-            else "minutes" if limit_type == "TIME_LIMIT" else "generic"
+            else "minutes"
+            if limit_type == "TIME_LIMIT"
+            else "generic"
         )
 
         return {
@@ -227,9 +221,7 @@ class ZaiPlanCollector(BaseCollector):
             "unit": unit,
             "reset": reset_str,
             "health": health,
-            "pace": (
-                "Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical"
-            ),
+            "pace": ("Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical"),
             "detail": detail,
             "used_value": float(used_val),
             "limit_value": float(limit_val),

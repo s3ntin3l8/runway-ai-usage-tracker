@@ -43,6 +43,7 @@ def test_list_sidecars_empty(client):
 
 def test_list_sidecars_returns_registered(client, session):
     from datetime import datetime
+
     row = SidecarRegistry(
         sidecar_id="test-host",
         hostname="test-host",
@@ -62,6 +63,7 @@ def test_list_sidecars_returns_registered(client, session):
 
 def test_get_sidecar(client, session):
     from datetime import datetime
+
     row = SidecarRegistry(
         sidecar_id="my-host",
         hostname="my-host",
@@ -83,6 +85,7 @@ def test_get_sidecar_not_found(client):
 
 def test_patch_sidecar_name_and_tags(client, session):
     from datetime import datetime
+
     row = SidecarRegistry(
         sidecar_id="patch-host",
         hostname="patch-host",
@@ -103,14 +106,13 @@ def test_patch_sidecar_name_and_tags(client, session):
 
 
 def test_patch_sidecar_not_found(client):
-    response = client.patch(
-        "/api/v1/fleet/sidecars/ghost", json={"custom_name": "Ghost"}
-    )
+    response = client.patch("/api/v1/fleet/sidecars/ghost", json={"custom_name": "Ghost"})
     assert response.status_code == 404
 
 
 def test_delete_sidecar(client, session):
     from datetime import datetime
+
     row = SidecarRegistry(
         sidecar_id="del-host",
         hostname="del-host",

@@ -35,7 +35,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     # ──────────────────────────────── Token lifecycle ────────────────────────
 
-
     async def _is_token_expired(self) -> bool:
         """Check if OAuth token is expired by reading credentials file."""
         try:
@@ -73,22 +72,20 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         client_id = settings.CLAUDE_OAUTH_CLIENT_ID
         if creds:
             oauth_payload = creds.get("claudeAiOauth", {})
-            client_id = (
-                oauth_payload.get("clientId")
-                or oauth_payload.get("client_id")
-                or client_id
-            )
+            client_id = oauth_payload.get("clientId") or oauth_payload.get("client_id") or client_id
 
             # Fallback: decode id_token JWT to find authorized party
             id_token = oauth_payload.get("idToken") or oauth_payload.get("id_token")
             if (not client_id or client_id == settings.CLAUDE_OAUTH_CLIENT_ID) and id_token:
                 from app.core.utils import IdentityExtractor
+
                 token_client_id = IdentityExtractor.get_client_id_from_jwt(id_token)
                 if token_client_id:
                     client_id = token_client_id
                     logger.info(f"Auto-discovered Claude Client ID: {client_id[:10]}...")
 
         from app.core.utils import http_request_with_retry
+
         try:
             resp = await http_request_with_retry(
                 client,
@@ -146,17 +143,23 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
     ) -> list[dict[str, Any]]:
         """
         Fetch Claude OAuth usage with internal 10-minute caching for API calls.
-        
+
         This allows the Statusline to update frequently (via SmartCollector 60s TTL)
         while keeping the expensive/rate-limited API calls on a slower cycle.
         """
         now = datetime.now(UTC)
-        
+
         # Check internal API cache (10 mins)
-        if hasattr(self, "_cached_api_results") and self._cached_api_results is not None and self._last_api_fetch:
+        if (
+            hasattr(self, "_cached_api_results")
+            and self._cached_api_results is not None
+            and self._last_api_fetch
+        ):
             if (now - self._last_api_fetch).total_seconds() < 600:
                 # If the cached result is a rate limit error, check if backoff expired
-                is_rate_limited = any(r.get("error_type") == "rate_limited" for r in self._cached_api_results)
+                is_rate_limited = any(
+                    r.get("error_type") == "rate_limited" for r in self._cached_api_results
+                )
                 if is_rate_limited:
                     backoff_until = getattr(self, "_last_429_backoff_until", None)
                     if backoff_until and now < backoff_until:
@@ -166,12 +169,12 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     return self._cached_api_results
 
         res = await self._get_claude_oauth(client, token)
-        
+
         # Only cache if not a transient connection error
         if not any(r.get("error_type") == "timeout" for r in res):
             self._cached_api_results = res
             self._last_api_fetch = now
-            
+
         return res
 
     async def _get_claude_oauth(
@@ -188,8 +191,17 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         backoff_until = getattr(self, "_last_429_backoff_until", None)
         if backoff_until and now < backoff_until:
             wait_rem = (backoff_until - now).total_seconds()
-            logger.debug(f"Proactively skipping Anthropic API call due to recent 429 (backoff for {wait_rem:.0f}s)")
-            return [error_card("Claude Pro", "🟠", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+            logger.debug(
+                f"Proactively skipping Anthropic API call due to recent 429 (backoff for {wait_rem:.0f}s)"
+            )
+            return [
+                error_card(
+                    "Claude Pro",
+                    "🟠",
+                    f"Rate Limited (429) - Backoff for {wait_rem:.0f}s",
+                    error_type="rate_limited",
+                )
+            ]
 
         url = "https://api.anthropic.com/api/oauth/usage"
         headers = {
@@ -209,8 +221,15 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10.0)
 
             if resp.status_code == 401:
-                return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)", error_type="auth_failed")]
-            
+                return [
+                    error_card(
+                        "Claude Pro",
+                        "🟠",
+                        "Expired/Invalid Token (OAuth)",
+                        error_type="auth_failed",
+                    )
+                ]
+
             if resp.status_code == 429:
                 # Set proactive backoff based on Retry-After or default 5m
                 retry_after = resp.headers.get("Retry-After")
@@ -218,10 +237,21 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
                 logger.warning(f"Anthropic API returned 429. Proactive backoff set for {wait_sec}s")
-                return [error_card("Claude Pro", "🟠", f"Rate Limited (429) - Try in {wait_sec/60:.1f}m", error_type="rate_limited")]
-            
+                return [
+                    error_card(
+                        "Claude Pro",
+                        "🟠",
+                        f"Rate Limited (429) - Try in {wait_sec / 60:.1f}m",
+                        error_type="rate_limited",
+                    )
+                ]
+
             if resp.status_code != 200:
-                return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error")]
+                return [
+                    error_card(
+                        "Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error"
+                    )
+                ]
 
             # Success: Clear any backoff
             self._last_429_backoff_until = None
@@ -231,7 +261,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
         except Exception as e:
             logger.error(f"Claude OAuth collection failed: {e}")
-            return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")]
+            return [
+                error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")
+            ]
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
         """Extract account identity string from OAuth API response."""
@@ -252,6 +284,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
     def _get_local_config_hints(self) -> dict[str, Any]:
         """Read supplementary billing hints from ~/.claude.json if available."""
         import os
+
         if not settings.LOCAL_COLLECTOR_ENABLED:
             return {}
         path = os.path.expanduser("~/.claude.json")
@@ -273,15 +306,18 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         results = []
         local_hints = self._get_local_config_hints()
 
-
         # Infer plan/tier: Credentials > Local Config > API
         tier = None
         if creds:
             raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
             if raw_tier:
                 tier_map = {
-                    "tier_0": "Free", "tier_1": "Pro", "tier_2": "Max",
-                    "tier_3": "Team", "tier_4": "Enterprise", "tier_5": "Enterprise",
+                    "tier_0": "Free",
+                    "tier_1": "Pro",
+                    "tier_2": "Max",
+                    "tier_3": "Team",
+                    "tier_4": "Enterprise",
+                    "tier_5": "Enterprise",
                 }
                 tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
 
@@ -312,7 +348,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         identity_str = self._extract_identity_from_oauth(creds)
         if not identity_str:
             identity_str = self._extract_identity_from_oauth(data)
-            
+
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
         for key in sorted(all_keys, key=sort_key):
@@ -324,28 +360,30 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 usage = {"utilization": 0.0, "resets_at": None}
 
             u_type = name_map.get(key, key.replace("_", " ").title())
-            
+
             # 1. Handle Balance/Currency fields (Prepaid or Specific Balance)
             if key in ["current_balance", "available_balance", "balance", "credits"]:
                 try:
                     bal = float(usage) if usage is not None else 0.0
-                    results.append({
-                        "service_name": f"Claude ({u_type})",
-                        "icon": "💰",
-                        "remaining": f"${bal:.2f}",
-                        "unit": "USD",
-                        "reset": "Prepaid",
-                        "health": "good" if bal > 5.0 else "warning",
-                        "pace": "Manual Top-up",
-                        "detail": f"Current Balance: ${bal:.2f} [OAuth]{identity_suffix}",
-                        "used_value": 0.0,
-                        "limit_value": bal,
-                        "unit_type": "currency",
-                        "data_source": "oauth",
-                        "tier": tier,
-                        "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    })
+                    results.append(
+                        {
+                            "service_name": f"Claude ({u_type})",
+                            "icon": "💰",
+                            "remaining": f"${bal:.2f}",
+                            "unit": "USD",
+                            "reset": "Prepaid",
+                            "health": "good" if bal > 5.0 else "warning",
+                            "pace": "Manual Top-up",
+                            "detail": f"Current Balance: ${bal:.2f} [OAuth]{identity_suffix}",
+                            "used_value": 0.0,
+                            "limit_value": bal,
+                            "unit_type": "currency",
+                            "data_source": "oauth",
+                            "tier": tier,
+                            "usage_url": "https://claude.ai/settings/usage",
+                            "updated_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
                 except (ValueError, TypeError):
                     pass
                 continue
@@ -360,23 +398,25 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 spend = float(raw_spend) if raw_spend is not None else 0.0
                 limit = float(raw_limit)
                 remaining = max(0.0, limit - spend)
-                results.append({
-                    "service_name": f"Claude ({u_type})",
-                    "icon": "💰",
-                    "remaining": f"${remaining:.2f}",
-                    "unit": "limit",
-                    "reset": "Monthly",
-                    "health": "good" if remaining > 5.0 else "warning",
-                    "pace": "Flexible",
-                    "detail": f"Spent: ${spend:.2f} / ${limit:.2f} [OAuth]{identity_suffix}",
-                    "used_value": spend,
-                    "limit_value": limit,
-                    "unit_type": "currency",
-                    "data_source": "oauth",
-                    "tier": tier,
-                    "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                })
+                results.append(
+                    {
+                        "service_name": f"Claude ({u_type})",
+                        "icon": "💰",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": "limit",
+                        "reset": "Monthly",
+                        "health": "good" if remaining > 5.0 else "warning",
+                        "pace": "Flexible",
+                        "detail": f"Spent: ${spend:.2f} / ${limit:.2f} [OAuth]{identity_suffix}",
+                        "used_value": spend,
+                        "limit_value": limit,
+                        "unit_type": "currency",
+                        "data_source": "oauth",
+                        "tier": tier,
+                        "usage_url": "https://claude.ai/settings/usage",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
                 continue
 
             # 3. Handle Standard Percentage windows
@@ -392,26 +432,34 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 except (ValueError, TypeError):
                     pass
 
-            results.append({
-                "service_name": f"Claude ({u_type})",
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "oauth",
-                "tier": tier,
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(UTC).isoformat(),
-            })
+            results.append(
+                {
+                    "service_name": f"Claude ({u_type})",
+                    "icon": "🟠",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at),
+                    "health": "good"
+                    if pct_used < 70
+                    else "warning"
+                    if pct_used < 90
+                    else "critical",
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": "oauth",
+                    "tier": tier,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
 
-        return results if results else [
-            error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")
-        ]
+        return (
+            results
+            if results
+            else [error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")]
+        )

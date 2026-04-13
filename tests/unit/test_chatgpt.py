@@ -31,9 +31,7 @@ def chatgpt_usage_response():
         "rate_limit": {
             "primary_window": {
                 "used_percent": 25.5,
-                "reset_at": int(
-                    (datetime.now(UTC) + timedelta(hours=3)).timestamp()
-                ),
+                "reset_at": int((datetime.now(UTC) + timedelta(hours=3)).timestamp()),
             }
         },
     }
@@ -130,16 +128,14 @@ class TestChatGPTCollectorDetailed:
                     assert mock_http_client.request.call_count == 1  # No new API call
 
     @pytest.mark.asyncio
-    async def test_tier_detection_plus(
-        self, mock_http_client, chatgpt_usage_response
-    ):
+    async def test_tier_detection_plus(self, mock_http_client, chatgpt_usage_response):
         """Verify 'PLUS' tier detection from unified usage data."""
         collector = ChatGPTCollector()
 
         usage_resp = MagicMock(spec=httpx.Response)
         usage_resp.status_code = 200
         usage_resp.headers = {}
-        usage_resp.json.return_value = chatgpt_usage_response # contains "plus"
+        usage_resp.json.return_value = chatgpt_usage_response  # contains "plus"
 
         mock_http_client.request.side_effect = [usage_resp]
 
@@ -174,7 +170,9 @@ class TestChatGPTCollectorDetailed:
             assert "FREE" in results[0]["detail"]
 
     @pytest.mark.asyncio
-    async def test_tier_extraction_from_usage_on_account_fail(self, mock_http_client, chatgpt_usage_response):
+    async def test_tier_extraction_from_usage_on_account_fail(
+        self, mock_http_client, chatgpt_usage_response
+    ):
         """Verify tier is extracted correctly from single usage call."""
         collector = ChatGPTCollector()
 
@@ -189,7 +187,7 @@ class TestChatGPTCollectorDetailed:
 
         with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
             results = await collector.collect(mock_http_client)
-            
+
             # Should have the Codex card with PLUS tier
             assert any(r["service_name"] == "ChatGPT Codex" for r in results)
             codex_card = next(r for r in results if r["service_name"] == "ChatGPT Codex")
@@ -209,13 +207,18 @@ class TestChatGPTCollectorDetailed:
         # Mock local logs existence
         log_content = json.dumps({"used_percent": 88.0, "resets_at": 1744876800})
 
-        with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}), patch(
-            "app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc",
-            return_value=[],
-        ), patch(
-            "app.services.collectors.chatgpt_local.glob.glob",
-            return_value=["/fake/path/session.jsonl"],
-        ), patch("os.path.getmtime", return_value=12345):
+        with (
+            patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}),
+            patch(
+                "app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc",
+                return_value=[],
+            ),
+            patch(
+                "app.services.collectors.chatgpt_local.glob.glob",
+                return_value=["/fake/path/session.jsonl"],
+            ),
+            patch("os.path.getmtime", return_value=12345),
+        ):
             with patch("builtins.open", mock_open(read_data=log_content)):
                 results = await collector.collect(mock_http_client)
 
@@ -246,43 +249,51 @@ class TestChatGPTCollectorDetailed:
     async def test_collect_via_cli_rpc_success(self):
         """Test successful data collection via codex CLI RPC."""
         collector = ChatGPTCollector()
-        
+
         # We need a process-like object that behaves correctly
         mock_process = MagicMock()
         mock_process.stdin = MagicMock()
-        mock_process.stdin.drain = AsyncMock() # Must be awaitable
+        mock_process.stdin.drain = AsyncMock()  # Must be awaitable
         mock_process.stdout = AsyncMock()
-        mock_process.terminate = MagicMock() # Sync mock
+        mock_process.terminate = MagicMock()  # Sync mock
         mock_process.wait = AsyncMock()
-        
+
         # Define mock responses for the 3 RPC calls (matching actual CLI output)
         mock_responses = [
             # initialize
-            json.dumps({"jsonrpc": "2.0", "id": "1", "result": {"userAgent": "Test"}}).encode() + b"\n",
+            json.dumps({"jsonrpc": "2.0", "id": "1", "result": {"userAgent": "Test"}}).encode()
+            + b"\n",
             # account/read
-            json.dumps({"jsonrpc": "2.0", "id": "2", "result": {"account": {
-                "email": "test@example.com",
-                "planType": "plus"
-            }}}).encode() + b"\n",
-            # account/rateLimits/read
-            json.dumps({"jsonrpc": "2.0", "id": "3", "result": {"rateLimits": {
-                "primary": {
-                    "usedPercent": 40.0,
-                    "resetsAt": 1744876800
-                },
-                "credits": {
-                    "balance": 15.50,
-                    "unlimited": False
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "2",
+                    "result": {"account": {"email": "test@example.com", "planType": "plus"}},
                 }
-            }}}).encode() + b"\n",
-            b"" # End of stream
+            ).encode()
+            + b"\n",
+            # account/rateLimits/read
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "3",
+                    "result": {
+                        "rateLimits": {
+                            "primary": {"usedPercent": 40.0, "resetsAt": 1744876800},
+                            "credits": {"balance": 15.50, "unlimited": False},
+                        }
+                    },
+                }
+            ).encode()
+            + b"\n",
+            b"",  # End of stream
         ]
-        
+
         mock_process.stdout.readline.side_effect = mock_responses
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             results = await collector._collect_via_cli_rpc()
-            
+
             assert len(results) == 3
             # Check Account card
             assert results[0]["service_name"] == "ChatGPT Account"

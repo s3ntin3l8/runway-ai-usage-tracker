@@ -108,14 +108,12 @@ class SmartCollector:
         # Cache is stale if age exceeds TTL
         if age > self.ttl:
             logger.debug(
-                f"{self.collector_name}: Cache expired "
-                f"(age: {age:.1f}s, ttl: {self.ttl}s)"
+                f"{self.collector_name}: Cache expired (age: {age:.1f}s, ttl: {self.ttl}s)"
             )
             return False
 
         logger.debug(
-            f"{self.collector_name}: Using cached result "
-            f"(age: {age:.1f}s, ttl: {self.ttl}s)"
+            f"{self.collector_name}: Using cached result (age: {age:.1f}s, ttl: {self.ttl}s)"
         )
         return True
 
@@ -144,10 +142,7 @@ class SmartCollector:
         sources = sorted(list({str(r.get("data_source", "unknown")) for r in result}))
         source_str = f" [source: {', '.join(sources)}]" if sources else ""
 
-        logger.info(
-            f"{self.collector_name}: Successful fetch "
-            f"({len(result)} cards){source_str}"
-        )
+        logger.info(f"{self.collector_name}: Successful fetch ({len(result)} cards){source_str}")
 
     def _mark_failure(self, error: Exception) -> None:
         """Record failed fetch."""
@@ -186,10 +181,7 @@ class SmartCollector:
         # Don't hammer the API during outages
         if not self._should_retry_after_error():
             last_fetch = self.last_fetch_time or 0.0
-            logger.debug(
-                f"{self.collector_name}: Still in retry delay "
-                f"({self.error_retry_delay}s)"
-            )
+            logger.debug(f"{self.collector_name}: Still in retry delay ({self.error_retry_delay}s)")
             if self.last_result:
                 return self._tag_as_cached(self.last_result)
             return [
@@ -209,7 +201,7 @@ class SmartCollector:
             if result:
                 # DEBUG: log all sources
                 # for r in result:
-                    # logger.info(f"DEBUG CARD: {r['service_name']} source={r.get('data_source')}")
+                # logger.info(f"DEBUG CARD: {r['service_name']} source={r.get('data_source')}")
                 self._mark_success(result)
                 return copy.deepcopy(result)
             # Empty result without error
@@ -231,8 +223,7 @@ class SmartCollector:
             # Graceful degradation: Use stale data if available
             if self.last_result:
                 logger.info(
-                    f"{self.collector_name}: Returning cached data "
-                    f"due to fetch failure: {e}"
+                    f"{self.collector_name}: Returning cached data due to fetch failure: {e}"
                 )
                 return self._tag_as_cached(self.last_result)
 
@@ -258,7 +249,7 @@ class SmartCollector:
         """
         last_success = self.last_success_time or 0.0
         age = time.time() - last_success
-        age_str = f"{age:.0f}s" if age < 60 else f"{age/60:.1f}m"
+        age_str = f"{age:.0f}s" if age < 60 else f"{age / 60:.1f}m"
 
         tagged = []
         for card in result:
@@ -269,6 +260,7 @@ class SmartCollector:
             tagged.append(card_copy)
 
         return tagged
+
     def get_stats(self) -> dict[str, Any]:
         """
         Get internal state statistics for monitoring/debugging.
@@ -281,9 +273,7 @@ class SmartCollector:
             "cache_status": {
                 "has_cache": self.last_result is not None,
                 "cache_age_seconds": (
-                    time.time() - self.last_success_time
-                    if self.last_success_time
-                    else 0
+                    time.time() - self.last_success_time if self.last_success_time else 0
                 ),
                 "cache_ttl_seconds": self.ttl,
             },

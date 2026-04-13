@@ -50,9 +50,9 @@ class TestWindowsCredCache:
 
     def test_windows_cred_cache_is_dict_not_none(self):
         """_windows_cred_cache must be initialized as a dict."""
-        assert isinstance(
-            sidecar._windows_cred_cache, dict
-        ), f"_windows_cred_cache is {type(sidecar._windows_cred_cache)}, expected dict"
+        assert isinstance(sidecar._windows_cred_cache, dict), (
+            f"_windows_cred_cache is {type(sidecar._windows_cred_cache)}, expected dict"
+        )
 
     def test_get_windows_credential_write_does_not_crash(self):
         """Writing to _windows_cred_cache must not raise TypeError."""
@@ -83,6 +83,6 @@ class TestWindowsCredCache:
         source = inspect.getsource(sidecar)
         # Count assignments of _windows_cred_cache = None (should be 0 after fix)
         matches = re.findall(r"_windows_cred_cache\s*=\s*None", source)
-        assert (
-            len(matches) == 0
-        ), f"Found {len(matches)} assignment(s) of _windows_cred_cache = None: {matches}"
+        assert len(matches) == 0, (
+            f"Found {len(matches)} assignment(s) of _windows_cred_cache = None: {matches}"
+        )

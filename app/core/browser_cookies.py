@@ -104,13 +104,13 @@ def _get_windows_master_key(db_path: Path) -> bytes | None:
             current = current.parent
             if current == current.parent:
                 break
-        
+
         if not local_state_path:
             return None
 
         with open(local_state_path, encoding="utf-8") as f:
             local_state = json.load(f)
-        
+
         encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
         # Prefix "DPAPI" is 5 bytes
         encrypted_key = encrypted_key[5:]
@@ -139,13 +139,18 @@ def decrypt_windows_cookie(encrypted_value: bytes, db_path: Path | None = None) 
         return None
 
     # Modern Chrome (v10/v20) uses AES-GCM
-    if (encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11") or encrypted_value.startswith(b"v20")) and db_path:
+    if (
+        encrypted_value.startswith(b"v10")
+        or encrypted_value.startswith(b"v11")
+        or encrypted_value.startswith(b"v20")
+    ) and db_path:
         master_key = _get_windows_master_key(db_path)
         if not master_key:
             return None
-        
+
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
             nonce = encrypted_value[3:15]
             ciphertext = encrypted_value[15:]
             aesgcm = AESGCM(master_key)
@@ -261,14 +266,12 @@ class SafariBinaryCookieParser:
                     return []
 
                 num_pages = struct.unpack(">I", f.read(4))[0]
-                page_sizes = [
-                    struct.unpack(">I", f.read(4))[0] for _ in range(num_pages)
-                ]
+                page_sizes = [struct.unpack(">I", f.read(4))[0] for _ in range(num_pages)]
 
                 for size in page_sizes:
                     page_data = f.read(size)
                     cookies.extend(SafariBinaryCookieParser.parse_page(page_data))
-            
+
             # DEBUG: Print all found cookies
             # Cleanup
         except Exception:
@@ -282,8 +285,7 @@ class SafariBinaryCookieParser:
             return []
         num_cookies = struct.unpack("<I", data[4:8])[0]
         offsets = [
-            struct.unpack("<I", data[8 + (i * 4) : 12 + (i * 4)])[0]
-            for i in range(num_cookies)
+            struct.unpack("<I", data[8 + (i * 4) : 12 + (i * 4)])[0] for i in range(num_cookies)
         ]
 
         for offset in offsets:
@@ -299,11 +301,7 @@ class SafariBinaryCookieParser:
 
             def read_string(off):
                 end = cookie_data.find(b"\x00", off)
-                return (
-                    cookie_data[off:end].decode("utf-8", errors="replace")
-                    if end != -1
-                    else ""
-                )
+                return cookie_data[off:end].decode("utf-8", errors="replace") if end != -1 else ""
 
             page_cookies.append(
                 {
@@ -325,7 +323,7 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
     """
     system = platform.system()
     home = Path.home()
-    
+
     # Discovery functions for each browser type
     def discover_safari():
         if system != "Darwin":
@@ -334,7 +332,9 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
             home / "Library/Cookies/Cookies.binarycookies",
             home / "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
         ]
-        return [{"browser": "Safari", "type": "safari", "path": p} for p in safari_paths if p.exists()]
+        return [
+            {"browser": "Safari", "type": "safari", "path": p} for p in safari_paths if p.exists()
+        ]
 
     def discover_chromium():
         results = []
@@ -422,17 +422,16 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
             for p in base.glob("*.default*"):
                 cookie_sqlite = p / "cookies.sqlite"
                 if cookie_sqlite.exists():
-                    results.append(
-                        {"browser": "Firefox", "type": "firefox", "path": cookie_sqlite}
-                    )
+                    results.append({"browser": "Firefox", "type": "firefox", "path": cookie_sqlite})
         return results
 
     # Apply preference ordering
     pref_str = settings.BROWSER_PREFERENCE.lower()
     prefs = [p.strip() for p in pref_str.split(",") if p.strip()]
-    
+
     # Lazy-loaded cache for chromium variants to avoid redundant discovery calls
     _cached_chromium_results = None
+
     def get_chromium(name: str):
         nonlocal _cached_chromium_results
         if _cached_chromium_results is None:
@@ -445,12 +444,12 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
         "chrome": lambda: get_chromium("Chrome"),
         "chromium": lambda: get_chromium("Chromium"),
         "edge": lambda: get_chromium("Edge"),
-        "firefox": discover_firefox
+        "firefox": discover_firefox,
     }
-    
+
     ordered_results = []
     seen_browsers = set()
-    
+
     # 1. Process preferred browsers in order
     for pref in prefs:
         if pref in discovery_map and pref not in seen_browsers:
@@ -468,7 +467,7 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
         if browser not in seen_browsers:
             res = discovery_map[browser]()
             ordered_results.extend(res)
-            
+
     return ordered_results
 
 
@@ -478,7 +477,9 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> str | None:
     return cookies[0] if cookies else None
 
 
-def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: bool = True) -> list[str]:
+def get_session_cookies(
+    domain_substring: str, cookie_name: str, allow_prefix: bool = True
+) -> list[str]:
     """
     Search for one or more session cookies (supporting chunked NextAuth tokens).
 
@@ -513,9 +514,11 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
                 found = []
                 for c in cookies:
                     if domain_substring in c["domain"]:
-                        if c["name"] == cookie_name or (allow_prefix and c["name"].startswith(f"{cookie_name}.")):
+                        if c["name"] == cookie_name or (
+                            allow_prefix and c["name"].startswith(f"{cookie_name}.")
+                        ):
                             found.append(c)
-                
+
                 if found:
                     # Sort by name to handle .0, .1, .2 order
                     found.sort(key=lambda x: x["name"])
@@ -538,7 +541,7 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
             if b_type == "chromium":
                 query = "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE ?"
                 params = [f"%{domain_substring}%"]
-                
+
                 if allow_prefix:
                     query += " AND (name = ? OR name LIKE ?)"
                     params.extend([cookie_name, f"{cookie_name}.%"])
@@ -556,9 +559,11 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
                         decrypted = decrypt_chromium_cookie(enc_val, path)
                         if decrypted:
                             results.append(decrypted)
-                    
+
                     if results:
-                        logger.info(f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}")
+                        logger.info(
+                            f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}"
+                        )
                         conn.close()
                         return results
                     # Rows existed but none could be decrypted — almost certainly ABE.
@@ -573,7 +578,7 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
             elif b_type == "firefox":
                 query = "SELECT name, value FROM moz_cookies WHERE host LIKE ?"
                 params = [f"%{domain_substring}%"]
-                
+
                 if allow_prefix:
                     query += " AND (name = ? OR name LIKE ?)"
                     params.extend([cookie_name, f"{cookie_name}.%"])
@@ -611,12 +616,12 @@ def get_cookie_from_registry(provider_id: str, cookie_name: str | None = None) -
     """Extract cookie for a provider using rules from registry.json."""
     provider_config = registry.get_provider(provider_id)
     rules = provider_config.get("rules", [])
-    
+
     for rule in rules:
         if rule.get("type") == "cookie":
             if cookie_name and rule.get("name") != cookie_name:
                 continue
-            
+
             c_name = rule.get("name")
             for domain in rule.get("domains", []):
                 val = get_session_cookie(domain, c_name)

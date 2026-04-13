@@ -10,15 +10,14 @@ from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
+
 class GeminiOAuthMixin(OAuthBaseCollector):
     """Mixin for Gemini OAuth token management."""
-    
+
     async def _get_current_token(self) -> str | None:
         """Get the current access token."""
         # Check sidecar cache first
-        token = await token_cache.get_token(
-            "gemini", "oauth_token", account_id=self.account_id
-        )
+        token = await token_cache.get_token("gemini", "oauth_token", account_id=self.account_id)
         if not token and not self.account_id:
             creds = await self._get_credentials()
             if creds:
@@ -53,7 +52,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
         client_id = settings.GEMINI_OAUTH_CLIENT_ID
         if not client_id:
             client_id = creds.get("client_id") or creds.get("clientId")
-            
+
         if not client_id and "id_token" in creds:
             token_client_id = IdentityExtractor.get_client_id_from_jwt(creds["id_token"])
             if token_client_id:
@@ -81,9 +80,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 new_data = resp.json()
                 creds["access_token"] = new_data["access_token"]
                 # Expiry is in seconds in response, convert to ms
-                creds["expiry_date"] = int(time.time() * 1000) + (
-                    new_data["expires_in"] * 1000
-                )
+                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
 
                 # Update sidecar cache
                 await self._store_sidecar_token("gemini", new_data["access_token"])

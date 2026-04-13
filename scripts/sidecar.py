@@ -42,22 +42,20 @@ __REGISTRY__ = {
                 {
                     "type": "env",
                     "variable": "CLAUDE_CODE_OAUTH_TOKEN",
-                    "mapping": {
-                        "value": "oauth_token"
-                    }
+                    "mapping": {"value": "oauth_token"},
                 },
                 {
                     "type": "file",
                     "paths": [
                         "~/.claude/.credentials.json",
-                        "{{CONFIG_DIR:claude}}/.credentials.json"
+                        "{{CONFIG_DIR:claude}}/.credentials.json",
                     ],
                     "format": "json",
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
-                        "claudeAiOauth.clientId": "client_id"
-                    }
+                        "claudeAiOauth.clientId": "client_id",
+                    },
                 },
                 {
                     "type": "keychain",
@@ -66,97 +64,58 @@ __REGISTRY__ = {
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
-                        "claudeAiOauth.clientId": "client_id"
-                    }
+                        "claudeAiOauth.clientId": "client_id",
+                    },
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "anthropic.com",
-                        ".anthropic.com",
-                        "claude.ai",
-                        ".claude.ai"
-                    ],
+                    "domains": ["anthropic.com", ".anthropic.com", "claude.ai", ".claude.ai"],
                     "name": "sessionKey",
-                    "mapping": {
-                        "value": "cookie_sessionKey"
-                    }
+                    "mapping": {"value": "cookie_sessionKey"},
                 },
                 {
                     "type": "file_json_statusline",
-                    "paths": [
-                        "~/.claude/statusline.json",
-                        "{{CONFIG_DIR:claude}}/statusline.json"
-                    ]
-                }
-            ]
+                    "paths": ["~/.claude/statusline.json", "{{CONFIG_DIR:claude}}/statusline.json"],
+                },
+            ],
         },
         "openrouter": {
             "name": "OpenRouter",
             "icon": "\ud83d\ude80",
             "rules": [
-                {
-                    "type": "env",
-                    "variable": "OPENROUTER_API_KEY",
-                    "mapping": {
-                        "value": "api_key"
-                    }
-                }
-            ]
+                {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}}
+            ],
         },
         "minimax": {
             "name": "MiniMax",
             "icon": "\ud83e\udd16",
             "rules": [
-                {
-                    "type": "env",
-                    "variable": "MINIMAX_API_KEY",
-                    "mapping": {
-                        "value": "api_key"
-                    }
-                }
-            ]
+                {"type": "env", "variable": "MINIMAX_API_KEY", "mapping": {"value": "api_key"}}
+            ],
         },
         "github": {
             "name": "GitHub API",
             "icon": "\ud83d\udc19",
             "rules": [
-                {
-                    "type": "env",
-                    "variable": "GITHUB_TOKEN",
-                    "mapping": {
-                        "value": "api_key"
-                    }
-                },
+                {"type": "env", "variable": "GITHUB_TOKEN", "mapping": {"value": "api_key"}},
                 {
                     "type": "file",
-                    "paths": [
-                        "{{CONFIG_DIR:usage-tracker}}/github_oauth.json"
-                    ],
+                    "paths": ["{{CONFIG_DIR:usage-tracker}}/github_oauth.json"],
                     "format": "json",
-                    "mapping": {
-                        "access_token": "api_key"
-                    }
+                    "mapping": {"access_token": "api_key"},
                 },
                 {
                     "type": "file",
-                    "paths": [
-                        "~/.config/gh/hosts.yml",
-                        "{{CONFIG_DIR:gh}}/hosts.yml"
-                    ],
+                    "paths": ["~/.config/gh/hosts.yml", "{{CONFIG_DIR:gh}}/hosts.yml"],
                     "format": "yaml",
-                    "mapping": {
-                        "github.com.oauth_token": "api_key"
-                    }
+                    "mapping": {"github.com.oauth_token": "api_key"},
                 },
                 {
                     "type": "windows_credential",
                     "target": "github.com",
-                    "mapping": {
-                        "value": "api_key"
-                    }
-                }
-            ]
+                    "mapping": {"value": "api_key"},
+                },
+            ],
         },
         "gemini": {
             "name": "Gemini API",
@@ -166,16 +125,16 @@ __REGISTRY__ = {
                     "type": "file",
                     "paths": [
                         "~/.gemini/oauth_creds.json",
-                        "{{CONFIG_DIR:gemini}}/oauth_creds.json"
+                        "{{CONFIG_DIR:gemini}}/oauth_creds.json",
                     ],
                     "format": "json",
                     "mapping": {
                         "access_token": "oauth_token",
                         "client_id": "client_id",
-                        "clientId": "client_id"
-                    }
+                        "clientId": "client_id",
+                    },
                 }
-            ]
+            ],
         },
         "chatgpt": {
             "name": "ChatGPT Codex",
@@ -184,32 +143,21 @@ __REGISTRY__ = {
                 {
                     "type": "env",
                     "variable": "CHATGPT_OAUTH_TOKEN",
-                    "mapping": {
-                        "value": "oauth_token"
-                    }
+                    "mapping": {"value": "oauth_token"},
                 },
                 {
                     "type": "file",
-                    "paths": [
-                        "~/.codex/auth.json",
-                        "{{CONFIG_DIR:codex}}/auth.json"
-                    ],
+                    "paths": ["~/.codex/auth.json", "{{CONFIG_DIR:codex}}/auth.json"],
                     "format": "json",
-                    "mapping": {
-                        "tokens.access_token": "oauth_token"
-                    }
+                    "mapping": {"tokens.access_token": "oauth_token"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "chatgpt.com"
-                    ],
+                    "domains": ["chatgpt.com"],
                     "name": "__Secure-next-auth.session-token",
-                    "mapping": {
-                        "value": "cookie___Secure-next-auth.session-token"
-                    }
-                }
-            ]
+                    "mapping": {"value": "cookie___Secure-next-auth.session-token"},
+                },
+            ],
         },
         "kimi": {
             "name": "Kimi API",
@@ -218,42 +166,21 @@ __REGISTRY__ = {
                 {
                     "type": "env",
                     "variable": "KIMI_AUTH_TOKEN",
-                    "mapping": {
-                        "value": "cookie_kimi-auth"
-                    }
+                    "mapping": {"value": "cookie_kimi-auth"},
                 },
-                {
-                    "type": "env",
-                    "variable": "KIMI_API_KEY",
-                    "mapping": {
-                        "value": "api_key"
-                    }
-                },
+                {"type": "env", "variable": "KIMI_API_KEY", "mapping": {"value": "api_key"}},
                 {
                     "type": "cookie",
-                    "domains": [
-                        "kimi.moonshot.cn",
-                        "kimi.com"
-                    ],
+                    "domains": ["kimi.moonshot.cn", "kimi.com"],
                     "name": "kimi-auth",
-                    "mapping": {
-                        "value": "cookie_kimi-auth"
-                    }
-                }
-            ]
+                    "mapping": {"value": "cookie_kimi-auth"},
+                },
+            ],
         },
         "zai": {
             "name": "zAI API",
             "icon": "\ud83c\udf10",
-            "rules": [
-                {
-                    "type": "env",
-                    "variable": "ZAI_API_KEY",
-                    "mapping": {
-                        "value": "api_key"
-                    }
-                }
-            ]
+            "rules": [{"type": "env", "variable": "ZAI_API_KEY", "mapping": {"value": "api_key"}}],
         },
         "opencode": {
             "name": "OpenCode",
@@ -261,39 +188,26 @@ __REGISTRY__ = {
             "rules": [
                 {
                     "type": "cookie",
-                    "domains": [
-                        "opencode.ai",
-                        ".opencode.ai"
-                    ],
+                    "domains": ["opencode.ai", ".opencode.ai"],
                     "name": "auth",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "sqlite",
                     "paths": [
                         "~/.local/share/opencode/opencode.db",
-                        "{{DATA_DIR:opencode}}/opencode.db"
+                        "{{DATA_DIR:opencode}}/opencode.db",
                     ],
                     "queries": [
                         {
                             "name": "Usage (5h/7d/30d)",
                             "query": "SELECT SUM(json_extract(data, '$.cost')), COUNT(*) FROM message WHERE time_created > ? AND json_valid(data) AND json_extract(data, '$.role') = 'assistant'",
-                            "windows": {
-                                "5h": 18000,
-                                "week": 604800,
-                                "month": 2592000
-                            },
-                            "limits": {
-                                "5h": 12.0,
-                                "week": 30.0,
-                                "month": 60.0
-                            }
+                            "windows": {"5h": 18000, "week": 604800, "month": 2592000},
+                            "limits": {"5h": 12.0, "week": 30.0, "month": 60.0},
                         }
-                    ]
-                }
-            ]
+                    ],
+                },
+            ],
         },
         "antigravity": {
             "name": "Antigravity",
@@ -303,10 +217,10 @@ __REGISTRY__ = {
                     "type": "file_json_data",
                     "paths": [
                         "~/.antigravity/state/quota.json",
-                        "{{DATA_DIR:antigravity}}/state/quota.json"
-                    ]
+                        "{{DATA_DIR:antigravity}}/state/quota.json",
+                    ],
                 }
-            ]
+            ],
         },
         "ollama": {
             "name": "Ollama Cloud",
@@ -315,79 +229,46 @@ __REGISTRY__ = {
                 {
                     "type": "env",
                     "variable": "OLLAMA_SESSION_TOKEN",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "ollama.com",
-                        ".ollama.com"
-                    ],
+                    "domains": ["ollama.com", ".ollama.com"],
                     "name": "session",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "ollama.com",
-                        ".ollama.com"
-                    ],
+                    "domains": ["ollama.com", ".ollama.com"],
                     "name": "ollama_session",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "ollama.com",
-                        ".ollama.com"
-                    ],
+                    "domains": ["ollama.com", ".ollama.com"],
                     "name": "__Host-ollama_session",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "ollama.com",
-                        ".ollama.com"
-                    ],
+                    "domains": ["ollama.com", ".ollama.com"],
                     "name": "__Secure-next-auth.session-token",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "ollama.com",
-                        ".ollama.com"
-                    ],
+                    "domains": ["ollama.com", ".ollama.com"],
                     "name": "__Secure-session",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
+                    "mapping": {"value": "cookie_session"},
                 },
                 {
                     "type": "cookie",
-                    "domains": [
-                        "ollama.com",
-                        ".ollama.com",
-                        "signin.ollama.com"
-                    ],
+                    "domains": ["ollama.com", ".ollama.com", "signin.ollama.com"],
                     "name": "access-token",
-                    "mapping": {
-                        "value": "cookie_session"
-                    }
-                }
-            ]
-        }
+                    "mapping": {"value": "cookie_session"},
+                },
+            ],
+        },
     }
 }
 # -------------------------
@@ -625,9 +506,7 @@ def queue_push(payload: dict[str, Any]) -> None:
     queue_rotate()
 
 
-def queue_rotate(
-    max_size_mb: int = 10, config: dict[str, Any] | None = None
-) -> None:
+def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) -> None:
     """Rotate queue files, removing oldest if total size exceeds limit."""
     queue_dir = get_queue_dir()
     if not queue_dir.exists():
@@ -685,9 +564,7 @@ def queue_flush(api_url: str, api_key: str) -> int:
                     entry = json.loads(line)
                     payload = entry.get("payload", {})
 
-                    success, _ = http_post_signed_with_retry(
-                        target_url, payload, api_key
-                    )
+                    success, _ = http_post_signed_with_retry(target_url, payload, api_key)
 
                     if success:
                         count += 1
@@ -730,16 +607,12 @@ def health_check(api_url: str, timeout: int = 5) -> bool:
         return False
 
 
-def http_post_signed(
-    url: str, data: dict[str, Any], api_key: str
-) -> tuple[bool, Any, int]:
+def http_post_signed(url: str, data: dict[str, Any], api_key: str) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
     timestamp = str(int(time.time()))
     body = json.dumps(data, separators=(",", ":")).encode("utf-8")
 
-    signature = hmac.new(
-        api_key.encode(), timestamp.encode() + body, hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(api_key.encode(), timestamp.encode() + body, hashlib.sha256).hexdigest()
 
     headers = {
         "Content-Type": "application/json",
@@ -861,9 +734,7 @@ def resolve_path(path_str: str) -> Path:
         match = re.search(r"{{CONFIG_DIR:([^}]+)}}", path_str)
         if match:
             app_name = match.group(1)
-            path_str = path_str.replace(
-                match.group(0), str(get_platform_config_dir(app_name))
-            )
+            path_str = path_str.replace(match.group(0), str(get_platform_config_dir(app_name)))
 
     if "{{DATA_DIR:" in path_str:
         import re
@@ -871,9 +742,7 @@ def resolve_path(path_str: str) -> Path:
         match = re.search(r"{{DATA_DIR:([^}]+)}}", path_str)
         if match:
             app_name = match.group(1)
-            path_str = path_str.replace(
-                match.group(0), str(get_platform_data_dir(app_name))
-            )
+            path_str = path_str.replace(match.group(0), str(get_platform_data_dir(app_name)))
 
     return Path(path_str)
 
@@ -910,9 +779,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 )
 
                 salt = b"saltysalt"
-                key = hashlib.pbkdf2_hmac(
-                    "sha1", password.encode("utf-8"), salt, 1003, 16
-                )
+                key = hashlib.pbkdf2_hmac("sha1", password.encode("utf-8"), salt, 1003, 16)
                 iv = b" " * 16
                 raw_ciphertext = encrypted_value[3:]
                 cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
@@ -975,9 +842,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
             ]:
                 password = item.get_secret()
                 break
-        if password and (
-            encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11")
-        ):
+        if password and (encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11")):
             salt = b"saltysalt"
             key = hashlib.pbkdf2_hmac("sha1", password, salt, 1003, 16)
             iv = b" " * 16
@@ -1029,9 +894,7 @@ class BrowserCookieExtractor:
                 dirs.append(home / "Library/Application Support" / v["darwin"])
             elif system == "Windows":
                 la = os.getenv("LOCALAPPDATA")
-                dirs.append(
-                    Path(la) / v["win"] if la else home / "AppData/Local" / v["win"]
-                )
+                dirs.append(Path(la) / v["win"] if la else home / "AppData/Local" / v["win"])
             else:
                 for lp in v["linux"]:
                     dirs.append(home / lp)
@@ -1043,9 +906,7 @@ class BrowserCookieExtractor:
                     for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
                         p = base / rel
                         if p.exists():
-                            results.append(
-                                {"browser": v["name"], "type": "chromium", "path": p}
-                            )
+                            results.append({"browser": v["name"], "type": "chromium", "path": p})
 
         # 2. Linux Flatpak / Snap
         if system == "Linux":
@@ -1120,10 +981,7 @@ class BrowserCookieExtractor:
                     )
 
         # 4. Safari
-        if (
-            system == "Darwin"
-            and (home / "Library/Cookies/Cookies.binarycookies").exists()
-        ):
+        if system == "Darwin" and (home / "Library/Cookies/Cookies.binarycookies").exists():
             results.append(
                 {
                     "browser": "Safari",
@@ -1142,9 +1000,7 @@ class BrowserCookieExtractor:
                 if f.read(4) != b"cook":
                     return []
                 num_pages = struct.unpack(">I", f.read(4))[0]
-                page_sizes = [
-                    struct.unpack(">I", f.read(4))[0] for _ in range(num_pages)
-                ]
+                page_sizes = [struct.unpack(">I", f.read(4))[0] for _ in range(num_pages)]
                 all_cookies = []
                 for size in page_sizes:
                     data = f.read(size)
@@ -1165,11 +1021,7 @@ class BrowserCookieExtractor:
 
                         def r_s(at):
                             e = c.find(b"\x00", at)
-                            return (
-                                c[at:e].decode("utf-8", errors="replace")
-                                if e != -1
-                                else ""
-                            )
+                            return c[at:e].decode("utf-8", errors="replace") if e != -1 else ""
 
                         all_cookies.append(
                             {"domain": r_s(u_o), "name": r_s(n_o), "value": r_s(v_o)}
@@ -1187,9 +1039,7 @@ class BrowserCookieExtractor:
                         if domain in c["domain"] and c["name"] == name:
                             return c["value"]
                 else:
-                    conn = sqlite3.connect(
-                        f"file:{str(target['path'])}?mode=ro&uri=1", uri=True
-                    )
+                    conn = sqlite3.connect(f"file:{str(target['path'])}?mode=ro&uri=1", uri=True)
                     cursor = conn.cursor()
                     if target["type"] == "chromium":
                         cursor.execute(
@@ -1275,7 +1125,7 @@ class GenericCollector:
         """Run all rules for a single provider and return metrics."""
         results = []
         tokens = {}
-        
+
         name = config.get("name", provider_id)
         icon = config.get("icon", "❓")
         rules = config.get("rules", [])
@@ -1379,7 +1229,10 @@ class GenericCollector:
                             for q in rule.get("queries", []):
                                 query_str = q.get("query")
                                 for window_name, seconds in q.get("windows", {}).items():
-                                    cutoff = int((now - datetime.timedelta(seconds=seconds)).timestamp() * 1000)
+                                    cutoff = int(
+                                        (now - datetime.timedelta(seconds=seconds)).timestamp()
+                                        * 1000
+                                    )
                                     cursor.execute(query_str, (cutoff,))
                                     row = cursor.fetchone()
                                     used = float(row[0] or 0.0)
@@ -1388,18 +1241,31 @@ class GenericCollector:
                                     remaining = max(0, limit - used)
                                     pct = (used / limit * 100) if limit > 0 else 0
 
-                                    results.append({
-                                        "service_name": f"{provider_id.capitalize()} ({window_name})",
-                                        "icon": icon,
-                                        "remaining": f"${remaining:.2f}" if "$" in q.get("name", "") or "cost" in query_str else f"{remaining}",
-                                        "unit": f"{limit} limit",
-                                        "reset": f"Rolling {window_name}",
-                                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                                        "pace": "Stable" if pct < 50 else "High",
-                                        "detail": f"{used} used · {count} msgs · {hostname} [Sidecar]",
-                                        "data_source": "local",
-                                        "metadata": {"used": used, "count": count, "window": window_name, "hostname": hostname}
-                                    })
+                                    results.append(
+                                        {
+                                            "service_name": f"{provider_id.capitalize()} ({window_name})",
+                                            "icon": icon,
+                                            "remaining": f"${remaining:.2f}"
+                                            if "$" in q.get("name", "") or "cost" in query_str
+                                            else f"{remaining}",
+                                            "unit": f"{limit} limit",
+                                            "reset": f"Rolling {window_name}",
+                                            "health": "good"
+                                            if pct < 70
+                                            else "warning"
+                                            if pct < 90
+                                            else "critical",
+                                            "pace": "Stable" if pct < 50 else "High",
+                                            "detail": f"{used} used · {count} msgs · {hostname} [Sidecar]",
+                                            "data_source": "local",
+                                            "metadata": {
+                                                "used": used,
+                                                "count": count,
+                                                "window": window_name,
+                                                "hostname": hostname,
+                                            },
+                                        }
+                                    )
                             conn.close()
                         except Exception as e:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
@@ -1415,19 +1281,29 @@ class GenericCollector:
                             for m_name, usage in data.get("models", {}).items():
                                 rem = usage.get("remaining_percent", 0.0)
                                 reset_ts = usage.get("resets_at")
-                                reset_at = datetime.datetime.fromtimestamp(reset_ts, tz=datetime.UTC) if reset_ts else None
-                                results.append({
-                                    "service_name": f"AG: {m_name}",
-                                    "icon": icon,
-                                    "remaining": f"{rem:.1f}%",
-                                    "unit": "remaining",
-                                    "reset": human_delta(reset_at),
-                                    "health": "good" if rem > 30 else "warning",
-                                    "pace": "Stable",
-                                    "detail": f"{m_name} [Sidecar]",
-                                    "data_source": "local",
-                                    "metadata": {"name": m_name, "remaining_percent": rem, "resets_at": reset_ts}
-                                })
+                                reset_at = (
+                                    datetime.datetime.fromtimestamp(reset_ts, tz=datetime.UTC)
+                                    if reset_ts
+                                    else None
+                                )
+                                results.append(
+                                    {
+                                        "service_name": f"AG: {m_name}",
+                                        "icon": icon,
+                                        "remaining": f"{rem:.1f}%",
+                                        "unit": "remaining",
+                                        "reset": human_delta(reset_at),
+                                        "health": "good" if rem > 30 else "warning",
+                                        "pace": "Stable",
+                                        "detail": f"{m_name} [Sidecar]",
+                                        "data_source": "local",
+                                        "metadata": {
+                                            "name": m_name,
+                                            "remaining_percent": rem,
+                                            "resets_at": reset_ts,
+                                        },
+                                    }
+                                )
                         except Exception:
                             pass
 
@@ -1444,7 +1320,7 @@ class GenericCollector:
 
                             with open(path) as f:
                                 data = json.load(f)
-                            
+
                             now_str = datetime.datetime.now(datetime.UTC).isoformat()
                             name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
 
@@ -1454,52 +1330,64 @@ class GenericCollector:
                                 u_type = name_map.get(key, key.replace("_", " ").title())
                                 pct_used = float(info.get("used_percentage", 0.0))
                                 reset_ts = info.get("resets_at")
-                                results.append({
-                                    "service_name": f"Claude ({u_type})",
-                                    "icon": icon,
-                                    "remaining": f"{(100 - pct_used):.1f}%",
-                                    "unit": "capacity",
-                                    "reset": str(datetime.datetime.fromtimestamp(reset_ts)) if reset_ts else "—",
-                                    "health": "good" if pct_used < 70 else "warning",
-                                    "pace": "Active",
-                                    "detail": f"{pct_used:.1f}% used [Sidecar]",
-                                    "data_source": "local",
-                                    "metadata": {"used": pct_used, "resets_at": reset_ts}
-                                })
+                                results.append(
+                                    {
+                                        "service_name": f"Claude ({u_type})",
+                                        "icon": icon,
+                                        "remaining": f"{(100 - pct_used):.1f}%",
+                                        "unit": "capacity",
+                                        "reset": str(datetime.datetime.fromtimestamp(reset_ts))
+                                        if reset_ts
+                                        else "—",
+                                        "health": "good" if pct_used < 70 else "warning",
+                                        "pace": "Active",
+                                        "detail": f"{pct_used:.1f}% used [Sidecar]",
+                                        "data_source": "local",
+                                        "metadata": {"used": pct_used, "resets_at": reset_ts},
+                                    }
+                                )
 
                             # Context / Tokens
                             ctx = data.get("context_window", {})
                             if ctx:
-                                tokens = ctx.get("total_input_tokens", 0) + ctx.get("total_output_tokens", 0)
+                                tokens = ctx.get("total_input_tokens", 0) + ctx.get(
+                                    "total_output_tokens", 0
+                                )
                                 max_t = ctx.get("max_tokens", 200000)
-                                results.append({
-                                    "service_name": "Claude (Session Tokens)",
-                                    "icon": "🪙",
-                                    "remaining": f"{tokens:,}",
-                                    "unit": f"/ {max_t:,}",
-                                    "reset": data.get("model", {}).get("display_name", "Sonnet"),
-                                    "health": "good",
-                                    "pace": "Active",
-                                    "detail": f"{tokens:,} tokens [Sidecar]",
-                                    "data_source": "local"
-                                })
+                                results.append(
+                                    {
+                                        "service_name": "Claude (Session Tokens)",
+                                        "icon": "🪙",
+                                        "remaining": f"{tokens:,}",
+                                        "unit": f"/ {max_t:,}",
+                                        "reset": data.get("model", {}).get(
+                                            "display_name", "Sonnet"
+                                        ),
+                                        "health": "good",
+                                        "pace": "Active",
+                                        "detail": f"{tokens:,} tokens [Sidecar]",
+                                        "data_source": "local",
+                                    }
+                                )
                         except Exception:
                             pass
 
         # If tokens were extracted, add a hidden token card
         if tokens:
-            results.append({
-                "service_name": name,
-                "icon": icon,
-                "remaining": "Token",
-                "unit": "oauth" if "oauth_token" in tokens else "api_key",
-                "reset": "—",
-                "health": "good",
-                "pace": "Token",
-                "detail": "[Token Extracted] [Sidecar]",
-                "data_source": "token_extracted",
-                "metadata": {**tokens, "provider_id": provider_id}
-            })
+            results.append(
+                {
+                    "service_name": name,
+                    "icon": icon,
+                    "remaining": "Token",
+                    "unit": "oauth" if "oauth_token" in tokens else "api_key",
+                    "reset": "—",
+                    "health": "good",
+                    "pace": "Token",
+                    "detail": "[Token Extracted] [Sidecar]",
+                    "data_source": "token_extracted",
+                    "metadata": {**tokens, "provider_id": provider_id},
+                }
+            )
 
         return results
 
@@ -1511,7 +1399,7 @@ def run_collection(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Run collection for all enabled providers."""
     all_metrics = []
     enabled_providers = config.get("providers", ["all"])
-    
+
     registry_providers = __REGISTRY__.get("providers", {})
 
     for provider_id, provider_config in registry_providers.items():
@@ -1554,30 +1442,31 @@ def main():
         try:
             logging.info("Starting collection cycle...")
             metrics = run_collection(config)
-            
+
             if metrics:
-                payload = {
-                    "provider": f"sidecar-{get_hostname()}",
-                    "metrics": metrics
-                }
-                
+                payload = {"provider": f"sidecar-{get_hostname()}", "metrics": metrics}
+
                 # Try to flush queue first
                 queue_flush(api_url, api_key)
-                
+
                 # Send fresh metrics
                 success, result, code = http_post_signed_with_retry(
                     f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
                     payload,
                     api_key,
                     max_attempts=config.get("retry_attempts", 3),
-                    backoff_seconds=config.get("retry_backoff_seconds", 5)
+                    backoff_seconds=config.get("retry_backoff_seconds", 5),
                 )
-                
+
                 if success:
                     logging.info(f"Successfully sent {len(metrics)} metrics")
                 else:
                     # Check for clock skew error (400 timestamp_expired)
-                    if code == 400 and isinstance(result, dict) and result.get("detail", {}).get("error") == "timestamp_expired":
+                    if (
+                        code == 400
+                        and isinstance(result, dict)
+                        and result.get("detail", {}).get("error") == "timestamp_expired"
+                    ):
                         skew = result.get("detail", {}).get("skew_seconds", "?")
                         logging.error("=" * 60)
                         logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")

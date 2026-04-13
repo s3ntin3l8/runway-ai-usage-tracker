@@ -49,18 +49,16 @@ class AnthropicCollector(
         # Result caching for API calls
         self._cached_api_results = None
         self._last_api_fetch = None
-        
+
         self._refresh_backoff_seconds = 30
         self._max_refresh_backoff = 21600  # 6 hours max
-        self._last_statusline_data = {}    # Cache for hybrid fallback
-        self._terminal_failure = False     # Guard for invalid_grant
+        self._last_statusline_data = {}  # Cache for hybrid fallback
+        self._terminal_failure = False  # Guard for invalid_grant
 
     async def _get_current_token(self) -> str | None:
         """Fetch current access token from sidecar cache or credentials file."""
         # 1. Check sidecar cache first (fastest, supports multi-account)
-        token = await token_cache.get_token(
-            "anthropic", "oauth_token", account_id=self.account_id
-        )
+        token = await token_cache.get_token("anthropic", "oauth_token", account_id=self.account_id)
         if token:
             return token
 
@@ -88,12 +86,12 @@ class AnthropicCollector(
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Hybrid primary strategy: Statusline merged with OAuth."""
         results = []
-        
+
         # 1. Fetch from Statusline (Fast Local)
         statusline_results = await self._strategy_statusline()
         if statusline_results:
             results.extend(statusline_results)
-            
+
         # 2. Fetch from OAuth (Full API)
         token = await self._get_valid_token(client)
         if token:
@@ -109,7 +107,12 @@ class AnthropicCollector(
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""
         from app.core.utils import error_card
-        return [error_card("Claude (Anthropic)", "🟠", "No authentication found", error_type="missing_config")]
+
+        return [
+            error_card(
+                "Claude (Anthropic)", "🟠", "No authentication found", error_type="missing_config"
+            )
+        ]
 
     async def reset(self):
         """Reset terminal failure and backoff state."""

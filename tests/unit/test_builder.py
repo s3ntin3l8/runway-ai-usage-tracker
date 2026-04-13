@@ -1,4 +1,5 @@
 """Unit tests for app/models/builder.py (LimitCardBuilder)."""
+
 import pytest
 
 from app.models.builder import LimitCardBuilder
@@ -48,9 +49,7 @@ class TestLimitCardBuilderSetProvider:
 
     def test_set_provider_default_window_type(self):
         card = (
-            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens")
-            .set_provider("anthropic")
-            .build()
+            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens").set_provider("anthropic").build()
         )
         assert card["provider_id"] == "anthropic"
         assert card["window_type"] == "unknown"
@@ -107,19 +106,11 @@ class TestLimitCardBuilderSetSidecar:
 
 class TestLimitCardBuilderSetHealth:
     def test_set_health_overrides_default(self):
-        card = (
-            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens")
-            .set_health("good")
-            .build()
-        )
+        card = LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens").set_health("good").build()
         assert card["health"] == "good"
 
     def test_set_health_critical(self):
-        card = (
-            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens")
-            .set_health("critical")
-            .build()
-        )
+        card = LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens").set_health("critical").build()
         assert card["health"] == "critical"
 
 
@@ -176,9 +167,7 @@ class TestLimitCardBuilderSetUsage:
 class TestLimitCardBuilderSetPace:
     def test_set_pace_overrides_default(self):
         card = (
-            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens")
-            .set_pace("Moderate Burn")
-            .build()
+            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens").set_pace("Moderate Burn").build()
         )
         assert card["pace"] == "Moderate Burn"
 
@@ -195,11 +184,7 @@ class TestLimitCardBuilderSetDetail:
 
 class TestLimitCardBuilderSetTier:
     def test_set_tier_sets_tier(self):
-        card = (
-            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens")
-            .set_tier("Pro")
-            .build()
-        )
+        card = LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens").set_tier("Pro").build()
         assert card["tier"] == "Pro"
 
 
@@ -216,11 +201,7 @@ class TestLimitCardBuilderSetUsageUrl:
 class TestLimitCardBuilderSetMetadata:
     def test_set_metadata_sets_metadata(self):
         meta = {"key1": "value1", "key2": 42}
-        card = (
-            LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens")
-            .set_metadata(meta)
-            .build()
-        )
+        card = LimitCardBuilder("Claude Pro", "🟠", "80%", "tokens").set_metadata(meta).build()
         assert card["metadata"] == meta
 
 

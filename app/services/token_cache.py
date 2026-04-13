@@ -107,12 +107,14 @@ class TokenCache:
             now = time.time()
             results = []
             for acc_id, (tokens, metadata, timestamp) in self._cache[provider].items():
-                results.append({
-                    "account_id": acc_id,
-                    "tokens": tokens,
-                    "account_label": metadata.get("account_label"),
-                    "age": now - timestamp
-                })
+                results.append(
+                    {
+                        "account_id": acc_id,
+                        "tokens": tokens,
+                        "account_label": metadata.get("account_label"),
+                        "age": now - timestamp,
+                    }
+                )
             return results
 
     async def get(self, provider: str, account_id: str | None = None) -> dict[str, str] | None:
@@ -126,21 +128,19 @@ class TokenCache:
                 return None
 
             provider_accounts = self._cache[provider]
-            
+
             if account_id:
                 if account_id not in provider_accounts:
                     return None
                 tokens, _, _ = provider_accounts[account_id]
                 return tokens
             # Return the most recently updated account if none specified
-            newest_acc = sorted(
-                provider_accounts.items(),
-                key=lambda x: x[1][2],
-                reverse=True
-            )[0]
+            newest_acc = sorted(provider_accounts.items(), key=lambda x: x[1][2], reverse=True)[0]
             return newest_acc[1][0]
 
-    async def get_token(self, provider: str, token_type: str, account_id: str | None = None) -> str | None:
+    async def get_token(
+        self, provider: str, token_type: str, account_id: str | None = None
+    ) -> str | None:
         """Get specific token type for provider/account."""
         tokens = await self.get(provider, account_id)
         return tokens.get(token_type) if tokens else None
@@ -149,7 +149,7 @@ class TokenCache:
         """Clear all expired accounts across all providers."""
         now = time.time()
         providers_to_clean = list(self._cache.keys())
-        
+
         for provider in providers_to_clean:
             expired_accs = [
                 acc_id
@@ -159,7 +159,7 @@ class TokenCache:
             for acc_id in expired_accs:
                 del self._cache[provider][acc_id]
                 logger.debug(f"Cleared expired account {acc_id} for {provider}")
-            
+
             if not self._cache[provider]:
                 del self._cache[provider]
 

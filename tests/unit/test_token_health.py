@@ -1,4 +1,5 @@
 """Unit tests for TokenHealthService (Phase 4D)."""
+
 import base64
 import json
 import time
@@ -76,12 +77,15 @@ class TestTokenHealthService:
         }
         mock_tokens = {"oauth_token": valid_jwt, "refresh_token": "rtoken"}
 
-        with patch(
-            "app.services.token_health.token_cache.get_all_stats",
-            new=AsyncMock(return_value=mock_stats),
-        ), patch(
-            "app.services.token_health.token_cache.get",
-            new=AsyncMock(return_value=mock_tokens),
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value=mock_tokens),
+            ),
         ):
             result = await service.get_health()
 
@@ -107,12 +111,15 @@ class TestTokenHealthService:
         }
         mock_tokens = {"oauth_token": expired_jwt}
 
-        with patch(
-            "app.services.token_health.token_cache.get_all_stats",
-            new=AsyncMock(return_value=mock_stats),
-        ), patch(
-            "app.services.token_health.token_cache.get",
-            new=AsyncMock(return_value=mock_tokens),
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value=mock_tokens),
+            ),
         ):
             result = await service.get_health()
 
@@ -130,12 +137,15 @@ class TestTokenHealthService:
         }
         mock_tokens = {"api_key": "gho_sometokenvalue"}
 
-        with patch(
-            "app.services.token_health.token_cache.get_all_stats",
-            new=AsyncMock(return_value=mock_stats),
-        ), patch(
-            "app.services.token_health.token_cache.get",
-            new=AsyncMock(return_value=mock_tokens),
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value=mock_tokens),
+            ),
         ):
             result = await service.get_health()
 

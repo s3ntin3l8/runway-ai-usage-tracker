@@ -54,7 +54,6 @@ class GitHubCollector(BaseCollector):
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
 
-
     def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for GitHub (None)."""
         return []
@@ -99,8 +98,17 @@ class GitHubCollector(BaseCollector):
         backoff_until = getattr(self, "_last_429_backoff_until", None)
         if backoff_until and now < backoff_until:
             wait_rem = (backoff_until - now).total_seconds()
-            logger.debug(f"Proactively skipping GitHub API call due to recent 429 (backoff for {wait_rem:.0f}s)")
-            return [error_card("GitHub Copilot", "🐙", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+            logger.debug(
+                f"Proactively skipping GitHub API call due to recent 429 (backoff for {wait_rem:.0f}s)"
+            )
+            return [
+                error_card(
+                    "GitHub Copilot",
+                    "🐙",
+                    f"Rate Limited (429) - Backoff for {wait_rem:.0f}s",
+                    error_type="rate_limited",
+                )
+            ]
 
         try:
             headers = {
@@ -128,8 +136,7 @@ class GitHubCollector(BaseCollector):
                 user_data = user_resp.json()
                 has_snapshots = bool(user_data.get("quota_snapshots"))
                 has_limited_info = (
-                    "limited_user_quotas" in user_data
-                    and "limited_user_reset_date" in user_data
+                    "limited_user_quotas" in user_data and "limited_user_reset_date" in user_data
                 )
                 if not (has_snapshots or has_limited_info):
                     token_resp = await http_request_with_retry(
@@ -145,7 +152,14 @@ class GitHubCollector(BaseCollector):
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
                 logger.warning(f"GitHub API returned 429. Proactive backoff set for {wait_sec}s")
-                return [error_card("GitHub Copilot", "🐙", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+                return [
+                    error_card(
+                        "GitHub Copilot",
+                        "🐙",
+                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
+                        error_type="rate_limited",
+                    )
+                ]
             else:
                 token_resp = await http_request_with_retry(
                     client,
@@ -160,7 +174,14 @@ class GitHubCollector(BaseCollector):
                 retry_after = token_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                return [error_card("GitHub Copilot", "🐙", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+                return [
+                    error_card(
+                        "GitHub Copilot",
+                        "🐙",
+                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
+                        error_type="rate_limited",
+                    )
+                ]
 
             # Success: Clear any backoff
             self._last_429_backoff_until = None
@@ -171,13 +192,16 @@ class GitHubCollector(BaseCollector):
             if os.path.exists(gh_config_path):
                 try:
                     import yaml
+
                     with open(gh_config_path) as f:
                         config = yaml.safe_load(f)
                         host_config = config.get("github.com", {})
-                        identity = host_config.get("user") or list(host_config.get("users", {}).keys())[0]
+                        identity = (
+                            host_config.get("user") or list(host_config.get("users", {}).keys())[0]
+                        )
                 except Exception:
                     pass
-            
+
             self._identity = identity
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
             # Cache results (including empty/error cards) to avoid hammering API
@@ -190,7 +214,6 @@ class GitHubCollector(BaseCollector):
             self._last_fetch = now
 
         return []
-
 
     async def _get_token(self) -> str | None:
         """Internal helper to get token from multiple sources."""
@@ -205,7 +228,7 @@ class GitHubCollector(BaseCollector):
     def _parse_api_responses(self, user_resp, token_resp, user_data) -> list[dict[str, Any]]:
         """Consolidate the parsing logic from collect()."""
         cards = []
-        
+
         # Process Token Response
         if token_resp and token_resp.status_code == 200:
             token_data = token_resp.json()
@@ -226,7 +249,9 @@ class GitHubCollector(BaseCollector):
 
         return cards
 
-    def _parse_limited_quotas(self, data: dict[str, Any], detail_context: str) -> list[dict[str, Any]]:
+    def _parse_limited_quotas(
+        self, data: dict[str, Any], detail_context: str
+    ) -> list[dict[str, Any]]:
         """Parse limited_user_quotas structure."""
         results = []
         quotas = data["limited_user_quotas"]
@@ -244,27 +269,37 @@ class GitHubCollector(BaseCollector):
                 val = quotas[key]
                 monthly_val = monthly.get(key, 100)
                 used_val = monthly_val - val if isinstance(monthly_val, int) else 0
-                pct_used = (used_val / monthly_val * 100) if isinstance(monthly_val, (int, float)) and monthly_val > 0 else 0
+                pct_used = (
+                    (used_val / monthly_val * 100)
+                    if isinstance(monthly_val, (int, float)) and monthly_val > 0
+                    else 0
+                )
                 pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
                 identity_suffix = f" · {self._identity}" if getattr(self, "_identity", None) else ""
-                results.append({
-                    "service_name": f"Copilot ({key.title()})",
-                    "icon": "🐙",
-                    "remaining": f"{val:,}",
-                    "unit": (f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"),
-                    "reset": reset_at.isoformat() if reset_at else None,
-                    "health": "good" if val > 10 else "warning",
-                    "pace": pace,
-                    "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
-                    "used_value": float(used_val),
-                    "limit_value": float(monthly_val) if isinstance(monthly_val, (int, float)) else 100.0,
-                    "is_unlimited": False,
-                    "unit_type": "requests",
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": "api",
-                    "usage_url": "https://github.com/settings/copilot/features",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                })
+                results.append(
+                    {
+                        "service_name": f"Copilot ({key.title()})",
+                        "icon": "🐙",
+                        "remaining": f"{val:,}",
+                        "unit": (
+                            f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"
+                        ),
+                        "reset": reset_at.isoformat() if reset_at else None,
+                        "health": "good" if val > 10 else "warning",
+                        "pace": pace,
+                        "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
+                        "used_value": float(used_val),
+                        "limit_value": float(monthly_val)
+                        if isinstance(monthly_val, (int, float))
+                        else 100.0,
+                        "is_unlimited": False,
+                        "unit_type": "requests",
+                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "data_source": "api",
+                        "usage_url": "https://github.com/settings/copilot/features",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
         return results
 
     def _parse_quota_snapshots(self, snapshots: list[dict], plan: str) -> list[dict[str, Any]]:
@@ -288,23 +323,25 @@ class GitHubCollector(BaseCollector):
                 used_val = ent - rem
                 pct_used = (used_val / ent * 100) if ent > 0 else 0
                 pace = PaceCalculator.estimate_longevity(pct_used, None)
-                results.append({
-                    "service_name": f"Copilot ({metric})",
-                    "icon": "🐙",
-                    "remaining": f"{rem:,}",
-                    "unit": f"/ {ent:,}",
-                    "reset": "Rolling",
-                    "health": "good" if (ent > 0 and (rem / ent) > 0.3) else "warning",
-                    "pace": pace,
-                    "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
-                    "used_value": float(used_val),
-                    "limit_value": float(ent),
-                    "is_unlimited": False,
-                    "tier": tier_name,
-                    "unit_type": "requests",
-                    "reset_at": None,
-                    "data_source": "api",
-                    "usage_url": "https://github.com/settings/copilot/features",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                })
+                results.append(
+                    {
+                        "service_name": f"Copilot ({metric})",
+                        "icon": "🐙",
+                        "remaining": f"{rem:,}",
+                        "unit": f"/ {ent:,}",
+                        "reset": "Rolling",
+                        "health": "good" if (ent > 0 and (rem / ent) > 0.3) else "warning",
+                        "pace": pace,
+                        "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
+                        "used_value": float(used_val),
+                        "limit_value": float(ent),
+                        "is_unlimited": False,
+                        "tier": tier_name,
+                        "unit_type": "requests",
+                        "reset_at": None,
+                        "data_source": "api",
+                        "usage_url": "https://github.com/settings/copilot/features",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
         return results

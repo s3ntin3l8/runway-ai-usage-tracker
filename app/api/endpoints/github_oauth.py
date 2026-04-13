@@ -42,7 +42,9 @@ async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
         try:
             # GitHub Device Flow STEP 1: Request codes
             # Using data= (form-encoded) as it's often more reliable for this endpoint
-            logger.debug(f"Initiating GitHub Device Flow for client_id: {settings.GITHUB_CLIENT_ID}")
+            logger.debug(
+                f"Initiating GitHub Device Flow for client_id: {settings.GITHUB_CLIENT_ID}"
+            )
             resp = await client.post(
                 "https://github.com/login/device/code",
                 data={
@@ -53,18 +55,23 @@ async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
                     "Accept": "application/json",
                     "User-Agent": "GitHubCopilotChat/0.26.7",
                 },
-                timeout=15.0
+                timeout=15.0,
             )
-            
+
             if resp.status_code != 200:
                 logger.error(f"GitHub Device Flow init failed: {resp.status_code} {resp.text}")
                 # Provide a more descriptive error if we can
                 try:
                     error_data = resp.json()
-                    detail = error_data.get("error_description", f"GitHub error: {error_data.get('error', resp.status_code)}")
+                    detail = error_data.get(
+                        "error_description",
+                        f"GitHub error: {error_data.get('error', resp.status_code)}",
+                    )
                     raise HTTPException(status_code=resp.status_code, detail=detail)
                 except (json.JSONDecodeError, KeyError):
-                    raise HTTPException(status_code=resp.status_code, detail=f"GitHub API error: {resp.status_code}")
+                    raise HTTPException(
+                        status_code=resp.status_code, detail=f"GitHub API error: {resp.status_code}"
+                    )
 
             data = resp.json()
             return DeviceFlowInitResponse(**data)
@@ -105,25 +112,19 @@ async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> dic
                     return {"status": "pending"}
                 if error == "slow_down":
                     return {"status": "slow_down", "interval": data.get("interval", 5)}
-                raise HTTPException(
-                    status_code=400, detail=data.get("error_description", error)
-                )
+                raise HTTPException(status_code=400, detail=data.get("error_description", error))
 
             if "access_token" in data:
                 # Save the token
                 await save_token(data)
                 return {"status": "success"}
 
-            raise HTTPException(
-                status_code=500, detail="Unexpected response from GitHub"
-            )
+            raise HTTPException(status_code=500, detail="Unexpected response from GitHub")
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error polling GitHub Device Flow: {e}")
-            raise HTTPException(
-                status_code=500, detail="Error communicating with GitHub"
-            )
+            raise HTTPException(status_code=500, detail="Error communicating with GitHub")
 
 
 @router.get("/status", response_model=DeviceFlowStatusResponse)

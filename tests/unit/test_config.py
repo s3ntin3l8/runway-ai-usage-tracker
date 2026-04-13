@@ -79,7 +79,6 @@ class TestConfigEnvironmentVariables:
         """Test CLAUDE_CODE_OAUTH_TOKEN is properly loaded."""
         test_token = "sk-ant-test-token-12345"
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": test_token}):
-
             # Token would be loaded from environment
             pass
 
@@ -87,7 +86,6 @@ class TestConfigEnvironmentVariables:
         """Test GITHUB_TOKEN is properly loaded."""
         test_token = "ghp_test_token_123456"
         with patch.dict(os.environ, {"GITHUB_TOKEN": test_token}):
-
             # Token would be loaded from environment
             pass
 
@@ -95,7 +93,6 @@ class TestConfigEnvironmentVariables:
         """Test GEMINI_OAUTH_PATH is properly configured."""
         test_path = "/custom/path/to/gemini/credentials.json"
         with patch.dict(os.environ, {"GEMINI_OAUTH_PATH": test_path}):
-
             # Path would be loaded from environment
             pass
 
@@ -135,5 +132,3 @@ class TestConfigEnvFileLoading:
             # Should handle missing .env file gracefully
             mock_load.return_value = None
             assert mock_load.return_value is None
-
-

@@ -98,17 +98,23 @@ async def _fire_webhook(
 
 def _discord_payload(card: LimitCard, used_pct: float, threshold: float) -> dict:
     return {
-        "embeds": [{
-            "title": f"Quota Alert: {card.service_name}",
-            "color": 0xED4245,
-            "fields": [
-                {"name": "Provider", "value": card.provider_id or "unknown", "inline": True},
-                {"name": "Account", "value": card.account_label or card.account_id or "unknown", "inline": True},
-                {"name": "Usage", "value": f"{used_pct:.1f}%", "inline": True},
-                {"name": "Threshold", "value": f"{threshold:.0f}%", "inline": True},
-            ],
-            "footer": {"text": "Runway · quota alert"},
-        }]
+        "embeds": [
+            {
+                "title": f"Quota Alert: {card.service_name}",
+                "color": 0xED4245,
+                "fields": [
+                    {"name": "Provider", "value": card.provider_id or "unknown", "inline": True},
+                    {
+                        "name": "Account",
+                        "value": card.account_label or card.account_id or "unknown",
+                        "inline": True,
+                    },
+                    {"name": "Usage", "value": f"{used_pct:.1f}%", "inline": True},
+                    {"name": "Threshold", "value": f"{threshold:.0f}%", "inline": True},
+                ],
+                "footer": {"text": "Runway · quota alert"},
+            }
+        ]
     }
 
 
@@ -123,8 +129,14 @@ def _slack_payload(card: LimitCard, used_pct: float, threshold: float) -> dict:
                 "type": "context",
                 "elements": [
                     {"type": "mrkdwn", "text": f"*Provider:* {card.provider_id}"},
-                    {"type": "mrkdwn", "text": f"*Account:* {card.account_label or card.account_id}"},
-                    {"type": "mrkdwn", "text": f"*Usage:* {used_pct:.1f}% (threshold: {threshold:.0f}%)"},
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Account:* {card.account_label or card.account_id}",
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Usage:* {used_pct:.1f}% (threshold: {threshold:.0f}%)",
+                    },
                 ],
             },
         ]

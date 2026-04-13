@@ -14,119 +14,139 @@ from app.core.utils import PaceCalculator, human_delta
 
 logger = logging.getLogger(__name__)
 
+
 class ChatGPTLocalMixin:
     """Mixin for ChatGPT local session and CLI RPC collection."""
-    
-    async def _collect_via_cli_rpc(self, client: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
+
+    async def _collect_via_cli_rpc(
+        self, client: httpx.AsyncClient | None = None
+    ) -> list[dict[str, Any]]:
         """
         Fetch usage data from the codex CLI RPC server.
         """
         process = None
         try:
             process = await asyncio.create_subprocess_exec(
-                "codex", "-s", "read-only", "-a", "untrusted", "app-server",
+                "codex",
+                "-s",
+                "read-only",
+                "-a",
+                "untrusted",
+                "app-server",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
             )
 
             async def call_rpc(method: str, params: dict | None = None) -> dict | None:
-                if not process.stdin: return None
+                if not process.stdin:
+                    return None
                 request = {
                     "jsonrpc": "2.0",
                     "id": str(uuid.uuid4()),
                     "method": method,
-                    "params": params or {}
+                    "params": params or {},
                 }
                 process.stdin.write((json.dumps(request) + "\n").encode())
                 await process.stdin.drain()
-                
+
                 line = await process.stdout.readline()
-                if not line: return None
+                if not line:
+                    return None
                 try:
                     response = json.loads(line.decode())
                     return response.get("result")
                 except json.JSONDecodeError:
                     return None
 
-            init_res = await call_rpc("initialize", {"clientInfo": {"name": "Runway", "version": "0.9.0"}})
+            init_res = await call_rpc(
+                "initialize", {"clientInfo": {"name": "Runway", "version": "0.9.0"}}
+            )
             if not init_res:
                 return []
 
             account_data = await call_rpc("account/read")
             account = account_data.get("account") if account_data else None
-            
+
             limits_data = await call_rpc("account/rateLimits/read")
             limits = limits_data.get("rateLimits") if limits_data else None
-            
+
             if not limits:
                 return []
 
             cards = []
             now = datetime.now(UTC)
-            
+
             tier = "free"
             email = "Unknown"
             if account:
                 plan_type = account.get("planType", "").lower()
-                if "plus" in plan_type or "pro" in plan_type: tier = "plus"
-                elif "team" in plan_type: tier = "team"
+                if "plus" in plan_type or "pro" in plan_type:
+                    tier = "plus"
+                elif "team" in plan_type:
+                    tier = "team"
                 email = account.get("email", "Unknown")
-                
-                cards.append({
-                    "service_name": "ChatGPT Account",
-                    "icon": "💬",
-                    "remaining": tier.upper(),
-                    "unit": "tier",
-                    "reset": "Active",
-                    "health": "good",
-                    "pace": "Active",
-                    "detail": f"Account: {email} [CLI RPC]",
-                    "data_source": "cli",
-                    "tier": tier,
-                    "updated_at": now.isoformat(),
-                })
+
+                cards.append(
+                    {
+                        "service_name": "ChatGPT Account",
+                        "icon": "💬",
+                        "remaining": tier.upper(),
+                        "unit": "tier",
+                        "reset": "Active",
+                        "health": "good",
+                        "pace": "Active",
+                        "detail": f"Account: {email} [CLI RPC]",
+                        "data_source": "cli",
+                        "tier": tier,
+                        "updated_at": now.isoformat(),
+                    }
+                )
 
             primary = limits.get("primary")
             if primary:
                 pct = float(primary.get("usedPercent", 0.0))
                 reset_ts = primary.get("resetsAt")
                 reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
-                
-                cards.append({
-                    "service_name": "ChatGPT Codex",
-                    "icon": "💬",
-                    "remaining": f"{(100-pct):.1f}%",
-                    "unit": "remaining",
-                    "reset": human_delta(reset_at),
-                    "health": "good" if pct < 80 else "warning",
-                    "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                    "detail": f"{pct:.1f}% used [CLI RPC]",
-                    "used_value": pct,
-                    "limit_value": 100.0,
-                    "unit_type": "percent",
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": "cli",
-                    "tier": tier,
-                    "usage_url": "https://chatgpt.com/codex/settings/usage/",
-                })
+
+                cards.append(
+                    {
+                        "service_name": "ChatGPT Codex",
+                        "icon": "💬",
+                        "remaining": f"{(100 - pct):.1f}%",
+                        "unit": "remaining",
+                        "reset": human_delta(reset_at),
+                        "health": "good" if pct < 80 else "warning",
+                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                        "detail": f"{pct:.1f}% used [CLI RPC]",
+                        "used_value": pct,
+                        "limit_value": 100.0,
+                        "unit_type": "percent",
+                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "data_source": "cli",
+                        "tier": tier,
+                        "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                    }
+                )
 
             credits = limits.get("credits")
             if credits:
                 balance = credits.get("balance", 0.0)
-                cards.append({
-                    "service_name": "ChatGPT Credits",
-                    "icon": "💰",
-                    "remaining": f"${balance:.2f}",
-                    "unit": "USD",
-                    "reset": "Prepaid",
-                    "health": "good",
-                    "pace": "N/A",
-                    "detail": f"Balance: ${balance:.2f} [CLI RPC]",
-                    "data_source": "cli",
-                    "tier": tier,
-                    "updated_at": now.isoformat(),
-                })
+                cards.append(
+                    {
+                        "service_name": "ChatGPT Credits",
+                        "icon": "💰",
+                        "remaining": f"${balance:.2f}",
+                        "unit": "USD",
+                        "reset": "Prepaid",
+                        "health": "good",
+                        "pace": "N/A",
+                        "detail": f"Balance: ${balance:.2f} [CLI RPC]",
+                        "data_source": "cli",
+                        "tier": tier,
+                        "updated_at": now.isoformat(),
+                    }
+                )
 
             return cards
 
@@ -143,29 +163,37 @@ class ChatGPTLocalMixin:
 
     async def _strategy_local_logs(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Local log parsing fallback."""
-        if not settings.LOCAL_COLLECTOR_ENABLED: return []
+        if not settings.LOCAL_COLLECTOR_ENABLED:
+            return []
         path = settings.CHATGPT_SESSIONS_DIR
         try:
             files = await asyncio.to_thread(glob.glob, f"{path}/**/*.jsonl", recursive=True)
-            if not files: return []
+            if not files:
+                return []
             latest = await asyncio.to_thread(max, files, key=os.path.getmtime)
-            
+
             with open(latest) as f:
                 lines = f.readlines()
-                if not lines: return []
+                if not lines:
+                    return []
                 usage = json.loads(lines[-1])
-            
-            pct = usage.get("used_percent", 0.0)
-            reset_at = datetime.fromtimestamp(usage["resets_at"], tz=UTC) if "resets_at" in usage else None
 
-            return [{
-                "service_name": "ChatGPT Codex",
-                "icon": "💬",
-                "remaining": f"{(100-pct):.1f}%",
-                "unit": "remaining",
-                "reset": human_delta(reset_at),
-                "detail": f"{pct:.1f}% used",
-                "data_source": "cache",
-                "updated_at": datetime.now(UTC).isoformat(),
-            }]
-        except Exception: return []
+            pct = usage.get("used_percent", 0.0)
+            reset_at = (
+                datetime.fromtimestamp(usage["resets_at"], tz=UTC) if "resets_at" in usage else None
+            )
+
+            return [
+                {
+                    "service_name": "ChatGPT Codex",
+                    "icon": "💬",
+                    "remaining": f"{(100 - pct):.1f}%",
+                    "unit": "remaining",
+                    "reset": human_delta(reset_at),
+                    "detail": f"{pct:.1f}% used",
+                    "data_source": "cache",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            ]
+        except Exception:
+            return []

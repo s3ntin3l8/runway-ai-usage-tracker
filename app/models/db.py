@@ -28,7 +28,7 @@ class UsageSnapshot(SQLModel, table=True):
     is_unlimited: bool = Field(default=False)
     data_source: str
     error_type: str | None = None
-    
+
     # Store provider-specific data as (possibly encrypted) JSON string
     raw_metadata_json: str | None = Field(default=None)
 
@@ -47,18 +47,15 @@ class UsageSnapshot(SQLModel, table=True):
 
 class SidecarRegistry(SQLModel, table=True):
     """Persistent registry of known sidecars that have sent data."""
+
     __tablename__ = "sidecar_registry"
 
     sidecar_id: str = Field(primary_key=True)
-    hostname: str | None = None          # socket.gethostname() from sidecar
-    custom_name: str | None = None       # User-assigned display name
+    hostname: str | None = None  # socket.gethostname() from sidecar
+    custom_name: str | None = None  # User-assigned display name
     tags_json: str | None = Field(default=None)  # JSON array stored as string
-    last_seen: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), index=True
-    )
-    first_seen: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_ip: str | None = None
     error_count: int = Field(default=0)
     ingest_count: int = Field(default=0)
@@ -74,6 +71,7 @@ class SidecarRegistry(SQLModel, table=True):
 
 class WebhookConfig(SQLModel, table=True):
     """Per-provider webhook alert configuration."""
+
     __tablename__ = "webhook_configs"
 
     id: int | None = Field(default=None, primary_key=True)

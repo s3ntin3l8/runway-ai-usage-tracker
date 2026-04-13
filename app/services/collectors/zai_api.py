@@ -31,6 +31,7 @@ from app.services.collectors.base import BaseCollector
 class ZaiApiCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+
     """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
 
     PROVIDER_ID = "zai_api"
@@ -48,11 +49,7 @@ class ZaiApiCollector(BaseCollector):
         """Return fallback error when API fails."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
-            return [
-                error_card(
-                    "zAI", "🌐", "Missing/Invalid Key", error_type="missing_config"
-                )
-            ]
+            return [error_card("zAI", "🌐", "Missing/Invalid Key", error_type="missing_config")]
         return [error_card("zAI", "🌐", "API Error", error_type="api_error")]
 
     async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -89,4 +86,3 @@ class ZaiApiCollector(BaseCollector):
             ]
         except (httpx.RequestError, ValueError, KeyError, TypeError):
             return []
-

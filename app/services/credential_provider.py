@@ -74,9 +74,11 @@ class CredentialProvider:
                             for key_path_str, target in mapping.items():
                                 if target not in results:
                                     # Strategy: Try to find the value by traversing the path.
-                                    # We handle keys that might contain dots (like "github.com") 
+                                    # We handle keys that might contain dots (like "github.com")
                                     # by checking if the prefix is a valid key.
-                                    val = CredentialProvider._resolve_mapping_value(data, key_path_str)
+                                    val = CredentialProvider._resolve_mapping_value(
+                                        data, key_path_str
+                                    )
                                     if val:
                                         results[target] = val
                         except Exception as e:
@@ -92,13 +94,15 @@ class CredentialProvider:
                     # Use centralized keychain access with caching
                     service = rule.get("service_name")
                     raw = get_keychain_secret(service)
-                    
+
                     if raw:
                         if rule.get("format") == "json":
                             data = json.loads(raw)
                             for key_path_str, target in mapping.items():
                                 if target not in results:
-                                    val = CredentialProvider._resolve_mapping_value(data, key_path_str)
+                                    val = CredentialProvider._resolve_mapping_value(
+                                        data, key_path_str
+                                    )
                                     if val:
                                         results[target] = val
                         else:
@@ -115,11 +119,11 @@ class CredentialProvider:
         """Helper to resolve a dot-notated key path from a data dict, handling keys with dots."""
         if not data or not isinstance(data, dict):
             return None
-            
+
         # Try full key first
         if key_path_str in data:
             return data[key_path_str]
-            
+
         # Split and try to find the longest prefix that is a key
         parts = key_path_str.split(".")
         for i in range(len(parts), 0, -1):
@@ -129,7 +133,7 @@ class CredentialProvider:
                 if i == len(parts):
                     return val
                 return CredentialProvider._resolve_mapping_value(val, ".".join(parts[i:]))
-                
+
         # Default fallback to standard nested
         return CredentialProvider._get_nested(data, parts)
 

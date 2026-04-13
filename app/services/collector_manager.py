@@ -74,7 +74,7 @@ class CollectorManager:
         self._collect_future: asyncio.Future | None = None
         # In-memory registry: latest snapshot of all cards (populated by poller + startup)
         self._registry: list[dict[str, Any]] = []
-        
+
         logger.info(
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
@@ -88,6 +88,7 @@ class CollectorManager:
             return
 
         from app.core.keychain import get_keychain_secret
+
         tasks = []
 
         if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
@@ -95,8 +96,8 @@ class CollectorManager:
 
         cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi", "ollama"]
         if any(os.getenv(f"{c.upper()}_SESSION_TOKEN") is None for c in cookie_collectors):
-             tasks.append(asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage"))
-             tasks.append(asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage"))
+            tasks.append(asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage"))
+            tasks.append(asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage"))
 
         if tasks:
             for task in tasks:
@@ -126,9 +127,7 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     self.smart_collectors[key] = SmartCollector(
-                        collector=cls(),
-                        collector_name=name,
-                        ttl=ttl
+                        collector=cls(), collector_name=name, ttl=ttl
                     )
 
             # 2. Discover active dynamic collectors from TokenCache
@@ -145,7 +144,7 @@ class CollectorManager:
                         self.smart_collectors[key] = SmartCollector(
                             collector=cls(account_id=acc_id, account_label=acc_name),
                             collector_name=full_name,
-                            ttl=ttl
+                            ttl=ttl,
                         )
 
             # 3. Prune collectors whose accounts disappeared from the token cache
@@ -241,7 +240,9 @@ class CollectorManager:
         external_results = await external_metric_service.get_all_metrics()
         flattened.extend(external_results)
 
-        logger.info(f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts")
+        logger.info(
+            f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts"
+        )
         # Update registry atomically inside _do_collect so all callers (startup,
         # poller, fallback) share one authoritative write path.
         self._registry = flattened
@@ -253,16 +254,12 @@ class CollectorManager:
 
     def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""
-        return {
-            "collectors": [
-                sc.get_stats() for sc in self.smart_collectors.values()
-            ]
-        }
+        return {"collectors": [sc.get_stats() for sc in self.smart_collectors.values()]}
 
     async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""
         target_prefix = f"{provider_id}:"
-        
+
         for key, sc in self.smart_collectors.items():
             if key.startswith(target_prefix):
                 if account_id is None or key == f"{provider_id}:{account_id}":

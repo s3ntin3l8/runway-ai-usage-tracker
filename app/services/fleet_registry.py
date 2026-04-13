@@ -1,4 +1,5 @@
 """Service for managing the persistent sidecar fleet registry."""
+
 import logging
 from datetime import UTC, datetime
 
@@ -12,9 +13,7 @@ logger = logging.getLogger(__name__)
 class FleetRegistryService:
     """Manages upsert and CRUD operations for SidecarRegistry rows."""
 
-    def upsert_sidecar(
-        self, sidecar_id: str, source_ip: str, session: Session
-    ) -> SidecarRegistry:
+    def upsert_sidecar(self, sidecar_id: str, source_ip: str, session: Session) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         row = session.get(SidecarRegistry, sidecar_id)
         if row:

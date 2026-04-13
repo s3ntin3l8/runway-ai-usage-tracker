@@ -19,16 +19,24 @@ MODEL_DISPLAY_NAMES = {
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro (Preview)",
 }
 
+
 class GeminiApiMixin:
     """Mixin for Gemini Cloud Code API collection."""
-    
+
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
         now = datetime.now(UTC)
         backoff_until = getattr(self, "_last_429_backoff_until", None)
         if backoff_until and now < backoff_until:
             wait_rem = (backoff_until - now).total_seconds()
-            return [error_card("Gemini", "🔵", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+            return [
+                error_card(
+                    "Gemini",
+                    "🔵",
+                    f"Rate Limited (429) - Backoff for {wait_rem:.0f}s",
+                    error_type="rate_limited",
+                )
+            ]
 
         token = await self._get_valid_token(client)
         if not token:
@@ -46,12 +54,19 @@ class GeminiApiMixin:
                 headers=headers,
                 timeout=10,
             )
-            
+
             if tier_resp.status_code == 429:
                 retry_after = tier_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                return [error_card("Gemini", "🔵", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+                return [
+                    error_card(
+                        "Gemini",
+                        "🔵",
+                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
+                        error_type="rate_limited",
+                    )
+                ]
 
             tier_info = tier_resp.json()
             project_id = tier_info.get("cloudaicompanionProject", "")
@@ -82,14 +97,23 @@ class GeminiApiMixin:
                 retry_after = quota_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                return [error_card("Gemini", "🔵", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+                return [
+                    error_card(
+                        "Gemini",
+                        "🔵",
+                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
+                        error_type="rate_limited",
+                    )
+                ]
 
             self._last_429_backoff_until = None
             quota_data = quota_resp.json()
             buckets = quota_data.get("buckets", [])
-            
+
             if not buckets:
-                return [error_card("Gemini", "🔵", "No quota buckets returned", error_type="api_error")]
+                return [
+                    error_card("Gemini", "🔵", "No quota buckets returned", error_type="api_error")
+                ]
 
             results = []
             seen_classes = set()
@@ -113,7 +137,8 @@ class GeminiApiMixin:
                     display_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
                     model_class = model_id
 
-                if model_class in seen_classes: continue
+                if model_class in seen_classes:
+                    continue
                 seen_classes.add(model_class)
 
                 remaining_fraction = bucket.get("remainingFraction", 1.0)
@@ -134,7 +159,9 @@ class GeminiApiMixin:
                     except (ValueError, TypeError):
                         pass
 
-                health = "good" if percent_used < 50 else "warning" if percent_used < 80 else "critical"
+                health = (
+                    "good" if percent_used < 50 else "warning" if percent_used < 80 else "critical"
+                )
                 pace = PaceCalculator.estimate_longevity(percent_used, reset_dt)
 
                 if quota_limit is not None and quota_remaining is not None:
@@ -142,29 +169,33 @@ class GeminiApiMixin:
                     used_val = float(quota_limit - quota_remaining)
                     limit_val = float(quota_limit)
                 else:
-                    detail_text = f"{percent_remaining}% remaining | Model: {model_id}{identity_suffix}"
+                    detail_text = (
+                        f"{percent_remaining}% remaining | Model: {model_id}{identity_suffix}"
+                    )
                     used_val = float(percent_used)
                     limit_val = 100.0
 
-                results.append({
-                    "service_name": display_name,
-                    "icon": "🔵",
-                    "remaining": f"{percent_used}%",
-                    "unit": "used",
-                    "reset": reset_at,
-                    "health": health,
-                    "pace": pace,
-                    "detail": detail_text,
-                    "used_value": used_val,
-                    "limit_value": limit_val,
-                    "is_unlimited": False,
-                    "unit_type": token_type if quota_limit is not None else "percent",
-                    "reset_at": reset_at,
-                    "data_source": "oauth",
-                    "tier": tier,
-                    "usage_url": "https://one.google.com/settings",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                })
+                results.append(
+                    {
+                        "service_name": display_name,
+                        "icon": "🔵",
+                        "remaining": f"{percent_used}%",
+                        "unit": "used",
+                        "reset": reset_at,
+                        "health": health,
+                        "pace": pace,
+                        "detail": detail_text,
+                        "used_value": used_val,
+                        "limit_value": limit_val,
+                        "is_unlimited": False,
+                        "unit_type": token_type if quota_limit is not None else "percent",
+                        "reset_at": reset_at,
+                        "data_source": "oauth",
+                        "tier": tier,
+                        "usage_url": "https://one.google.com/settings",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
 
             results.sort(key=lambda x: int(x["remaining"].rstrip("%")), reverse=True)
             return results
@@ -185,7 +216,12 @@ class GeminiApiMixin:
                         import asyncio
 
                         from app.services.token_cache import token_cache
-                        asyncio.create_task(token_cache.update_account_metadata("gemini", self.account_id, name=email))
+
+                        asyncio.create_task(
+                            token_cache.update_account_metadata(
+                                "gemini", self.account_id, name=email
+                            )
+                        )
                         self.account_label = email
                     return email
         except Exception:

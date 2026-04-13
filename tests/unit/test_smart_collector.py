@@ -62,9 +62,7 @@ class TestSmartCollectorCaching:
         assert "[Cached" in str(result2[0].get("detail", ""))
 
     @pytest.mark.asyncio
-    async def test_cache_expiration_triggers_fresh_fetch(
-        self, mock_collector, mock_client
-    ):
+    async def test_cache_expiration_triggers_fresh_fetch(self, mock_collector, mock_client):
         """Test that expired cache triggers fresh fetch."""
         cached_data = [{"service_name": "Test", "remaining": "100%"}]
         fresh_data = [{"service_name": "Test", "remaining": "50%"}]
@@ -107,9 +105,7 @@ class TestSmartCollectorErrorHandling:
     """Test error handling and graceful degradation."""
 
     @pytest.mark.asyncio
-    async def test_error_with_cache_returns_stale_data(
-        self, mock_collector, mock_client
-    ):
+    async def test_error_with_cache_returns_stale_data(self, mock_collector, mock_client):
         """Test that fetch errors return cached data instead of error card."""
         cached_data = [{"service_name": "Test", "remaining": "100%", "detail": "Fresh"}]
 
@@ -138,9 +134,7 @@ class TestSmartCollectorErrorHandling:
         assert "[Cached" in result2[0].get("detail", "")  # Tagged as stale
 
     @pytest.mark.asyncio
-    async def test_error_without_cache_returns_error_card(
-        self, mock_collector, mock_client
-    ):
+    async def test_error_without_cache_returns_error_card(self, mock_collector, mock_client):
         """Test that error without cache returns error card."""
         mock_collector.collect.side_effect = Exception("Connection failed")
 
@@ -286,9 +280,7 @@ class TestSmartCollectorCacheTags:
         data = [{"service_name": "Test", "remaining": "100%", "detail": "Original detail"}]
         mock_collector.collect.return_value = data
 
-        smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=600.0, error_retry_delay=0
-        )
+        smart = SmartCollector(mock_collector, "TestCollector", ttl=600.0, error_retry_delay=0)
 
         # First call - populate cache
         result1 = await smart.collect(mock_client)
@@ -339,9 +331,7 @@ class TestSmartCollectorIntegration:
     """Integration tests with realistic scenarios."""
 
     @pytest.mark.asyncio
-    async def test_realistic_scenario_with_provider_outage(
-        self, mock_collector, mock_client
-    ):
+    async def test_realistic_scenario_with_provider_outage(self, mock_collector, mock_client):
         """Test realistic scenario: provider outage and recovery."""
         good_data = [{"service_name": "Provider", "remaining": "100%"}]
 

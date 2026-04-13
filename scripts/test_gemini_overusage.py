@@ -30,9 +30,9 @@ BOLD = "\033[1m"
 
 def print_section(title):
     """Print a formatted section header."""
-    print(f"\n{BOLD}{'='*60}{RESET}")
+    print(f"\n{BOLD}{'=' * 60}{RESET}")
     print(f"{BOLD}{title}{RESET}")
-    print(f"{BOLD}{'='*60}{RESET}\n")
+    print(f"{BOLD}{'=' * 60}{RESET}\n")
 
 
 async def refresh_token(client, creds):

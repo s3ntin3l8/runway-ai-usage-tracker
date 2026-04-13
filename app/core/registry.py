@@ -42,6 +42,7 @@ class Registry:
 
         if "{{CONFIG_DIR:" in path_str:
             import re
+
             match = re.search(r"{{CONFIG_DIR:([^}]+)}}", path_str)
             if match:
                 app_name = match.group(1)
@@ -49,6 +50,7 @@ class Registry:
 
         if "{{DATA_DIR:" in path_str:
             import re
+
             match = re.search(r"{{DATA_DIR:([^}]+)}}", path_str)
             if match:
                 app_name = match.group(1)

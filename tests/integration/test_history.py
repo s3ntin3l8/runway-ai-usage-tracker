@@ -18,28 +18,31 @@ def session_fixture():
     db_url = f"sqlite:///{db_path}"
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
-    
+
     with Session(engine) as session:
         yield session
-    
+
     os.close(fd)
     if os.path.exists(db_path):
         os.remove(db_path)
+
 
 @pytest.fixture(name="client")
 def client_fixture(session: Session):
     def get_session_override():
         return session
-    
+
     app.dependency_overrides[get_session] = get_session_override
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
 
+
 def test_get_history_empty(client: TestClient):
     response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
     assert response.json() == []
+
 
 def test_get_history_with_data(client: TestClient, session: Session):
     # Add some dummy data
@@ -50,7 +53,7 @@ def test_get_history_with_data(client: TestClient, session: Session):
         service_name="Claude Pro",
         health="good",
         data_source="api",
-        timestamp=now
+        timestamp=now,
     )
     s2 = UsageSnapshot(
         provider_id="openai",
@@ -58,18 +61,19 @@ def test_get_history_with_data(client: TestClient, session: Session):
         service_name="ChatGPT Plus",
         health="warning",
         data_source="api",
-        timestamp=now - timedelta(hours=1)
+        timestamp=now - timedelta(hours=1),
     )
     session.add(s1)
     session.add(s2)
     session.commit()
-    
+
     response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
     assert data[0]["provider_id"] == "anthropic"
     assert data[1]["provider_id"] == "openai"
+
 
 def test_get_history_filtering(client: TestClient, session: Session):
     now = datetime.now(UTC)
@@ -79,7 +83,7 @@ def test_get_history_filtering(client: TestClient, session: Session):
         service_name="Claude Pro",
         health="good",
         data_source="api",
-        timestamp=now
+        timestamp=now,
     )
     s2 = UsageSnapshot(
         provider_id="openai",
@@ -87,15 +91,16 @@ def test_get_history_filtering(client: TestClient, session: Session):
         service_name="ChatGPT Plus",
         health="warning",
         data_source="api",
-        timestamp=now
+        timestamp=now,
     )
     session.add(s1)
     session.add(s2)
     session.commit()
-    
+
     response = client.get("/api/v1/usage/history?provider_id=anthropic")
     assert len(response.json()) == 1
     assert response.json()[0]["provider_id"] == "anthropic"
+
 
 def test_get_history_limit(client: TestClient, session: Session):
     now = datetime.now(UTC)
@@ -106,10 +111,10 @@ def test_get_history_limit(client: TestClient, session: Session):
             service_name=f"Service {i}",
             health="good",
             data_source="api",
-            timestamp=now - timedelta(minutes=i)
+            timestamp=now - timedelta(minutes=i),
         )
         session.add(s)
     session.commit()
-    
+
     response = client.get("/api/v1/usage/history?limit=5")
     assert len(response.json()) == 5

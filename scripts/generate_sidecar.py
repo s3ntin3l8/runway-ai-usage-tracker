@@ -2,6 +2,7 @@
 """
 Sidecar Generator - Builds the zero-dependency sidecar.py from registry.json.
 """
+
 import json
 import os
 from pathlib import Path
@@ -30,7 +31,7 @@ def generate():
 
     # Convert registry to a pretty-printed python dict string
     registry_str = json.dumps(registry, indent=4)
-    
+
     # Inject registry into template
     output = template.replace("__REGISTRY__ = {}", f"__REGISTRY__ = {registry_str}")
 
@@ -39,6 +40,7 @@ def generate():
 
     os.chmod(output_path, 0o755)
     print(f"Successfully generated {output_path} from registry.")
+
 
 if __name__ == "__main__":
     generate()

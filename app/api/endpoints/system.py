@@ -95,6 +95,7 @@ async def refresh_token(
 
 # --- Webhook alert configuration ---
 
+
 class _WebhookCreate(BaseModel):
     provider_id: str
     threshold_pct: float = Field(ge=0.0, le=100.0)
@@ -113,18 +114,20 @@ class _WebhookUpdate(BaseModel):
 async def list_webhooks(session: Session = Depends(get_session)) -> dict:
     """List all webhook alert configurations."""
     configs = session.exec(select(WebhookConfig)).all()
-    return {"webhooks": [
-        {
-            "id": c.id,
-            "provider_id": c.provider_id,
-            "threshold_pct": c.threshold_pct,
-            "url": c.url,
-            "channel": c.channel,
-            "active": c.active,
-            "last_fired_at": c.last_fired_at.isoformat() if c.last_fired_at else None,
-        }
-        for c in configs
-    ]}
+    return {
+        "webhooks": [
+            {
+                "id": c.id,
+                "provider_id": c.provider_id,
+                "threshold_pct": c.threshold_pct,
+                "url": c.url,
+                "channel": c.channel,
+                "active": c.active,
+                "last_fired_at": c.last_fired_at.isoformat() if c.last_fired_at else None,
+            }
+            for c in configs
+        ]
+    }
 
 
 @router.post("/webhooks", status_code=201)
@@ -193,6 +196,7 @@ async def test_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found")
 
     from app.services.webhooks import _fire_webhook
+
     test_card = LimitCard(
         service_name="Test Alert",
         icon="T",

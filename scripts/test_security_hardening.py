@@ -16,9 +16,7 @@ def send_signed_request(payload):
     timestamp = str(int(time.time()))
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
-    signature = hmac.new(
-        SECRET_KEY.encode(), timestamp.encode() + body, hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(SECRET_KEY.encode(), timestamp.encode() + body, hashlib.sha256).hexdigest()
 
     headers = {
         "Content-Type": "application/json",
@@ -75,9 +73,7 @@ def test_security():
 
             # Check Token Redaction (Backend)
             if "secret-token-123" in card["detail"]:
-                print(
-                    "❌ CRITICAL FAILURE: Raw token 'secret-token-123' found in detail field!"
-                )
+                print("❌ CRITICAL FAILURE: Raw token 'secret-token-123' found in detail field!")
             else:
                 print("✅ SUCCESS: Token 'secret-token-123' was redacted.")
                 print(f"   Detail: {card['detail']}")

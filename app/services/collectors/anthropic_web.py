@@ -55,13 +55,13 @@ class AnthropicWebMixin:
             os.path.join(home, ".claude", "statusline.json"),
             os.path.join(home, "Library", "Application Support", "Claude", "statusline.json"),
         ]
-        
+
         path = None
         for p in paths:
             if os.path.exists(p):
                 path = p
                 break
-                
+
         if not path:
             return []
 
@@ -94,22 +94,28 @@ class AnthropicWebMixin:
             reset_ts = info.get("resets_at")
             reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
 
-            results.append({
-                "service_name": f"Claude ({u_type})",
-                "icon": "🟠",
-                "remaining": f"{(100 - pct_used):.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [Statusline]",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "statusline",
-                "updated_at": now.isoformat(),
-            })
+            results.append(
+                {
+                    "service_name": f"Claude ({u_type})",
+                    "icon": "🟠",
+                    "remaining": f"{(100 - pct_used):.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at),
+                    "health": "good"
+                    if pct_used < 70
+                    else "warning"
+                    if pct_used < 90
+                    else "critical",
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used [Statusline]",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": "statusline",
+                    "updated_at": now.isoformat(),
+                }
+            )
 
         # 2. Session Context (Tokens/Cost)
         context = data.get("context_window", {})
@@ -119,37 +125,41 @@ class AnthropicWebMixin:
             total = input_tokens + output_tokens
             max_tokens = context.get("max_tokens", 200000)
 
-            results.append({
-                "service_name": "Claude (Session Tokens)",
-                "icon": "🪙",
-                "remaining": f"{total:,}",
-                "unit": f"/ {max_tokens:,}",
-                "reset": data.get("model", {}).get("display_name", "Sonnet"),
-                "health": "good",
-                "pace": "Active",
-                "detail": f"IN: {input_tokens:,} | OUT: {output_tokens:,} [Statusline]",
-                "used_value": float(total),
-                "limit_value": float(max_tokens),
-                "unit_type": "tokens",
-                "data_source": "statusline",
-                "updated_at": now.isoformat(),
-            })
+            results.append(
+                {
+                    "service_name": "Claude (Session Tokens)",
+                    "icon": "🪙",
+                    "remaining": f"{total:,}",
+                    "unit": f"/ {max_tokens:,}",
+                    "reset": data.get("model", {}).get("display_name", "Sonnet"),
+                    "health": "good",
+                    "pace": "Active",
+                    "detail": f"IN: {input_tokens:,} | OUT: {output_tokens:,} [Statusline]",
+                    "used_value": float(total),
+                    "limit_value": float(max_tokens),
+                    "unit_type": "tokens",
+                    "data_source": "statusline",
+                    "updated_at": now.isoformat(),
+                }
+            )
 
         cost = data.get("cost", {})
         if cost and cost.get("total_cost_usd", 0) > 0:
             total_cost = cost.get("total_cost_usd")
-            results.append({
-                "service_name": "Claude (Session Cost)",
-                "icon": "💰",
-                "remaining": f"${total_cost:.2f}",
-                "unit": "USD",
-                "reset": "This Session",
-                "health": "good",
-                "pace": "Stable",
-                "detail": f"+{cost.get('total_lines_added', 0)} / -{cost.get('total_lines_deleted', 0)} lines [Statusline]",
-                "data_source": "statusline",
-                "updated_at": now.isoformat(),
-            })
+            results.append(
+                {
+                    "service_name": "Claude (Session Cost)",
+                    "icon": "💰",
+                    "remaining": f"${total_cost:.2f}",
+                    "unit": "USD",
+                    "reset": "This Session",
+                    "health": "good",
+                    "pace": "Stable",
+                    "detail": f"+{cost.get('total_lines_added', 0)} / -{cost.get('total_lines_deleted', 0)} lines [Statusline]",
+                    "data_source": "statusline",
+                    "updated_at": now.isoformat(),
+                }
+            )
 
         return results
 
@@ -159,9 +169,7 @@ class AnthropicWebMixin:
         """Check if a web cookie is available without making API calls."""
         return await asyncio.to_thread(get_claude_session_cookie) is not None
 
-    async def _get_claude_via_web_api(
-        self, client: httpx.AsyncClient
-    ) -> list[dict[str, Any]]:
+    async def _get_claude_via_web_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
         Secondary strategy: Fetch Claude quota via Web API using Chrome cookies.
 
@@ -218,7 +226,9 @@ class AnthropicWebMixin:
 
             # Step 3: Get usage data
             usage_resp = await http_request_with_retry(
-                client, "GET", f"https://claude.ai/api/organizations/{org_id}/usage",
+                client,
+                "GET",
+                f"https://claude.ai/api/organizations/{org_id}/usage",
                 headers=headers,
                 timeout=10.0,
             )
@@ -288,7 +298,7 @@ class AnthropicWebMixin:
             else:
                 raw_pct = window_data.get("percentUsed")
                 pct_used = float(raw_pct) if raw_pct is not None else 0.0
-            
+
             remaining_pct = 100.0 - pct_used
 
             reset_at = None
@@ -299,25 +309,31 @@ class AnthropicWebMixin:
                 except (ValueError, TypeError):
                     pass
 
-            results.append({
-                "service_name": f"Claude ({display_name})",
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "web_api",
-                "tier": tier,
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(UTC).isoformat(),
-            })
+            results.append(
+                {
+                    "service_name": f"Claude ({display_name})",
+                    "icon": "🟠",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at),
+                    "health": "good"
+                    if pct_used < 70
+                    else "warning"
+                    if pct_used < 90
+                    else "critical",
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": "web_api",
+                    "tier": tier,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
 
         # 2. Balance / Prepaid Credits (New)
         balance_keys = ["current_balance", "available_balance", "balance", "credits"]
@@ -326,23 +342,25 @@ class AnthropicWebMixin:
             if bal_val is not None:
                 try:
                     bal = float(bal_val)
-                    results.append({
-                        "service_name": "Claude (Current Balance)",
-                        "icon": "💰",
-                        "remaining": f"${bal:.2f}",
-                        "unit": "USD",
-                        "reset": "Prepaid",
-                        "health": "good" if bal > 5.0 else "warning",
-                        "pace": "Manual Top-up",
-                        "detail": f"Credits: ${bal:.2f} [Web API]{identity_suffix}",
-                        "used_value": 0.0,
-                        "limit_value": bal,
-                        "unit_type": "currency",
-                        "data_source": "web_api",
-                        "tier": tier,
-                        "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    })
+                    results.append(
+                        {
+                            "service_name": "Claude (Current Balance)",
+                            "icon": "💰",
+                            "remaining": f"${bal:.2f}",
+                            "unit": "USD",
+                            "reset": "Prepaid",
+                            "health": "good" if bal > 5.0 else "warning",
+                            "pace": "Manual Top-up",
+                            "detail": f"Credits: ${bal:.2f} [Web API]{identity_suffix}",
+                            "used_value": 0.0,
+                            "limit_value": bal,
+                            "unit_type": "currency",
+                            "data_source": "web_api",
+                            "tier": tier,
+                            "usage_url": "https://claude.ai/settings/usage",
+                            "updated_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
                     # Found a balance, break to avoid duplicates if multiple keys exist
                     break
                 except (ValueError, TypeError):
@@ -358,22 +376,24 @@ class AnthropicWebMixin:
 
             if limit > 0:
                 remaining = max(0.0, limit - spend)
-                results.append({
-                    "service_name": "Claude (Extra Usage)",
-                    "icon": "💰",
-                    "remaining": f"${remaining:.2f}",
-                    "unit": "USD",
-                    "reset": "Monthly",
-                    "health": "good" if remaining > 5.0 else "warning",
-                    "pace": "Sustainable",
-                    "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
-                    "used_value": spend,
-                    "limit_value": limit,
-                    "unit_type": "currency",
-                    "data_source": "web_api",
-                    "tier": tier,
-                    "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                })
+                results.append(
+                    {
+                        "service_name": "Claude (Extra Usage)",
+                        "icon": "💰",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": "USD",
+                        "reset": "Monthly",
+                        "health": "good" if remaining > 5.0 else "warning",
+                        "pace": "Sustainable",
+                        "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
+                        "used_value": spend,
+                        "limit_value": limit,
+                        "unit_type": "currency",
+                        "data_source": "web_api",
+                        "tier": tier,
+                        "usage_url": "https://claude.ai/settings/usage",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
 
         return results

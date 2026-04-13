@@ -26,6 +26,13 @@ Pipeline runs on push/PR to `main` and on version tags (`v*`):
 
 Dependabot updates actions, pip, and npm weekly. Secrets baseline (`.secrets.baseline`) is tracked in git — required by CI.
 
+## Releases
+Releases are managed by **Release Please** (`.github/workflows/release-please.yml`):
+- Uses Conventional Commits to determine version bumps: `feat:` → minor, `fix:` → patch, `feat!:` → major, `chore:`/`docs:`/`test:` → no release
+- On qualifying commits to `main`, Release Please opens a PR updating `CHANGELOG.md` and `package.json`
+- Merging that PR creates the GitHub Release and tag automatically
+- To force a version jump (e.g. v1.0.0): tag manually, push the tag, create the GitHub Release by hand — Release Please picks up from there
+
 ## Code Style & Patterns
 - **Backend**: Python 3.12+, FastAPI, Pydantic v2, `httpx` (async).
 - **Frontend**: Vanilla CSS (glassmorphism) + Tailwind CSS.

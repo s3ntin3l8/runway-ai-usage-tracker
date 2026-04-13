@@ -45,9 +45,7 @@ async def test_github_api():
         print("\n2. Testing /copilot_internal/user")
         print("-" * 40)
         try:
-            resp = await client.get(
-                "https://api.github.com/copilot_internal/user", headers=headers
-            )
+            resp = await client.get("https://api.github.com/copilot_internal/user", headers=headers)
             print(f"Status: {resp.status_code}")
             print(f"Response headers: {dict(resp.headers)}")
             print(f"Response body:\n{resp.text[:2000] if resp.text else '(empty)'}")

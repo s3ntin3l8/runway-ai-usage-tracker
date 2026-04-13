@@ -49,9 +49,7 @@ async def ingest_metrics(
             detail="Ingest endpoint not configured: INGEST_API_KEY is empty",
         )
     if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
-        logger.error(
-            "INGEST_API_KEY is the default insecure value — ingest endpoint is disabled"
-        )
+        logger.error("INGEST_API_KEY is the default insecure value — ingest endpoint is disabled")
         raise HTTPException(
             status_code=503,
             detail="Ingest endpoint not configured: INGEST_API_KEY must be changed from default",
@@ -60,9 +58,7 @@ async def ingest_metrics(
     # 1. Check headers
     if not x_signature or not x_timestamp:
         logger.warning("Ingest attempt with missing HMAC headers")
-        raise HTTPException(
-            status_code=401, detail="Missing HMAC signature or timestamp"
-        )
+        raise HTTPException(status_code=401, detail="Missing HMAC signature or timestamp")
 
     # 2. Check timestamp (5-minute window for past, 60s for future drift)
     try:
@@ -70,9 +66,7 @@ async def ingest_metrics(
         now = time.time()
         skew = now - ts
         if skew < -60 or skew > 300:
-            logger.warning(
-                f"Ingest attempt with rejected timestamp: {skew:.0f}s difference"
-            )
+            logger.warning(f"Ingest attempt with rejected timestamp: {skew:.0f}s difference")
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -95,9 +89,7 @@ async def ingest_metrics(
     ).hexdigest()
 
     if not hmac.compare_digest(x_signature, expected_sig):
-        logger.warning(
-            f"HMAC mismatch. Received: {x_signature[:8]}... (len: {len(x_signature)})"
-        )
+        logger.warning(f"HMAC mismatch. Received: {x_signature[:8]}... (len: {len(x_signature)})")
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
     # 4. Parse request
@@ -146,9 +138,7 @@ async def ingest_metrics(
                             provider_tokens[key] = val
 
                 if provider_tokens:
-                    tokens_to_store.append(
-                        (provider_id, provider_tokens, acc_id, acc_label)
-                    )
+                    tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_label))
                     logger.debug(
                         f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {request.provider}"
                     )
@@ -180,9 +170,7 @@ async def ingest_metrics(
 
     # Store local data metrics
     if local_cards:
-        await external_metric_service.metrics_update_from_ingest(
-            request.provider, local_cards
-        )
+        await external_metric_service.metrics_update_from_ingest(request.provider, local_cards)
         logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
 
     return {

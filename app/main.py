@@ -31,10 +31,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # Apply JSON formatter when LOG_FORMAT=json
 if settings.LOG_FORMAT == "json":
     from app.core.logging import JsonFormatter
+
     _json_fmt = JsonFormatter()
     for _handler in logging.root.handlers:
         _handler.setFormatter(_json_fmt)
 logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -145,7 +147,5 @@ if __name__ == "__main__":
 
     logger.info(f"Starting Runway on http://{settings.APP_HOST}:{settings.APP_PORT}")
     if settings.APP_HOST == "0.0.0.0":
-        logger.warning(
-            "Server bound to 0.0.0.0 - accessible from all network interfaces!"
-        )
+        logger.warning("Server bound to 0.0.0.0 - accessible from all network interfaces!")
     uvicorn.run(app, host=settings.APP_HOST, port=settings.APP_PORT)

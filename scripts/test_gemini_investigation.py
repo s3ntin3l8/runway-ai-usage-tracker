@@ -35,9 +35,9 @@ BOLD = "\033[1m"
 
 def print_section(title):
     """Print a formatted section header."""
-    print(f"\n{BOLD}{'='*60}{RESET}")
+    print(f"\n{BOLD}{'=' * 60}{RESET}")
     print(f"{BOLD}{title}{RESET}")
-    print(f"{BOLD}{'='*60}{RESET}\n")
+    print(f"{BOLD}{'=' * 60}{RESET}\n")
 
 
 def print_bucket_comparison(buckets, label):
@@ -64,7 +64,7 @@ def print_bucket_comparison(buckets, label):
         print(f"  {color}• {model}{RESET}")
         print(f"    Token Type: {token_type}")
         print(
-            f"    Remaining Fraction: {fraction} ({int(fraction * 100)}% remaining = {int((1-fraction) * 100)}% used)"
+            f"    Remaining Fraction: {fraction} ({int(fraction * 100)}% remaining = {int((1 - fraction) * 100)}% used)"
         )
         print(f"    Reset: {reset}")
 
@@ -185,9 +185,7 @@ async def test_project_discovery(client, headers):
             labels = proj.get("labels", {})
 
             # Check for gen-lang-client pattern or generative-language label
-            is_gemini = "gen-lang-client" in proj_id or labels.get(
-                "generative-language"
-            )
+            is_gemini = "gen-lang-client" in proj_id or labels.get("generative-language")
 
             if is_gemini:
                 gemini_projects.append(proj)
@@ -259,7 +257,7 @@ async def compare_all_models():
                 return
         else:
             print(
-                f"{GREEN}Token is valid (expires in {int((expiry - now)/1000/60)} minutes){RESET}"
+                f"{GREEN}Token is valid (expires in {int((expiry - now) / 1000 / 60)} minutes){RESET}"
             )
 
         token = creds.get("access_token")
@@ -272,9 +270,7 @@ async def compare_all_models():
         print_section("2. Testing Quota Endpoint with Different Project Parameters")
 
         # Test A: Empty project (current implementation)
-        buckets_empty = await test_quota_with_project(
-            client, headers, "", "Empty project ('')"
-        )
+        buckets_empty = await test_quota_with_project(client, headers, "", "Empty project ('')")
 
         # Test B: No project key at all
         print(f"\n{BOLD}Testing: No project key in body{RESET}")
@@ -288,9 +284,7 @@ async def compare_all_models():
         if resp.status_code == 200:
             data = resp.json()
             buckets_none = data.get("buckets", [])
-            print_bucket_comparison(
-                buckets_none, f"Found {len(buckets_none)} quota buckets"
-            )
+            print_bucket_comparison(buckets_none, f"Found {len(buckets_none)} quota buckets")
         else:
             print(f"{RED}Error: {resp.text}{RESET}")
             buckets_none = []
@@ -358,9 +352,7 @@ async def compare_all_models():
             print("  This could mean:")
             print("  1. gemini-3 models are on a different API version")
             print("  2. Your account/tier doesn't have access to gemini-3 quotas yet")
-            print(
-                "  3. gemini-3 quotas are tracked differently (not in retrieveUserQuota)"
-            )
+            print("  3. gemini-3 quotas are tracked differently (not in retrieveUserQuota)")
             print("  4. The CLI aggregates model data from multiple sources")
 
 
