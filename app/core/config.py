@@ -102,9 +102,7 @@ class Settings(BaseSettings):
             get_platform_config_dir("usage-tracker"), "github_oauth.json"
         )
     )
-    CHATGPT_AUTH_PATH: str = Field(
-        default_factory=lambda: os.path.expanduser("~/.codex/auth.json")
-    )
+    CHATGPT_AUTH_PATH: str = Field(default_factory=lambda: os.path.expanduser("~/.codex/auth.json"))
     CHATGPT_SESSIONS_DIR: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("codex"), "sessions")
     )
@@ -117,9 +115,7 @@ class Settings(BaseSettings):
         default_factory=lambda: os.path.join(get_platform_data_dir("opencode"), "opencode.db")
     )
     DATABASE_PATH: str = Field(
-        default_factory=lambda: os.path.join(
-            get_platform_config_dir("usage-tracker"), "runway.db"
-        )
+        default_factory=lambda: os.path.join(get_platform_config_dir("usage-tracker"), "runway.db")
     )
     EXTERNAL_METRICS_PATH: str = Field(
         default_factory=lambda: os.path.join(
@@ -166,9 +162,7 @@ settings = Settings()
 # Security check: Warn if using default ingest secret
 if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
     logger.warning("=" * 60)
-    logger.warning(
-        "SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')"
-    )
+    logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
     logger.warning("The ingest endpoint is DISABLED until a custom key is set.")
     logger.warning("Set INGEST_API_KEY environment variable to a strong secret.")
     logger.warning("=" * 60)

@@ -10,6 +10,7 @@ from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
+
 class OpenRouterCollector(BaseCollector):
     """
     Collector for OpenRouter usage and credits.
@@ -29,7 +30,7 @@ class OpenRouterCollector(BaseCollector):
             token = await token_cache.get_token("openrouter", "api_key", account_id=self.account_id)
             if token:
                 return token
-        
+
         # 2. Fallback to settings
         return settings.OPENROUTER_API_KEY
 
@@ -44,14 +45,12 @@ class OpenRouterCollector(BaseCollector):
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
-            
+
             # Check credits/usage
             resp = await client.get(
-                "https://openrouter.ai/api/v1/credits",
-                headers=headers,
-                timeout=10
+                "https://openrouter.ai/api/v1/credits", headers=headers, timeout=10
             )
-            
+
             if resp.status_code == 200:
                 data = resp.json()
                 if "data" in data:
@@ -59,25 +58,31 @@ class OpenRouterCollector(BaseCollector):
                     total_credits = info.get("total_credits", 0.0)
                     usage = info.get("usage", 0.0)
                     remaining = max(0, total_credits - usage)
-                    
-                    return [{
-                        "service_name": "OpenRouter Credits",
-                        "icon": "🚀",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": "USD",
-                        "reset": "Prepaid",
-                        "health": "good" if remaining > 5.0 else "warning" if remaining > 1.0 else "critical",
-                        "pace": "Stable",
-                        "detail": f"Used: ${usage:.2f} of ${total_credits:.2f} [API]",
-                        "used_value": usage,
-                        "limit_value": total_credits,
-                        "unit_type": "currency",
-                        "data_source": "api",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    }]
+
+                    return [
+                        {
+                            "service_name": "OpenRouter Credits",
+                            "icon": "🚀",
+                            "remaining": f"${remaining:.2f}",
+                            "unit": "USD",
+                            "reset": "Prepaid",
+                            "health": "good"
+                            if remaining > 5.0
+                            else "warning"
+                            if remaining > 1.0
+                            else "critical",
+                            "pace": "Stable",
+                            "detail": f"Used: ${usage:.2f} of ${total_credits:.2f} [API]",
+                            "used_value": usage,
+                            "limit_value": total_credits,
+                            "unit_type": "currency",
+                            "data_source": "api",
+                            "updated_at": datetime.now(UTC).isoformat(),
+                        }
+                    ]
             else:
                 logger.error(f"OpenRouter API error (HTTP {resp.status_code}): {resp.text}")
-                
+
         except Exception as e:
             logger.error(f"Failed to collect OpenRouter usage: {e}")
 
@@ -90,9 +95,13 @@ class OpenRouterCollector(BaseCollector):
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return the ultimate error card(s) when all strategies fail."""
         from app.core.utils import error_card
-        
+
         api_key = await self._get_api_key()
         if not api_key:
-            return [error_card("OpenRouter", "🚀", "Missing OPENROUTER_API_KEY", error_type="missing_config")]
-            
+            return [
+                error_card(
+                    "OpenRouter", "🚀", "Missing OPENROUTER_API_KEY", error_type="missing_config"
+                )
+            ]
+
         return [error_card("OpenRouter", "🚀", "API connection failed", error_type="api_error")]

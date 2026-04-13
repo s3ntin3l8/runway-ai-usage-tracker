@@ -92,8 +92,10 @@ def human_delta(target_dt: datetime | None) -> str:
     hours = (seconds % 86400) // 3600
     return f"{days}d {hours}h"
 
+
 def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
     from app.models.builder import LimitCardBuilder
+
     return LimitCardBuilder.error(service, icon, message, error_type)
 
 
@@ -154,9 +156,10 @@ async def http_request_with_retry(
                     else:
                         # Handle HTTP-date format (optional but good practice)
                         from email.utils import parsedate_to_datetime
+
                         retry_date = parsedate_to_datetime(retry_after)
                         wait_time = (retry_date - datetime.now(UTC)).total_seconds()
-                    
+
                     # Add a small buffer
                     wait_time = max(0.1, wait_time + 0.5)
                 else:
@@ -164,7 +167,7 @@ async def http_request_with_retry(
             except Exception:
                 wait_time = (2**attempt) * initial_delay + random.uniform(0, 0.1 * (2**attempt))
 
-            # CRITICAL: Cap wait time. If it's too long (e.g. 1 hour), 
+            # CRITICAL: Cap wait time. If it's too long (e.g. 1 hour),
             # don't block the collector task (which now has a 20s timeout).
             if wait_time > 5.0:
                 logger.warning(
@@ -185,9 +188,7 @@ async def http_request_with_retry(
             await asyncio.sleep(initial_delay * (attempt + 1))
 
     # This shouldn't be reached but just in case
-    raise RuntimeError(
-        f"Max retries ({max_retries}) exceeded for {method.upper()} {url}"
-    )
+    raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")
 
 
 def safe_write_json(path: str, data: dict):

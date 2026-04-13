@@ -17,9 +17,7 @@ class MockCollector(BaseCollector):
         return []
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        return [
-            {"service_name": "Mock", "detail": "original", "metadata": {"nested": "value"}}
-        ]
+        return [{"service_name": "Mock", "detail": "original", "metadata": {"nested": "value"}}]
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         return []
@@ -44,9 +42,7 @@ class TestCacheResilience:
 
         # Second call - should return cached data UNCHANGED
         results2 = await smart.collect(mock_client)
-        assert (
-            results2[0]["metadata"]["nested"] == "value"
-        ), "Cache was corrupted by shallow copy!"
+        assert results2[0]["metadata"]["nested"] == "value", "Cache was corrupted by shallow copy!"
         assert "original" in results2[0]["detail"]
 
 
@@ -57,18 +53,14 @@ class TestUtilityResilience:
         assert extract_token_regex("token:abc 123", "token:") == "abc"
 
         # With separators
-        assert (
-            extract_token_regex("token:sk-ant-123 · session", "token:") == "sk-ant-123"
-        )
+        assert extract_token_regex("token:sk-ant-123 · session", "token:") == "sk-ant-123"
         assert extract_token_regex("token:my_token[env]", "token:") == "my_token"
 
         # Multi-byte / Special chars (Kimi review concern)
         # Note: tokens shouldn't have spaces, but Sk-ant can have hyphens.
         # If tokens have weird chars, regex should still isolate them from UI separators.
         assert (
-            extract_token_regex(
-                "api_key:key_with_underscores_and-hyphens detail", "api_key:"
-            )
+            extract_token_regex("api_key:key_with_underscores_and-hyphens detail", "api_key:")
             == "key_with_underscores_and-hyphens"
         )
 
@@ -77,10 +69,7 @@ class TestUtilityResilience:
         assert extract_token_regex("token: ", "token:") is None
 
         # Prefix matching
-        assert (
-            extract_token_regex("oauth_token:abc refresh_token:def", "refresh_token:")
-            == "def"
-        )
+        assert extract_token_regex("oauth_token:abc refresh_token:def", "refresh_token:") == "def"
 
     def test_human_delta_timezone_resilience(self):
         """Verify human_delta handles mixed naive/aware datetimes."""
@@ -133,9 +122,7 @@ class TestIngestBoundary:
         secret = "test-secret"
         timestamp = str(int(datetime.now().timestamp()))
         # Body with emoji and multi-byte chars
-        body = json.dumps(
-            {"provider": "test", "metrics": [], "notes": "🚀 汉字"}
-        ).encode("utf-8")
+        body = json.dumps({"provider": "test", "metrics": [], "notes": "🚀 汉字"}).encode("utf-8")
 
         expected_sig = hmac.new(
             secret.encode(), f"{timestamp}".encode() + body, hashlib.sha256

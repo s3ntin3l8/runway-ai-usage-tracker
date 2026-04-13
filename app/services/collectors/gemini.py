@@ -63,7 +63,7 @@ class GeminiCollector(
         # Check if we have credentials to determine the most helpful error
         creds = await self._get_credentials()
         if not creds:
-             return [
+            return [
                 error_card(
                     "Gemini",
                     "🔵",
@@ -71,9 +71,7 @@ class GeminiCollector(
                     error_type="missing_config",
                 )
             ]
-        
+
         return [
-            error_card(
-                "Gemini", "🔵", "All collection strategies failed", error_type="api_error"
-            )
+            error_card("Gemini", "🔵", "All collection strategies failed", error_type="api_error")
         ]

@@ -166,6 +166,7 @@ class LimitCardBuilder:
     ) -> dict[str, Any]:
         """Build a standardised error card dict."""
         from app.core.strings import truncate_string
+
         b = (
             cls(service_name, icon, "ERR", "Check State")
             .set_health("critical")

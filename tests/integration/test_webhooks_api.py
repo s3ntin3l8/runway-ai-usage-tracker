@@ -63,14 +63,18 @@ def test_list_webhooks_after_create(client):
 
 
 def test_patch_webhook(client):
-    create_resp = client.post("/api/v1/system/webhooks", json={
-        "provider_id": "anthropic", "threshold_pct": 90.0,
-        "url": "https://discord.example.com/hook", "channel": "discord",
-    })
+    create_resp = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
     webhook_id = create_resp.json()["id"]
 
-    patch_resp = client.patch(f"/api/v1/system/webhooks/{webhook_id}",
-                              json={"threshold_pct": 75.0})
+    patch_resp = client.patch(f"/api/v1/system/webhooks/{webhook_id}", json={"threshold_pct": 75.0})
     assert patch_resp.status_code == 200
 
     list_resp = client.get("/api/v1/system/webhooks")
@@ -78,10 +82,15 @@ def test_patch_webhook(client):
 
 
 def test_delete_webhook(client):
-    create_resp = client.post("/api/v1/system/webhooks", json={
-        "provider_id": "anthropic", "threshold_pct": 90.0,
-        "url": "https://discord.example.com/hook", "channel": "discord",
-    })
+    create_resp = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
     webhook_id = create_resp.json()["id"]
 
     del_resp = client.delete(f"/api/v1/system/webhooks/{webhook_id}")
@@ -103,10 +112,15 @@ def test_delete_nonexistent_webhook(client):
 
 def test_test_endpoint_sends_payload(client):
     """Test endpoint fires a webhook and returns status=sent."""
-    create_resp = client.post("/api/v1/system/webhooks", json={
-        "provider_id": "anthropic", "threshold_pct": 90.0,
-        "url": "https://discord.example.com/hook", "channel": "discord",
-    })
+    create_resp = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
     webhook_id = create_resp.json()["id"]
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -126,21 +140,27 @@ def test_test_endpoint_sends_payload(client):
 
 def test_test_endpoint_returns_502_on_delivery_failure(client):
     """Test endpoint returns 502 when webhook delivery fails."""
-    create_resp = client.post("/api/v1/system/webhooks", json={
-        "provider_id": "anthropic", "threshold_pct": 90.0,
-        "url": "https://discord.example.com/hook", "channel": "discord",
-    })
+    create_resp = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
     webhook_id = create_resp.json()["id"]
 
     import httpx as _httpx
+
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(side_effect=_httpx.HTTPStatusError(
-            "500", request=MagicMock(), response=MagicMock()
-        ))
+        mock_response.raise_for_status = MagicMock(
+            side_effect=_httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock())
+        )
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value = mock_client
 

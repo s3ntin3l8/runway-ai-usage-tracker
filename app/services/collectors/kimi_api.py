@@ -33,6 +33,7 @@ from app.services.collectors.base import BaseCollector
 class KimiApiCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+
     """Collector for Kimi API (Moonshot AI) prepaid balance and usage history."""
 
     PROVIDER_ID = "kimi_api"
@@ -51,9 +52,9 @@ class KimiApiCollector(BaseCollector):
         # Run strategies in parallel
         balance_task = self._strategy_balance(client, key)
         history_task = self._strategy_history(client, key)
-        
+
         results = await asyncio.gather(balance_task, history_task)
-        
+
         # Merge results (flatten list)
         return [card for sublist in results for card in sublist]
 
@@ -62,9 +63,7 @@ class KimiApiCollector(BaseCollector):
         key = settings.KIMI_API_KEY
         if not key or len(key) < 10:
             return [
-                error_card(
-                    "Kimi API", "🌙", "Missing/Invalid Key", error_type="missing_config"
-                )
+                error_card("Kimi API", "🌙", "Missing/Invalid Key", error_type="missing_config")
             ]
         return [error_card("Kimi API", "🌙", "Unauthorized", error_type="api_error")]
 
@@ -74,7 +73,7 @@ class KimiApiCollector(BaseCollector):
             resp = await client.get(
                 "https://api.moonshot.cn/v1/users/me/balance",
                 headers={"Authorization": f"Bearer {key}"},
-                timeout=10.0
+                timeout=10.0,
             )
 
             if resp.status_code != 200:
@@ -103,7 +102,7 @@ class KimiApiCollector(BaseCollector):
     async def _strategy_history(self, client: httpx.AsyncClient, key: str) -> list[dict[str, Any]]:
         """
         Collect Kimi usage history for daily spend breakdown.
-        
+
         Note: Moonshot API usage endpoint often requires specific dates.
         We poll the last 30 days of usage.
         """
@@ -111,7 +110,6 @@ class KimiApiCollector(BaseCollector):
             # Usage endpoint: /v1/users/me/usage (if available) or specific model usage
             # For now, we'll implement a robust placeholder for the history API
             # as per standard patterns for prepaid collectors.
-            return [] # History API logic would go here once endpoint is confirmed
+            return []  # History API logic would go here once endpoint is confirmed
         except Exception:
             return []
-

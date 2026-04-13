@@ -40,8 +40,7 @@ def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1"):
     )
 
 
-def _config(session, provider="anthropic", threshold=90.0, channel="discord",
-            last_fired=None):
+def _config(session, provider="anthropic", threshold=90.0, channel="discord", last_fired=None):
     cfg = WebhookConfig(
         provider_id=provider,
         threshold_pct=threshold,
@@ -60,6 +59,7 @@ def _config(session, provider="anthropic", threshold=90.0, channel="discord",
 async def test_fires_when_above_threshold(session):
     """Webhook fires when usage exceeds threshold and last_fired_at is None."""
     from app.services.webhooks import check_and_fire
+
     _config(session)  # threshold=90%, last_fired=None
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -80,6 +80,7 @@ async def test_fires_when_above_threshold(session):
 async def test_does_not_fire_when_below_threshold(session):
     """No webhook fired when usage is below threshold."""
     from app.services.webhooks import check_and_fire
+
     _config(session)  # threshold=90%
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -98,6 +99,7 @@ async def test_does_not_fire_when_below_threshold(session):
 async def test_does_not_refire_same_breach(session):
     """Once fired, does not fire again while still above threshold."""
     from app.services.webhooks import check_and_fire
+
     _config(session, last_fired=datetime.now(UTC))  # already fired
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -116,6 +118,7 @@ async def test_does_not_refire_same_breach(session):
 async def test_resets_when_below_hysteresis(session):
     """last_fired_at cleared when usage drops below threshold * 0.85."""
     from app.services.webhooks import check_and_fire
+
     fired_time = datetime.now(UTC)
     cfg = _config(session, threshold=90.0, last_fired=fired_time)
 
@@ -136,6 +139,7 @@ async def test_resets_when_below_hysteresis(session):
 def test_discord_payload_has_embed():
     """Discord payload contains embeds array with correct color."""
     from app.services.webhooks import _discord_payload
+
     card = _card()
     payload = _discord_payload(card, 95.0, 90.0)
     assert "embeds" in payload
@@ -145,6 +149,7 @@ def test_discord_payload_has_embed():
 def test_slack_payload_has_blocks():
     """Slack payload contains blocks array."""
     from app.services.webhooks import _slack_payload
+
     card = _card()
     payload = _slack_payload(card, 95.0, 90.0)
     assert "blocks" in payload
@@ -155,6 +160,7 @@ def test_slack_payload_has_blocks():
 async def test_dead_zone_preserves_last_fired_at(session):
     """Usage in dead zone (hysteresis ≤ used_pct < threshold) neither fires nor resets."""
     from app.services.webhooks import check_and_fire
+
     fired_time = datetime.now(UTC)
     cfg = _config(session, threshold=90.0, last_fired=fired_time)
 
@@ -182,6 +188,7 @@ async def test_http_failure_does_not_set_last_fired_at(session):
     import httpx as _httpx
 
     from app.services.webhooks import check_and_fire
+
     cfg = _config(session)  # threshold=90%, last_fired=None
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -189,9 +196,9 @@ async def test_http_failure_does_not_set_last_fired_at(session):
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(side_effect=_httpx.HTTPStatusError(
-            "500", request=MagicMock(), response=MagicMock()
-        ))
+        mock_response.raise_for_status = MagicMock(
+            side_effect=_httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock())
+        )
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value = mock_client
 
@@ -205,6 +212,7 @@ async def test_http_failure_does_not_set_last_fired_at(session):
 async def test_skips_cards_with_none_or_zero_limit(session):
     """Cards with None or zero limit_value are safely skipped."""
     from app.services.webhooks import check_and_fire
+
     _config(session)
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -228,6 +236,7 @@ async def test_skips_cards_with_none_or_zero_limit(session):
 async def test_global_wildcard_matches_all_providers(session):
     """provider_id='*' config fires for any provider card."""
     from app.services.webhooks import check_and_fire
+
     cfg = WebhookConfig(
         provider_id="*",
         threshold_pct=90.0,

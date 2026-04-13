@@ -16,9 +16,10 @@ from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
+
 class ChatGPTAuthMixin:
     """Mixin for ChatGPT authentication and token management."""
-    
+
     async def _get_auth_data(self, client: httpx.AsyncClient) -> dict[str, Any]:
         """
         Retrieve ChatGPT auth with priority: OAUTH -> Browser Cookies -> Sidecar Cache.
@@ -44,10 +45,10 @@ class ChatGPTAuthMixin:
                     logger.debug(f"Failed to check/refresh stale ChatGPT token: {e}")
 
             return {
-                "token": token, 
+                "token": token,
                 "account_id": account_id,
                 "refresh_token": refresh_token,
-                "source": "credential_provider"
+                "source": "credential_provider",
             }
 
         # Priority 3: Browser Cookies
@@ -78,9 +79,7 @@ class ChatGPTAuthMixin:
                 return {"token": refreshed, "source": "cookies"}
 
         # Priority 4: Sidecar cache (direct OAuth token)
-        token = await token_cache.get_token(
-            "chatgpt", "oauth_token", account_id=self.account_id
-        )
+        token = await token_cache.get_token("chatgpt", "oauth_token", account_id=self.account_id)
         if token:
             logger.debug("Using OAuth token from sidecar cache")
             return {"token": token, "source": "sidecar_cache"}
@@ -180,9 +179,7 @@ class ChatGPTAuthMixin:
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("accessToken")
-            logger.debug(
-                f"Failed to refresh ChatGPT token: HTTP {resp.status_code}"
-            )
+            logger.debug(f"Failed to refresh ChatGPT token: HTTP {resp.status_code}")
         except Exception as e:
             logger.debug(f"Error refreshing ChatGPT token: {e}")
         return None

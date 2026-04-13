@@ -1,4 +1,5 @@
 """Tests for the registry-backed /limits endpoint (Phase 4C)."""
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -52,9 +53,12 @@ def test_limits_fallback_when_registry_empty(client):
             "detail": "Fresh detail",
         }
     ]
-    with patch.object(manager, "_registry", []), patch.object(
-        manager, "collect_all", new_callable=AsyncMock, return_value=fresh_cards
-    ) as mock_collect:
+    with (
+        patch.object(manager, "_registry", []),
+        patch.object(
+            manager, "collect_all", new_callable=AsyncMock, return_value=fresh_cards
+        ) as mock_collect,
+    ):
         response = client.get("/api/v1/usage/limits")
         assert response.status_code == 200
         data = response.json()
@@ -66,8 +70,18 @@ def test_limits_fallback_when_registry_empty(client):
 
 def test_get_registry_snapshot_returns_copy():
     """get_registry_snapshot returns a copy, not a reference."""
-    cards = [{"service_name": "Test", "icon": "T", "remaining": "50%",
-              "unit": "u", "reset": "—", "health": "good", "pace": "Stable", "detail": "d"}]
+    cards = [
+        {
+            "service_name": "Test",
+            "icon": "T",
+            "remaining": "50%",
+            "unit": "u",
+            "reset": "—",
+            "health": "good",
+            "pace": "Stable",
+            "detail": "d",
+        }
+    ]
     with patch.object(manager, "_registry", cards):
         snapshot = manager.get_registry_snapshot()
         assert snapshot == cards

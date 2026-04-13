@@ -9,8 +9,8 @@ from app.models.db import UsageSnapshot
 
 logger = logging.getLogger(__name__)
 
-_HOURLY_DAYS = 60    # compact to hourly: rows older than 60 days
-_DAILY_DAYS = 180    # compact to daily:  rows older than 180 days
+_HOURLY_DAYS = 60  # compact to hourly: rows older than 60 days
+_DAILY_DAYS = 180  # compact to daily:  rows older than 180 days
 
 
 def compact_snapshots(session: Session) -> dict:

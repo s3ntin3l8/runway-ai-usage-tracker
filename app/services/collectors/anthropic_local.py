@@ -45,7 +45,8 @@ class AnthropicLocalMixin:
         try:
             # Check if claude CLI is available
             proc = await asyncio.create_subprocess_exec(
-                "which", "claude",
+                "which",
+                "claude",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -119,22 +120,28 @@ class AnthropicLocalMixin:
                 if delta.total_seconds() > 0:
                     reset_at = now + delta
 
-            results.append({
-                "service_name": f"Claude ({u_type})",
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at) if reset_at else "Unknown",
-                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [CLI PTY]",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "cli",
-                "updated_at": now.isoformat(),
-            })
+            results.append(
+                {
+                    "service_name": f"Claude ({u_type})",
+                    "icon": "🟠",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at) if reset_at else "Unknown",
+                    "health": "good"
+                    if pct_used < 70
+                    else "warning"
+                    if pct_used < 90
+                    else "critical",
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used [CLI PTY]",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": "cli",
+                    "updated_at": now.isoformat(),
+                }
+            )
 
         return results
 
@@ -251,25 +258,27 @@ class AnthropicLocalMixin:
         pct = (total_tokens / limit * 100) if limit > 0 else 0
         reset_at = (oldest + timedelta(hours=5)) if oldest else None
 
-        return [{
-            "service_name": "Claude Pro",
-            "icon": "🟠",
-            "remaining": f"{remaining:,}",
-            "unit": "tokens / 5h",
-            "reset": human_delta(reset_at),
-            "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-            "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-            "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
-            "used_value": float(total_tokens),
-            "limit_value": float(limit),
-            "is_unlimited": False,
-            "tier": tier,
-            "unit_type": "tokens",
-            "reset_at": reset_at.isoformat() if reset_at else None,
-            "data_source": "local",
-            "usage_url": "https://claude.ai/settings/usage",
-            "updated_at": datetime.now(UTC).isoformat(),
-        }]
+        return [
+            {
+                "service_name": "Claude Pro",
+                "icon": "🟠",
+                "remaining": f"{remaining:,}",
+                "unit": "tokens / 5h",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
+                "used_value": float(total_tokens),
+                "limit_value": float(limit),
+                "is_unlimited": False,
+                "tier": tier,
+                "unit_type": "tokens",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "local",
+                "usage_url": "https://claude.ai/settings/usage",
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        ]
 
     def _get_config_dirs(self) -> list[str]:
         """
@@ -287,9 +296,7 @@ class AnthropicLocalMixin:
                 path = path.strip()
                 if path and os.path.isdir(path):
                     projects_path = (
-                        os.path.join(path, "projects")
-                        if not path.endswith("/projects")
-                        else path
+                        os.path.join(path, "projects") if not path.endswith("/projects") else path
                     )
                     if os.path.isdir(projects_path):
                         dirs.append(projects_path)
@@ -298,7 +305,7 @@ class AnthropicLocalMixin:
         default_paths = [
             os.path.join(get_platform_config_dir("claude"), "projects"),
             os.path.expanduser("~/.config/claude/projects"),  # Legacy/Generic Linux
-            os.path.expanduser("~/.claude/projects"),          # Legacy/Direct home
+            os.path.expanduser("~/.claude/projects"),  # Legacy/Direct home
         ]
 
         for path in default_paths:

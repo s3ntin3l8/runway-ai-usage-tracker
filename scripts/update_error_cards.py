@@ -35,9 +35,7 @@ def determine_error_type(msg):
         ]
     ):
         return "parse_error"
-    if any(
-        x in msg for x in ["api error", "http", "fail", "db error", "api unavailable"]
-    ):
+    if any(x in msg for x in ["api error", "http", "fail", "db error", "api unavailable"]):
         return "api_error"
     return "unknown"
 

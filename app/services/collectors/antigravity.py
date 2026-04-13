@@ -37,7 +37,7 @@ class AntigravityCollector(BaseCollector):
         lsp_res = await self._strategy_lsp(client)
         if lsp_res:
             return lsp_res
-            
+
         # Fallback to local JSON file
         return await self._strategy_local_file(client)
 
@@ -49,7 +49,8 @@ class AntigravityCollector(BaseCollector):
         """Probes the active language server processes."""
         try:
             proc_info = await self._detect_lsp_proc_info()
-            if not proc_info: return []
+            if not proc_info:
+                return []
 
             results = []
             seen_services = set()
@@ -59,7 +60,8 @@ class AntigravityCollector(BaseCollector):
                 probe_tasks = []
                 for port in ports:
                     for csrf in tokens:
-                        if not csrf: continue
+                        if not csrf:
+                            continue
                         probe_tasks.append(self._probe_lsp_service(client, port, csrf))
 
                 if probe_tasks:
@@ -72,9 +74,12 @@ class AntigravityCollector(BaseCollector):
                                     results.append(card)
                                     seen_services.add(svc_key)
             return results
-        except Exception: return []
+        except Exception:
+            return []
 
-    async def _probe_lsp_service(self, client: httpx.AsyncClient, port: int, csrf: str) -> list[dict[str, Any]]:
+    async def _probe_lsp_service(
+        self, client: httpx.AsyncClient, port: int, csrf: str
+    ) -> list[dict[str, Any]]:
         """Probe a specific port/token."""
         headers = {
             "X-Codeium-Csrf-Token": csrf,
@@ -88,16 +93,20 @@ class AntigravityCollector(BaseCollector):
             resp = await client.post(url, headers=headers, json=payload, timeout=0.5)
             if resp.status_code == 200:
                 return self._parse_lsp_response(resp.json())
-        except Exception: pass
+        except Exception:
+            pass
         return []
 
     async def _detect_lsp_proc_info(self) -> dict[int, list[str]]:
         """Find Antigravity PIDs and tokens."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ps", "-ax", "-o", "pid,command",
+                "ps",
+                "-ax",
+                "-o",
+                "pid,command",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate()
             output = stdout.decode(errors="ignore")
@@ -108,20 +117,31 @@ class AntigravityCollector(BaseCollector):
                     if pid_match:
                         pid = int(pid_match.group(1))
                         tokens = []
-                        for pattern in [r"--csrf_token\s+([a-f0-9-]+)", r"--extension_server_csrf_token\s+([a-f0-9-]+)"]:
+                        for pattern in [
+                            r"--csrf_token\s+([a-f0-9-]+)",
+                            r"--extension_server_csrf_token\s+([a-f0-9-]+)",
+                        ]:
                             match = re.search(pattern, line)
-                            if match: tokens.append(match.group(1))
-                        if tokens: results[pid] = tokens
+                            if match:
+                                tokens.append(match.group(1))
+                        if tokens:
+                            results[pid] = tokens
             return results
-        except Exception: return {}
+        except Exception:
+            return {}
 
     async def _find_listening_ports(self, pid: int) -> list[int]:
         """Find listening ports for PID."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-p", str(pid),
+                "lsof",
+                "-nP",
+                "-iTCP",
+                "-sTCP:LISTEN",
+                "-p",
+                str(pid),
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate()
             output = stdout.decode(errors="ignore")
@@ -130,20 +150,25 @@ class AntigravityCollector(BaseCollector):
                 match = re.search(r":(\d+)\s+\(LISTEN\)", line)
                 if match:
                     port = int(match.group(1))
-                    if port != settings.APP_PORT: ports.append(port)
+                    if port != settings.APP_PORT:
+                        ports.append(port)
             return sorted(list(set(ports)))
-        except Exception: return []
+        except Exception:
+            return []
 
     def _parse_lsp_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse LSP response."""
         results = []
         user_status = data.get("userStatus", {})
         email = user_status.get("email", "")
-        
+
         # Identity Promotion
         if email and self.account_id:
             from app.services.token_cache import token_cache
-            asyncio.create_task(token_cache.update_account_metadata("antigravity", self.account_id, name=email))
+
+            asyncio.create_task(
+                token_cache.update_account_metadata("antigravity", self.account_id, name=email)
+            )
             self.account_label = email
 
         plan_info = user_status.get("planStatus", {}).get("planInfo", {})
@@ -154,50 +179,55 @@ class AntigravityCollector(BaseCollector):
         for config in configs:
             quota = config.get("quotaInfo", {})
             rem_frac = quota.get("remainingFraction")
-            if rem_frac is None: continue
+            if rem_frac is None:
+                continue
 
             service_name = config.get("label", "Unknown Model")
             rem_pct = float(rem_frac) * 100
-            
-            results.append({
-                "service_name": f"AG: {service_name}",
-                "icon": "🛸",
-                "remaining": f"{rem_pct:.1f}%",
-                "unit": "capacity",
-                "reset": "Dynamic",
-                "pace": "Continuous",
-                "health": "good" if rem_pct > 30 else "warning",
-                "detail": f"{plan} | {email} [LSP]",
-                "tier": plan,
-                "data_source": "lsp",
-                "updated_at": datetime.now(UTC).isoformat(),
-            })
+
+            results.append(
+                {
+                    "service_name": f"AG: {service_name}",
+                    "icon": "🛸",
+                    "remaining": f"{rem_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": "Dynamic",
+                    "pace": "Continuous",
+                    "health": "good" if rem_pct > 30 else "warning",
+                    "detail": f"{plan} | {email} [LSP]",
+                    "tier": plan,
+                    "data_source": "lsp",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
 
         # Process Credits
         credits_data = user_status.get("userTier", {}).get("availableCredits", [])
         for cred in credits_data:
             c_type = cred.get("creditType", "AI Credits")
             amount = cred.get("creditAmount", "0")
-            
+
             # Map types to human names
             name_map = {
                 "GOOGLE_ONE_AI": "Google AI Credits",
                 "ANTHROPIC_CREDIT": "Anthropic Credits",
             }
             display_name = name_map.get(c_type, c_type.replace("_", " ").title())
-            
-            results.append({
-                "service_name": f"AG: {display_name}",
-                "icon": "💰",
-                "remaining": amount,
-                "unit": "credits",
-                "reset": "Prepaid",
-                "pace": "N/A",
-                "health": "good" if int(amount) > 100 else "warning",
-                "detail": f"{display_name} | {email} [LSP]",
-                "data_source": "lsp",
-                "updated_at": datetime.now(UTC).isoformat(),
-            })
+
+            results.append(
+                {
+                    "service_name": f"AG: {display_name}",
+                    "icon": "💰",
+                    "remaining": amount,
+                    "unit": "credits",
+                    "reset": "Prepaid",
+                    "pace": "N/A",
+                    "health": "good" if int(amount) > 100 else "warning",
+                    "detail": f"{display_name} | {email} [LSP]",
+                    "data_source": "lsp",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
         return results
 
     async def _strategy_local_file(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -209,17 +239,20 @@ class AntigravityCollector(BaseCollector):
             res = []
             for name, usage in data.get("models", {}).items():
                 rem = usage.get("remaining_percent", 0.0)
-                res.append({
-                    "service_name": f"AG: {name}",
-                    "icon": "🛸",
-                    "remaining": f"{rem:.1f}%",
-                    "unit": "remaining",
-                    "reset": "Unknown",
-                    "pace": "N/A",
-                    "health": "good" if rem > 30 else "warning",
-                    "detail": f"{name} [IDE/File]",
-                    "data_source": "local_file",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                })
+                res.append(
+                    {
+                        "service_name": f"AG: {name}",
+                        "icon": "🛸",
+                        "remaining": f"{rem:.1f}%",
+                        "unit": "remaining",
+                        "reset": "Unknown",
+                        "pace": "N/A",
+                        "health": "good" if rem > 30 else "warning",
+                        "detail": f"{name} [IDE/File]",
+                        "data_source": "local_file",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
             return res
-        except Exception: return []
+        except Exception:
+            return []

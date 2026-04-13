@@ -13,15 +13,15 @@ from app.services.collector_manager import manager
 
 logger = logging.getLogger(__name__)
 
-_COMPACTION_INTERVAL_POLLS = 96   # 96 × 15 min ≈ 24 hours
-_SLEEP_INTERVAL = 7200            # 2 hours in seconds
-_DORMANT_THRESHOLD = 3            # consecutive identical polls before sleep
+_COMPACTION_INTERVAL_POLLS = 96  # 96 × 15 min ≈ 24 hours
+_SLEEP_INTERVAL = 7200  # 2 hours in seconds
+_DORMANT_THRESHOLD = 3  # consecutive identical polls before sleep
 
 
 class BackgroundPoller:
     def __init__(self, interval_seconds: int = 900):
         self._base_interval = interval_seconds
-        self._interval = interval_seconds   # current active interval
+        self._interval = interval_seconds  # current active interval
         self._task: asyncio.Task | None = None
         self._running = False
         self._poll_count = 0
@@ -85,8 +85,7 @@ class BackgroundPoller:
 
         # Wake: any account's latest hash differs from previous
         any_changed = any(
-            len(dq) >= 2 and dq[-1] != dq[-2]
-            for dq in self._snapshot_hashes.values()
+            len(dq) >= 2 and dq[-1] != dq[-2] for dq in self._snapshot_hashes.values()
         )
         if any_changed:
             if self._interval != self._base_interval:
@@ -153,6 +152,7 @@ class BackgroundPoller:
         # Fire webhook alerts for any threshold breaches
         try:
             from app.services.webhooks import check_and_fire
+
             limit_cards = []
             for card_dict in cards:
                 try:
@@ -170,6 +170,7 @@ class BackgroundPoller:
         if self._poll_count % _COMPACTION_INTERVAL_POLLS == 0:
             try:
                 from app.services.compaction import compact_snapshots
+
                 with Session(engine) as compact_session:
                     result = compact_snapshots(compact_session)
                     logger.info(f"Daily compaction: {result}")

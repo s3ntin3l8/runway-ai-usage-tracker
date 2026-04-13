@@ -12,9 +12,7 @@ def mock_ingest_logic(payload: dict[str, Any]) -> dict[str, str]:
         metadata = card.get("metadata", {})
         if metadata:
             for key, val in metadata.items():
-                if key in ("oauth_token", "refresh_token", "api_key") or key.startswith(
-                    "cookie_"
-                ):
+                if key in ("oauth_token", "refresh_token", "api_key") or key.startswith("cookie_"):
                     tokens[key] = val
 
         # Token-only card check

@@ -27,9 +27,9 @@ def brute_force_decrypt(encrypted_value, password_raw):
     """Try all known variations of Chrome macOS decryption."""
     if not encrypted_value.startswith(b"v10") and not encrypted_value.startswith(b"v11"):
         return None
-    
+
     ciphertext = encrypted_value[3:]
-    
+
     # Variations to try
     passwords = [password_raw.encode("utf-8")]
     try:
@@ -37,11 +37,11 @@ def brute_force_decrypt(encrypted_value, password_raw):
         passwords.append(base64.b64decode(password_raw))
     except Exception:
         pass
-        
-    salts = [b"saltysalt", b"salt"] # Trying BOTH now
+
+    salts = [b"saltysalt", b"salt"]  # Trying BOTH now
     iterations = [1003, 1000]
     ivs = [b" " * 16, b"\x00" * 16]
-    
+
     for p in passwords:
         for salt in salts:
             for iters in iterations:
@@ -51,7 +51,7 @@ def brute_force_decrypt(encrypted_value, password_raw):
                         cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
                         decryptor = cipher.decryptor()
                         decrypted = decryptor.update(ciphertext) + decryptor.finalize()
-                        
+
                         # Check padding
                         pad_len = decrypted[-1]
                         if 1 <= pad_len <= 16:
@@ -60,7 +60,7 @@ def brute_force_decrypt(encrypted_value, password_raw):
                                 # If we get a valid string, return it
                                 return {
                                     "value": val,
-                                    "params": f"pw_type={'b64' if p != passwords[0] else 'raw'}, salt={salt!r}, iters={iters}, iv={iv!r}"
+                                    "params": f"pw_type={'b64' if p != passwords[0] else 'raw'}, salt={salt!r}, iters={iters}, iv={iv!r}",
                                 }
                             except UnicodeDecodeError:
                                 # Sometimes it might decrypt but not be UTF-8
@@ -69,16 +69,19 @@ def brute_force_decrypt(encrypted_value, password_raw):
                         continue
     return None
 
+
 def debug_brute_force():
     logger.info("=== Chrome macOS Decryption Brute-Force (v2: saltysalt vs salt) ===")
-    
+
     password = get_keychain_secret("Chrome Safe Storage", force_refresh=True)
     if not password:
         logger.error("Could not get Keychain password.")
         return
 
-    logger.info(f"Using Keychain Password: {password[:2]}...{password[-2:]} (Length: {len(password)})")
-    
+    logger.info(
+        f"Using Keychain Password: {password[:2]}...{password[-2:]} (Length: {len(password)})"
+    )
+
     db_path = Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
     if not db_path.exists():
         logger.error(f"Database not found at {db_path}")
@@ -89,12 +92,14 @@ def debug_brute_force():
         fd, temp_path = tempfile.mkstemp(suffix=".sqlite")
         os.close(fd)
         shutil.copy2(str(db_path), temp_path)
-        
+
         conn = sqlite3.connect(temp_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT name, host_key, encrypted_value FROM cookies WHERE encrypted_value IS NOT NULL LIMIT 20")
+        cursor.execute(
+            "SELECT name, host_key, encrypted_value FROM cookies WHERE encrypted_value IS NOT NULL LIMIT 20"
+        )
         rows = cursor.fetchall()
-        
+
         success_count = 0
         for name, host, enc_val in rows:
             result = brute_force_decrypt(enc_val, password)
@@ -102,17 +107,20 @@ def debug_brute_force():
                 logger.info(f"✅ SUCCESS for cookie '{name}' on '{host}'!")
                 logger.info(f"Working Params: {result['params']}")
                 success_count += 1
-                if success_count >= 1: # One success is enough to prove the params
+                if success_count >= 1:  # One success is enough to prove the params
                     break
-        
+
         if success_count == 0:
             logger.error("❌ FAILED: Tried all combinations (including saltysalt), nothing worked.")
-            logger.info("This confirms App-Bound encryption is active and blocking standard derivation.")
-            
+            logger.info(
+                "This confirms App-Bound encryption is active and blocking standard derivation."
+            )
+
         conn.close()
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+
 
 if __name__ == "__main__":
     debug_brute_force()

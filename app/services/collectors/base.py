@@ -68,18 +68,20 @@ class BaseCollector(ABC):
 
         except Exception as e:
             logger.error(f"Collector {self.__class__.__name__} failed: {e}")
-            return self._tag_results([
-                {
-                    "service_name": "Collector Error",
-                    "icon": "⚠️",
-                    "remaining": "ERR",
-                    "unit": "fail",
-                    "reset": "—",
-                    "pace": "Stopped",
-                    "detail": f"Internal Error: {str(e)[:30]}",
-                    "health": "critical",
-                }
-            ])
+            return self._tag_results(
+                [
+                    {
+                        "service_name": "Collector Error",
+                        "icon": "⚠️",
+                        "remaining": "ERR",
+                        "unit": "fail",
+                        "reset": "—",
+                        "pace": "Stopped",
+                        "detail": f"Internal Error: {str(e)[:30]}",
+                        "health": "critical",
+                    }
+                ]
+            )
 
     def _tag_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -88,10 +90,11 @@ class BaseCollector(ABC):
         """
         if not results:
             return []
-        
+
         # 1. Try to discover account_label if missing
         if not self.account_label:
             import re
+
             for card in results:
                 detail = card.get("detail", "")
                 if not detail:
@@ -102,13 +105,13 @@ class BaseCollector(ABC):
                 if match:
                     self.account_label = match.group(1)
                     break
-                
+
                 # Fallback to org pattern or standalone username after separator (·)
                 org_match = re.search(r"org:\s*([^\s·\[\]|]+)", detail)
                 if org_match:
                     self.account_label = f"org: {org_match.group(1)}"
                     break
-                
+
                 # Standalone username after a dot/separator e.g. "· username"
                 user_match = re.search(r"·\s*([a-zA-Z0-9_-]+)$", detail)
                 if user_match:

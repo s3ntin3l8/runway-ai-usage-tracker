@@ -32,6 +32,7 @@ class TestDecryptMacosCookie:
     def clear_cache(self):
         """Clear the keychain cache before each test to prevent cross-test pollution."""
         from app.core.keychain import clear_keychain_cache
+
         clear_keychain_cache()
         yield
         clear_keychain_cache()
@@ -98,9 +99,7 @@ class TestSafariParser:
                 struct.pack(">I", len(full_page)),
                 full_page,
             ]
-            cookies = SafariBinaryCookieParser.parse_file(
-                Path("/tmp/mock.binarycookies")
-            )
+            cookies = SafariBinaryCookieParser.parse_file(Path("/tmp/mock.binarycookies"))
 
         assert len(cookies) == 1
         assert cookies[0]["domain"] == "example.com"
@@ -133,9 +132,7 @@ class TestPathDiscovery:
     def test_finds_firefox_paths(self, mock_home, mock_glob, mock_system):
         mock_system.return_value = "Linux"
         mock_home.return_value = Path("/home/test")
-        mock_glob.return_value = [
-            Path("/home/test/.mozilla/firefox/abc.default-release")
-        ]
+        mock_glob.return_value = [Path("/home/test/.mozilla/firefox/abc.default-release")]
 
         with patch.object(Path, "exists", autospec=True) as mock_exists:
 

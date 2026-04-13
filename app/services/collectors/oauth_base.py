@@ -39,6 +39,7 @@ class OAuthBaseCollector(BaseCollector):
 
         try:
             if await asyncio.to_thread(os.path.exists, self._credentials_path):
+
                 def read_json(path):
                     with open(path) as f:
                         return json.load(f)
@@ -70,7 +71,9 @@ class OAuthBaseCollector(BaseCollector):
                 return token
 
             # 2. Check if we can refresh
-            logger.info(f"Refreshing {self.provider_name} access token for account {self.account_id or 'default'}...")
+            logger.info(
+                f"Refreshing {self.provider_name} access token for account {self.account_id or 'default'}..."
+            )
             new_creds = await self._execute_refresh(client)
             if new_creds:
                 self._persist_credentials(new_creds)
@@ -78,15 +81,15 @@ class OAuthBaseCollector(BaseCollector):
 
             return None
 
-    async def _store_sidecar_token(self, provider: str, access_token: str, refresh_token: str | None = None):
+    async def _store_sidecar_token(
+        self, provider: str, access_token: str, refresh_token: str | None = None
+    ):
         """Update sidecar token cache with newly refreshed tokens."""
         data = {"oauth_token": access_token}
         if refresh_token:
             data["refresh_token"] = refresh_token
-            
-        await token_cache.store(
-            provider, data, account_id=self.account_id
-        )
+
+        await token_cache.store(provider, data, account_id=self.account_id)
 
     # These must be implemented by subclasses
     async def _get_current_token(self) -> str | None:

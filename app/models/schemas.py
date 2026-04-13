@@ -17,9 +17,7 @@ class LimitCard(BaseModel):
     used_value: float | None = None
     limit_value: float | None = None
     is_unlimited: bool = False
-    unit_type: str = (
-        "generic"  # "currency", "tokens", "requests", "minutes", "percent", "generic"
-    )
+    unit_type: str = "generic"  # "currency", "tokens", "requests", "minutes", "percent", "generic"
     currency: str | None = None  # "USD", "EUR", "CNY", etc.
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
@@ -39,12 +37,12 @@ class LimitCard(BaseModel):
     metadata: dict[str, Any] | None = Field(default_factory=dict)
 
     # Phase 0B: Promoted schema fields
-    provider_id: str | None = None        # e.g. "anthropic", "openai"
-    account_id: str | None = None         # Unique account hash/ID
-    account_label: str | None = None      # Human-readable: email, org name
-    model_id: str | None = None           # None=aggregate snapshot; specific=per-model
-    sidecar_id: str | None = None         # Originating host FQDN/tag; None=local
-    window_type: str = "unknown"             # "daily","weekly","monthly","session","rolling","unknown"
+    provider_id: str | None = None  # e.g. "anthropic", "openai"
+    account_id: str | None = None  # Unique account hash/ID
+    account_label: str | None = None  # Human-readable: email, org name
+    model_id: str | None = None  # None=aggregate snapshot; specific=per-model
+    sidecar_id: str | None = None  # Originating host FQDN/tag; None=local
+    window_type: str = "unknown"  # "daily","weekly","monthly","session","rolling","unknown"
 
     @field_validator("service_name", "remaining", "unit", "reset", "pace", "detail", "tier")
     @classmethod

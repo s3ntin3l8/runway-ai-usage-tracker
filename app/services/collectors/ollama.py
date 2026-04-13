@@ -48,7 +48,7 @@ class OllamaCollector(BaseCollector):
             "__Secure-session",
             "access-token",
         ]
-        
+
         for name in possible_names:
             # get_session_cookies returns a list (handles chunked .0, .1, etc.)
             cookies = get_session_cookies("ollama.com", name)
@@ -63,9 +63,9 @@ class OllamaCollector(BaseCollector):
                 else:
                     for i, val in enumerate(cookies):
                         header_parts.append(f"{name}.{i}={val}")
-                
+
                 return "; ".join(header_parts)
-        
+
         return None
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -95,12 +95,7 @@ class OllamaCollector(BaseCollector):
         try:
             # CRITICAL: set follow_redirects=True as Ollama often redirects to www. or /
             resp = await http_request_with_retry(
-                client, 
-                "GET", 
-                self.target_url, 
-                headers=headers, 
-                timeout=15,
-                follow_redirects=True
+                client, "GET", self.target_url, headers=headers, timeout=15, follow_redirects=True
             )
             if resp.status_code == 200:
                 return self._parse_html(resp.text)
@@ -120,7 +115,9 @@ class OllamaCollector(BaseCollector):
 
         # 1. Extract Plan Name
         plan_name = None
-        plan_match = re.search(r'Cloud Usage\s*</span>\s*<span[^>]*>([^<]+)</span>', html, re.DOTALL)
+        plan_match = re.search(
+            r"Cloud Usage\s*</span>\s*<span[^>]*>([^<]+)</span>", html, re.DOTALL
+        )
         if plan_match:
             plan_name = plan_match.group(1).strip()
 
@@ -136,7 +133,7 @@ class OllamaCollector(BaseCollector):
 
         if session_block:
             cards.append(self._make_card("Ollama Session", session_block, plan_name, email, now))
-        
+
         if weekly_block:
             cards.append(self._make_card("Ollama Weekly", weekly_block, plan_name, email, now))
 
@@ -147,22 +144,22 @@ class OllamaCollector(BaseCollector):
             idx = html.find(label)
             if idx == -1:
                 continue
-            
+
             # Take a window of 800 chars after the label
             window = html[idx : idx + 800]
-            
+
             # Parse percentage
             pct = None
             # Pattern 1: "XX% used"
-            pct_match = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*%\s*used', window, re.IGNORECASE)
+            pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*used", window, re.IGNORECASE)
             if pct_match:
                 pct = float(pct_match.group(1))
             else:
                 # Pattern 2: "width: XX%"
-                pct_match = re.search(r'width:\s*([0-9]+(?:\.[0-9]+)?)%', window, re.IGNORECASE)
+                pct_match = re.search(r"width:\s*([0-9]+(?:\.[0-9]+)?)%", window, re.IGNORECASE)
                 if pct_match:
                     pct = float(pct_match.group(1))
-            
+
             if pct is None:
                 continue
 
@@ -176,14 +173,21 @@ class OllamaCollector(BaseCollector):
                     resets_at = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
                 except ValueError:
                     pass
-            
+
             return {"used_percent": pct, "resets_at": resets_at}
         return None
 
-    def _make_card(self, service_name: str, block: dict[str, Any], plan: str | None, email: str | None, now: datetime) -> dict[str, Any]:
+    def _make_card(
+        self,
+        service_name: str,
+        block: dict[str, Any],
+        plan: str | None,
+        email: str | None,
+        now: datetime,
+    ) -> dict[str, Any]:
         pct = block["used_percent"]
         resets_at = block["resets_at"]
-        
+
         detail = f"{pct:.1f}% used"
         if plan:
             detail = f"{plan} · {detail}"
@@ -193,7 +197,7 @@ class OllamaCollector(BaseCollector):
         return {
             "service_name": service_name,
             "icon": "🦙",
-            "remaining": f"{(100-pct):.1f}%",
+            "remaining": f"{(100 - pct):.1f}%",
             "unit": "remaining",
             "reset": human_delta(resets_at),
             "health": "good" if pct < 80 else "warning" if pct < 95 else "danger",

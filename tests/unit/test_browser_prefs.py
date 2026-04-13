@@ -7,7 +7,9 @@ from app.core.browser_cookies import get_all_browser_cookies_paths
 def test_browser_preference_ordering():
     # Mock Path.exists to return True for some paths
     with patch.object(Path, "exists", return_value=True):
-        with patch.object(Path, "glob", return_value=[Path("/home/user/.mozilla/firefox/profile.default")]):
+        with patch.object(
+            Path, "glob", return_value=[Path("/home/user/.mozilla/firefox/profile.default")]
+        ):
             with patch.object(Path, "home", return_value=Path("/home/user")):
                 with patch("platform.system", return_value="Linux"):
                     # Test default order
@@ -16,7 +18,7 @@ def test_browser_preference_ordering():
                         browsers = [p["browser"] for p in paths]
                         assert "Chrome" in browsers
                         assert "Firefox" in browsers
-                        
+
                     # Test explicit preference: Firefox first
                     with patch("app.core.config.settings.BROWSER_PREFERENCE", "firefox,chrome"):
                         paths = get_all_browser_cookies_paths()

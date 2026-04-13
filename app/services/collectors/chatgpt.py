@@ -36,7 +36,7 @@ class ChatGPTCollector(
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
         super().__init__(account_id=account_id, account_label=account_label)
-        
+
         # In-memory session state for mixins
         self._refreshed_token = None
         self._refreshed_token_expiry = None
@@ -69,7 +69,5 @@ class ChatGPTCollector(
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""
         return [
-            error_card(
-                "ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config"
-            )
+            error_card("ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config")
         ]

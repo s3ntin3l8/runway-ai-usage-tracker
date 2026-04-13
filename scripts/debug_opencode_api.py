@@ -25,9 +25,7 @@ async def test_opencode_api():
         print("\n1. Testing /v1/user/usage")
         print("-" * 40)
         try:
-            resp = await client.get(
-                "https://api.opencode.ai/v1/user/usage", headers=headers
-            )
+            resp = await client.get("https://api.opencode.ai/v1/user/usage", headers=headers)
             print(f"Status: {resp.status_code}")
             print(f"Content-Type: {resp.headers.get('content-type', 'N/A')}")
             print(
@@ -88,9 +86,7 @@ async def test_opencode_api():
         print("\n5. Testing opencode.ai/api/v1/user/usage")
         print("-" * 40)
         try:
-            resp = await client.get(
-                "https://opencode.ai/api/v1/user/usage", headers=headers
-            )
+            resp = await client.get("https://opencode.ai/api/v1/user/usage", headers=headers)
             print(f"Status: {resp.status_code}")
             print(f"Content-Type: {resp.headers.get('content-type', 'N/A')}")
             print(
@@ -103,9 +99,7 @@ async def test_opencode_api():
         print("\n6. Testing opencode.ai/zen/api/v1/user/usage")
         print("-" * 40)
         try:
-            resp = await client.get(
-                "https://opencode.ai/zen/api/v1/user/usage", headers=headers
-            )
+            resp = await client.get("https://opencode.ai/zen/api/v1/user/usage", headers=headers)
             print(f"Status: {resp.status_code}")
             print(f"Content-Type: {resp.headers.get('content-type', 'N/A')}")
             print(
@@ -118,9 +112,7 @@ async def test_opencode_api():
         print("\n7. Testing opencode.ai/api/user/usage")
         print("-" * 40)
         try:
-            resp = await client.get(
-                "https://opencode.ai/api/user/usage", headers=headers
-            )
+            resp = await client.get("https://opencode.ai/api/user/usage", headers=headers)
             print(f"Status: {resp.status_code}")
             print(f"Content-Type: {resp.headers.get('content-type', 'N/A')}")
             print(

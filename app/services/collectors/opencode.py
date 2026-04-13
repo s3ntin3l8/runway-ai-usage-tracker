@@ -58,7 +58,9 @@ class OpenCodeCollector(BaseCollector):
         """Return empty list on failure (OpenCode is non-critical)."""
         return []
 
-    async def _strategy_sidecar_aggregation(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    async def _strategy_sidecar_aggregation(
+        self, client: httpx.AsyncClient
+    ) -> list[dict[str, Any]]:
         """Second tier: Sidecar aggregation of multi-host data."""
         return await external_metric_service.get_opencode_aggregated()
 
@@ -68,10 +70,7 @@ class OpenCodeCollector(BaseCollector):
             return await self._get_opencode_tui()
         return []
 
-
-    async def _get_opencode_web(
-        self, client: httpx.AsyncClient
-    ) -> list[dict[str, Any]]:
+    async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
         Fetch OpenCode usage from web API using Chrome cookies.
 
@@ -113,9 +112,7 @@ class OpenCodeCollector(BaseCollector):
                 return []
 
             # 2. Get subscription data
-            usage_data = await self._get_subscription_data(
-                client, headers, workspace_id
-            )
+            usage_data = await self._get_subscription_data(client, headers, workspace_id)
             if not usage_data:
                 return []
 
@@ -139,13 +136,16 @@ class OpenCodeCollector(BaseCollector):
                 return env_workspace
 
             import uuid
+
             ws_headers = headers.copy()
             func_id = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
-            ws_headers.update({
-                "X-Server-Id": func_id,
-                "X-Server-Instance": f"server-fn:{uuid.uuid4()}",
-                "Accept": "text/javascript, application/json;q=0.9, */*;q=0.8",
-            })
+            ws_headers.update(
+                {
+                    "X-Server-Id": func_id,
+                    "X-Server-Instance": f"server-fn:{uuid.uuid4()}",
+                    "Accept": "text/javascript, application/json;q=0.9, */*;q=0.8",
+                }
+            )
 
             # Try primary GET approach
             url = f"https://opencode.ai/_server?id={func_id}"
@@ -156,8 +156,13 @@ class OpenCodeCollector(BaseCollector):
             # Fallback to POST with empty body if GET fails
             if resp.status_code != 200:
                 resp = await http_request_with_retry(
-                    client, "POST", "https://opencode.ai/_server", 
-                    headers=ws_headers, json=[], timeout=10.0, follow_redirects=True
+                    client,
+                    "POST",
+                    "https://opencode.ai/_server",
+                    headers=ws_headers,
+                    json=[],
+                    timeout=10.0,
+                    follow_redirects=True,
                 )
 
             if resp.status_code != 200:
@@ -169,7 +174,7 @@ class OpenCodeCollector(BaseCollector):
             match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
             if match:
                 return match.group(1)
-            
+
             return None
         except Exception:
             return None
@@ -182,8 +187,10 @@ class OpenCodeCollector(BaseCollector):
             url = f"https://opencode.ai/workspace/{workspace_id}/go"
             # Switch to HTML accept header for the page fetch
             usage_headers = headers.copy()
-            usage_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            
+            usage_headers["Accept"] = (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+
             resp = await http_request_with_retry(
                 client, "GET", url, headers=usage_headers, timeout=15.0, follow_redirects=True
             )
@@ -200,7 +207,7 @@ class OpenCodeCollector(BaseCollector):
         Parse JavaScript/React stream response to extract usage data.
         """
         # logger.info(f"OpenCode parsing usage data (text length: {len(text)})")
-        
+
         cards = []
         now = datetime.now(UTC)
         now_iso = now.isoformat()
@@ -216,24 +223,24 @@ class OpenCodeCollector(BaseCollector):
         for key, service_name, limit, reset_label in windows:
             # Even more flexible regex
             # key:($R[xx]=)?{...}
-            pattern = fr'{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}'
+            pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
             match = re.search(pattern, text)
-            
+
             if not match:
                 logger.info(f"OpenCode: Could not find object for {key}")
                 continue
-                
+
             obj_content = match.group(1)
             # logger.info(f"OpenCode: Found {key} object content: {obj_content}")
-            
+
             # Extract fields from the object content
-            pct_match = re.search(r'usagePercent:([\d.]+)', obj_content)
-            reset_match = re.search(r'resetInSec:(\d+)', obj_content)
-            
+            pct_match = re.search(r"usagePercent:([\d.]+)", obj_content)
+            reset_match = re.search(r"resetInSec:(\d+)", obj_content)
+
             if not pct_match or not reset_match:
                 logger.info(f"OpenCode: Missing fields in {key} object")
                 continue
-                
+
             pct = float(pct_match.group(1))
             reset_sec = int(reset_match.group(1))
             # logger.info(f"OpenCode: Parsed {key}: {pct}% used, reset in {reset_sec}s")
@@ -242,25 +249,27 @@ class OpenCodeCollector(BaseCollector):
             remaining = max(0, limit - used)
             reset_at = now + timedelta(seconds=reset_sec)
 
-            cards.append({
-                "service_name": service_name,
-                "icon": "⚡",
-                "remaining": f"${remaining:.2f}",
-                "unit": f"${limit:.0f} limit",
-                "reset": reset_label,
-                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
-                "used_value": used,
-                "limit_value": limit,
-                "is_unlimited": False,
-                "unit_type": "currency",
-                "currency": "USD",
-                "reset_at": reset_at.isoformat(),
-                "data_source": "web_api",
-                "usage_url": usage_url,
-                "updated_at": now_iso,
-            })
+            cards.append(
+                {
+                    "service_name": service_name,
+                    "icon": "⚡",
+                    "remaining": f"${remaining:.2f}",
+                    "unit": f"${limit:.0f} limit",
+                    "reset": reset_label,
+                    "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                    "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                    "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+                    "used_value": used,
+                    "limit_value": limit,
+                    "is_unlimited": False,
+                    "unit_type": "currency",
+                    "currency": "USD",
+                    "reset_at": reset_at.isoformat(),
+                    "data_source": "web_api",
+                    "usage_url": usage_url,
+                    "updated_at": now_iso,
+                }
+            )
 
         # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
         return cards
@@ -280,14 +289,14 @@ class OpenCodeCollector(BaseCollector):
             os.path.expanduser("~/.local/share/opencode/opencode.db"),
             os.path.expanduser("~/.opencode/opencode.db"),
         ]
-        
+
         db = None
         for p in potential_paths:
             if os.path.exists(p):
                 db = p
                 logger.debug(f"Found OpenCode database at: {p}")
                 break
-                
+
         if not db:
             logger.debug("No OpenCode database found in any of the potential paths.")
             return []
@@ -346,15 +355,9 @@ class OpenCodeCollector(BaseCollector):
                             "unit": f"${limit:.0f} limit",
                             "reset": f"Rolling {window_labels[window]}",
                             "health": (
-                                "good"
-                                if pct < 70
-                                else "warning" if pct < 90 else "critical"
+                                "good" if pct < 70 else "warning" if pct < 90 else "critical"
                             ),
-                            "pace": (
-                                "Stable"
-                                if pct < 50
-                                else "High" if pct < 80 else "Fatigue"
-                            ),
+                            "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
                             "detail": f"${used:.2f} used · {count} msgs · Local DB",
                             "used_value": used,
                             "limit_value": limit,

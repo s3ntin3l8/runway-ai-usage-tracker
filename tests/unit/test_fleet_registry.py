@@ -1,4 +1,5 @@
 """Unit tests for FleetRegistryService (Phase 4B)."""
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 

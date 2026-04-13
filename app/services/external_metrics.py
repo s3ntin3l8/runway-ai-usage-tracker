@@ -60,9 +60,11 @@ class ExternalMetricService:
                 remaining = _DEBOUNCE_INTERVAL - (now - self._last_save_time)
                 asyncio.create_task(self._flush_after(remaining))
             return
+
         def sync_save():
             with open(self.path, "w") as f:
                 json.dump(self.metrics, f, indent=2)
+
         await asyncio.to_thread(sync_save)
         self._last_save_time = now
         self._pending_save = False
@@ -85,11 +87,7 @@ class ExternalMetricService:
         for card in cards:
             card_dict = card.model_dump()
             # Append update info to detail
-            card_dict[
-                "detail"
-            ] += (
-                f" [Sidecar Updated: {datetime.now(UTC).strftime('%H:%M:%S')}]"
-            )
+            card_dict["detail"] += f" [Sidecar Updated: {datetime.now(UTC).strftime('%H:%M:%S')}]"
             processed_cards.append(card_dict)
 
         async with self._lock:
@@ -212,14 +210,8 @@ class ExternalMetricService:
                         "remaining": f"${remaining:.2f}",
                         "unit": f"${limit:.0f} limit",
                         "reset": f"Rolling {window}",
-                        "health": (
-                            "good"
-                            if pct < 70
-                            else "warning" if pct < 90 else "critical"
-                        ),
-                        "pace": (
-                            "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"
-                        ),
+                        "health": ("good" if pct < 70 else "warning" if pct < 90 else "critical"),
+                        "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
                         "detail": f"Combined from {host_count} hosts · ${used:.2f} used ({time_str})",
                     }
                 )
@@ -260,8 +252,10 @@ class ExternalMetricService:
 
         async with self._lock:
             stale = [
-                p for p, d in self.metrics.items()
-                if (now - datetime.fromisoformat(d["timestamp"])).total_seconds() > STALE_HOURS * 3600
+                p
+                for p, d in self.metrics.items()
+                if (now - datetime.fromisoformat(d["timestamp"])).total_seconds()
+                > STALE_HOURS * 3600
             ]
             for p in stale:
                 del self.metrics[p]

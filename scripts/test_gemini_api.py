@@ -53,9 +53,7 @@ async def test_gemini_api():
             if resp.status_code == 200:
                 new_data = resp.json()
                 creds["access_token"] = new_data["access_token"]
-                creds["expiry_date"] = int(time.time() * 1000) + (
-                    new_data["expires_in"] * 1000
-                )
+                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
                 print("Token refreshed successfully.")
             else:
                 print(f"Failed to refresh: {resp.text}")
