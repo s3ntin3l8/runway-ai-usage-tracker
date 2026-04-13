@@ -52,8 +52,37 @@ window.toggleHistoryProvider = function(pid) {
     } else {
         historyState.activeProviders.add(pid);
     }
+    updateCsvHref();
     renderHistoryFromCache();
 };
+
+window.setHistoryDays = function(days) {
+    historyState.days = days;
+    document.querySelectorAll('#history-range-btns .toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.days) === days);
+    });
+    updateCsvHref();
+    loadHistory();
+};
+
+window.setHistoryMetric = function(metric) {
+    historyState.metric = metric;
+    document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.metric === metric);
+    });
+    // Re-render chart with new metric — no refetch needed
+    updateCharts(_historyCache, historyState.metric);
+};
+
+function updateCsvHref() {
+    const btn = document.getElementById('csv-download-btn');
+    if (!btn) return;
+    const params = new URLSearchParams({ format: 'csv', days: historyState.days });
+    if (historyState.activeProviders && historyState.activeProviders.size === 1) {
+        params.set('provider_id', [...historyState.activeProviders][0]);
+    }
+    btn.href = `/api/v1/usage/history?${params.toString()}`;
+}
 
 function renderHistoryFromCache() {
     const history = _historyCache;
@@ -99,6 +128,7 @@ function renderHistoryFromCache() {
 }
 
 async function loadHistory() {
+    updateCsvHref();
     const container = document.getElementById('history-content');
     container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
 

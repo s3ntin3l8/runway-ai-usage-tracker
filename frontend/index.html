@@ -84,8 +84,22 @@
             <section id="view-history" class="view hidden">
                 <!-- Chart Panel -->
                 <div id="history-chart-panel" class="glass-panel rounded-3xl p-6 mb-6">
-                    <div class="flex items-center justify-between mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <h3 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Usage Over Time</h3>
+                        <div class="flex items-center gap-3 flex-wrap">
+                            <!-- Time range -->
+                            <div class="flex gap-1" id="history-range-btns">
+                                <button class="toggle-btn active" data-days="7"  onclick="setHistoryDays(7)">7d</button>
+                                <button class="toggle-btn"        data-days="30" onclick="setHistoryDays(30)">30d</button>
+                                <button class="toggle-btn"        data-days="90" onclick="setHistoryDays(90)">90d</button>
+                            </div>
+                            <!-- Metric -->
+                            <div class="flex gap-1" id="history-metric-btns">
+                                <button class="toggle-btn active" data-metric="percent" onclick="setHistoryMetric('percent')">% used</button>
+                                <button class="toggle-btn"        data-metric="tokens"  onclick="setHistoryMetric('tokens')">tokens</button>
+                                <button class="toggle-btn"        data-metric="cost"    onclick="setHistoryMetric('cost')">cost</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="history-sparkline-strip"></div>
                     <div id="chart-empty" class="hidden text-zinc-500 italic text-sm py-8 text-center">No data for selected range.</div>
