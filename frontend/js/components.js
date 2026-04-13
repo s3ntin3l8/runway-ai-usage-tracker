@@ -1148,7 +1148,7 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>`;
     }).join('');
 
-    return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200"
+    return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 card-layout"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <div class="p-5">
             <div class="flex justify-between items-start mb-1">
