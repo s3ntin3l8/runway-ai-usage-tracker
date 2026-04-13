@@ -1164,7 +1164,7 @@ export function buildProviderSummaryCard(providerId, items) {
             <div class="text-4xl font-black ${worstColor} leading-none mt-3">${worstDisplay}</div>
             <div class="text-xs text-zinc-500 mt-1.5">${escapeHTML(worst.service_name)} · worst</div>
         </div>
-        <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5">
+        <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5 flex flex-col justify-start">
             <div class="h-0.5 rounded-full overflow-hidden flex gap-0.5 mb-3">${barSegments}</div>
             <div class="space-y-1">${breakdownRows}</div>
         </div>

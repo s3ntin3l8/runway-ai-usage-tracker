@@ -22,10 +22,10 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
     box-shadow: 0 12px 40px rgba(0,0,0,0.4);
 }
 
-/* Card two-zone layout: top zone grows, footer always pinned to bottom */
+/* Card two-zone layout: top zone natural height, bottom zone fills remainder */
 .card-layout {
     display: grid;
-    grid-template-rows: 1fr auto;
+    grid-template-rows: auto 1fr;
     min-height: 100%;
 }
 
