@@ -70,8 +70,7 @@ window.setHistoryMetric = function(metric) {
     document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.metric === metric);
     });
-    // Re-render chart with new metric — no refetch needed
-    updateCharts(_historyCache, historyState.metric);
+    renderHistoryFromCache();
 };
 
 function updateCsvHref() {

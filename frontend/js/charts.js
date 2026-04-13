@@ -24,7 +24,7 @@ function extractLabelsAndProviders(snapshots) {
     const providers = new Set();
     for (const s of snapshots) {
         days.add(s.timestamp.slice(0, 10));
-        if (s.provider_id) providers.add(s.provider_id);
+        providers.add(s.provider_id || 'unknown');
     }
     return { labels: Array.from(days).sort(), providers: Array.from(providers) };
 }
@@ -46,10 +46,11 @@ function bucketByDayMetric(snapshots, metric) {
             if (snap.unit_type !== 'tokens' || snap.used_value == null) continue;
             value = snap.used_value;
         } else {
-            // percent: use direct percent value or derive from used/limit
+            // percent: use direct percent value or derive ratio from quota-type units
             if (snap.unit_type === 'percent' && snap.used_value != null) {
                 value = snap.used_value;
-            } else if (snap.used_value != null && snap.limit_value > 0) {
+            } else if (['tokens', 'requests', 'messages', 'credits'].includes(snap.unit_type)
+                       && snap.used_value != null && snap.limit_value > 0) {
                 value = (snap.used_value / snap.limit_value) * 100;
             } else {
                 continue;
