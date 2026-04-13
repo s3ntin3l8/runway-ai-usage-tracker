@@ -66,7 +66,6 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
 # Cache for dashboard HTML
-_DASHBOARD_HTML_CACHE = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -121,19 +120,14 @@ async def favicon():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    """Serve the main dashboard page with caching."""
-    global _DASHBOARD_HTML_CACHE
-    if _DASHBOARD_HTML_CACHE is None:
-        index_file = os.path.join(frontend_path, "index.html")
-        if os.path.exists(index_file):
-            with open(index_file) as f:
-                _DASHBOARD_HTML_CACHE = f.read()
-        else:
-            return "<h1>Frontend index.html not found!</h1>"
-
-    # Return with no-cache headers to ensure sidecar updates are visible immediately in state
+    """Serve the main dashboard page, always reading from disk."""
+    index_file = os.path.join(frontend_path, "index.html")
+    if not os.path.exists(index_file):
+        return HTMLResponse("<h1>Frontend index.html not found!</h1>", status_code=404)
+    with open(index_file) as f:
+        content = f.read()
     return HTMLResponse(
-        content=_DASHBOARD_HTML_CACHE,
+        content=content,
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
