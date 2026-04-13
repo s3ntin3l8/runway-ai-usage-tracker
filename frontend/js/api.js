@@ -126,6 +126,12 @@ export async function deleteSidecarAPI(sidecarId) {
  * Token Health
  */
 
+export async function forceCollect() {
+    const resp = await fetch('/api/v1/system/force-collect', { method: 'POST' });
+    if (!resp.ok) throw new Error(`Force collect failed: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
 export async function fetchTokenHealth() {
     const resp = await fetch('/api/v1/system/token-health');
     if (!resp.ok) throw new Error('Failed to fetch token health');

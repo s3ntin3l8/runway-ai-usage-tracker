@@ -276,7 +276,16 @@ class AnthropicWebMixin:
         identity_str = self._extract_identity_from_web(org_data) if org_data else ""
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
-        plan = account_data.get("plan", "") if account_data else ""
+        # Try multiple keys — the account API may use 'plan', 'account_type', or 'subscription'
+        plan = ""
+        if account_data:
+            plan = (
+                account_data.get("plan")
+                or account_data.get("account_type")
+                or account_data.get("subscription")
+                or ""
+            )
+            logger.debug(f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}")
         tier = plan.capitalize() if plan else None
 
         window_map = {

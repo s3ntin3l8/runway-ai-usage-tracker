@@ -301,6 +301,7 @@ class GitHubCollector(BaseCollector):
                         if isinstance(monthly_val, (int, float))
                         else 100.0,
                         "is_unlimited": False,
+                        "tier": "free",
                         "unit_type": "requests",
                         "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": "api",

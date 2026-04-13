@@ -59,6 +59,20 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
     return manager.get_collector_stats()
 
 
+@router.post("/force-collect")
+@limiter.limit("6/minute")
+async def force_collect(request: Request) -> dict[str, Any]:
+    """Trigger an immediate collection cycle and update the registry."""
+    from app.services.poller import poller
+    try:
+        await poller.poll_now()
+        cards = manager.get_registry_snapshot()
+        return {"ok": True, "cards": len(cards)}
+    except Exception as e:
+        logger.error(f"Force collect failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/token-health")
 @limiter.limit("30/minute")
 async def get_token_health(request: Request) -> dict[str, Any]:

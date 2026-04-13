@@ -58,7 +58,7 @@ class ChatGPTApiMixin:
                         "remaining": f"{(100 - pct):.1f}%",
                         "unit": "remaining",
                         "reset": human_delta(reset_at),
-                        "health": "good" if pct < 80 else "warning",
+                        "health": "critical" if pct >= 90 else ("warning" if pct >= 80 else "good"),
                         "pace": PaceCalculator.estimate_longevity(pct, reset_at),
                         "detail": f"{tier.upper()} Account · {email} · {pct:.1f}% used",
                         "used_value": float(pct),

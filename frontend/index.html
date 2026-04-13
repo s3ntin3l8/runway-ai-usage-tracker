@@ -38,10 +38,12 @@
 
             <div class="flex flex-col items-end gap-3 ml-5 sm:ml-0">
                 <div class="flex items-center gap-2">
-                    <button id="toggle-compact" class="toggle-btn" onclick="toggleConfig('compact')">COMPACT</button>
-                    <button id="toggle-remaining" class="toggle-btn" onclick="toggleConfig('remaining')">📊 % Used</button>
                     <button id="toggle-showHidden" class="toggle-btn" onclick="toggleConfig('showHidden')">👁 SHOW HIDDEN</button>
                     <button id="toggle-theme" class="toggle-btn" onclick="toggleTheme()" title="Switch to bright mode">☀️</button>
+                    <button id="refresh-btn" class="toggle-btn flex items-center gap-1.5" onclick="forceRefresh()" title="Force poll all providers">
+                        <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                        SYNC
+                    </button>
                     <span id="last-updated" class="text-[10px] text-zinc-600 mono ml-2 hidden"></span>
                 </div>
             </div>
@@ -69,9 +71,8 @@
                 <div id="filter-bar" class="mb-5 flex flex-col gap-2">
                     <div class="flex gap-2 items-center">
                         <span class="text-[10px] text-zinc-600 uppercase tracking-wide">Filter by</span>
-                        <button class="dim-btn" data-dim="sidecar_id" onclick="setFilterDimension('sidecar_id')">Source</button>
                         <button class="dim-btn" data-dim="account_label" onclick="setFilterDimension('account_label')">Account</button>
-                        <button class="dim-btn" data-dim="window_type" onclick="setFilterDimension('window_type')">Window</button>
+                        <button id="dim-btn-sidecar" class="dim-btn hidden" data-dim="sidecar_id" onclick="setFilterDimension('sidecar_id')">Source</button>
                     </div>
                     <div id="filter-pills" class="flex flex-wrap gap-1.5"></div>
                 </div>
@@ -89,9 +90,12 @@
                         <div class="flex items-center gap-3 flex-wrap">
                             <!-- Time range -->
                             <div class="flex gap-1" id="history-range-btns">
-                                <button class="toggle-btn active" data-days="7"  onclick="setHistoryDays(7)">7d</button>
-                                <button class="toggle-btn"        data-days="30" onclick="setHistoryDays(30)">30d</button>
-                                <button class="toggle-btn"        data-days="90" onclick="setHistoryDays(90)">90d</button>
+                                <button class="toggle-btn"        data-days="0.042" onclick="setHistoryDays(0.042)">1h</button>
+                                <button class="toggle-btn"        data-days="0.25"  onclick="setHistoryDays(0.25)">6h</button>
+                                <button class="toggle-btn"        data-days="1"     onclick="setHistoryDays(1)">1d</button>
+                                <button class="toggle-btn active" data-days="7"     onclick="setHistoryDays(7)">7d</button>
+                                <button class="toggle-btn"        data-days="30"    onclick="setHistoryDays(30)">30d</button>
+                                <button class="toggle-btn"        data-days="90"    onclick="setHistoryDays(90)">90d</button>
                             </div>
                             <!-- Metric -->
                             <div class="flex gap-1" id="history-metric-btns">
@@ -155,7 +159,7 @@
 
         <!-- Footer -->
         <footer class="mt-14 text-center text-xs text-zinc-700 mono">
-            runway · local-first · stateless · <span id="footer-count">0</span> sources ·
+            runway · local-first · <span id="footer-count">0</span> sources ·
             <a href="https://github.com/s3ntin3l8/ai-usage-tracker" target="_blank" rel="noopener noreferrer" class="hover:text-zinc-500 transition-colors">GitHub</a>
         </footer>
     </div>
@@ -163,7 +167,7 @@
     <!-- Modal Backdrop & Content -->
     <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 opacity-0 pointer-events-none transition-all duration-300">
         <div id="modal-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div id="modal-content" class="relative w-full max-w-lg glass-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 transition-all duration-300 overflow-hidden">
+        <div id="modal-content" class="relative w-full max-w-2xl glass-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 transition-all duration-300 overflow-hidden">
             <!-- Content will be injected here -->
         </div>
     </div>
