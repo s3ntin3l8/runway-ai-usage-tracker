@@ -11,8 +11,8 @@ RUN npm run build:css
 FROM python:3.12-slim-bookworm AS python-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libsqlite3-dev \
+    gcc=4:12.2.0-3 \
+    libsqlite3-dev=3.40.1-2+deb12u2 \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -27,9 +27,8 @@ RUN groupadd -r runway && useradd -r -g runway -u 1000 -m runway
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    curl=7.88.1-10+deb12u14 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment
 COPY --from=python-builder /opt/venv /opt/venv

@@ -1,7 +1,8 @@
 import csv
 import io
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, Sequence
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -16,9 +17,19 @@ from app.services.collector_manager import manager
 router = APIRouter()
 
 _CSV_COLUMNS = [
-    "timestamp", "provider_id", "account_id", "account_label", "service_name",
-    "used_value", "limit_value", "unit_type", "currency", "tier", "model_id",
-    "window_type", "health",
+    "timestamp",
+    "provider_id",
+    "account_id",
+    "account_label",
+    "service_name",
+    "used_value",
+    "limit_value",
+    "unit_type",
+    "currency",
+    "tier",
+    "model_id",
+    "window_type",
+    "health",
 ]
 
 
@@ -100,21 +111,23 @@ def _history_as_csv(results: Sequence[UsageSnapshot]) -> StreamingResponse:
     writer = csv.DictWriter(output, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
     writer.writeheader()
     for s in results:
-        writer.writerow({
-            "timestamp": s.timestamp.isoformat(),
-            "provider_id": s.provider_id,
-            "account_id": s.account_id,
-            "account_label": s.account_label or "",
-            "service_name": s.service_name,
-            "used_value": s.used_value,
-            "limit_value": s.limit_value,
-            "unit_type": s.unit_type,
-            "currency": s.currency or "",
-            "tier": s.tier or "",
-            "model_id": s.model_id or "",
-            "window_type": s.window_type,
-            "health": s.health,
-        })
+        writer.writerow(
+            {
+                "timestamp": s.timestamp.isoformat(),
+                "provider_id": s.provider_id,
+                "account_id": s.account_id,
+                "account_label": s.account_label or "",
+                "service_name": s.service_name,
+                "used_value": s.used_value,
+                "limit_value": s.limit_value,
+                "unit_type": s.unit_type,
+                "currency": s.currency or "",
+                "tier": s.tier or "",
+                "model_id": s.model_id or "",
+                "window_type": s.window_type,
+                "health": s.health,
+            }
+        )
     filename = f"runway-history-{datetime.now(UTC).strftime('%Y-%m-%d')}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),

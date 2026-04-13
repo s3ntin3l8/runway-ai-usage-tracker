@@ -1,5 +1,5 @@
 """Unit tests for app/services/token_refresher.py"""
-import json
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -57,7 +57,11 @@ class TestRefreshOAuthTokenAnthropic:
 
         call_kwargs = ctx.__aenter__.return_value.post.call_args
         assert call_kwargs is not None
-        data = call_kwargs.kwargs.get("data") or call_kwargs.args[1] if len(call_kwargs.args) > 1 else call_kwargs.kwargs["data"]
+        data = (
+            call_kwargs.kwargs.get("data") or call_kwargs.args[1]
+            if len(call_kwargs.args) > 1
+            else call_kwargs.kwargs["data"]
+        )
         # Access via keyword arg 'data'
         sent_data = call_kwargs.kwargs["data"]
         assert sent_data["grant_type"] == "refresh_token"

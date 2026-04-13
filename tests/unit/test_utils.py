@@ -1,5 +1,5 @@
 """Unit tests for app/core/utils.py"""
-import asyncio
+
 import base64
 import json
 import os
@@ -18,15 +18,13 @@ from app.core.utils import (
     safe_write_json,
 )
 
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _make_jwt(payload: dict) -> str:
     """Build a minimal unsigned JWT with the given payload."""
     header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
-    payload_b64 = (
-        base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
-    )
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
     return f"{header}.{payload_b64}.fakesig"
 
 
@@ -266,9 +264,7 @@ class TestHttpRequestWithRetry:
     async def test_non_429_exception_on_non_final_attempt_retries(self):
         client = MagicMock(spec=httpx.AsyncClient)
         resp_200 = _make_mock_response(200)
-        client.request = AsyncMock(
-            side_effect=[httpx.ConnectError("connection refused"), resp_200]
-        )
+        client.request = AsyncMock(side_effect=[httpx.ConnectError("connection refused"), resp_200])
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             result = await http_request_with_retry(
