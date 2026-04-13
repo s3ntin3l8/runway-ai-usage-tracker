@@ -38,16 +38,18 @@ Error Handling:
 - Invalid response: Returns error card
 """
 
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
+
 from app.core.config import settings
 from app.core.utils import error_card, human_delta
 from app.services.collectors.base import BaseCollector
 
 
 class ZaiPlanCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
     """Collector for zAI Plan quota limits (tokens and time windows)."""
 
@@ -60,15 +62,15 @@ class ZaiPlanCollector(BaseCollector):
         "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
     ]
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for zAI Plan."""
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect zAI plan quota limits trying multiple endpoints."""
         return await self._strategy_api(client)
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when all endpoints fail."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
@@ -79,7 +81,7 @@ class ZaiPlanCollector(BaseCollector):
             ]
         return [error_card("zAI Plan", "📊", "API Unavailable", error_type="api_error")]
 
-    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect zAI plan quota limits trying multiple endpoints."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
@@ -100,7 +102,7 @@ class ZaiPlanCollector(BaseCollector):
 
     async def _fetch_quota(
         self, client: httpx.AsyncClient, key: str, endpoint: str
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """
         Fetch quota from a specific endpoint.
 
@@ -146,8 +148,8 @@ class ZaiPlanCollector(BaseCollector):
         return cards if cards else None
 
     def _parse_limit(
-        self, limit: Dict[str, Any], plan_name: str
-    ) -> Optional[Dict[str, Any]]:
+        self, limit: dict[str, Any], plan_name: str
+    ) -> dict[str, Any] | None:
         """
         Parse a single limit entry into a card.
 
@@ -197,7 +199,7 @@ class ZaiPlanCollector(BaseCollector):
                 # Handle both milliseconds and seconds
                 if reset_ts > 1000000000000:  # Milliseconds
                     reset_ts = reset_ts / 1000
-                reset_dt = datetime.fromtimestamp(reset_ts, tz=timezone.utc)
+                reset_dt = datetime.fromtimestamp(reset_ts, tz=UTC)
                 reset_str = human_delta(reset_dt)
                 reset_at = reset_dt.isoformat()
             except (ValueError, OSError, OverflowError):
@@ -235,5 +237,5 @@ class ZaiPlanCollector(BaseCollector):
             "unit_type": unit_type,
             "reset_at": reset_at,
             "data_source": "api",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }

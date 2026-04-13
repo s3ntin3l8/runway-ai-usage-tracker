@@ -8,24 +8,25 @@ Provides:
 - Mock response data for various providers
 """
 
-import pytest
-import os
 import json
+import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
+
 import httpx
+import pytest
+
 from app.main import app
 from tests.fixtures.mock_data import (
     ANTHROPIC_OAUTH_RESPONSE,
+    BIGMODEL_ZAI_RESPONSE,
+    CHATGPT_USAGE_RESPONSE,
     CLAUDE_WEB_API_ORGS_RESPONSE,
     CLAUDE_WEB_API_USAGE_RESPONSE,
     GEMINI_QUOTA_RESPONSE,
     GITHUB_COPILOT_RESPONSE,
-    CHATGPT_USAGE_RESPONSE,
-    OPENCODE_GO_RESPONSE,
-    BIGMODEL_ZAI_RESPONSE,
     KIMI_RESPONSE,
+    OPENCODE_GO_RESPONSE,
 )
 
 

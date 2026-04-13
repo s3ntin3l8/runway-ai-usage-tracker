@@ -47,17 +47,19 @@ Error Handling:
 """
 
 import asyncio
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
+
+from app.core.browser_cookies import get_kimi_auth_cookie
 from app.core.config import settings
 from app.core.utils import error_card, human_delta
-from app.core.browser_cookies import get_kimi_auth_cookie
 from app.services.collectors.base import BaseCollector
 
 
 class KimiCodingCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
     """Collector for Kimi Coding IDE quotas (weekly + rate limits)."""
 
@@ -68,15 +70,15 @@ class KimiCodingCollector(BaseCollector):
         "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
     )
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for Kimi Coding."""
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi Coding usage via API."""
         return await self._strategy_api(client)
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when API fails."""
         token = await self._get_auth_token()
         if not token:
@@ -90,7 +92,7 @@ class KimiCodingCollector(BaseCollector):
             ]
         return [error_card("Kimi Coding", "🌙", "API Collection Failed", error_type="api_error")]
 
-    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi Coding usage via API."""
         token = await self._get_auth_token()
         if not token:
@@ -120,7 +122,7 @@ class KimiCodingCollector(BaseCollector):
             return []
 
 
-    async def _get_auth_token(self) -> Optional[str]:
+    async def _get_auth_token(self) -> str | None:
         """
         Get authentication token from env var or Chrome cookie.
 
@@ -139,7 +141,7 @@ class KimiCodingCollector(BaseCollector):
         # Priority 2: Chrome cookie
         return await asyncio.to_thread(get_kimi_auth_cookie)
 
-    def _parse_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Parse API response into quota cards.
 
@@ -163,7 +165,7 @@ class KimiCodingCollector(BaseCollector):
                     "pace": "Stable",
                     "detail": "No usage recorded yet",
                     "data_source": "api",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 }
             ]
 
@@ -205,7 +207,7 @@ class KimiCodingCollector(BaseCollector):
             ]
         )
 
-    def _parse_weekly_quota(self, detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _parse_weekly_quota(self, detail: dict[str, Any]) -> dict[str, Any] | None:
         """Parse weekly quota into card."""
         try:
             limit = int(detail.get("limit", 0))
@@ -251,14 +253,14 @@ class KimiCodingCollector(BaseCollector):
                 "unit_type": "requests",
                 "reset_at": reset_dt.isoformat() if reset_dt else None,
                 "data_source": "api",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
         except (ValueError, TypeError):
             return None
 
     def _parse_rate_limit(
-        self, detail: Dict[str, Any], window: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, detail: dict[str, Any], window: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Parse rate limit (5-hour window) into card."""
         try:
             limit = int(detail.get("limit", 0))
@@ -308,7 +310,7 @@ class KimiCodingCollector(BaseCollector):
                 "unit_type": "requests",
                 "reset_at": reset_dt.isoformat() if reset_dt else None,
                 "data_source": "api",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
         except (ValueError, TypeError):
             return None
@@ -325,9 +327,8 @@ class KimiCodingCollector(BaseCollector):
         """
         if limit >= 7000:
             return "Allegretto"
-        elif limit >= 2000:
+        if limit >= 2000:
             return "Moderato"
-        elif limit >= 1000:
+        if limit >= 1000:
             return "Andante"
-        else:
-            return "Basic"
+        return "Basic"

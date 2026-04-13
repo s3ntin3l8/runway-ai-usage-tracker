@@ -8,12 +8,11 @@ Architecture:
 - If account identity is discovered (email/name), the cache entry is updated ("promoted")
 """
 
-import time
-import logging
 import asyncio
 import hashlib
-from typing import Dict, Optional, Tuple, Any, List
-from datetime import datetime, timezone
+import logging
+import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +29,11 @@ class TokenCache:
 
     def __init__(self, ttl_seconds: int = DEFAULT_TTL):
         # provider_id -> {account_id: (tokens, metadata, timestamp)}
-        self._cache: Dict[str, Dict[str, Tuple[Dict[str, str], Dict[str, Any], float]]] = {}
+        self._cache: dict[str, dict[str, tuple[dict[str, str], dict[str, Any], float]]] = {}
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
 
-    def _derive_account_id(self, tokens: Dict[str, str]) -> str:
+    def _derive_account_id(self, tokens: dict[str, str]) -> str:
         """Derive a stable-ish account ID from tokens if none provided."""
         # Try to find a reasonably unique and stable token
         ident = (
@@ -48,9 +47,9 @@ class TokenCache:
     async def store(
         self,
         provider: str,
-        tokens: Dict[str, str],
-        account_id: Optional[str] = None,
-        account_label: Optional[str] = None,
+        tokens: dict[str, str],
+        account_id: str | None = None,
+        account_label: str | None = None,
     ) -> str:
         """
         Store tokens for a provider and account.
@@ -81,7 +80,7 @@ class TokenCache:
             return account_id
 
     async def update_account_metadata(
-        self, provider: str, account_id: str, name: Optional[str] = None
+        self, provider: str, account_id: str, name: str | None = None
     ) -> None:
         """Update metadata (like account name/email) for an existing cache entry."""
         async with self._lock:
@@ -92,7 +91,7 @@ class TokenCache:
                 self._cache[provider][account_id] = (tokens, metadata, timestamp)
                 logger.debug(f"Updated metadata for {provider}:{account_id} -> name={name}")
 
-    async def get_accounts(self, provider: str) -> List[Dict[str, Any]]:
+    async def get_accounts(self, provider: str) -> list[dict[str, Any]]:
         """
         Get all active accounts for a provider.
 
@@ -116,7 +115,7 @@ class TokenCache:
                 })
             return results
 
-    async def get(self, provider: str, account_id: Optional[str] = None) -> Optional[Dict[str, str]]:
+    async def get(self, provider: str, account_id: str | None = None) -> dict[str, str] | None:
         """
         Get tokens for a specific account, or the first available if account_id is None.
         """
@@ -133,16 +132,15 @@ class TokenCache:
                     return None
                 tokens, _, _ = provider_accounts[account_id]
                 return tokens
-            else:
-                # Return the most recently updated account if none specified
-                newest_acc = sorted(
-                    provider_accounts.items(),
-                    key=lambda x: x[1][2],
-                    reverse=True
-                )[0]
-                return newest_acc[1][0]
+            # Return the most recently updated account if none specified
+            newest_acc = sorted(
+                provider_accounts.items(),
+                key=lambda x: x[1][2],
+                reverse=True
+            )[0]
+            return newest_acc[1][0]
 
-    async def get_token(self, provider: str, token_type: str, account_id: Optional[str] = None) -> Optional[str]:
+    async def get_token(self, provider: str, token_type: str, account_id: str | None = None) -> str | None:
         """Get specific token type for provider/account."""
         tokens = await self.get(provider, account_id)
         return tokens.get(token_type) if tokens else None
@@ -165,7 +163,7 @@ class TokenCache:
             if not self._cache[provider]:
                 del self._cache[provider]
 
-    async def get_all_stats(self) -> Dict[str, Any]:
+    async def get_all_stats(self) -> dict[str, Any]:
         """Get flattened stats for all cached providers and accounts."""
         async with self._lock:
             self._clear_expired_unlocked()
@@ -183,7 +181,7 @@ class TokenCache:
                 }
             return stats
 
-    async def get_all_active_accounts(self) -> List[Tuple[str, str, Optional[str]]]:
+    async def get_all_active_accounts(self) -> list[tuple[str, str, str | None]]:
         """
         Get a list of all active (provider, account_id, account_label) tuples.
         Useful for CollectorManager discovery.

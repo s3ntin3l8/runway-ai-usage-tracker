@@ -19,30 +19,32 @@ Key Validation:
 - Checks that key is not literally "zai" (placeholder detection)
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Any
+
 import httpx
+
 from app.core.config import settings
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 
 
 class ZaiApiCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
     """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
 
     PROVIDER_ID = "zai_api"
     DEFAULT_WINDOW_TYPE = "monthly"
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for zAI API."""
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect zAI prepaid balance via API."""
         return await self._strategy_api(client)
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when API fails."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
@@ -53,7 +55,7 @@ class ZaiApiCollector(BaseCollector):
             ]
         return [error_card("zAI", "🌐", "API Error", error_type="api_error")]
 
-    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect zAI prepaid balance via API."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":

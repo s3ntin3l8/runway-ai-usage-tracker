@@ -5,8 +5,8 @@ Debug script to test GitHub Copilot API endpoints and see actual responses.
 
 import asyncio
 import os
+
 import httpx
-from datetime import datetime, timezone
 
 
 async def test_github_api():

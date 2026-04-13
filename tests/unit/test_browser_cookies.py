@@ -2,15 +2,15 @@
 
 import hashlib
 import struct
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from app.core.browser_cookies import (
-    decrypt_macos_cookie,
-    decrypt_linux_cookie,
     SafariBinaryCookieParser,
+    decrypt_macos_cookie,
     get_all_browser_cookies_paths,
 )
 

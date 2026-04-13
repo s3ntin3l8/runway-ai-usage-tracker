@@ -1,20 +1,19 @@
 import logging
-import os
 import time
-from typing import Optional, Dict
+
 import httpx
-from datetime import datetime, timezone
+
 from app.core.config import settings
 from app.core.utils import IdentityExtractor, http_request_with_retry
-from app.services.token_cache import token_cache
 from app.services.collectors.oauth_base import OAuthBaseCollector
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
 class GeminiOAuthMixin(OAuthBaseCollector):
     """Mixin for Gemini OAuth token management."""
     
-    async def _get_current_token(self) -> Optional[str]:
+    async def _get_current_token(self) -> str | None:
         """Get the current access token."""
         # Check sidecar cache first
         token = await token_cache.get_token(
@@ -39,7 +38,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             logger.debug(f"Could not check Gemini token expiration: {e}")
         return True
 
-    async def _execute_refresh(self, client: httpx.AsyncClient) -> Optional[Dict]:
+    async def _execute_refresh(self, client: httpx.AsyncClient) -> dict | None:
         """Execute the HTTP request to refresh the token for Gemini."""
         creds = await self._get_credentials()
         if not creds:
@@ -90,11 +89,10 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 await self._store_sidecar_token("gemini", new_data["access_token"])
 
                 return creds
-            else:
-                logger.warning(
-                    f"Gemini token refresh failed with status {resp.status_code}: {resp.text[:100]}"
-                )
-                return None
+            logger.warning(
+                f"Gemini token refresh failed with status {resp.status_code}: {resp.text[:100]}"
+            )
+            return None
         except Exception as e:
             logger.error(f"Failed to refresh Gemini token: {e}")
             return None

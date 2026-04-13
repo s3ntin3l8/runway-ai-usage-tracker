@@ -1,12 +1,14 @@
-import os
-import json
 import asyncio
-import logging
 import glob
+import json
+import logging
+import os
 import uuid
-from typing import List, Dict, Any, Optional
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
-from datetime import datetime, timezone
+
 from app.core.config import settings
 from app.core.utils import PaceCalculator, human_delta
 
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 class ChatGPTLocalMixin:
     """Mixin for ChatGPT local session and CLI RPC collection."""
     
-    async def _collect_via_cli_rpc(self, client: Optional[httpx.AsyncClient] = None) -> List[Dict[str, Any]]:
+    async def _collect_via_cli_rpc(self, client: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
         """
         Fetch usage data from the codex CLI RPC server.
         """
@@ -28,7 +30,7 @@ class ChatGPTLocalMixin:
                 stderr=asyncio.subprocess.DEVNULL
             )
 
-            async def call_rpc(method: str, params: Optional[Dict] = None) -> Optional[Dict]:
+            async def call_rpc(method: str, params: dict | None = None) -> dict | None:
                 if not process.stdin: return None
                 request = {
                     "jsonrpc": "2.0",
@@ -47,7 +49,7 @@ class ChatGPTLocalMixin:
                 except json.JSONDecodeError:
                     return None
 
-            init_res = await call_rpc("initialize", {"clientInfo": {"name": "Runway", "version": "1.0.0"}})
+            init_res = await call_rpc("initialize", {"clientInfo": {"name": "Runway", "version": "0.9.0"}})
             if not init_res:
                 return []
 
@@ -61,7 +63,7 @@ class ChatGPTLocalMixin:
                 return []
 
             cards = []
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             
             tier = "free"
             email = "Unknown"
@@ -89,7 +91,7 @@ class ChatGPTLocalMixin:
             if primary:
                 pct = float(primary.get("usedPercent", 0.0))
                 reset_ts = primary.get("resetsAt")
-                reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+                reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
                 
                 cards.append({
                     "service_name": "ChatGPT Codex",
@@ -139,7 +141,7 @@ class ChatGPTLocalMixin:
                 except (ProcessLookupError, OSError):
                     pass
 
-    async def _strategy_local_logs(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_local_logs(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Local log parsing fallback."""
         if not settings.LOCAL_COLLECTOR_ENABLED: return []
         path = settings.CHATGPT_SESSIONS_DIR
@@ -148,13 +150,13 @@ class ChatGPTLocalMixin:
             if not files: return []
             latest = await asyncio.to_thread(max, files, key=os.path.getmtime)
             
-            with open(latest, "r") as f:
+            with open(latest) as f:
                 lines = f.readlines()
                 if not lines: return []
                 usage = json.loads(lines[-1])
             
             pct = usage.get("used_percent", 0.0)
-            reset_at = datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc) if "resets_at" in usage else None
+            reset_at = datetime.fromtimestamp(usage["resets_at"], tz=UTC) if "resets_at" in usage else None
 
             return [{
                 "service_name": "ChatGPT Codex",
@@ -164,6 +166,6 @@ class ChatGPTLocalMixin:
                 "reset": human_delta(reset_at),
                 "detail": f"{pct:.1f}% used",
                 "data_source": "cache",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }]
         except Exception: return []

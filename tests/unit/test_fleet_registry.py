@@ -1,10 +1,11 @@
 """Unit tests for FleetRegistryService (Phase 4B)."""
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from app.services.fleet_registry import FleetRegistryService
+import pytest
+
 from app.models.db import SidecarRegistry
+from app.services.fleet_registry import FleetRegistryService
 
 
 @pytest.fixture
@@ -35,8 +36,8 @@ class TestUpsertSidecar:
             sidecar_id="host-1",
             ingest_count=5,
             last_ip="10.0.0.1",
-            last_seen=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            first_seen=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            last_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            first_seen=datetime(2026, 1, 1, tzinfo=UTC),
         )
         mock_session.get.return_value = existing
 
@@ -44,7 +45,7 @@ class TestUpsertSidecar:
 
         assert existing.ingest_count == 6
         assert existing.last_ip == "10.0.0.2"
-        assert existing.last_seen > datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert existing.last_seen > datetime(2026, 1, 1, tzinfo=UTC)
         mock_session.add.assert_not_called()
         mock_session.commit.assert_called_once()
 
@@ -53,8 +54,8 @@ class TestUpdateSidecar:
     def test_updates_custom_name_and_tags(self, service, mock_session):
         existing = SidecarRegistry(
             sidecar_id="host-1",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
         )
         mock_session.get.return_value = existing
 
@@ -75,8 +76,8 @@ class TestUpdateSidecar:
     def test_partial_update_only_name(self, service, mock_session):
         existing = SidecarRegistry(
             sidecar_id="host-1",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
         )
         existing.tags = ["Existing"]
         mock_session.get.return_value = existing
@@ -91,8 +92,8 @@ class TestDeleteSidecar:
     def test_deletes_existing_sidecar(self, service, mock_session):
         existing = SidecarRegistry(
             sidecar_id="host-1",
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
         )
         mock_session.get.return_value = existing
 
@@ -113,7 +114,7 @@ class TestDeleteSidecar:
 
 class TestToDict:
     def test_serializes_all_fields(self, service):
-        now = datetime(2026, 4, 13, 12, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 4, 13, 12, 0, 0, tzinfo=UTC)
         row = SidecarRegistry(
             sidecar_id="host-1",
             hostname="host-1.local",

@@ -9,18 +9,17 @@ Handles:
 """
 
 import json
-import base64
 import logging
 import time
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
 
 from app.core.config import settings
-from app.services.credential_provider import credential_provider
-from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
-from app.services.token_cache import token_cache
+from app.core.utils import PaceCalculator, error_card, http_request_with_retry, human_delta
 from app.services.collectors.oauth_base import OAuthBaseCollector
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +43,13 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if creds:
                 expires_at_ms = creds.get("claudeAiOauth", {}).get("expiresAt")
                 if expires_at_ms:
-                    expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=timezone.utc)
-                    return datetime.now(timezone.utc) >= expires_at
+                    expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=UTC)
+                    return datetime.now(UTC) >= expires_at
         except Exception as e:
             logger.debug(f"Could not check token expiration: {e}")
         return False
 
-    async def _execute_refresh(self, client: httpx.AsyncClient) -> Optional[Dict]:
+    async def _execute_refresh(self, client: httpx.AsyncClient) -> dict | None:
         """
         Execute the HTTP request to refresh the Claude OAuth token.
 
@@ -130,7 +129,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 # Return for base collector compatibility
                 creds["access_token"] = new_data["access_token"]
                 return creds
-            elif resp.status_code == 400:
+            if resp.status_code == 400:
                 error_data = resp.json()
                 if error_data.get("error") == "invalid_grant":
                     logger.error("Terminal OAuth failure (invalid_grant) for Anthropic")
@@ -144,14 +143,14 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     async def _get_claude_oauth_with_cache(
         self, client: httpx.AsyncClient, token: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch Claude OAuth usage with internal 10-minute caching for API calls.
         
         This allows the Statusline to update frequently (via SmartCollector 60s TTL)
         while keeping the expensive/rate-limited API calls on a slower cycle.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         
         # Check internal API cache (10 mins)
         if hasattr(self, "_cached_api_results") and self._cached_api_results is not None and self._last_api_fetch:
@@ -177,7 +176,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     async def _get_claude_oauth(
         self, client: httpx.AsyncClient, token: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch Claude quota from Anthropic OAuth API.
 
@@ -185,7 +184,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         Proactively respects 429 backoff to avoid hammering the API.
         """
         # Proactive backoff check
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         backoff_until = getattr(self, "_last_429_backoff_until", None)
         if backoff_until and now < backoff_until:
             wait_rem = (backoff_until - now).total_seconds()
@@ -234,7 +233,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.error(f"Claude OAuth collection failed: {e}")
             return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")]
 
-    def _extract_identity_from_oauth(self, data: Optional[Dict[str, Any]]) -> str:
+    def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
         """Extract account identity string from OAuth API response."""
         if not data:
             return ""
@@ -244,13 +243,13 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
         if email and org:
             return f"{email} @ {org}"
-        elif email:
+        if email:
             return email
-        elif org:
+        if org:
             return f"org: {org}"
         return ""
 
-    def _get_local_config_hints(self) -> Dict[str, Any]:
+    def _get_local_config_hints(self) -> dict[str, Any]:
         """Read supplementary billing hints from ~/.claude.json if available."""
         import os
         if not settings.LOCAL_COLLECTOR_ENABLED:
@@ -258,7 +257,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         path = os.path.expanduser("~/.claude.json")
         try:
             if os.path.exists(path):
-                with open(path, "r") as f:
+                with open(path) as f:
                     return json.load(f)
         except Exception:
             pass
@@ -266,10 +265,10 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     def _parse_oauth_response(
         self,
-        data: Dict[str, Any],
-        name_map: Dict[str, str],
-        creds: Optional[Dict] = None,
-    ) -> List[Dict[str, Any]]:
+        data: dict[str, Any],
+        name_map: dict[str, str],
+        creds: dict | None = None,
+    ) -> list[dict[str, Any]]:
         """Parse OAuth API response into standardized quota cards."""
         results = []
         local_hints = self._get_local_config_hints()
@@ -345,7 +344,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                         "data_source": "oauth",
                         "tier": tier,
                         "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
                     })
                 except (ValueError, TypeError):
                     pass
@@ -376,7 +375,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "data_source": "oauth",
                     "tier": tier,
                     "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 })
                 continue
 
@@ -410,7 +409,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 "data_source": "oauth",
                 "tier": tier,
                 "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             })
 
         return results if results else [

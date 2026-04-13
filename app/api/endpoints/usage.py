@@ -1,16 +1,16 @@
 import csv
 import io
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Dict, Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Sequence
 
-from fastapi import APIRouter, Depends, Query, Request, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlmodel import Session, select, desc
+from sqlmodel import Session, desc, select
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.models.db import UsageSnapshot
-from app.models.schemas import LimitsResponse, LimitCard
+from app.models.schemas import LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 
 router = APIRouter()
@@ -24,7 +24,7 @@ _CSV_COLUMNS = [
 
 @router.get("/limits")
 @limiter.limit("10/minute")
-async def fetch_all_limits(request: Request) -> Dict[str, Any]:
+async def fetch_all_limits(request: Request) -> dict[str, Any]:
     """Fetch all AI service usage limits from the in-memory registry."""
     results = manager.get_registry_snapshot()
     if not results:
@@ -44,15 +44,15 @@ async def fetch_all_limits(request: Request) -> Dict[str, Any]:
 @limiter.limit("30/minute")
 async def get_usage_history(
     request: Request,
-    provider_id: Optional[str] = None,
-    account_id: Optional[str] = None,
+    provider_id: str | None = None,
+    account_id: str | None = None,
     days: int = Query(default=7, ge=1, le=90),
     limit: int = Query(default=50, ge=1, le=500),
     export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
 ):
     """Fetch usage history snapshots. Use format=csv for a downloadable CSV."""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     statement = select(UsageSnapshot).where(UsageSnapshot.timestamp >= since)
 
@@ -95,7 +95,7 @@ def _snapshot_to_dict(s: UsageSnapshot) -> dict:
     }
 
 
-def _history_as_csv(results: list) -> StreamingResponse:
+def _history_as_csv(results: Sequence[UsageSnapshot]) -> StreamingResponse:
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
     writer.writeheader()
@@ -115,7 +115,7 @@ def _history_as_csv(results: list) -> StreamingResponse:
             "window_type": s.window_type,
             "health": s.health,
         })
-    filename = f"runway-history-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
+    filename = f"runway-history-{datetime.now(UTC).strftime('%Y-%m-%d')}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
@@ -126,8 +126,8 @@ def _history_as_csv(results: list) -> StreamingResponse:
 @router.post("/reset/{provider}")
 @limiter.limit("10/minute")
 async def reset_provider(
-    request: Request, provider: str, account_id: Optional[str] = None
-) -> Dict[str, Any]:
+    request: Request, provider: str, account_id: str | None = None
+) -> dict[str, Any]:
     """Reset terminal failure state for a provider."""
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+
 def generate():
     # Root relative paths
     root = Path(__file__).parent.parent

@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Dict, Any, Optional, Literal
-import time
 import logging
-import httpx
+import time
+from typing import Any, Literal
 
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -15,8 +15,8 @@ from app.core.security import require_admin_key
 from app.models.db import WebhookConfig
 from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
-from app.services.token_health import token_health_service
 from app.services.token_cache import token_cache
+from app.services.token_health import token_health_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,7 +24,7 @@ router = APIRouter()
 
 @router.get("/health")
 @limiter.limit("30/minute")
-async def health_check(request: Request) -> Dict[str, Any]:
+async def health_check(request: Request) -> dict[str, Any]:
     """Check system health and collector status."""
     return {
         "status": "healthy",
@@ -34,7 +34,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
 
 @router.get("/settings")
 @limiter.limit("30/minute")
-async def get_app_settings(request: Request) -> Dict[str, Any]:
+async def get_app_settings(request: Request) -> dict[str, Any]:
     """Return the current non-sensitive configuration."""
     return {
         "project_name": settings.PROJECT_NAME,
@@ -50,7 +50,7 @@ async def get_app_settings(request: Request) -> Dict[str, Any]:
 
 @router.get("/status")
 @limiter.limit("30/minute")
-async def get_collector_status(request: Request) -> Dict[str, Any]:
+async def get_collector_status(request: Request) -> dict[str, Any]:
     """Return detailed health and cache stats for all active collectors."""
     try:
         await manager._sync_collectors()
@@ -61,7 +61,7 @@ async def get_collector_status(request: Request) -> Dict[str, Any]:
 
 @router.get("/token-health")
 @limiter.limit("30/minute")
-async def get_token_health(request: Request) -> Dict[str, Any]:
+async def get_token_health(request: Request) -> dict[str, Any]:
     """Return health status for all cached credentials."""
     tokens = await token_health_service.get_health()
     return {"tokens": tokens}
@@ -74,7 +74,7 @@ async def refresh_token(
     provider: str,
     account_id: str,
     _auth: None = Depends(require_admin_key),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Attempt proactive OAuth token refresh for supported providers."""
     tokens = await token_cache.get(provider, account_id) or {}
     if "refresh_token" not in tokens:
@@ -104,9 +104,9 @@ class _WebhookCreate(BaseModel):
 
 
 class _WebhookUpdate(BaseModel):
-    threshold_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
-    url: Optional[str] = None
-    active: Optional[bool] = None
+    threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    url: str | None = None
+    active: bool | None = None
 
 
 @router.get("/webhooks")

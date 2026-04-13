@@ -1,18 +1,19 @@
-import os
 import json
 import logging
+import os
 import platform
-from typing import Optional, Dict, List, Any
+from typing import Any
+
 from app.core.config import settings
-from app.core.registry import registry
 from app.core.keychain import get_keychain_secret
+from app.core.registry import registry
 
 logger = logging.getLogger(__name__)
 
 try:
     import yaml
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore
 
 
 class CredentialProvider:
@@ -22,7 +23,7 @@ class CredentialProvider:
     """
 
     @staticmethod
-    def _get_nested(data: Any, key_path: List[str]) -> Any:
+    def _get_nested(data: Any, key_path: list[str]) -> Any:
         """Get nested value from dict using list of keys."""
         if not data or not isinstance(data, dict):
             return None
@@ -36,7 +37,7 @@ class CredentialProvider:
         return current
 
     @staticmethod
-    def get_credentials(provider_id: str) -> Dict[str, str]:
+    def get_credentials(provider_id: str) -> dict[str, str]:
         """Generic extraction based on registry rules for a provider."""
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
             return {}
@@ -64,7 +65,7 @@ class CredentialProvider:
                     if os.path.exists(path):
                         try:
                             fmt = rule.get("format", "json")
-                            with open(path, "r") as f:
+                            with open(path) as f:
                                 if fmt == "yaml" and yaml:
                                     data = yaml.safe_load(f)
                                 else:
@@ -139,7 +140,7 @@ class CredentialProvider:
         return creds.get("api_key", "")
 
     @staticmethod
-    def get_gemini_credentials_path() -> Optional[str]:
+    def get_gemini_credentials_path() -> str | None:
         """Search for Gemini credentials file using registry rules."""
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
             return None
@@ -154,7 +155,7 @@ class CredentialProvider:
         return None
 
     @staticmethod
-    def get_anthropic_credentials_path() -> Optional[str]:
+    def get_anthropic_credentials_path() -> str | None:
         """Search for Anthropic credentials file using registry rules."""
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
             return None
@@ -169,7 +170,7 @@ class CredentialProvider:
         return None
 
     @staticmethod
-    def get_chatgpt_credentials_path() -> Optional[str]:
+    def get_chatgpt_credentials_path() -> str | None:
         """Search for ChatGPT credentials file using registry rules."""
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
             return None
@@ -184,7 +185,7 @@ class CredentialProvider:
         return None
 
     @staticmethod
-    def get_chatgpt_data() -> Dict[str, str]:
+    def get_chatgpt_data() -> dict[str, str]:
         """Get full ChatGPT OAuth data using registry rules."""
         creds = CredentialProvider.get_credentials("chatgpt")
         # Ensure compatibility with existing keys
@@ -196,7 +197,7 @@ class CredentialProvider:
     def get_chatgpt_token() -> str:
         return CredentialProvider.get_chatgpt_data().get("access_token", "")
 
-    _claude_token_cache: Optional[str] = None
+    _claude_token_cache: str | None = None
 
     @classmethod
     def get_claude_token(cls) -> str:

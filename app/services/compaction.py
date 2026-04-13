@@ -1,9 +1,10 @@
 # app/services/compaction.py
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
+
 from sqlmodel import Session, select
+
 from app.models.db import UsageSnapshot
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ def compact_snapshots(session: Session) -> dict:
 
     Returns: {"hourly_compacted": N, "daily_compacted": N}
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     hourly_threshold = now - timedelta(days=_HOURLY_DAYS)
     daily_threshold = now - timedelta(days=_DAILY_DAYS)
 
@@ -46,7 +47,7 @@ def compact_snapshots(session: Session) -> dict:
 
 def _compact_range(
     session: Session,
-    start: Optional[datetime],
+    start: datetime | None,
     end: datetime,
     bucket_fn,
 ) -> int:

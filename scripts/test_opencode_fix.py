@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, "/home/bjoern/projects/ai-usage-tracker")
 
 import httpx
+
 from app.services.collectors.opencode import OpenCodeCollector
 
 

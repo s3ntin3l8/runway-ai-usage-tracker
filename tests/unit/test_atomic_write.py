@@ -1,9 +1,8 @@
-import unittest
-import os
 import json
-import tempfile
+import os
 import sys
-from pathlib import Path
+import tempfile
+import unittest
 
 # Add app to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -27,7 +26,7 @@ class TestAtomicWrite(unittest.TestCase):
         safe_write_json(self.test_file, data)
 
         self.assertTrue(os.path.exists(self.test_file))
-        with open(self.test_file, "r") as f:
+        with open(self.test_file) as f:
             read_data = json.load(f)
         self.assertEqual(data, read_data)
 
@@ -37,7 +36,7 @@ class TestAtomicWrite(unittest.TestCase):
         safe_write_json(deep_file, data)
 
         self.assertTrue(os.path.exists(deep_file))
-        with open(deep_file, "r") as f:
+        with open(deep_file) as f:
             read_data = json.load(f)
         self.assertEqual(data, read_data)
 

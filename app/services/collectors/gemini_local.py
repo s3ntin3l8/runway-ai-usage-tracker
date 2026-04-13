@@ -1,10 +1,12 @@
-import os
-import json
 import asyncio
+import json
 import logging
-from typing import List, Dict, Any, Optional
+import os
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
-from datetime import datetime, timezone
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -12,7 +14,7 @@ logger = logging.getLogger(__name__)
 class GeminiLocalMixin:
     """Mixin for Gemini local session log parsing."""
     
-    async def _collect_via_logs(self, client: Optional[httpx.AsyncClient] = None) -> List[Dict[str, Any]]:
+    async def _collect_via_logs(self, client: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
         """Fallback: Parse Gemini usage from local session logs."""
         potential_dirs = [
             settings.GEMINI_SESSIONS_DIR,
@@ -34,7 +36,7 @@ class GeminiLocalMixin:
             def process_logs(fpaths):
                 total = 0
                 for fpath in fpaths:
-                    with open(fpath, "r") as f:
+                    with open(fpath) as f:
                         for line in f:
                             u = json.loads(line).get("usage", {})
                             total += u.get("prompt_tokens", 0) + u.get("completion_tokens", 0)
@@ -52,7 +54,7 @@ class GeminiLocalMixin:
                 "detail": "Fallback: Local logs",
                 "data_source": "local",
                 "usage_url": "https://one.google.com/settings",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }]
         except Exception:
             return []

@@ -1,9 +1,12 @@
-import os
 import json
+import os
+from unittest.mock import MagicMock, mock_open, patch
+
 import yaml
-from unittest.mock import patch, mock_open, MagicMock
-from app.services.credential_provider import CredentialProvider
+
 from app.core.config import settings
+from app.services.credential_provider import CredentialProvider
+
 
 def test_github_token_env():
     """Test discovering GitHub token from environment."""

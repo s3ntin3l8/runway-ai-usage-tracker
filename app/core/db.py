@@ -1,7 +1,9 @@
-from sqlmodel import SQLModel, create_engine, Session
-from app.core.config import settings
-import os
 import logging
+import os
+
+from sqlmodel import Session, SQLModel, create_engine
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ engine = create_engine(
 def init_db():
     """Create database tables if they don't exist."""
     # Import all models here so they are registered with SQLModel.metadata
-    from app.models.db import UsageSnapshot, SidecarRegistry, WebhookConfig  # noqa: F401
+    from app.models.db import SidecarRegistry, UsageSnapshot, WebhookConfig  # noqa: F401
     
     try:
         SQLModel.metadata.create_all(engine)

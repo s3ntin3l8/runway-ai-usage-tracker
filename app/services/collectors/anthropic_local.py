@@ -7,16 +7,17 @@ Handles:
 """
 
 import asyncio
-import os
-import re
 import glob
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+import os
+import re
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
 
-from app.core.config import settings, get_platform_config_dir
+from app.core.config import get_platform_config_dir, settings
 from app.core.utils import PaceCalculator, human_delta
 
 logger = logging.getLogger(__name__)
@@ -30,13 +31,13 @@ class AnthropicLocalMixin:
 
     # ──────────────────────────────── CLI PTY strategy ───────────────────────
 
-    async def _strategy_cli_pty(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_cli_pty(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Third tier: CLI PTY fallback."""
         if not settings.LOCAL_COLLECTOR_ENABLED:
             return []
         return await self._collect_via_cli_pty()
 
-    async def _collect_via_cli_pty(self) -> List[Dict[str, Any]]:
+    async def _collect_via_cli_pty(self) -> list[dict[str, Any]]:
         """
         Fetch Claude usage by running the 'claude' CLI and parsing '/usage' output.
         Uses subprocess communicate() to send /usage and capture the result.
@@ -77,10 +78,10 @@ class AnthropicLocalMixin:
         ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         return ansi_escape.sub("", text)
 
-    def _parse_cli_usage_output(self, output: str) -> List[Dict[str, Any]]:
+    def _parse_cli_usage_output(self, output: str) -> list[dict[str, Any]]:
         """Parse the text output of 'claude /usage' into quota cards."""
         results = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Matches: "Current session: 42% used (resets in 2h 15m)"
         usage_re = re.compile(
@@ -139,20 +140,20 @@ class AnthropicLocalMixin:
 
     # ──────────────────────────────── Local log strategy ─────────────────────
 
-    async def _strategy_local_enhanced(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_local_enhanced(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fourth tier: Enhanced local logs fallback."""
         if not settings.LOCAL_COLLECTOR_ENABLED:
             return []
         return await self._get_claude_local_enhanced()
 
-    async def _get_claude_local_enhanced(self) -> List[Dict[str, Any]]:
+    async def _get_claude_local_enhanced(self) -> list[dict[str, Any]]:
         """
         Offloads blocking file I/O to a thread to avoid blocking the event loop.
         See _get_claude_local_enhanced_sync for implementation details.
         """
         return await asyncio.to_thread(self._get_claude_local_enhanced_sync)
 
-    def _get_claude_local_enhanced_sync(self) -> List[Dict[str, Any]]:
+    def _get_claude_local_enhanced_sync(self) -> list[dict[str, Any]]:
         """
         Synchronous implementation of local log parsing.
         Called via asyncio.to_thread — must not be awaited directly.
@@ -181,7 +182,7 @@ class AnthropicLocalMixin:
         tier = None
         try:
             if os.path.exists(self._credentials_path):
-                with open(self._credentials_path, "r") as f:
+                with open(self._credentials_path) as f:
                     data = json.load(f)
                     plan = data.get("account", {}).get("plan", "").lower()
                     if plan:
@@ -190,15 +191,15 @@ class AnthropicLocalMixin:
             logger.debug(f"Could not read tier from credentials: {e}")
 
         limit = settings.CLAUDE_FREE_LIMIT if tier == "Free" else settings.CLAUDE_PRO_LIMIT
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
+        cutoff = datetime.now(UTC) - timedelta(hours=5)
 
         total_tokens = 0
         seen_messages: set = set()  # Deduplicate by (message_id, request_id)
-        oldest: Optional[datetime] = None
+        oldest: datetime | None = None
 
         for fpath in all_files:
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
+                with open(fpath, encoding="utf-8") as f:
                     for line in f:
                         try:
                             entry = json.loads(line)
@@ -267,10 +268,10 @@ class AnthropicLocalMixin:
             "reset_at": reset_at.isoformat() if reset_at else None,
             "data_source": "local",
             "usage_url": "https://claude.ai/settings/usage",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }]
 
-    def _get_config_dirs(self) -> List[str]:
+    def _get_config_dirs(self) -> list[str]:
         """
         Get list of Claude config directories to scan.
 

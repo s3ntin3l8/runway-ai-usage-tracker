@@ -9,19 +9,18 @@ Tests cover:
 - Rate limiting and timeout handling
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import json
-from datetime import datetime, timezone
-import httpx
-import hmac
 import hashlib
+import hmac
+import json
 import time
-from app.core.config import settings
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from app.core.config import settings
 from app.main import app
-from app.services.collector_manager import manager
 from app.models.schemas import LimitCard
+from app.services.collector_manager import manager
 
 
 @pytest.fixture
@@ -156,7 +155,6 @@ class TestIngestEndpoint:
     @staticmethod
     def _make_secure_settings():
         """Create mock settings that pass security checks for ingest tests."""
-        from unittest.mock import PropertyMock
 
         mock = MagicMock()
         mock.INGEST_API_KEY = "test-secret-key-for-ingest-tests"
@@ -165,8 +163,9 @@ class TestIngestEndpoint:
 
     async def test_ingest_success(self):
         """Test successful metric ingestion."""
+        from unittest.mock import patch
+
         from fastapi.testclient import TestClient
-        from unittest.mock import patch, MagicMock
 
         test_client = TestClient(app)
         test_key = "test-secret-key-for-ingest-tests"
@@ -237,8 +236,9 @@ class TestIngestEndpoint:
 
     async def test_ingest_structured_metadata_extraction(self):
         """Verify that tokens are extracted from structured metadata."""
+        from unittest.mock import patch
+
         from fastapi.testclient import TestClient
-        from unittest.mock import patch, MagicMock
 
         test_client = TestClient(app)
         test_key = "test-secret-key-for-ingest-tests"
@@ -335,6 +335,7 @@ class TestIngestEndpoint:
     async def test_ingest_rejects_when_api_key_is_default(self):
         """C3: ingest endpoint must return 503 when INGEST_API_KEY is the default insecure value."""
         from fastapi.testclient import TestClient
+
         from app.core.config import DEFAULT_INGEST_API_KEY
 
         test_client = TestClient(app)
@@ -382,7 +383,6 @@ class TestResponseValidation:
     @pytest.mark.asyncio
     async def test_limit_card_schema_validation(self):
         """Test that all responses conform to LimitCard schema."""
-        from app.models.schemas import LimitCard
 
         valid_card = {
             "service_name": "Claude Pro",
@@ -403,7 +403,6 @@ class TestResponseValidation:
     @pytest.mark.asyncio
     async def test_limit_card_missing_required_field(self):
         """Test that cards with missing required fields are rejected."""
-        from app.models.schemas import LimitCard
         from pydantic import ValidationError
 
         invalid_card = {
@@ -421,14 +420,12 @@ class TestErrorHandling:
 
     async def test_malformed_collector_response(self):
         """Test graceful handling of malformed collector responses."""
-        from unittest.mock import AsyncMock, patch
 
         # This test needs revision to properly patch the manager's collectors
         pass
 
     async def test_collector_exception_isolation(self):
         """Test that one collector exception doesn't crash the orchestrator."""
-        from unittest.mock import AsyncMock, patch
 
         # This test needs revision to properly patch the manager's collectors
         pass

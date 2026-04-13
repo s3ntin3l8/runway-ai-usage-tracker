@@ -18,14 +18,15 @@ Benefits:
 - Per-collector configurable TTL and error thresholds
 """
 
-import time
-import logging
 import copy
-from typing import List, Dict, Any, Optional
+import logging
+import time
+from typing import Any
+
 import httpx
 
-from app.services.collectors.base import BaseCollector
 from app.core.utils import error_card
+from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +72,11 @@ class SmartCollector:
         self.error_retry_delay = error_retry_delay
 
         # State tracking
-        self.last_result: Optional[List[Dict[str, Any]]] = None
-        self.last_success_time: Optional[float] = None
-        self.last_fetch_time: Optional[float] = None
+        self.last_result: list[dict[str, Any]] | None = None
+        self.last_success_time: float | None = None
+        self.last_fetch_time: float | None = None
         self.consecutive_errors: int = 0
-        self.last_error_message: Optional[str] = None
+        self.last_error_message: str | None = None
         self.cache_age_seconds: float = 0.0
 
     def _should_use_cache(self) -> bool:
@@ -93,7 +94,8 @@ class SmartCollector:
         if self.last_success_time is None:
             return False
 
-        age = time.time() - self.last_success_time
+        last_success = self.last_success_time or 0.0
+        age = time.time() - last_success
 
         # If error threshold exceeded, force fresh fetch attempt
         if self.consecutive_errors >= self.error_threshold:
@@ -130,7 +132,7 @@ class SmartCollector:
         time_since_last_fetch = time.time() - self.last_fetch_time
         return time_since_last_fetch >= self.error_retry_delay
 
-    def _mark_success(self, result: List[Dict[str, Any]]) -> None:
+    def _mark_success(self, result: list[dict[str, Any]]) -> None:
         """Record successful fetch."""
         self.last_result = result
         self.last_success_time = time.time()
@@ -158,7 +160,7 @@ class SmartCollector:
             f"(error {self.consecutive_errors}/{self.error_threshold}): {error}"
         )
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
         Intelligently fetch data with differential fetching strategy.
 
@@ -178,11 +180,12 @@ class SmartCollector:
             List[Dict[str, Any]]: Fresh data, cached data, or error card
         """
         # Fast path: Return cached data if fresh
-        if self._should_use_cache():
+        if self._should_use_cache() and self.last_result is not None:
             return self._tag_as_cached(self.last_result)
 
         # Don't hammer the API during outages
         if not self._should_retry_after_error():
+            last_fetch = self.last_fetch_time or 0.0
             logger.debug(
                 f"{self.collector_name}: Still in retry delay "
                 f"({self.error_retry_delay}s)"
@@ -193,7 +196,7 @@ class SmartCollector:
                 error_card(
                     self.collector_name,
                     "⏳",
-                    f"Retry in {self.error_retry_delay - (time.time() - self.last_fetch_time):.0f}s",
+                    f"Retry in {self.error_retry_delay - (time.time() - last_fetch):.0f}s",
                     error_type="rate_limited",
                 )
             ]
@@ -209,19 +212,18 @@ class SmartCollector:
                     # logger.info(f"DEBUG CARD: {r['service_name']} source={r.get('data_source')}")
                 self._mark_success(result)
                 return copy.deepcopy(result)
-            else:
-                # Empty result without error
-                self._mark_failure(Exception("Empty result from collector"))
-                if self.last_result:
-                    return self._tag_as_cached(self.last_result)
-                return [
-                    error_card(
-                        self.collector_name,
-                        "❌",
-                        "No data available",
-                        error_type="parse_error",
-                    )
-                ]
+            # Empty result without error
+            self._mark_failure(Exception("Empty result from collector"))
+            if self.last_result:
+                return self._tag_as_cached(self.last_result)
+            return [
+                error_card(
+                    self.collector_name,
+                    "❌",
+                    "No data available",
+                    error_type="parse_error",
+                )
+            ]
 
         except Exception as e:
             self._mark_failure(e)
@@ -244,7 +246,7 @@ class SmartCollector:
                 )
             ]
 
-    def _tag_as_cached(self, result: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _tag_as_cached(self, result: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Add [Cached X seconds ago] tag to detail field.
 
@@ -254,7 +256,8 @@ class SmartCollector:
         Returns:
             Result with updated detail field including cache age
         """
-        age = time.time() - self.last_success_time
+        last_success = self.last_success_time or 0.0
+        age = time.time() - last_success
         age_str = f"{age:.0f}s" if age < 60 else f"{age/60:.1f}m"
 
         tagged = []
@@ -266,7 +269,7 @@ class SmartCollector:
             tagged.append(card_copy)
 
         return tagged
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get internal state statistics for monitoring/debugging.
 

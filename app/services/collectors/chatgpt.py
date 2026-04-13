@@ -4,16 +4,17 @@ ChatGPT Codex quota collector orchestrating API and log fallback strategies.
 
 import logging
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import Any
+
 import httpx
 
 from app.core.utils import error_card
+from app.services.collectors.base import BaseCollector
+from app.services.collectors.chatgpt_api import ChatGPTApiMixin
 
 # Mixins
 from app.services.collectors.chatgpt_auth import ChatGPTAuthMixin
-from app.services.collectors.chatgpt_api import ChatGPTApiMixin
 from app.services.collectors.chatgpt_local import ChatGPTLocalMixin
-from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class ChatGPTCollector(
     PROVIDER_ID = "chatgpt"
     DEFAULT_WINDOW_TYPE = "daily"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
         super().__init__(account_id=account_id, account_label=account_label)
         
@@ -41,14 +42,14 @@ class ChatGPTCollector(
         self._refreshed_token_expiry = None
         self._device_id = str(uuid.uuid4())
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for ChatGPT."""
         return [
             self._collect_via_cli_rpc,
             self._strategy_local_logs,
         ]
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Web API / OAuth strategy."""
         auth = await self._get_auth_data(client)
         token = auth.get("token")
@@ -65,7 +66,7 @@ class ChatGPTCollector(
             logger.debug(f"ChatGPT Web API failed: {e}")
         return []
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""
         return [
             error_card(

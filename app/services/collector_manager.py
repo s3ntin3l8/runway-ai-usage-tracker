@@ -7,31 +7,31 @@ Now supports multi-account dynamic spawning based on discovered tokens.
 """
 
 import asyncio
-import httpx
 import logging
 import os
 import platform
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
+
+import httpx
 
 from app.core.config import settings
-from app.services.token_cache import token_cache
-
 from app.services.collectors.anthropic import AnthropicCollector
+from app.services.collectors.antigravity import AntigravityCollector
+from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
-from app.services.collectors.chatgpt import ChatGPTCollector
-from app.services.collectors.antigravity import AntigravityCollector
-from app.services.collectors.opencode import OpenCodeCollector
-from app.services.collectors.zai_api import ZaiApiCollector
-from app.services.collectors.zai_plan import ZaiPlanCollector
 from app.services.collectors.kimi_api import KimiApiCollector
 from app.services.collectors.kimi_coding import KimiCodingCollector
-from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.ollama import OllamaCollector
-from app.services.smart_collector import SmartCollector
+from app.services.collectors.opencode import OpenCodeCollector
+from app.services.collectors.openrouter import OpenRouterCollector
+from app.services.collectors.zai_api import ZaiApiCollector
+from app.services.collectors.zai_plan import ZaiPlanCollector
 from app.services.external_metrics import external_metric_service
+from app.services.smart_collector import SmartCollector
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +66,14 @@ class CollectorManager:
         }
 
         # Active collectors keyed by "provider_id:account_id"
-        self.smart_collectors: Dict[str, SmartCollector] = {}
+        self.smart_collectors: dict[str, SmartCollector] = {}
         self._client = None
         self._keychain_warmed_up = False
         self._last_sync_time: float = 0.0
         self._collect_lock = asyncio.Lock()
-        self._collect_future: Optional[asyncio.Future] = None
+        self._collect_future: asyncio.Future | None = None
         # In-memory registry: latest snapshot of all cards (populated by poller + startup)
-        self._registry: List[Dict[str, Any]] = []
+        self._registry: list[dict[str, Any]] = []
         
         logger.info(
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
@@ -170,7 +170,7 @@ class CollectorManager:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
-    async def collect_all(self) -> List[Dict[str, Any]]:
+    async def collect_all(self) -> list[dict[str, Any]]:
         """
         Collect all limits across all active accounts.
 
@@ -205,7 +205,7 @@ class CollectorManager:
 
         return await future
 
-    async def _do_collect(self) -> List[Dict[str, Any]]:
+    async def _do_collect(self) -> list[dict[str, Any]]:
         """Execute one collection cycle across all active collectors."""
         # Ensure we have collectors for all current accounts
         await self._sync_collectors()
@@ -225,7 +225,7 @@ class CollectorManager:
             results = await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=True), timeout=45.0
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Global collector timeout reached. Collection aborted.")
             results = []
 
@@ -247,11 +247,11 @@ class CollectorManager:
         self._registry = flattened
         return flattened
 
-    def get_registry_snapshot(self) -> List[Dict[str, Any]]:
+    def get_registry_snapshot(self) -> list[dict[str, Any]]:
         """Return current in-memory card registry. Never blocks."""
         return list(self._registry)  # shallow copy prevents external mutation
 
-    def get_collector_stats(self) -> Dict[str, Any]:
+    def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""
         return {
             "collectors": [
@@ -259,7 +259,7 @@ class CollectorManager:
             ]
         }
 
-    async def reset_collector(self, provider_id: str, account_id: Optional[str] = None):
+    async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""
         target_prefix = f"{provider_id}:"
         

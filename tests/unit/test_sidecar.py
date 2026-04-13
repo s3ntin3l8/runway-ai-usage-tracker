@@ -1,12 +1,12 @@
 """Unit tests for sidecar critical bug fixes."""
 
-import sys
-import os
 import json
+import sys
 import time
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
 
 # Import sidecar as a module (it lives in scripts/, not a package)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))

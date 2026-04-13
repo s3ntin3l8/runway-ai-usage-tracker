@@ -1,18 +1,18 @@
 """Proactive OAuth token refresh for supported providers."""
-import httpx
 import logging
-from typing import Dict
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
 # Known OAuth token endpoints per provider
-_REFRESH_ENDPOINTS: Dict[str, str] = {
+_REFRESH_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://platform.claude.com/v1/oauth/token",
     "gemini": "https://oauth2.googleapis.com/token",
 }
 
 
-async def refresh_oauth_token(provider: str, tokens: Dict[str, str]) -> Dict[str, str]:
+async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str, str]:
     """
     Attempt to exchange a refresh_token for new access credentials.
 
@@ -27,7 +27,7 @@ async def refresh_oauth_token(provider: str, tokens: Dict[str, str]) -> Dict[str
     if not endpoint:
         raise ValueError(f"No refresh endpoint known for provider: {provider}")
 
-    payload: Dict[str, str] = {
+    payload: dict[str, str] = {
         "grant_type": "refresh_token",
         "refresh_token": tokens["refresh_token"],
     }

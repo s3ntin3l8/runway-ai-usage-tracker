@@ -1,9 +1,11 @@
-import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
-import httpx
 import asyncio
-from app.core.utils import PaceCalculator, human_delta, http_request_with_retry
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+import httpx
+
+from app.core.utils import PaceCalculator, http_request_with_retry, human_delta
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -12,8 +14,8 @@ class ChatGPTApiMixin:
     """Mixin for ChatGPT Web API collection."""
     
     async def _fetch_api_data(
-        self, client: httpx.AsyncClient, token: str, account_id: Optional[str], source: str
-    ) -> List[Dict[str, Any]]:
+        self, client: httpx.AsyncClient, token: str, account_id: str | None, source: str
+    ) -> list[dict[str, Any]]:
         """Fetch from ChatGPT backend."""
         headers = {
             "Authorization": f"Bearer {token}",
@@ -25,7 +27,7 @@ class ChatGPTApiMixin:
         if account_id:
             headers["ChatGPT-Account-Id"] = account_id
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         usage_resp = await http_request_with_retry(client, "GET", "https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
         
         if usage_resp.status_code == 200:
@@ -42,7 +44,7 @@ class ChatGPTApiMixin:
             if primary:
                 pct = primary.get("used_percent", 0.0)
                 reset_ts = primary.get("reset_at")
-                reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+                reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
 
                 return [{
                     "service_name": "ChatGPT Codex",

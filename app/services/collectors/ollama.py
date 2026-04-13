@@ -8,15 +8,17 @@ Collection Strategy:
    - Extracts plan name, account email, usage percentages, and reset timestamps.
 """
 
-import re
 import logging
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+import re
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
-from app.services.collectors.base import BaseCollector
+
 from app.core.browser_cookies import get_session_cookies
-from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
 from app.core.config import settings
+from app.core.utils import PaceCalculator, error_card, http_request_with_retry, human_delta
+from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +27,12 @@ class OllamaCollector(BaseCollector):
     PROVIDER_ID = "ollama"
     DEFAULT_WINDOW_TYPE = "session"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
 
-    def _get_cookie_header(self) -> Optional[str]:
+    def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
         # 1. Check environment variable first
         env_token = settings.OLLAMA_SESSION_TOKEN
@@ -66,7 +68,7 @@ class OllamaCollector(BaseCollector):
         
         return None
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Scrape Ollama settings page."""
         cookie_header = self._get_cookie_header()
         if not cookie_header:
@@ -102,7 +104,7 @@ class OllamaCollector(BaseCollector):
             )
             if resp.status_code == 200:
                 return self._parse_html(resp.text)
-            elif resp.status_code in (401, 403):
+            if resp.status_code in (401, 403):
                 logger.debug("Ollama auth failed (401/403)")
             else:
                 logger.debug(f"Ollama fetch failed with status {resp.status_code} at {resp.url}")
@@ -111,10 +113,10 @@ class OllamaCollector(BaseCollector):
 
         return []
 
-    def _parse_html(self, html: str) -> List[Dict[str, Any]]:
+    def _parse_html(self, html: str) -> list[dict[str, Any]]:
         """Parse the settings page HTML for usage data."""
         cards = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Extract Plan Name
         plan_name = None
@@ -140,7 +142,7 @@ class OllamaCollector(BaseCollector):
 
         return cards
 
-    def _get_usage_block(self, labels: List[str], html: str) -> Optional[Dict[str, Any]]:
+    def _get_usage_block(self, labels: list[str], html: str) -> dict[str, Any] | None:
         for label in labels:
             idx = html.find(label)
             if idx == -1:
@@ -178,7 +180,7 @@ class OllamaCollector(BaseCollector):
             return {"used_percent": pct, "resets_at": resets_at}
         return None
 
-    def _make_card(self, service_name: str, block: Dict[str, Any], plan: Optional[str], email: Optional[str], now: datetime) -> Dict[str, Any]:
+    def _make_card(self, service_name: str, block: dict[str, Any], plan: str | None, email: str | None, now: datetime) -> dict[str, Any]:
         pct = block["used_percent"]
         resets_at = block["resets_at"]
         
@@ -207,10 +209,10 @@ class OllamaCollector(BaseCollector):
             "updated_at": now.isoformat(),
         }
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         return []
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         return [
             error_card(
                 "Ollama Cloud", "🦙", "Not logged in or parsing failed", error_type="missing_config"

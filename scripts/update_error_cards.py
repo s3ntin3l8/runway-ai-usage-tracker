@@ -1,6 +1,4 @@
-import os
 import glob
-import ast
 
 
 def determine_error_type(msg):
@@ -45,7 +43,7 @@ def determine_error_type(msg):
 
 
 for filepath in glob.glob("app/services/**/*.py", recursive=True):
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         lines = f.readlines()
 
     modified = False

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-import os
-import sys
-import sqlite3
-import platform
-import shutil
-import tempfile
-import logging
-import json
 import base64
 import hashlib
+import logging
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
 from pathlib import Path
+
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 # Setup logging
@@ -22,6 +21,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from app.core.keychain import get_keychain_secret
+
 
 def brute_force_decrypt(encrypted_value, password_raw):
     """Try all known variations of Chrome macOS decryption."""

@@ -1,7 +1,8 @@
 """Tests for the registry-backed /limits endpoint (Phase 4C)."""
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, AsyncMock
 
 from app.main import app
 from app.services.collector_manager import manager
@@ -51,17 +52,16 @@ def test_limits_fallback_when_registry_empty(client):
             "detail": "Fresh detail",
         }
     ]
-    with patch.object(manager, "_registry", []):
-        with patch.object(
-            manager, "collect_all", new_callable=AsyncMock, return_value=fresh_cards
-        ) as mock_collect:
-            response = client.get("/api/v1/usage/limits")
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["limits"]) == 1
-            assert data["limits"][0]["service_name"] == "Fresh Service"
-            # collect_all should have been called as fallback
-            mock_collect.assert_called_once()
+    with patch.object(manager, "_registry", []), patch.object(
+        manager, "collect_all", new_callable=AsyncMock, return_value=fresh_cards
+    ) as mock_collect:
+        response = client.get("/api/v1/usage/limits")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["limits"]) == 1
+        assert data["limits"][0]["service_name"] == "Fresh Service"
+        # collect_all should have been called as fallback
+        mock_collect.assert_called_once()
 
 
 def test_get_registry_snapshot_returns_copy():

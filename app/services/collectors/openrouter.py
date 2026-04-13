@@ -1,10 +1,12 @@
 import logging
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
-from typing import List, Dict, Any, Optional
-from app.services.collectors.base import BaseCollector
+
 from app.core.config import settings
+from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +19,10 @@ class OpenRouterCollector(BaseCollector):
     PROVIDER_ID = "openrouter"
     DEFAULT_WINDOW_TYPE = "monthly"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
 
-    async def _get_api_key(self) -> Optional[str]:
+    async def _get_api_key(self) -> str | None:
         """Discovery API key from cache or settings."""
         # 1. Try account-specific token from cache
         if self.account_id:
@@ -31,7 +33,7 @@ class OpenRouterCollector(BaseCollector):
         # 2. Fallback to settings
         return settings.OPENROUTER_API_KEY
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect usage data from OpenRouter via API."""
         api_key = await self._get_api_key()
         if not api_key:
@@ -71,7 +73,7 @@ class OpenRouterCollector(BaseCollector):
                         "limit_value": total_credits,
                         "unit_type": "currency",
                         "data_source": "api",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
                     }]
             else:
                 logger.error(f"OpenRouter API error (HTTP {resp.status_code}): {resp.text}")
@@ -81,11 +83,11 @@ class OpenRouterCollector(BaseCollector):
 
         return []
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return an ordered list of fallback async methods. Currently none for OpenRouter."""
         return []
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return the ultimate error card(s) when all strategies fail."""
         from app.core.utils import error_card
         

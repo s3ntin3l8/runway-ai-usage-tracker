@@ -11,15 +11,14 @@ decryption key to Chrome's own app bundle. This script will detect ABE and repor
 actionable workarounds if standard decryption fails.
 """
 
+import json
+import logging
 import os
-import sys
-import sqlite3
 import platform
 import shutil
+import sqlite3
+import sys
 import tempfile
-import logging
-import json
-import glob
 from pathlib import Path
 
 # Setup logging to output directly to console
@@ -37,8 +36,8 @@ if project_root not in sys.path:
 
 try:
     from app.core.browser_cookies import (
-        get_all_browser_cookies_paths,
         decrypt_chromium_cookie,
+        get_all_browser_cookies_paths,
     )
     from app.core.keychain import get_keychain_secret
 except ImportError as e:
@@ -131,7 +130,7 @@ def debug_chrome_extraction():
         if local_state_path.exists():
             logger.info(f"Found 'Local State' file at {local_state_path}")
             try:
-                with open(local_state_path, "r") as f:
+                with open(local_state_path) as f:
                     ls_data = json.load(f)
                     has_crypt = "os_crypt" in ls_data
                     logger.debug(f"Local State contains 'os_crypt' section: {has_crypt}")
@@ -183,8 +182,7 @@ def debug_chrome_extraction():
                     logger.info(f"✅ SUCCESS: Successfully decrypted cookie '{name}' (prefix: {prefix!r}) for '{host_key}'")
                     decryption_success = True
                     break
-                else:
-                    logger.debug(f"Failed to decrypt cookie '{name}' (prefix: {prefix!r}) for '{host_key}'")
+                logger.debug(f"Failed to decrypt cookie '{name}' (prefix: {prefix!r}) for '{host_key}'")
                     
             if decryption_success:
                 success_count += 1

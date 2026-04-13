@@ -8,20 +8,19 @@ Encryption Support:
 - Safari: Binary encoding (not encrypted).
 """
 
+import logging
 import os
-import sys
-import sqlite3
 import platform
 import shutil
-import tempfile
+import sqlite3
 import struct
-import glob
-import logging
+import tempfile
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any
+
 from app.core.config import settings
-from app.core.registry import registry
 from app.core.keychain import get_keychain_secret
+from app.core.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ _abe_warning_logged: bool = False
 # --- Chromium-based (Chrome, Edge) decryption ---
 
 
-def decrypt_macos_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
+def decrypt_macos_cookie(encrypted_value: bytes, db_path: Path | None = None) -> str | None:
     """Decrypt a cookie value using macOS Keychain."""
     global _abe_warning_logged
     try:
@@ -45,6 +44,7 @@ def decrypt_macos_cookie(encrypted_value: bytes, db_path: Optional[Path] = None)
             return None
         if encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11"):
             import hashlib
+
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
             salt = b"saltysalt"
@@ -79,12 +79,12 @@ def decrypt_macos_cookie(encrypted_value: bytes, db_path: Optional[Path] = None)
         return None
 
 
-def _get_windows_master_key(db_path: Path) -> Optional[bytes]:
+def _get_windows_master_key(db_path: Path) -> bytes | None:
     """Extract and decrypt the master key for Windows Chrome/Edge."""
     try:
-        import json
         import base64
         import ctypes
+        import json
         from ctypes import wintypes
 
         class DATA_BLOB(ctypes.Structure):
@@ -108,24 +108,24 @@ def _get_windows_master_key(db_path: Path) -> Optional[bytes]:
         if not local_state_path:
             return None
 
-        with open(local_state_path, "r", encoding="utf-8") as f:
+        with open(local_state_path, encoding="utf-8") as f:
             local_state = json.load(f)
         
         encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
         # Prefix "DPAPI" is 5 bytes
         encrypted_key = encrypted_key[5:]
 
-        crypt32 = ctypes.windll.crypt32
+        crypt32 = ctypes.windll.crypt32  # type: ignore
         blob_in = DATA_BLOB()
         blob_in.cbData = len(encrypted_key)
-        blob_in.pbData = ctypes.cast(encrypted_key, ctypes.POINTER(wintypes.BYTE))
+        blob_in.pbData = ctypes.cast(encrypted_key, ctypes.POINTER(wintypes.BYTE))  # type: ignore
         blob_out = DATA_BLOB()
 
         if crypt32.CryptUnprotectData(
             ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
         ):
             master_key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+            ctypes.windll.kernel32.LocalFree(blob_out.pbData)  # type: ignore
             return master_key
         return None
     except Exception as e:
@@ -133,7 +133,7 @@ def _get_windows_master_key(db_path: Path) -> Optional[bytes]:
         return None
 
 
-def decrypt_windows_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
+def decrypt_windows_cookie(encrypted_value: bytes, db_path: Path | None = None) -> str | None:
     """Decrypt a cookie value using Windows DPAPI or AES-GCM with Master Key."""
     if not encrypted_value:
         return None
@@ -165,24 +165,24 @@ def decrypt_windows_cookie(encrypted_value: bytes, db_path: Optional[Path] = Non
                 ("pbData", ctypes.POINTER(wintypes.BYTE)),
             ]
 
-        crypt32 = ctypes.windll.crypt32
+        crypt32 = ctypes.windll.crypt32  # type: ignore
         blob_in = DATA_BLOB()
         blob_in.cbData = len(encrypted_value)
-        blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(wintypes.BYTE))
+        blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(wintypes.BYTE))  # type: ignore
         blob_out = DATA_BLOB()
 
         if crypt32.CryptUnprotectData(
             ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
         ):
             buffer = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+            ctypes.windll.kernel32.LocalFree(blob_out.pbData)  # type: ignore
             return buffer.decode("utf-8")
     except Exception:
         pass
     return None
 
 
-def decrypt_linux_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
+def decrypt_linux_cookie(encrypted_value: bytes, db_path: Path | None = None) -> str | None:
     """Decrypt a cookie value on Linux (Chromium)."""
     try:
         try:
@@ -211,6 +211,7 @@ def decrypt_linux_cookie(encrypted_value: bytes, db_path: Optional[Path] = None)
                 encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11")
             ):
                 import hashlib
+
                 from cryptography.hazmat.primitives.ciphers import (
                     Cipher,
                     algorithms,
@@ -234,15 +235,14 @@ def decrypt_linux_cookie(encrypted_value: bytes, db_path: Optional[Path] = None)
         return None
 
 
-def decrypt_chromium_cookie(encrypted_value: bytes, db_path: Optional[Path] = None) -> Optional[str]:
+def decrypt_chromium_cookie(encrypted_value: bytes, db_path: Path | None = None) -> str | None:
     """Decrypt a Chromium-based cookie value based on the current platform."""
     system = platform.system()
     if system == "Darwin":
         return decrypt_macos_cookie(encrypted_value, db_path)
-    elif system == "Windows":
+    if system == "Windows":
         return decrypt_windows_cookie(encrypted_value, db_path)
-    else:
-        return decrypt_linux_cookie(encrypted_value, db_path)
+    return decrypt_linux_cookie(encrypted_value, db_path)
 
 
 # --- Safari Binary Cookies Parser ---
@@ -252,7 +252,7 @@ class SafariBinaryCookieParser:
     """Minimal parser for Safari's Cookies.binarycookies format."""
 
     @staticmethod
-    def parse_file(file_path: Path) -> List[Dict[str, Any]]:
+    def parse_file(file_path: Path) -> list[dict[str, Any]]:
         cookies = []
         try:
             with open(file_path, "rb") as f:
@@ -276,7 +276,7 @@ class SafariBinaryCookieParser:
         return cookies
 
     @staticmethod
-    def parse_page(data: bytes) -> List[Dict[str, Any]]:
+    def parse_page(data: bytes) -> list[dict[str, Any]]:
         page_cookies = []
         if len(data) < 12:
             return []
@@ -319,7 +319,7 @@ class SafariBinaryCookieParser:
 # --- Path Discovery ---
 
 
-def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
+def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
     """Get all potential paths to Cookies databases for all supported browsers.
     Respects BROWSER_PREFERENCE from config.
     """
@@ -472,13 +472,13 @@ def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
     return ordered_results
 
 
-def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]:
+def get_session_cookie(domain_substring: str, cookie_name: str) -> str | None:
     """Search for a single session cookie (legacy wrapper)."""
     cookies = get_session_cookies(domain_substring, cookie_name)
     return cookies[0] if cookies else None
 
 
-def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: bool = True) -> List[str]:
+def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: bool = True) -> list[str]:
     """
     Search for one or more session cookies (supporting chunked NextAuth tokens).
 
@@ -552,7 +552,7 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
                     # Sort by name
                     rows.sort(key=lambda x: x[0])
                     results = []
-                    for name, enc_val in rows:
+                    for _name, enc_val in rows:
                         decrypted = decrypt_chromium_cookie(enc_val, path)
                         if decrypted:
                             results.append(decrypted)
@@ -561,15 +561,14 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
                         logger.info(f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}")
                         conn.close()
                         return results
-                    else:
-                        # Rows existed but none could be decrypted — almost certainly ABE.
-                        logger.warning(
-                            f"⚠️  Found {len(rows)} '{cookie_name}' cookie(s) in {browser_name} "
-                            f"but could not decrypt them. "
-                            f"App-Bound Encryption (ABE) is likely blocking access on Chrome/Edge 127+. "
-                            f"Try Safari instead, or set credentials via environment variables. "
-                            f"See: docs/troubleshooting.md"
-                        )
+                    # Rows existed but none could be decrypted — almost certainly ABE.
+                    logger.warning(
+                        f"⚠️  Found {len(rows)} '{cookie_name}' cookie(s) in {browser_name} "
+                        f"but could not decrypt them. "
+                        f"App-Bound Encryption (ABE) is likely blocking access on Chrome/Edge 127+. "
+                        f"Try Safari instead, or set credentials via environment variables. "
+                        f"See: docs/troubleshooting.md"
+                    )
 
             elif b_type == "firefox":
                 query = "SELECT name, value FROM moz_cookies WHERE host LIKE ?"
@@ -608,7 +607,7 @@ def get_session_cookies(domain_substring: str, cookie_name: str, allow_prefix: b
 # --- Registry-aware functions ---
 
 
-def get_cookie_from_registry(provider_id: str, cookie_name: Optional[str] = None) -> Optional[str]:
+def get_cookie_from_registry(provider_id: str, cookie_name: str | None = None) -> str | None:
     """Extract cookie for a provider using rules from registry.json."""
     provider_config = registry.get_provider(provider_id)
     rules = provider_config.get("rules", [])
@@ -629,28 +628,28 @@ def get_cookie_from_registry(provider_id: str, cookie_name: Optional[str] = None
 # --- Legacy compatibility functions ---
 
 
-def get_opencode_session_cookie() -> Optional[str]:
+def get_opencode_session_cookie() -> str | None:
     return get_cookie_from_registry("opencode")
 
 
-def get_claude_session_cookie() -> Optional[str]:
+def get_claude_session_cookie() -> str | None:
     return get_cookie_from_registry("anthropic")
 
 
-def get_kimi_auth_cookie() -> Optional[str]:
+def get_kimi_auth_cookie() -> str | None:
     return get_cookie_from_registry("kimi", "kimi-auth")
 
 
-def get_chatgpt_session_token() -> Optional[str]:
+def get_chatgpt_session_token() -> str | None:
     """Extract ChatGPT session token from browser cookies."""
     return get_cookie_from_registry("chatgpt", "__Secure-next-auth.session-token")
 
 
-def get_chatgpt_device_id() -> Optional[str]:
+def get_chatgpt_device_id() -> str | None:
     """Extract ChatGPT device ID from browser cookies."""
     return get_session_cookie("chatgpt.com", "oai-device-id")
 
 
-def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
+def get_macos_keychain_token(service: str, account: str) -> str | None:
     """Fetch a token directly from macOS Keychain."""
     return get_keychain_secret(service, account)

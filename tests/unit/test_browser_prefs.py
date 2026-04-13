@@ -1,8 +1,8 @@
-import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import patch
+
 from app.core.browser_cookies import get_all_browser_cookies_paths
-from app.core.config import settings
+
 
 def test_browser_preference_ordering():
     # Mock Path.exists to return True for some paths

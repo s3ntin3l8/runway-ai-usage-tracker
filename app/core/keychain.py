@@ -1,19 +1,18 @@
-import subprocess
-import platform
-import threading
+import json
 import logging
 import os
-import json
+import platform
+import subprocess
+import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
 # Global cache for keychain secrets to avoid multiple macOS prompts during a session
 # We now also cache failures (None) to avoid prompt-spam in a single session
-_KEYCHAIN_CACHE: Dict[str, Optional[str]] = {}
+_KEYCHAIN_CACHE: dict[str, str | None] = {}
 _KEYCHAIN_LOCK = threading.Lock()
 
 def _get_backoff_file() -> Path:
@@ -30,14 +29,14 @@ def _is_in_backoff(service: str) -> bool:
         return False
     
     try:
-        with open(backoff_file, "r") as f:
+        with open(backoff_file) as f:
             backoffs = json.load(f)
         
         last_denied = backoffs.get(service)
         if last_denied:
             denied_dt = datetime.fromisoformat(last_denied)
             # 6-hour cooldown period (matches Swift logic)
-            if datetime.now(timezone.utc) < denied_dt + timedelta(hours=6):
+            if datetime.now(UTC) < denied_dt + timedelta(hours=6):
                 return True
     except Exception:
         pass
@@ -49,16 +48,16 @@ def _record_denial(service: str):
     try:
         backoffs = {}
         if backoff_file.exists():
-            with open(backoff_file, "r") as f:
+            with open(backoff_file) as f:
                 backoffs = json.load(f)
         
-        backoffs[service] = datetime.now(timezone.utc).isoformat()
+        backoffs[service] = datetime.now(UTC).isoformat()
         with open(backoff_file, "w") as f:
             json.dump(backoffs, f)
     except Exception:
         pass
 
-def get_keychain_secret(service: str, account: Optional[str] = None, force_refresh: bool = False) -> Optional[str]:
+def get_keychain_secret(service: str, account: str | None = None, force_refresh: bool = False) -> str | None:
     """
     Fetch a secret from the macOS Keychain with in-memory caching and persistent backoff.
     Ensures that the user is not spammed with prompts if they deny access.

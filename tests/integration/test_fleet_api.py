@@ -1,13 +1,15 @@
 """Integration tests for fleet sidecar CRUD endpoints (Phase 4B)."""
+
+from datetime import UTC
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, create_engine, SQLModel
+from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
-from unittest.mock import patch
 
-from app.main import app
 from app.core.db import get_session
-from app.models.db import SidecarRegistry, UsageSnapshot
+from app.main import app
+from app.models.db import SidecarRegistry
 
 
 @pytest.fixture(name="session")
@@ -40,13 +42,13 @@ def test_list_sidecars_empty(client):
 
 
 def test_list_sidecars_returns_registered(client, session):
-    from datetime import datetime, timezone
+    from datetime import datetime
     row = SidecarRegistry(
         sidecar_id="test-host",
         hostname="test-host",
         last_ip="10.0.0.1",
-        last_seen=datetime(2026, 4, 13, tzinfo=timezone.utc),
-        first_seen=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        last_seen=datetime(2026, 4, 13, tzinfo=UTC),
+        first_seen=datetime(2026, 4, 1, tzinfo=UTC),
     )
     session.add(row)
     session.commit()
@@ -59,12 +61,12 @@ def test_list_sidecars_returns_registered(client, session):
 
 
 def test_get_sidecar(client, session):
-    from datetime import datetime, timezone
+    from datetime import datetime
     row = SidecarRegistry(
         sidecar_id="my-host",
         hostname="my-host",
-        last_seen=datetime.now(timezone.utc),
-        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(UTC),
+        first_seen=datetime.now(UTC),
     )
     session.add(row)
     session.commit()
@@ -80,12 +82,12 @@ def test_get_sidecar_not_found(client):
 
 
 def test_patch_sidecar_name_and_tags(client, session):
-    from datetime import datetime, timezone
+    from datetime import datetime
     row = SidecarRegistry(
         sidecar_id="patch-host",
         hostname="patch-host",
-        last_seen=datetime.now(timezone.utc),
-        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(UTC),
+        first_seen=datetime.now(UTC),
     )
     session.add(row)
     session.commit()
@@ -108,12 +110,12 @@ def test_patch_sidecar_not_found(client):
 
 
 def test_delete_sidecar(client, session):
-    from datetime import datetime, timezone
+    from datetime import datetime
     row = SidecarRegistry(
         sidecar_id="del-host",
         hostname="del-host",
-        last_seen=datetime.now(timezone.utc),
-        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(UTC),
+        first_seen=datetime.now(UTC),
     )
     session.add(row)
     session.commit()

@@ -12,27 +12,25 @@ IMPORTANT: This sidecar does NOT make API calls directly.
 All API calls are done by the server using tokens we provide.
 """
 
-import os
-import sys
-import json
 import argparse
-import datetime
-import subprocess
-import sqlite3
-import socket
-import hmac
-import hashlib
-import time
-import platform
-import shutil
-import tempfile
-import logging
-import signal
 import atexit
+import datetime
+import hashlib
+import hmac
+import json
+import logging
+import os
+import platform
+import signal
+import socket
+import sqlite3
 import struct
+import subprocess
+import sys
+import time
 from pathlib import Path
-from urllib import request, error
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any
+from urllib import error, request
 
 # --- INJECTED REGISTRY ---
 __REGISTRY__ = {}
@@ -54,8 +52,8 @@ REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
 
 # Global state for daemon mode
 _daemon_running = False
-_pid_file_path: Optional[Path] = None
-_hostname: Optional[str] = None
+_pid_file_path: Path | None = None
+_hostname: str | None = None
 _windows_cred_cache: dict = {}
 _windows_cred_ttl_seconds: int = 300
 
@@ -67,8 +65,7 @@ def get_sidecar_dir() -> Path:
         if app_data:
             return Path(app_data) / "runway" / "sidecar"
         return Path.home() / "AppData" / "Roaming" / "runway" / "sidecar"
-    else:
-        return Path.home() / ".config" / "runway" / "sidecar"
+    return Path.home() / ".config" / "runway" / "sidecar"
 
 
 def get_queue_dir() -> Path:
@@ -100,7 +97,7 @@ def ensure_dirs() -> None:
     get_queue_dir().mkdir(parents=True, exist_ok=True)
 
 
-def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+def load_config(config_path: str | None = None) -> dict[str, Any]:
     """Load configuration from file or create template if missing."""
     if config_path:
         config_file = Path(config_path)
@@ -155,7 +152,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
 def setup_logging(log_level: str, file_enabled: bool) -> None:
     """Configure logging with console and optional file output."""
-    handlers: List[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
 
     if file_enabled:
         ensure_dirs()
@@ -254,13 +251,13 @@ def setup_signal_handlers() -> None:
 # --- Queue Management ---
 
 
-def queue_push(payload: Dict[str, Any]) -> None:
+def queue_push(payload: dict[str, Any]) -> None:
     """Add payload to offline queue."""
     ensure_dirs()
     queue_dir = get_queue_dir()
 
     # Create queue file for today
-    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     queue_file = queue_dir / f"{today}.jsonl"
 
     entry = {"ts": int(time.time()), "payload": payload}
@@ -273,7 +270,7 @@ def queue_push(payload: Dict[str, Any]) -> None:
 
 
 def queue_rotate(
-    max_size_mb: int = 10, config: Optional[Dict[str, Any]] = None
+    max_size_mb: int = 10, config: dict[str, Any] | None = None
 ) -> None:
     """Rotate queue files, removing oldest if total size exceeds limit."""
     queue_dir = get_queue_dir()
@@ -378,8 +375,8 @@ def health_check(api_url: str, timeout: int = 5) -> bool:
 
 
 def http_post_signed(
-    url: str, data: Dict[str, Any], api_key: str
-) -> Tuple[bool, Any, int]:
+    url: str, data: dict[str, Any], api_key: str
+) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
     timestamp = str(int(time.time()))
     body = json.dumps(data, separators=(",", ":")).encode("utf-8")
@@ -409,11 +406,11 @@ def http_post_signed(
 
 def http_post_signed_with_retry(
     url: str,
-    data: Dict[str, Any],
+    data: dict[str, Any],
     api_key: str,
     max_attempts: int = 3,
     backoff_seconds: int = 5,
-) -> Tuple[bool, Any, int]:
+) -> tuple[bool, Any, int]:
     """POST with exponential backoff retry."""
     last_error = None
     last_code = 500
@@ -444,9 +441,9 @@ def human_delta(target_dt):
     """Format datetime as human-readable delta."""
     if not target_dt:
         return "—"
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     if target_dt.tzinfo is None:
-        target_dt = target_dt.replace(tzinfo=datetime.timezone.utc)
+        target_dt = target_dt.replace(tzinfo=datetime.UTC)
     diff = target_dt - now
     seconds = int(diff.total_seconds())
     if seconds < 0:
@@ -471,13 +468,12 @@ def get_platform_data_dir(app_name: str) -> Path:
         if local_app_data:
             return Path(local_app_data) / app_name
         return home / "AppData/Local" / app_name
-    elif system == "Darwin":
+    if system == "Darwin":
         return home / "Library/Application Support" / app_name
-    else:
-        xdg_data_home = os.getenv("XDG_DATA_HOME")
-        if xdg_data_home:
-            return Path(xdg_data_home) / app_name
-        return home / ".local/share" / app_name
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home) / app_name
+    return home / ".local/share" / app_name
 
 
 def get_platform_config_dir(app_name: str) -> Path:
@@ -490,13 +486,12 @@ def get_platform_config_dir(app_name: str) -> Path:
         if app_data:
             return Path(app_data) / app_name
         return home / "AppData/Roaming" / app_name
-    elif system == "Darwin":
+    if system == "Darwin":
         return home / "Library/Application Support" / app_name
-    else:
-        xdg_config_home = os.getenv("XDG_CONFIG_HOME")
-        if xdg_config_home:
-            return Path(xdg_config_home) / app_name
-        return home / ".config" / app_name
+    xdg_config_home = os.getenv("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        return Path(xdg_config_home) / app_name
+    return home / ".config" / app_name
 
 
 def resolve_path(path_str: str) -> Path:
@@ -551,6 +546,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
             password = result.stdout.strip()
             if encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11"):
                 import hashlib
+
                 from cryptography.hazmat.primitives.ciphers import (
                     Cipher,
                     algorithms,
@@ -574,7 +570,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
         return None
 
     # Windows decryption
-    elif system == "Windows":
+    if system == "Windows":
         try:
             import ctypes
             from ctypes import wintypes
@@ -601,45 +597,44 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
         return None
 
     # Linux decryption
-    else:
+    try:
         try:
-            try:
-                return encrypted_value.decode("utf-8")
-            except Exception:
-                pass
-            import hashlib
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-            # Try secretstorage for Chrome/Edge keys
-            import secretstorage
-
-            conn = secretstorage.dbus_init()
-            collection = secretstorage.get_default_collection(conn)
-            password = None
-            for item in collection.get_all_items():
-                if item.get_label() in [
-                    "Chrome Safe Storage",
-                    "Chromium Safe Storage",
-                    "Microsoft Edge Safe Storage",
-                ]:
-                    password = item.get_secret()
-                    break
-            if password and (
-                encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11")
-            ):
-                salt = b"saltysalt"
-                key = hashlib.pbkdf2_hmac("sha1", password, salt, 1003, 16)
-                iv = b" " * 16
-                raw_ciphertext = encrypted_value[3:]
-                cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-                decryptor = cipher.decryptor()
-                decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
-                pad_len = decrypted[-1]
-                if 1 <= pad_len <= 16:
-                    return decrypted[:-pad_len].decode("utf-8")
+            return encrypted_value.decode("utf-8")
         except Exception:
             pass
-        return None
+        import hashlib
+
+        # Try secretstorage for Chrome/Edge keys
+        import secretstorage
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        conn = secretstorage.dbus_init()
+        collection = secretstorage.get_default_collection(conn)
+        password = None
+        for item in collection.get_all_items():
+            if item.get_label() in [
+                "Chrome Safe Storage",
+                "Chromium Safe Storage",
+                "Microsoft Edge Safe Storage",
+            ]:
+                password = item.get_secret()
+                break
+        if password and (
+            encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11")
+        ):
+            salt = b"saltysalt"
+            key = hashlib.pbkdf2_hmac("sha1", password, salt, 1003, 16)
+            iv = b" " * 16
+            raw_ciphertext = encrypted_value[3:]
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+            decryptor = cipher.decryptor()
+            decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
+            pad_len = decrypted[-1]
+            if 1 <= pad_len <= 16:
+                return decrypted[:-pad_len].decode("utf-8")
+    except Exception:
+        pass
+    return None
 
 
 class BrowserCookieExtractor:
@@ -867,7 +862,7 @@ class BrowserCookieExtractor:
         return None
 
 
-def get_windows_credential(target: str) -> Optional[str]:
+def get_windows_credential(target: str) -> str | None:
     """Extract credential from Windows Credential Manager with caching."""
     if platform.system() != "Windows":
         return None
@@ -920,7 +915,7 @@ class GenericCollector:
         return current
 
     @staticmethod
-    def collect_provider(provider_id: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect_provider(provider_id: str, config: dict[str, Any]) -> list[dict[str, Any]]:
         """Run all rules for a single provider and return metrics."""
         results = []
         tokens = {}
@@ -1022,7 +1017,7 @@ class GenericCollector:
                         try:
                             conn = sqlite3.connect(str(path))
                             cursor = conn.cursor()
-                            now = datetime.datetime.now(datetime.timezone.utc)
+                            now = datetime.datetime.now(datetime.UTC)
                             hostname = get_hostname()
 
                             for q in rule.get("queries", []):
@@ -1064,7 +1059,7 @@ class GenericCollector:
                             for m_name, usage in data.get("models", {}).items():
                                 rem = usage.get("remaining_percent", 0.0)
                                 reset_ts = usage.get("resets_at")
-                                reset_at = datetime.datetime.fromtimestamp(reset_ts, tz=datetime.timezone.utc) if reset_ts else None
+                                reset_at = datetime.datetime.fromtimestamp(reset_ts, tz=datetime.UTC) if reset_ts else None
                                 results.append({
                                     "service_name": f"AG: {m_name}",
                                     "icon": icon,
@@ -1094,7 +1089,7 @@ class GenericCollector:
                             with open(path) as f:
                                 data = json.load(f)
                             
-                            now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                            now_str = datetime.datetime.now(datetime.UTC).isoformat()
                             name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
 
                             # Rate Limits
@@ -1156,7 +1151,7 @@ class GenericCollector:
 # --- Main Loop ---
 
 
-def run_collection(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+def run_collection(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Run collection for all enabled providers."""
     all_metrics = []
     enabled_providers = config.get("providers", ["all"])

@@ -1,12 +1,11 @@
-import pytest
-import os
 import json
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+
 import httpx
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-from datetime import datetime, timezone, timedelta
+import pytest
 
 from app.services.collectors.chatgpt import ChatGPTCollector
-from app.core.config import settings
 
 
 @pytest.fixture
@@ -33,7 +32,7 @@ def chatgpt_usage_response():
             "primary_window": {
                 "used_percent": 25.5,
                 "reset_at": int(
-                    (datetime.now(timezone.utc) + timedelta(hours=3)).timestamp()
+                    (datetime.now(UTC) + timedelta(hours=3)).timestamp()
                 ),
             }
         },
@@ -210,23 +209,20 @@ class TestChatGPTCollectorDetailed:
         # Mock local logs existence
         log_content = json.dumps({"used_percent": 88.0, "resets_at": 1744876800})
 
-        with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
-            with patch(
-                "app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc",
-                return_value=[],
-            ):
-                with patch(
-                    "app.services.collectors.chatgpt_local.glob.glob",
-                    return_value=["/fake/path/session.jsonl"],
-                ):
-                    with patch("os.path.getmtime", return_value=12345):
-                        with patch("builtins.open", mock_open(read_data=log_content)):
-                            results = await collector.collect(mock_http_client)
+        with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}), patch(
+            "app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc",
+            return_value=[],
+        ), patch(
+            "app.services.collectors.chatgpt_local.glob.glob",
+            return_value=["/fake/path/session.jsonl"],
+        ), patch("os.path.getmtime", return_value=12345):
+            with patch("builtins.open", mock_open(read_data=log_content)):
+                results = await collector.collect(mock_http_client)
 
-                            assert len(results) == 1
-                            assert results[0]["service_name"] == "ChatGPT Codex"
-                            assert "12.0%" in results[0]["remaining"]
-                            assert results[0]["data_source"] == "cache"
+                assert len(results) == 1
+                assert results[0]["service_name"] == "ChatGPT Codex"
+                assert "12.0%" in results[0]["remaining"]
+                assert results[0]["data_source"] == "cache"
 
     @pytest.mark.asyncio
     async def test_user_agent_on_auth_refresh(self, mock_http_client):

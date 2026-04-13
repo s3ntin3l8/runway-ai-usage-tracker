@@ -1,4 +1,4 @@
-# Environment & secrets - NEVER include these
+# --- SECRETS & ENV - NEVER include these ---
 .env
 .env.*
 !.env.example
@@ -6,8 +6,41 @@
 *.pem
 secrets/
 credentials/
+.secrets.baseline
+.claude/
+.gemini/
+.codex/
+.anthropic/
+.codex
 
-# Python cache & compiled files
+# --- SYSTEM & OS ---
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~
+
+# --- GIT ---
+.git/
+.gitignore
+.gitattributes
+
+# --- DOCKER ---
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# --- CI/CD ---
+.github/
+codecov.yml
+.secrets.baseline
+dependabot.yml
+
+# --- PYTHON ---
+.venv/
+venv/
+ENV/
+env/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -17,74 +50,41 @@ __pycache__/
 .eggs/
 *.egg
 pip-wheel-metadata/
-
-# Virtual environments
-env/
-venv/
-ENV/
-.venv/
-
-# Testing - not needed in production image
-tests/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
 .nox/
-.mypy_cache/
 
-# IDE & editor files
+# --- FRONTEND ---
+node_modules/
+# frontend/css/styles.css is already built in the context
+
+# --- IDE & TOOLS ---
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
 
-# Git
-.git/
-.gitignore
-.gitattributes
+# --- PROJECT STATE & DATABASE ---
+*.db
+*.sqlite
+*.jsonl
+data/
+sessions/
+metrics/
+quota.json
+external_metrics.json
+tmp/
+temp/
+*.log
 
-# Documentation - not needed in image
+# --- DOCUMENTATION ---
 docs/
 *.md
 !README.md
 
-# CI/CD
-.github/
-.travis.yml
-.gitlab-ci.yml
-
-# Docker files themselves (not needed inside)
-Dockerfile
-.dockerignore
-docker-compose.yml
-
-# Temporary files
-tmp/
-temp/
-*.log
-*.bak
-*.jsonl
-
-# Database & State
-*.db
-*.sqlite
-metrics/
-sessions/
-data/
-quota.json
-external_metrics.json
-
-# AI config
-.gemini/
-.claude/
-.codex/
-.anthropic/
-.codex
-
-# Performance comparisons
-docs/comparison/
-docs/sidecar_implementation.md
+# --- SCRIPTS & TESTS ---
+tests/
+scripts/

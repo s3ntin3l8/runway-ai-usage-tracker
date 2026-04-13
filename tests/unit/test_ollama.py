@@ -1,8 +1,11 @@
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
-from unittest.mock import AsyncMock, patch, MagicMock
-from app.services.collectors.ollama import OllamaCollector
+import pytest
+
 from app.core.config import settings
+from app.services.collectors.ollama import OllamaCollector
+
 
 @pytest.fixture
 def ollama_html():

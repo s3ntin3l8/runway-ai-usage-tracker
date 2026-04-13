@@ -1,26 +1,27 @@
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
 import json
-import httpx
-from typing import List, Any, Dict
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import MagicMock
 
-from app.services.smart_collector import SmartCollector
+import httpx
+import pytest
+
 from app.core.utils import extract_token_regex, human_delta
-from app.services.collectors.zai_plan import ZaiPlanCollector
 from app.services.collectors.base import BaseCollector
+from app.services.collectors.zai_plan import ZaiPlanCollector
+from app.services.smart_collector import SmartCollector
 
 
 class MockCollector(BaseCollector):
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         return [
             {"service_name": "Mock", "detail": "original", "metadata": {"nested": "value"}}
         ]
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         return []
 
 
@@ -84,7 +85,7 @@ class TestUtilityResilience:
     def test_human_delta_timezone_resilience(self):
         """Verify human_delta handles mixed naive/aware datetimes."""
         # Use 25 hours to ensure we definitely get "1d Xh"
-        future_aware = datetime.now(timezone.utc) + timedelta(hours=25)
+        future_aware = datetime.now(UTC) + timedelta(hours=25)
         future_naive = datetime.now() + timedelta(hours=25)
 
         # Should not raise TypeError: can't subtract offset-naive and offset-aware datetimes
@@ -126,8 +127,8 @@ class TestIngestBoundary:
     @pytest.mark.asyncio
     async def test_ingest_hmac_utf8_resilience(self):
         """Test ingest HMAC verification with various character types (conceptual test)."""
-        import hmac
         import hashlib
+        import hmac
 
         secret = "test-secret"
         timestamp = str(int(datetime.now().timestamp()))

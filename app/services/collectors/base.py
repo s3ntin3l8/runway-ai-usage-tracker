@@ -8,11 +8,12 @@ must implement. Each collector follows a 3-tier fallback pattern:
 3. Tertiary Strategy: Error cards or graceful degradation
 """
 
-import httpx
 import logging
-import asyncio
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Callable, Awaitable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class BaseCollector(ABC):
     PROVIDER_ID: str = "unknown"
     DEFAULT_WINDOW_TYPE: str = "unknown"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """
         Initialize BaseCollector.
 
@@ -38,11 +39,11 @@ class BaseCollector(ABC):
         self.account_id = account_id
         self.account_label = account_label
 
-    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
+    def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
         """Return True if results are empty or contain an error card."""
         return not results or any(r.get("remaining") == "ERR" for r in results)
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
         Orchestrate collection strategy with fallbacks and error handling.
         Automatically tags results with account identifiers.
@@ -80,7 +81,7 @@ class BaseCollector(ABC):
                 }
             ])
 
-    def _tag_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _tag_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Add account identifiers to every card in the result list.
         Also attempts to discover account_label if it is missing by scanning card details.
@@ -135,19 +136,19 @@ class BaseCollector(ABC):
         return results
 
     @abstractmethod
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Execute the primary (usually API) collection strategy."""
         pass
 
     @abstractmethod
     def _fallback_strategies(
         self,
-    ) -> List[Callable[[httpx.AsyncClient], Awaitable[List[Dict[str, Any]]]]]:
+    ) -> list[Callable[[httpx.AsyncClient], Awaitable[list[dict[str, Any]]]]]:
         """Return an ordered list of fallback async methods to execute."""
         pass
 
     @abstractmethod
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return the error card(s) when all strategies fail."""
         pass
 

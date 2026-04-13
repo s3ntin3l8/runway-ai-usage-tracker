@@ -28,15 +28,16 @@ Headers:
 - Includes editor version and plugin version headers
 """
 
-import os
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional
+import os
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
-from app.core.config import settings
-from app.services.credential_provider import credential_provider
-from app.core.utils import human_delta, error_card, PaceCalculator, http_request_with_retry
+
+from app.core.utils import PaceCalculator, error_card, http_request_with_retry
 from app.services.collectors.base import BaseCollector
+from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class GitHubCollector(BaseCollector):
     PROVIDER_ID = "github"
     DEFAULT_WINDOW_TYPE = "monthly"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
         super().__init__(account_id=account_id, account_label=account_label)
         self._cached_results = None
@@ -54,15 +55,15 @@ class GitHubCollector(BaseCollector):
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
 
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for GitHub (None)."""
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch GitHub Copilot quota with caching."""
         return await self._strategy_api(client)
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card context when both API and fallback fail."""
         token = await self._get_token()
 
@@ -82,14 +83,14 @@ class GitHubCollector(BaseCollector):
             )
         ]
 
-    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch GitHub Copilot quota with caching."""
         token = await self._get_token()
         if not token:
             return []
 
         # Check cache
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self._cached_results is not None and self._last_fetch:
             if (now - self._last_fetch).total_seconds() < self._cache_ttl:
                 return self._cached_results
@@ -170,7 +171,7 @@ class GitHubCollector(BaseCollector):
             if os.path.exists(gh_config_path):
                 try:
                     import yaml
-                    with open(gh_config_path, "r") as f:
+                    with open(gh_config_path) as f:
                         config = yaml.safe_load(f)
                         host_config = config.get("github.com", {})
                         identity = host_config.get("user") or list(host_config.get("users", {}).keys())[0]
@@ -191,7 +192,7 @@ class GitHubCollector(BaseCollector):
         return []
 
 
-    async def _get_token(self) -> Optional[str]:
+    async def _get_token(self) -> str | None:
         """Internal helper to get token from multiple sources."""
         token = credential_provider.get_github_token()
         if token:
@@ -201,7 +202,7 @@ class GitHubCollector(BaseCollector):
             token = await token_cache.get_token("github", "api_key", account_id=self.account_id)
         return token
 
-    def _parse_api_responses(self, user_resp, token_resp, user_data) -> List[Dict[str, Any]]:
+    def _parse_api_responses(self, user_resp, token_resp, user_data) -> list[dict[str, Any]]:
         """Consolidate the parsing logic from collect()."""
         cards = []
         
@@ -225,7 +226,7 @@ class GitHubCollector(BaseCollector):
 
         return cards
 
-    def _parse_limited_quotas(self, data: Dict[str, Any], detail_context: str) -> List[Dict[str, Any]]:
+    def _parse_limited_quotas(self, data: dict[str, Any], detail_context: str) -> list[dict[str, Any]]:
         """Parse limited_user_quotas structure."""
         results = []
         quotas = data["limited_user_quotas"]
@@ -262,11 +263,11 @@ class GitHubCollector(BaseCollector):
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": "api",
                     "usage_url": "https://github.com/settings/copilot/features",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 })
         return results
 
-    def _parse_quota_snapshots(self, snapshots: List[Dict], plan: str) -> List[Dict[str, Any]]:
+    def _parse_quota_snapshots(self, snapshots: list[dict], plan: str) -> list[dict[str, Any]]:
         """Parse quota_snapshots structure."""
         results = []
         metric_map = {
@@ -304,6 +305,6 @@ class GitHubCollector(BaseCollector):
                     "reset_at": None,
                     "data_source": "api",
                     "usage_url": "https://github.com/settings/copilot/features",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 })
         return results

@@ -1,4 +1,3 @@
-import os
 import pytest
 
 
@@ -29,12 +28,12 @@ def test_database_url_reflects_custom_path(tmp_path):
         mp.setenv("DATABASE_PATH", db_file)
         from app.core.config import Settings
         s = Settings()
-        assert s.DATABASE_URL == f"sqlite:///{db_file}"
+        assert f"sqlite:///{db_file}" == s.DATABASE_URL
 
 
 def test_ingest_key_default_detection():
     """INGEST_API_KEY_IS_INSECURE_DEFAULT is True for the default key."""
-    from app.core.config import Settings, DEFAULT_INGEST_API_KEY
+    from app.core.config import DEFAULT_INGEST_API_KEY, Settings
     s = Settings()
     assert s.INGEST_API_KEY == DEFAULT_INGEST_API_KEY
     assert s.INGEST_API_KEY_IS_INSECURE_DEFAULT is True

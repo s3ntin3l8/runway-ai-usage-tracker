@@ -18,19 +18,20 @@ Local DB Collection:
 - Only used as additional data source, not primary
 """
 
-import os
-import re
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional
+import os
+import re
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
-from app.core.config import settings
-from app.core.utils import error_card, human_delta, http_request_with_retry, PaceCalculator
+
 from app.core.browser_cookies import get_opencode_session_cookie
+from app.core.config import settings
+from app.core.utils import PaceCalculator, error_card, http_request_with_retry
 from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
-from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -39,29 +40,29 @@ class OpenCodeCollector(BaseCollector):
     PROVIDER_ID = "opencode"
     DEFAULT_WINDOW_TYPE = "rolling"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for OpenCode (Sidecar, Local DB)."""
         return [
             self._strategy_sidecar_aggregation,
             self._strategy_local_db_fallback,
         ]
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """OpenCode Web API strategy."""
         return await self._get_opencode_web(client)
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return empty list on failure (OpenCode is non-critical)."""
         return []
 
-    async def _strategy_sidecar_aggregation(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_sidecar_aggregation(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Second tier: Sidecar aggregation of multi-host data."""
         return await external_metric_service.get_opencode_aggregated()
 
-    async def _strategy_local_db_fallback(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_local_db_fallback(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Third tier: Local database collection (if enabled)."""
         if settings.LOCAL_COLLECTOR_ENABLED:
             return await self._get_opencode_tui()
@@ -70,7 +71,7 @@ class OpenCodeCollector(BaseCollector):
 
     async def _get_opencode_web(
         self, client: httpx.AsyncClient
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch OpenCode usage from web API using Chrome cookies.
 
@@ -125,8 +126,8 @@ class OpenCodeCollector(BaseCollector):
             return []
 
     async def _get_workspace_id(
-        self, client: httpx.AsyncClient, headers: Dict[str, str]
-    ) -> Optional[str]:
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> str | None:
         """Get the first workspace ID from opencode.ai."""
         try:
             # Check for env override first
@@ -174,8 +175,8 @@ class OpenCodeCollector(BaseCollector):
             return None
 
     async def _get_subscription_data(
-        self, client: httpx.AsyncClient, headers: Dict[str, str], workspace_id: str
-    ) -> Optional[str]:
+        self, client: httpx.AsyncClient, headers: dict[str, str], workspace_id: str
+    ) -> str | None:
         """Get subscription/usage data from the workspace page (GET)."""
         try:
             url = f"https://opencode.ai/workspace/{workspace_id}/go"
@@ -194,18 +195,14 @@ class OpenCodeCollector(BaseCollector):
         except Exception:
             return None
 
-    def _parse_usage_data(self, text: str, workspace_id: str) -> List[Dict[str, Any]]:
+    def _parse_usage_data(self, text: str, workspace_id: str) -> list[dict[str, Any]]:
         """
         Parse JavaScript/React stream response to extract usage data.
         """
         # logger.info(f"OpenCode parsing usage data (text length: {len(text)})")
-        # Log a snippet of where usage usually is
-        if "Usage" in text:
-            start = text.find("Usage")
-            # logger.info(f"OpenCode usage snippet: {text[start-50:start+2000]}")
         
         cards = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         now_iso = now.isoformat()
         usage_url = f"https://opencode.ai/workspace/{workspace_id}/go"
 
@@ -268,7 +265,7 @@ class OpenCodeCollector(BaseCollector):
         # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
         return cards
 
-    async def _get_opencode_tui(self) -> List[Dict[str, Any]]:
+    async def _get_opencode_tui(self) -> list[dict[str, Any]]:
         """
         Fetch OpenCode TUI local database statistics with multi-window limits.
 
@@ -298,7 +295,7 @@ class OpenCodeCollector(BaseCollector):
         try:
             import aiosqlite
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             # Calculate cutoff times for each window
             cutoffs = {
@@ -366,7 +363,7 @@ class OpenCodeCollector(BaseCollector):
                             "currency": "USD",
                             "reset_at": None,  # Rolling window has no fixed reset time
                             "data_source": "local",
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            "updated_at": datetime.now(UTC).isoformat(),
                         }
                     )
 

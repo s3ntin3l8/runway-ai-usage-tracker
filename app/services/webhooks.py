@@ -1,8 +1,10 @@
 # app/services/webhooks.py
 import logging
+from datetime import UTC, datetime
+
 import httpx
-from datetime import datetime, timezone
 from sqlmodel import Session, select
+
 from app.models.db import WebhookConfig
 from app.models.schemas import LimitCard
 
@@ -70,7 +72,7 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                 card, used_pct = max(breaching, key=lambda x: x[1])
                 try:
                     await _fire_webhook(client, config, card, used_pct)
-                    config.last_fired_at = datetime.now(timezone.utc)
+                    config.last_fired_at = datetime.now(UTC)
                     session.add(config)
                 except Exception as e:
                     logger.error(f"Webhook delivery failed for config {config.id}: {e}")

@@ -8,17 +8,18 @@ Handles:
 """
 
 import asyncio
-import os
 import json
 import logging
+import os
 import time
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
 
-from app.core.config import settings
-from app.core.utils import PaceCalculator, human_delta, http_request_with_retry
 from app.core.browser_cookies import get_claude_session_cookie
+from app.core.config import settings
+from app.core.utils import PaceCalculator, http_request_with_retry, human_delta
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class AnthropicWebMixin:
 
     # ─────────────────────────────── Statusline (fast path) ──────────────────
 
-    async def _strategy_statusline(self) -> List[Dict[str, Any]]:
+    async def _strategy_statusline(self) -> list[dict[str, Any]]:
         """
         Choice #1: Read the local Claude statusline file (Fast Path).
         Returns metrics if the file exists and is fresh (< 5 mins old).
@@ -71,7 +72,7 @@ class AnthropicWebMixin:
                 # logger.info(f"Claude statusline file is stale ({int(time.time() - mtime)}s old) at {path}")
                 return []
 
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
 
             self._last_statusline_data = data
@@ -80,10 +81,10 @@ class AnthropicWebMixin:
             logger.debug(f"Failed to read Claude statusline: {e}")
             return []
 
-    def _parse_statusline_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_statusline_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse statusline.json into standardized quota cards."""
         results = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Rate Limits
         limits = data.get("rate_limits", {})
@@ -91,7 +92,7 @@ class AnthropicWebMixin:
             u_type = self._name_map.get(key, key.replace("_", " ").title())
             pct_used = float(info.get("used_percentage", 0.0))
             reset_ts = info.get("resets_at")
-            reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+            reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
 
             results.append({
                 "service_name": f"Claude ({u_type})",
@@ -117,7 +118,6 @@ class AnthropicWebMixin:
             output_tokens = context.get("total_output_tokens", 0)
             total = input_tokens + output_tokens
             max_tokens = context.get("max_tokens", 200000)
-            pct = (total / max_tokens * 100) if max_tokens > 0 else 0
 
             results.append({
                 "service_name": "Claude (Session Tokens)",
@@ -161,7 +161,7 @@ class AnthropicWebMixin:
 
     async def _get_claude_via_web_api(
         self, client: httpx.AsyncClient
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Secondary strategy: Fetch Claude quota via Web API using Chrome cookies.
 
@@ -239,7 +239,7 @@ class AnthropicWebMixin:
             logger.error(f"Claude Web API collection failed: {e}")
             return []
 
-    def _extract_identity_from_web(self, org_data: Dict[str, Any]) -> str:
+    def _extract_identity_from_web(self, org_data: dict[str, Any]) -> str:
         """Extract account identity string from Web API organization response."""
         membership = org_data.get("membership", {})
         user = membership.get("user", {})
@@ -248,18 +248,18 @@ class AnthropicWebMixin:
 
         if email and org_name:
             return f"{email} @ {org_name}"
-        elif email:
+        if email:
             return email
-        elif org_name:
+        if org_name:
             return f"org: {org_name}"
         return ""
 
     def _parse_web_api_response(
         self,
-        data: Dict[str, Any],
-        org_data: Optional[Dict[str, Any]] = None,
-        account_data: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        data: dict[str, Any],
+        org_data: dict[str, Any] | None = None,
+        account_data: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Parse Web API response into standardized quota cards."""
         results = []
 
@@ -316,7 +316,7 @@ class AnthropicWebMixin:
                 "data_source": "web_api",
                 "tier": tier,
                 "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             })
 
         # 2. Balance / Prepaid Credits (New)
@@ -341,7 +341,7 @@ class AnthropicWebMixin:
                         "data_source": "web_api",
                         "tier": tier,
                         "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
                     })
                     # Found a balance, break to avoid duplicates if multiple keys exist
                     break
@@ -373,7 +373,7 @@ class AnthropicWebMixin:
                     "data_source": "web_api",
                     "tier": tier,
                     "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 })
 
         return results

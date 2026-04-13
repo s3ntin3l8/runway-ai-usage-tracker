@@ -1,8 +1,10 @@
 import logging
-from typing import List, Dict, Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
-from datetime import datetime, timezone, timedelta
-from app.core.utils import error_card, PaceCalculator, IdentityExtractor, http_request_with_retry
+
+from app.core.utils import IdentityExtractor, PaceCalculator, error_card, http_request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +22,9 @@ MODEL_DISPLAY_NAMES = {
 class GeminiApiMixin:
     """Mixin for Gemini Cloud Code API collection."""
     
-    async def _collect_via_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         backoff_until = getattr(self, "_last_429_backoff_until", None)
         if backoff_until and now < backoff_until:
             wait_rem = (backoff_until - now).total_seconds()
@@ -161,7 +163,7 @@ class GeminiApiMixin:
                     "data_source": "oauth",
                     "tier": tier,
                     "usage_url": "https://one.google.com/settings",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 })
 
             results.sort(key=lambda x: int(x["remaining"].rstrip("%")), reverse=True)
@@ -171,7 +173,7 @@ class GeminiApiMixin:
             logger.error(f"Gemini API collection failed: {e}")
             return [error_card("Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error")]
 
-    async def _extract_identity_from_creds(self) -> Optional[str]:
+    async def _extract_identity_from_creds(self) -> str | None:
         """Extract user identity from credentials and promote if found."""
         try:
             creds = await self._get_credentials()
@@ -180,8 +182,9 @@ class GeminiApiMixin:
                 if email:
                     # Identity Promotion
                     if self.account_id:
-                        from app.services.token_cache import token_cache
                         import asyncio
+
+                        from app.services.token_cache import token_cache
                         asyncio.create_task(token_cache.update_account_metadata("gemini", self.account_id, name=email))
                         self.account_label = email
                     return email

@@ -1,7 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
+
 from app.models.db import UsageSnapshot
 
 
@@ -38,7 +40,7 @@ def test_hourly_compaction_merges_rows(session):
     """Rows 60-180 days old are compacted to one row per hour-bucket."""
     from app.services.compaction import compact_snapshots
 
-    old = datetime.now(timezone.utc) - timedelta(days=90)
+    old = datetime.now(UTC) - timedelta(days=90)
     for used in [100.0, 200.0, 300.0]:
         session.add(_snap(old, used, 1000.0))
     session.commit()
@@ -56,7 +58,7 @@ def test_daily_compaction_merges_rows(session):
     """Rows 180+ days old are compacted to one row per day-bucket."""
     from app.services.compaction import compact_snapshots
 
-    old = datetime.now(timezone.utc) - timedelta(days=200)
+    old = datetime.now(UTC) - timedelta(days=200)
     for used in [50.0, 150.0]:
         session.add(_snap(old, used, 500.0))
     session.commit()
@@ -73,7 +75,7 @@ def test_recent_rows_not_compacted(session):
     """Rows less than 60 days old are left untouched."""
     from app.services.compaction import compact_snapshots
 
-    recent = datetime.now(timezone.utc) - timedelta(days=10)
+    recent = datetime.now(UTC) - timedelta(days=10)
     session.add(_snap(recent, 100.0, 1000.0))
     session.add(_snap(recent, 200.0, 1000.0))
     session.commit()
@@ -89,7 +91,7 @@ def test_already_compacted_rows_skipped(session):
     """Rows with raw_metadata_json=NULL are not re-compacted."""
     from app.services.compaction import compact_snapshots
 
-    old = datetime.now(timezone.utc) - timedelta(days=90)
+    old = datetime.now(UTC) - timedelta(days=90)
     snap = _snap(old, 100.0, 1000.0)
     snap.raw_metadata_json = None  # already compacted
     session.add(snap)
@@ -106,7 +108,7 @@ def test_single_row_per_bucket_not_compacted(session):
     from app.services.compaction import compact_snapshots
 
     # Two rows in DIFFERENT hours, within the hourly compaction range (60-180 days old)
-    base = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(days=90)
+    base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=90)
     old1 = base.replace(hour=10)
     old2 = base.replace(hour=11)
     session.add(_snap(old1, 100.0, 1000.0))
@@ -123,7 +125,7 @@ def test_multiple_providers_compacted_independently(session):
     """Different providers are compacted into separate rows."""
     from app.services.compaction import compact_snapshots
 
-    old = datetime.now(timezone.utc) - timedelta(days=90)
+    old = datetime.now(UTC) - timedelta(days=90)
     for provider in ["anthropic", "openai"]:
         for used in [100.0, 200.0]:
             session.add(_snap(old, used, 1000.0, provider=provider))

@@ -9,11 +9,12 @@ This script tests:
 """
 
 import asyncio
-import httpx
 import json
 import os
 import time
 from pathlib import Path
+
+import httpx
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -133,9 +134,8 @@ async def test_load_code_assist(client, headers):
                 print(f"    - {tier.get('id')}: {tier.get('name')}")
 
         return project
-    else:
-        print(f"{RED}Error: {resp.text}{RESET}")
-        return None
+    print(f"{RED}Error: {resp.text}{RESET}")
+    return None
 
 
 async def test_quota_with_project(client, headers, project_id, label):
@@ -157,9 +157,8 @@ async def test_quota_with_project(client, headers, project_id, label):
         buckets = data.get("buckets", [])
         print_bucket_comparison(buckets, f"Found {len(buckets)} quota buckets")
         return buckets
-    else:
-        print(f"{RED}Error: {resp.text}{RESET}")
-        return []
+    print(f"{RED}Error: {resp.text}{RESET}")
+    return []
 
 
 async def test_project_discovery(client, headers):
@@ -171,7 +170,7 @@ async def test_project_discovery(client, headers):
         "https://cloudresourcemanager.googleapis.com/v1/projects", headers=headers
     )
 
-    print(f"cloudresourcemanager.googleapis.com/v1/projects")
+    print("cloudresourcemanager.googleapis.com/v1/projects")
     print(f"Status: {resp.status_code}")
 
     if resp.status_code == 200:
@@ -199,9 +198,8 @@ async def test_project_discovery(client, headers):
                 print(f"  • {proj_id} ({name})")
 
         return gemini_projects
-    else:
-        print(f"{RED}Error: {resp.text}{RESET}")
-        return []
+    print(f"{RED}Error: {resp.text}{RESET}")
+    return []
 
 
 async def test_v2_endpoint(client, headers, project_id):
@@ -216,18 +214,17 @@ async def test_v2_endpoint(client, headers, project_id):
         headers=headers,
     )
 
-    print(f"Endpoint: v2:retrieveUserQuota")
+    print("Endpoint: v2:retrieveUserQuota")
     print(f"Status: {resp.status_code}")
 
     if resp.status_code == 200:
         data = resp.json()
-        print(f"\nResponse:")
+        print("\nResponse:")
         print(json.dumps(data, indent=2))
         return data.get("buckets", [])
-    else:
-        print(f"{YELLOW}v2 endpoint not available or returned error{RESET}")
-        print(resp.text[:200] if resp.text else "No response body")
-        return []
+    print(f"{YELLOW}v2 endpoint not available or returned error{RESET}")
+    print(resp.text[:200] if resp.text else "No response body")
+    return []
 
 
 async def compare_all_models():
@@ -247,7 +244,7 @@ async def compare_all_models():
         )
         return
 
-    with open(CREDS_PATH, "r") as f:
+    with open(CREDS_PATH) as f:
         creds = json.load(f)
 
     async with httpx.AsyncClient() as client:
@@ -286,7 +283,7 @@ async def compare_all_models():
             json={},
             headers=headers,
         )
-        print(f"Request body: {{}}")
+        print("Request body: {}")
         print(f"Status: {resp.status_code}")
         if resp.status_code == 200:
             data = resp.json()
@@ -345,7 +342,7 @@ async def compare_all_models():
                     model_sources[model] = source
 
         print(f"\n{BOLD}Total unique models found: {len(all_models)}{RESET}")
-        print(f"\nModels by source:")
+        print("\nModels by source:")
         for model, source in sorted(model_sources.items()):
             has_gemini3 = "gemini-3" in model
             color = GREEN if has_gemini3 else RESET
@@ -358,13 +355,13 @@ async def compare_all_models():
                 print(f"  • {m}")
         else:
             print(f"\n{YELLOW}⚠ No gemini-3 models found in any API response{RESET}")
-            print(f"  This could mean:")
-            print(f"  1. gemini-3 models are on a different API version")
-            print(f"  2. Your account/tier doesn't have access to gemini-3 quotas yet")
+            print("  This could mean:")
+            print("  1. gemini-3 models are on a different API version")
+            print("  2. Your account/tier doesn't have access to gemini-3 quotas yet")
             print(
-                f"  3. gemini-3 quotas are tracked differently (not in retrieveUserQuota)"
+                "  3. gemini-3 quotas are tracked differently (not in retrieveUserQuota)"
             )
-            print(f"  4. The CLI aggregates model data from multiple sources")
+            print("  4. The CLI aggregates model data from multiple sources")
 
 
 if __name__ == "__main__":

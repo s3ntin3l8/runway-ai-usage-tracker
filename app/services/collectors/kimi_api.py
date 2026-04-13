@@ -19,28 +19,30 @@ Key Validation:
 - Checks that key length >= 10 (minimum valid key length)
 """
 
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone, timedelta
 import asyncio
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
+
 from app.core.config import settings
-from app.core.utils import error_card, human_delta
+from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 
 
 class KimiApiCollector(BaseCollector):
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
     """Collector for Kimi API (Moonshot AI) prepaid balance and usage history."""
 
     PROVIDER_ID = "kimi_api"
     DEFAULT_WINDOW_TYPE = "monthly"
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for Kimi API."""
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi prepaid balance and history via API."""
         key = settings.KIMI_API_KEY
         if not key or len(key) < 10:
@@ -55,7 +57,7 @@ class KimiApiCollector(BaseCollector):
         # Merge results (flatten list)
         return [card for sublist in results for card in sublist]
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when API fails."""
         key = settings.KIMI_API_KEY
         if not key or len(key) < 10:
@@ -66,7 +68,7 @@ class KimiApiCollector(BaseCollector):
             ]
         return [error_card("Kimi API", "🌙", "Unauthorized", error_type="api_error")]
 
-    async def _strategy_balance(self, client: httpx.AsyncClient, key: str) -> List[Dict[str, Any]]:
+    async def _strategy_balance(self, client: httpx.AsyncClient, key: str) -> list[dict[str, Any]]:
         """Collect Kimi prepaid balance via API."""
         try:
             resp = await client.get(
@@ -92,13 +94,13 @@ class KimiApiCollector(BaseCollector):
                     "pace": "Stable",
                     "detail": "Prepaid balance (API)",
                     "data_source": "api_balance",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 }
             ]
         except Exception:
             return []
 
-    async def _strategy_history(self, client: httpx.AsyncClient, key: str) -> List[Dict[str, Any]]:
+    async def _strategy_history(self, client: httpx.AsyncClient, key: str) -> list[dict[str, Any]]:
         """
         Collect Kimi usage history for daily spend breakdown.
         

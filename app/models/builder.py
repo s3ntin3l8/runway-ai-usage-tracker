@@ -19,8 +19,8 @@ Usage:
     error_card = LimitCardBuilder.error("Claude Pro", "🟠", "Auth failed", "auth_failed")
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from app.models.schemas import LimitCard
 
@@ -44,7 +44,7 @@ class LimitCardBuilder:
         if unit is None:
             raise ValueError("unit is required")
 
-        self._data: Dict[str, Any] = {
+        self._data: dict[str, Any] = {
             "service_name": service_name,
             "icon": icon,
             "remaining": remaining,
@@ -55,7 +55,7 @@ class LimitCardBuilder:
             "health": "unknown",
             "detail": "",
             "data_source": "unknown",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
     # ─── Provider / schema fields ──────────────────────────────────────────────
@@ -67,8 +67,8 @@ class LimitCardBuilder:
 
     def set_account(
         self,
-        account_id: Optional[str] = None,
-        account_label: Optional[str] = None,
+        account_id: str | None = None,
+        account_label: str | None = None,
     ) -> "LimitCardBuilder":
         if account_id is not None:
             self._data["account_id"] = account_id
@@ -90,7 +90,7 @@ class LimitCardBuilder:
         self._data["health"] = health
         return self
 
-    def set_timing(self, reset: str, reset_at: Optional[str] = None) -> "LimitCardBuilder":
+    def set_timing(self, reset: str, reset_at: str | None = None) -> "LimitCardBuilder":
         self._data["reset"] = reset
         if reset_at is not None:
             self._data["reset_at"] = reset_at
@@ -101,7 +101,7 @@ class LimitCardBuilder:
         used_value: float,
         limit_value: float,
         unit_type: str,
-        currency: Optional[str] = None,
+        currency: str | None = None,
         is_unlimited: bool = False,
     ) -> "LimitCardBuilder":
         self._data["used_value"] = used_value
@@ -132,7 +132,7 @@ class LimitCardBuilder:
         self._data["usage_url"] = usage_url
         return self
 
-    def set_metadata(self, metadata: Dict[str, Any]) -> "LimitCardBuilder":
+    def set_metadata(self, metadata: dict[str, Any]) -> "LimitCardBuilder":
         self._data["metadata"] = metadata
         return self
 
@@ -142,7 +142,7 @@ class LimitCardBuilder:
 
     # ─── Build ─────────────────────────────────────────────────────────────────
 
-    def build(self) -> Dict[str, Any]:
+    def build(self) -> dict[str, Any]:
         """
         Validate against LimitCard Pydantic schema and return a dict.
 
@@ -162,8 +162,8 @@ class LimitCardBuilder:
         icon: str,
         message: str,
         error_type: str = "unknown",
-        provider_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        provider_id: str | None = None,
+    ) -> dict[str, Any]:
         """Build a standardised error card dict."""
         from app.core.strings import truncate_string
         b = (

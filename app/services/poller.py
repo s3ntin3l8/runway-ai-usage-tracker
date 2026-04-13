@@ -2,13 +2,14 @@
 import asyncio
 import logging
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from sqlmodel import Session
-from app.services.collector_manager import manager
+
 from app.core.db import engine
 from app.models.db import UsageSnapshot
 from app.models.schemas import LimitCard
-from typing import List, Optional
+from app.services.collector_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class BackgroundPoller:
     def __init__(self, interval_seconds: int = 900):
         self._base_interval = interval_seconds
         self._interval = interval_seconds   # current active interval
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
         self._poll_count = 0
         self._snapshot_hashes: dict[str, deque] = {}  # key → deque(maxlen=3) of hashes
@@ -70,7 +71,7 @@ class BackgroundPoller:
                 key = f"{card.provider_id}:{card.account_id}"
                 poll_hashes.setdefault(key, []).append(hash((card.used_value, card.limit_value)))
             except Exception:
-                logger.debug(f"Skipping malformed card in sleep state tracking")
+                logger.debug("Skipping malformed card in sleep state tracking")
 
         # Append one composite hash per key (order-independent via sorted)
         for key, hashes in poll_hashes.items():
@@ -139,7 +140,7 @@ class BackgroundPoller:
                             is_unlimited=card.is_unlimited,
                             data_source=card.data_source,
                             error_type=card.error_type,
-                            timestamp=datetime.now(timezone.utc),
+                            timestamp=datetime.now(UTC),
                         )
                         snapshot.raw_metadata = card.metadata
                         session.add(snapshot)

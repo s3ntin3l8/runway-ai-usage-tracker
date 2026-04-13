@@ -1,9 +1,11 @@
 import logging
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
-from typing import List, Dict, Any, Optional
-from app.services.collectors.base import BaseCollector
+
 from app.core.config import settings
-from datetime import datetime, timezone
+from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +18,11 @@ class MiniMaxCollector(BaseCollector):
     PROVIDER_ID = "minimax"
     DEFAULT_WINDOW_TYPE = "monthly"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
         self.api_key = settings.MINIMAX_API_KEY
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect usage data from MiniMax via API."""
         if not self.api_key:
             return []
@@ -40,7 +42,7 @@ class MiniMaxCollector(BaseCollector):
             if resp.status_code == 200:
                 data = resp.json()
                 results = []
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 
                 model_remains = data.get("model_remains", [])
                 for item in model_remains:
@@ -63,19 +65,18 @@ class MiniMaxCollector(BaseCollector):
                         "updated_at": now_str,
                     })
                 return results
-            else:
-                logger.error(f"MiniMax API error (HTTP {resp.status_code}): {resp.text}")
+            logger.error(f"MiniMax API error (HTTP {resp.status_code}): {resp.text}")
                 
         except Exception as e:
             logger.error(f"Failed to collect MiniMax usage: {e}")
 
         return []
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return an ordered list of fallback async methods. Currently none for MiniMax."""
         return []
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return the ultimate error card(s) when all strategies fail."""
         from app.core.utils import error_card
         

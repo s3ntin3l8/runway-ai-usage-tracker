@@ -1,29 +1,30 @@
-from fastapi import APIRouter, HTTPException, Header, Request, Depends
-from typing import Dict, Any, List, Optional
-from pydantic import BaseModel
-from sqlmodel import Session, select
-import hmac
 import hashlib
-import time
+import hmac
 import logging
+import time
+from typing import Any
 
-from app.models.schemas import IngestRequest
-from app.models.db import SidecarRegistry
-from app.services.external_metrics import external_metric_service
-from app.services.token_cache import token_cache
-from app.services.fleet_registry import fleet_registry
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel
+from sqlmodel import Session, col, select
+
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
+from app.models.db import SidecarRegistry
+from app.models.schemas import IngestRequest
+from app.services.external_metrics import external_metric_service
+from app.services.fleet_registry import fleet_registry
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class SidecarUpdateRequest(BaseModel):
-    custom_name: Optional[str] = None
-    tags: Optional[List[str]] = None
+    custom_name: str | None = None
+    tags: list[str] | None = None
 
 
 @router.post("/ingest")
@@ -32,7 +33,7 @@ async def ingest_metrics(
     x_signature: str = Header(None, alias="X-Signature"),
     x_timestamp: str = Header(None, alias="X-Timestamp"),
     session: Session = Depends(get_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Ingest metrics from sidecar with HMAC-SHA256 signature verification.
 
@@ -197,10 +198,10 @@ async def ingest_metrics(
 async def list_sidecars(
     request: Request,
     session: Session = Depends(get_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List all registered sidecars."""
     rows = session.exec(
-        select(SidecarRegistry).order_by(SidecarRegistry.last_seen.desc())
+        select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
     return {"sidecars": [fleet_registry.to_dict(row) for row in rows]}
 
@@ -211,7 +212,7 @@ async def get_sidecar(
     request: Request,
     sidecar_id: str,
     session: Session = Depends(get_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get a single sidecar by ID."""
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
@@ -227,7 +228,7 @@ async def update_sidecar(
     body: SidecarUpdateRequest,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update custom_name and/or tags for a sidecar."""
     row = fleet_registry.update_sidecar(sidecar_id, body.custom_name, body.tags, session)
     if not row:
@@ -242,7 +243,7 @@ async def delete_sidecar(
     sidecar_id: str,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Remove a sidecar from the registry."""
     deleted = fleet_registry.delete_sidecar(sidecar_id, session)
     if not deleted:

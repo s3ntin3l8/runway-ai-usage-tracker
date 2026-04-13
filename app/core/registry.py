@@ -1,7 +1,8 @@
-import os
 import json
 import logging
-from typing import Dict, Any, List, Optional
+import os
+from typing import Any
+
 from app.core.config import get_platform_config_dir, get_platform_data_dir
 
 logger = logging.getLogger(__name__)
@@ -16,21 +17,21 @@ class Registry:
     def __init__(self):
         self._registry = self._load()
 
-    def _load(self) -> Dict[str, Any]:
+    def _load(self) -> dict[str, Any]:
         """Load registry.json from disk."""
         path = os.path.join(os.path.dirname(__file__), "registry.json")
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Failed to load registry.json: {e}")
             return {"providers": {}}
 
-    def get_provider(self, provider_id: str) -> Dict[str, Any]:
+    def get_provider(self, provider_id: str) -> dict[str, Any]:
         """Get rules for a specific provider."""
         return self._registry.get("providers", {}).get(provider_id, {})
 
-    def get_all_providers(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_providers(self) -> dict[str, dict[str, Any]]:
         """Get all providers."""
         return self._registry.get("providers", {})
 

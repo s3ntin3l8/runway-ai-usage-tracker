@@ -1,7 +1,10 @@
 import asyncio
-import httpx
 import logging
+
+import httpx
+
 from app.services.collectors.antigravity import AntigravityCollector
+
 
 async def test_antigravity():
     logging.basicConfig(level=logging.DEBUG)

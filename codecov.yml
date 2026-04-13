@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 63%       # current baseline is 65%; 2% buffer for variance
+        threshold: 2%     # allow up to 2% drop before failing
+    patch:
+      default:
+        target: 70%       # new/changed lines in a PR should be well-covered
+
+comment:
+  layout: "reach,diff,flags"
+  behavior: default       # post once, update on new commits
+  require_changes: true   # only comment if coverage changed

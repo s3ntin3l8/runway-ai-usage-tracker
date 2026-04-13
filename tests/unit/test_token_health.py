@@ -2,10 +2,11 @@
 import base64
 import json
 import time
-import pytest
 from unittest.mock import AsyncMock, patch
 
-from app.services.token_health import TokenHealthService, _parse_jwt_exp, _classify_status
+import pytest
+
+from app.services.token_health import TokenHealthService, _classify_status, _parse_jwt_exp
 
 
 def _make_jwt(exp: float) -> str:

@@ -4,11 +4,10 @@ Debug script to check ChatGPT API response and see available fields including ti
 """
 
 import asyncio
-import httpx
 import json
-import os
 from pathlib import Path
-from datetime import datetime, timezone
+
+import httpx
 
 
 async def test_chatgpt_api():
@@ -20,7 +19,7 @@ async def test_chatgpt_api():
         return
 
     try:
-        with open(auth_path, "r") as f:
+        with open(auth_path) as f:
             data = json.load(f)
             token = data.get("tokens", {}).get("access_token")
             if not token:
@@ -42,7 +41,7 @@ async def test_chatgpt_api():
         try:
             resp = await client.get(url, headers=headers, timeout=10)
             print(f"Status: {resp.status_code}")
-            print(f"\n=== FULL JSON RESPONSE ===")
+            print("\n=== FULL JSON RESPONSE ===")
 
             if resp.status_code == 200:
                 data = resp.json()

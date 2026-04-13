@@ -1,11 +1,13 @@
 import asyncio
-import os
 import json
 import logging
+import os
+from typing import Any
+
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.utils import safe_write_json
@@ -29,7 +31,7 @@ class DeviceFlowPollRequest(BaseModel):
 
 class DeviceFlowStatusResponse(BaseModel):
     authenticated: bool
-    account: Optional[str] = None
+    account: str | None = None
 
 
 @router.get("/init", response_model=DeviceFlowInitResponse)
@@ -77,7 +79,7 @@ async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
 
 @router.post("/poll")
 @limiter.limit("5/minute")
-async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> Dict[str, Any]:
+async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> dict[str, Any]:
     """Step 2: Poll for the access token."""
     async with httpx.AsyncClient() as client:
         try:
@@ -101,12 +103,11 @@ async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> Dic
                 error = data["error"]
                 if error == "authorization_pending":
                     return {"status": "pending"}
-                elif error == "slow_down":
+                if error == "slow_down":
                     return {"status": "slow_down", "interval": data.get("interval", 5)}
-                else:
-                    raise HTTPException(
-                        status_code=400, detail=data.get("error_description", error)
-                    )
+                raise HTTPException(
+                    status_code=400, detail=data.get("error_description", error)
+                )
 
             if "access_token" in data:
                 # Save the token
@@ -152,7 +153,7 @@ async def get_status() -> DeviceFlowStatusResponse:
 
 
 @router.post("/logout")
-async def logout() -> Dict[str, str]:
+async def logout() -> dict[str, str]:
     """Clear the stored GitHub token."""
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:

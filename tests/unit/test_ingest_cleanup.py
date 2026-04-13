@@ -1,14 +1,9 @@
-import json
-import hmac
-import hashlib
-import time
-import sys
 import unittest
-from typing import Dict, Any
+from typing import Any
 
 
 # Mocking the simplified logic of ingest_metrics to verify it works
-def mock_ingest_logic(payload: Dict[str, Any]) -> Dict[str, str]:
+def mock_ingest_logic(payload: dict[str, Any]) -> dict[str, str]:
     metrics = payload.get("metrics", [])
     tokens = {}
 

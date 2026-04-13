@@ -1,11 +1,12 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, create_engine, SQLModel
+from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
-from app.main import app
+
 from app.core.db import get_session
-from app.models.db import WebhookConfig
+from app.main import app
 
 
 @pytest.fixture(name="session")

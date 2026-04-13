@@ -1,5 +1,6 @@
 """Optional admin key dependency for mutation endpoints."""
 from fastapi import Header, HTTPException
+
 from app.core.config import settings
 
 

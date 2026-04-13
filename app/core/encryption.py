@@ -1,16 +1,17 @@
-from cryptography.fernet import Fernet
-from app.core.config import settings
-import os
-import logging
-from typing import Optional, Any
 import json
+import logging
+from typing import Any
+
+from cryptography.fernet import Fernet
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class EncryptionService:
-    def __init__(self, key: Optional[str] = None):
+    def __init__(self, key: str | None = None):
         self._key = key or settings.DB_ENCRYPTION_KEY
-        self._fernet: Optional[Fernet] = None
+        self._fernet: Fernet | None = None
         
         if self._key:
             try:
@@ -28,22 +29,24 @@ class EncryptionService:
 
     def encrypt_string(self, plaintext: str) -> str:
         """Encrypt a string and return as string."""
-        if not self.is_enabled:
+        fernet = self._fernet
+        if not fernet:
             return plaintext
         
         try:
-            return self._fernet.encrypt(plaintext.encode()).decode()
+            return fernet.encrypt(plaintext.encode()).decode()
         except Exception as e:
             logger.error(f"Encryption failed: {e}")
             return plaintext
 
     def decrypt_string(self, ciphertext: str) -> str:
         """Decrypt a string and return plaintext."""
-        if not self.is_enabled:
+        fernet = self._fernet
+        if not fernet:
             return ciphertext
         
         try:
-            return self._fernet.decrypt(ciphertext.encode()).decode()
+            return fernet.decrypt(ciphertext.encode()).decode()
         except Exception as e:
             logger.error(f"Decryption failed: {e}. Perhaps the key changed?")
             return ciphertext # Return as is (might be plaintext or corrupted)

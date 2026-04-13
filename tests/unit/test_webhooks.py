@@ -1,8 +1,8 @@
-import pytest
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from sqlmodel import Session, create_engine, SQLModel
+
+import pytest
+from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import WebhookConfig
@@ -98,7 +98,7 @@ async def test_does_not_fire_when_below_threshold(session):
 async def test_does_not_refire_same_breach(session):
     """Once fired, does not fire again while still above threshold."""
     from app.services.webhooks import check_and_fire
-    _config(session, last_fired=datetime.now(timezone.utc))  # already fired
+    _config(session, last_fired=datetime.now(UTC))  # already fired
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
@@ -116,7 +116,7 @@ async def test_does_not_refire_same_breach(session):
 async def test_resets_when_below_hysteresis(session):
     """last_fired_at cleared when usage drops below threshold * 0.85."""
     from app.services.webhooks import check_and_fire
-    fired_time = datetime.now(timezone.utc)
+    fired_time = datetime.now(UTC)
     cfg = _config(session, threshold=90.0, last_fired=fired_time)
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -155,7 +155,7 @@ def test_slack_payload_has_blocks():
 async def test_dead_zone_preserves_last_fired_at(session):
     """Usage in dead zone (hysteresis ≤ used_pct < threshold) neither fires nor resets."""
     from app.services.webhooks import check_and_fire
-    fired_time = datetime.now(timezone.utc)
+    fired_time = datetime.now(UTC)
     cfg = _config(session, threshold=90.0, last_fired=fired_time)
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
@@ -179,8 +179,9 @@ async def test_dead_zone_preserves_last_fired_at(session):
 @pytest.mark.asyncio
 async def test_http_failure_does_not_set_last_fired_at(session):
     """A failed HTTP call logs the error and leaves last_fired_at as None."""
-    from app.services.webhooks import check_and_fire
     import httpx as _httpx
+
+    from app.services.webhooks import check_and_fire
     cfg = _config(session)  # threshold=90%, last_fired=None
 
     with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:

@@ -10,14 +10,14 @@ Tests cover:
 - Cache age tagging
 """
 
-import pytest
-import time
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
-import httpx
+from unittest.mock import AsyncMock
 
-from app.services.smart_collector import SmartCollector
+import httpx
+import pytest
+
 from app.services.collectors.base import BaseCollector
+from app.services.smart_collector import SmartCollector
 
 
 @pytest.fixture

@@ -1,6 +1,8 @@
-import pytest
 from collections import deque
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from app.services.poller import BackgroundPoller
 
 

@@ -1,10 +1,11 @@
-import json
-import os
-import logging
 import asyncio
+import json
+import logging
+import os
 import time
-from datetime import datetime, timezone
-from typing import Dict, List, Any
+from datetime import UTC, datetime
+from typing import Any
+
 from app.core.config import settings
 from app.models.schemas import LimitCard
 
@@ -18,7 +19,7 @@ class ExternalMetricService:
     def __init__(self):
         self.path = settings.EXTERNAL_METRICS_PATH
         self._ensure_dir()
-        self.metrics: Dict[str, Dict[str, Any]] = self._load()
+        self.metrics: dict[str, dict[str, Any]] = self._load()
         self._lock = asyncio.Lock()
         self._last_save_time: float = 0.0
         self._pending_save: bool = False
@@ -28,10 +29,10 @@ class ExternalMetricService:
         if not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
 
-    def _load(self) -> Dict[str, Dict[str, Any]]:
+    def _load(self) -> dict[str, dict[str, Any]]:
         if os.path.exists(self.path):
             try:
-                with open(self.path, "r") as f:
+                with open(self.path) as f:
                     return json.load(f)
             except FileNotFoundError:
                 logger.debug(f"External metrics file not found: {self.path}")
@@ -78,8 +79,8 @@ class ExternalMetricService:
         async with self._lock:
             await self._save_unlocked()
 
-    async def update_metrics(self, provider: str, cards: List[LimitCard]):
-        now = datetime.now(timezone.utc).isoformat()
+    async def update_metrics(self, provider: str, cards: list[LimitCard]):
+        now = datetime.now(UTC).isoformat()
         processed_cards = []
         for card in cards:
             card_dict = card.model_dump()
@@ -87,7 +88,7 @@ class ExternalMetricService:
             card_dict[
                 "detail"
             ] += (
-                f" [Sidecar Updated: {datetime.now(timezone.utc).strftime('%H:%M:%S')}]"
+                f" [Sidecar Updated: {datetime.now(UTC).strftime('%H:%M:%S')}]"
             )
             processed_cards.append(card_dict)
 
@@ -95,9 +96,9 @@ class ExternalMetricService:
             self.metrics[provider] = {"timestamp": now, "cards": processed_cards}
             await self._save_unlocked()
 
-    async def metrics_update_from_ingest(self, provider: str, cards: List[LimitCard]):
+    async def metrics_update_from_ingest(self, provider: str, cards: list[LimitCard]):
         """Special update for ingest that avoids double-tagging metadata."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         async with self._lock:
             self.metrics[provider] = {
                 "timestamp": now,
@@ -106,8 +107,8 @@ class ExternalMetricService:
             await self._save_unlocked()
 
     def _aggregate_opencode_cards(
-        self, opencode_cards: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, opencode_cards: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Aggregate OpenCode cards from multiple hosts.
 
@@ -128,7 +129,7 @@ class ExternalMetricService:
         }
 
         # Track aggregated data per window
-        aggregated = {
+        aggregated: dict[str, dict[str, Any]] = {
             "5h": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
             "week": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
             "month": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
@@ -225,7 +226,7 @@ class ExternalMetricService:
 
         return result
 
-    async def get_opencode_aggregated(self) -> List[Dict[str, Any]]:
+    async def get_opencode_aggregated(self) -> list[dict[str, Any]]:
         """
         Get aggregated OpenCode metrics from sidecar data.
 
@@ -233,7 +234,7 @@ class ExternalMetricService:
             List[Dict[str, Any]]: List of aggregated cards for 5h, week, month windows
         """
         opencode_cards = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         async with self._lock:
             for provider, data in self.metrics.items():
@@ -251,10 +252,10 @@ class ExternalMetricService:
 
         return self._aggregate_opencode_cards(opencode_cards)
 
-    async def get_all_metrics(self) -> List[Dict[str, Any]]:
+    async def get_all_metrics(self) -> list[dict[str, Any]]:
         all_cards = []
         opencode_cards = []  # Collect all opencode-* cards for aggregation
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         STALE_HOURS = 2  # Drop providers silent for more than 2 hours
 
         async with self._lock:

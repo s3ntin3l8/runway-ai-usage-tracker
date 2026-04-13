@@ -1,14 +1,15 @@
-from datetime import datetime, timezone
-from typing import Optional, Any, Dict, List
-import re
 import asyncio
-import random
-import httpx
+import base64
+import json
 import logging
 import os
-import json
+import random
+import re
 import tempfile
-import base64
+from datetime import UTC, datetime
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class IdentityExtractor:
     """Helper for extracting user identity from various sources (JWT, logs, etc.)"""
 
     @staticmethod
-    def extract_jwt_payload(token: str) -> Dict[str, Any]:
+    def extract_jwt_payload(token: str) -> dict[str, Any]:
         """Robustly decode JWT payload without external libraries."""
         try:
             parts = token.split(".")
@@ -35,13 +36,13 @@ class IdentityExtractor:
             return {}
 
     @classmethod
-    def get_email_from_jwt(cls, token: str) -> Optional[str]:
+    def get_email_from_jwt(cls, token: str) -> str | None:
         """Extract email claim from JWT payload."""
         payload = cls.extract_jwt_payload(token)
         return payload.get("email")
 
     @classmethod
-    def get_client_id_from_jwt(cls, token: str) -> Optional[str]:
+    def get_client_id_from_jwt(cls, token: str) -> str | None:
         """Extract azp or aud claim from JWT payload."""
         payload = cls.extract_jwt_payload(token)
         return payload.get("azp") or payload.get("aud")
@@ -49,14 +50,14 @@ class IdentityExtractor:
 
 class PaceCalculator:
     @staticmethod
-    def estimate_longevity(pct_used: float, reset_at: Optional[datetime]) -> str:
+    def estimate_longevity(pct_used: float, reset_at: datetime | None) -> str:
         if pct_used <= 0:
             return "Stable"
         if not reset_at:
             return "Sustainable"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if reset_at.tzinfo is None:
-            reset_at = reset_at.replace(tzinfo=timezone.utc)
+            reset_at = reset_at.replace(tzinfo=UTC)
         time_to_reset = (reset_at - now).total_seconds()
         if time_to_reset <= 0:
             return "Pending Reset"
@@ -70,12 +71,12 @@ class PaceCalculator:
         return "Sustainable"
 
 
-def human_delta(target_dt: Optional[datetime]) -> str:
+def human_delta(target_dt: datetime | None) -> str:
     if not target_dt:
         return "—"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if target_dt.tzinfo is None:
-        target_dt = target_dt.replace(tzinfo=timezone.utc)
+        target_dt = target_dt.replace(tzinfo=UTC)
     diff = target_dt - now
     seconds = int(diff.total_seconds())
     if seconds < 0:
@@ -96,7 +97,7 @@ def error_card(service: str, icon: str, message: str, error_type: str = "unknown
     return LimitCardBuilder.error(service, icon, message, error_type)
 
 
-def extract_token_regex(detail: str, prefix: str) -> Optional[str]:
+def extract_token_regex(detail: str, prefix: str) -> str | None:
     """
     Robustly extract a token from a detail string using regex.
     Matches the prefix followed by non-whitespace/separator characters.
@@ -154,7 +155,7 @@ async def http_request_with_retry(
                         # Handle HTTP-date format (optional but good practice)
                         from email.utils import parsedate_to_datetime
                         retry_date = parsedate_to_datetime(retry_after)
-                        wait_time = (retry_date - datetime.now(timezone.utc)).total_seconds()
+                        wait_time = (retry_date - datetime.now(UTC)).total_seconds()
                     
                     # Add a small buffer
                     wait_time = max(0.1, wait_time + 0.5)

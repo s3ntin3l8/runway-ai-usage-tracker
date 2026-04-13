@@ -1,9 +1,9 @@
-import hmac
 import hashlib
-import time
-import requests
+import hmac
 import json
-import sys
+import time
+
+import requests
 
 # Configuration
 API_URL = "http://localhost:8767/api/ingest"

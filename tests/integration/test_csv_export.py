@@ -1,11 +1,12 @@
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 from fastapi.testclient import TestClient
-from sqlmodel import Session, create_engine, SQLModel
+from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from app.main import app
 from app.core.db import get_session
+from app.main import app
 from app.models.db import UsageSnapshot
 
 
@@ -31,7 +32,7 @@ def client_fixture(session):
 
 def _add_snapshot(session, provider="anthropic", used=100.0):
     snap = UsageSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         provider_id=provider,
         account_id="acc1",
         service_name="Test",

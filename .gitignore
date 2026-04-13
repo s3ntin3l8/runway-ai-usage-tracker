@@ -1,50 +1,75 @@
-.env
-.pytest_cache/
+# --- SYSTEM & OS ---
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~
+
+# --- PYTHON ---
+.venv/
+venv/
+ENV/
+env/
 __pycache__/
 *.py[cod]
 *$py.class
-.DS_Store
-.venv/
-venv/
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# --- FRONTEND ---
 node_modules/
-.idea/
-.vscode/*
+# frontend/css/styles.css is built from input.css but checked in 
+# so the app works without Node.js. 
+
+# --- IDE & TOOLS ---
+.vscode/
 !.vscode/settings.json
 !.vscode/launch.json
-*.swp
-*.bak
-tasks.md
-task.md
-diagnose.py
+.idea/
 
-# AI config
+# --- PROJECT STATE & DATABASE ---
+*.db
+*.sqlite
+*.jsonl
+data/
+sessions/
+metrics/
+quota.json
+external_metrics.json
+
+# --- SECRETS & ENV ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials/
+gha-creds-*.json
+# .secrets.baseline is intentionally tracked — CI needs it for detect-secrets
+
+# --- AI & TEMP ---
 .gemini/
 .claude/
 .codex/
 .anthropic/
 .codex
+tasks.md
+task.md
+diagnose.py
 
-# Local data and logs
-*.jsonl
-data/
-sessions/
-metrics/
-
-# Database and state files
-*.db
-*.sqlite
-quota.json
-external_metrics.json
-
-# NOTE: frontend/css/styles.css is built from frontend/css/input.css
-# It is checked into git so the app works without Node.js installed
-# To rebuild: npm run build:css
-# Coverage
-.coverage
-coverage.xml
-
-# Performance comparisons
+# --- MISC ---
 docs/comparison/
 docs/sidecar_implementation.md
-
-gha-creds-*.json

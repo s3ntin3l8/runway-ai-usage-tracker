@@ -1,0 +1,23 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # This specifies the release strategy (node is good for projects with package.json)
+          # Even though it's Python, using node or simple-strategy works well for versioning.
+          # Since you have a package.json, 'node' will update the version there too.
+          release-type: node
+          # Or use 'python' if you want it to look for pyproject.toml or setup.py
+          # release-type: python

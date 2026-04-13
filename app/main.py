@@ -1,23 +1,22 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import Response
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
-from app.api.routes import router as api_router
-from app.services.collector_manager import manager
-from app.core.config import settings
-from app.core.rate_limit import limiter
-from app.core.db import init_db
-from app.services.poller import poller
-import os
 import logging
+import os
 import sys
-import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.responses import Response
+
+from app.api.routes import router as api_router
+from app.core.config import settings
+from app.core.db import init_db
+from app.core.rate_limit import limiter
+from app.services.collector_manager import manager
+from app.services.poller import poller
 
 # Configure logging
 logging.basicConfig(
@@ -62,7 +61,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
 # Cache for dashboard HTML
 _DASHBOARD_HTML_CACHE = None
@@ -125,7 +124,7 @@ async def dashboard():
     if _DASHBOARD_HTML_CACHE is None:
         index_file = os.path.join(frontend_path, "index.html")
         if os.path.exists(index_file):
-            with open(index_file, "r") as f:
+            with open(index_file) as f:
                 _DASHBOARD_HTML_CACHE = f.read()
         else:
             return "<h1>Frontend index.html not found!</h1>"

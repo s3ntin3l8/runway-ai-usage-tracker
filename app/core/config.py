@@ -1,8 +1,8 @@
 # app/core/config.py
-import os
 import logging
+import os
 import platform
-from typing import Optional, List
+
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,13 +18,12 @@ def get_platform_data_dir(app_name: str) -> str:
         if local_app_data:
             return os.path.join(local_app_data, app_name)
         return os.path.join(home, "AppData", "Local", app_name)
-    elif system == "Darwin":
+    if system == "Darwin":
         return os.path.join(home, "Library", "Application Support", app_name)
-    else:
-        xdg_data_home = os.getenv("XDG_DATA_HOME")
-        if xdg_data_home:
-            return os.path.join(xdg_data_home, app_name)
-        return os.path.join(home, ".local", "share", app_name)
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return os.path.join(xdg_data_home, app_name)
+    return os.path.join(home, ".local", "share", app_name)
 
 
 def get_platform_config_dir(app_name: str) -> str:
@@ -36,13 +35,12 @@ def get_platform_config_dir(app_name: str) -> str:
         if app_data:
             return os.path.join(app_data, app_name)
         return os.path.join(home, "AppData", "Roaming", app_name)
-    elif system == "Darwin":
+    if system == "Darwin":
         return os.path.join(home, "Library", "Application Support", app_name)
-    else:
-        xdg_config_home = os.getenv("XDG_CONFIG_HOME")
-        if xdg_config_home:
-            return os.path.join(xdg_config_home, app_name)
-        return os.path.join(home, ".config", app_name)
+    xdg_config_home = os.getenv("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        return os.path.join(xdg_config_home, app_name)
+    return os.path.join(home, ".config", app_name)
 
 
 DEFAULT_INGEST_API_KEY = "sidecar-default-secret"
@@ -70,7 +68,7 @@ class Settings(BaseSettings):
     KIMI_AUTH_TOKEN: str = ""
 
     INGEST_API_KEY: str = DEFAULT_INGEST_API_KEY
-    ADMIN_API_KEY: Optional[str] = None
+    ADMIN_API_KEY: str | None = None
 
     # OAuth credentials
     GEMINI_OAUTH_CLIENT_ID: str = ""
@@ -138,7 +136,7 @@ class Settings(BaseSettings):
     APP_PORT: int = 8765
 
     # Encryption
-    DB_ENCRYPTION_KEY: Optional[str] = None
+    DB_ENCRYPTION_KEY: str | None = None
 
     # Logging format: "plain" (default) or "json"
     LOG_FORMAT: str = "plain"
@@ -153,7 +151,7 @@ class Settings(BaseSettings):
         return f"sqlite:///{self.DATABASE_PATH}"
 
     @property
-    def CORS_ORIGINS(self) -> List[str]:
+    def CORS_ORIGINS(self) -> list[str]:
         origins = os.getenv("CORS_ORIGINS")
         if origins:
             return [o.strip() for o in origins.split(",")]

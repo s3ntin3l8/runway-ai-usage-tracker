@@ -9,10 +9,11 @@ Tests cover:
 - Configuration override behavior
 """
 
-import pytest
 import os
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
 
 
 class TestSettings:
@@ -29,6 +30,7 @@ class TestSettings:
         with patch.dict(os.environ, test_vars, clear=False):
             # Import fresh to get new environment
             import importlib
+
             from app.core import config
 
             importlib.reload(config)
@@ -56,8 +58,6 @@ class TestSettings:
 
     def test_settings_validation(self):
         """Test that invalid settings raise validation errors."""
-        from pydantic import ValidationError
-        from app.core.config import Settings
 
         # Invalid settings should be caught
         # (This is a placeholder - actual test would depend on Settings implementation)
@@ -79,7 +79,6 @@ class TestConfigEnvironmentVariables:
         """Test CLAUDE_CODE_OAUTH_TOKEN is properly loaded."""
         test_token = "sk-ant-test-token-12345"
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": test_token}):
-            from app.core.config import settings
 
             # Token would be loaded from environment
             pass
@@ -88,7 +87,6 @@ class TestConfigEnvironmentVariables:
         """Test GITHUB_TOKEN is properly loaded."""
         test_token = "ghp_test_token_123456"
         with patch.dict(os.environ, {"GITHUB_TOKEN": test_token}):
-            from app.core.config import settings
 
             # Token would be loaded from environment
             pass
@@ -97,7 +95,6 @@ class TestConfigEnvironmentVariables:
         """Test GEMINI_OAUTH_PATH is properly configured."""
         test_path = "/custom/path/to/gemini/credentials.json"
         with patch.dict(os.environ, {"GEMINI_OAUTH_PATH": test_path}):
-            from app.core.config import settings
 
             # Path would be loaded from environment
             pass

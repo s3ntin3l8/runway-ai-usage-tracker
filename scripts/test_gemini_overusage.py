@@ -4,11 +4,12 @@ Tests various endpoints and response scenarios.
 """
 
 import asyncio
-import httpx
 import json
 import os
 import time
 from pathlib import Path
+
+import httpx
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -180,8 +181,8 @@ async def test_usage_api(client, headers):
     project_id = "climbing-engine-hczq7"
     endpoints = [
         f"https://monitoring.googleapis.com/v3/projects/{project_id}/timeSeries",
-        f"https://cloudcode-pa.googleapis.com/v1internal:retrieveUsage",
-        f"https://cloudcode-pa.googleapis.com/v1internal:getUsage",
+        "https://cloudcode-pa.googleapis.com/v1internal:retrieveUsage",
+        "https://cloudcode-pa.googleapis.com/v1internal:getUsage",
     ]
 
     for endpoint in endpoints:
@@ -214,7 +215,7 @@ async def main():
         )
         return
 
-    with open(CREDS_PATH, "r") as f:
+    with open(CREDS_PATH) as f:
         creds = json.load(f)
 
     async with httpx.AsyncClient() as client:

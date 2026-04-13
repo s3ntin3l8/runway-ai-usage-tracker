@@ -2,15 +2,16 @@
 Antigravity IDE quota collector with file-based data source.
 """
 
-import re
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple
+import re
+from datetime import UTC, datetime
+from typing import Any
+
 import httpx
+
 from app.core.config import settings
-from app.core.utils import PaceCalculator, human_delta
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -20,14 +21,14 @@ class AntigravityCollector(BaseCollector):
     PROVIDER_ID = "antigravity"
     DEFAULT_WINDOW_TYPE = "session"
 
-    def __init__(self, account_id: Optional[str] = None, account_label: Optional[str] = None):
+    def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
 
-    def _fallback_strategies(self) -> List[Any]:
+    def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for Antigravity."""
         return []
 
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Antigravity quota via LSP probing (Primary) or local file (Fallback)."""
         if not settings.LOCAL_COLLECTOR_ENABLED:
             return []
@@ -40,11 +41,11 @@ class AntigravityCollector(BaseCollector):
         # Fallback to local JSON file
         return await self._strategy_local_file(client)
 
-    async def _error_handler(self) -> List[Dict[str, Any]]:
+    async def _error_handler(self) -> list[dict[str, Any]]:
         """Return empty list on failure."""
         return []
 
-    async def _strategy_lsp(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_lsp(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Probes the active language server processes."""
         try:
             proc_info = await self._detect_lsp_proc_info()
@@ -73,7 +74,7 @@ class AntigravityCollector(BaseCollector):
             return results
         except Exception: return []
 
-    async def _probe_lsp_service(self, client: httpx.AsyncClient, port: int, csrf: str) -> List[Dict[str, Any]]:
+    async def _probe_lsp_service(self, client: httpx.AsyncClient, port: int, csrf: str) -> list[dict[str, Any]]:
         """Probe a specific port/token."""
         headers = {
             "X-Codeium-Csrf-Token": csrf,
@@ -90,7 +91,7 @@ class AntigravityCollector(BaseCollector):
         except Exception: pass
         return []
 
-    async def _detect_lsp_proc_info(self) -> Dict[int, List[str]]:
+    async def _detect_lsp_proc_info(self) -> dict[int, list[str]]:
         """Find Antigravity PIDs and tokens."""
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -114,7 +115,7 @@ class AntigravityCollector(BaseCollector):
             return results
         except Exception: return {}
 
-    async def _find_listening_ports(self, pid: int) -> List[int]:
+    async def _find_listening_ports(self, pid: int) -> list[int]:
         """Find listening ports for PID."""
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -133,7 +134,7 @@ class AntigravityCollector(BaseCollector):
             return sorted(list(set(ports)))
         except Exception: return []
 
-    def _parse_lsp_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_lsp_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse LSP response."""
         results = []
         user_status = data.get("userStatus", {})
@@ -151,7 +152,6 @@ class AntigravityCollector(BaseCollector):
         configs = cascade_data.get("clientModelConfigs", [])
 
         for config in configs:
-            label = config.get("label", "").lower()
             quota = config.get("quotaInfo", {})
             rem_frac = quota.get("remainingFraction")
             if rem_frac is None: continue
@@ -170,7 +170,7 @@ class AntigravityCollector(BaseCollector):
                 "detail": f"{plan} | {email} [LSP]",
                 "tier": plan,
                 "data_source": "lsp",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             })
 
         # Process Credits
@@ -196,15 +196,15 @@ class AntigravityCollector(BaseCollector):
                 "health": "good" if int(amount) > 100 else "warning",
                 "detail": f"{display_name} | {email} [LSP]",
                 "data_source": "lsp",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             })
         return results
 
-    async def _strategy_local_file(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    async def _strategy_local_file(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Antigravity quota from local JSON file."""
         path = settings.ANTIGRAVITY_QUOTA_PATH
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
             res = []
             for name, usage in data.get("models", {}).items():
@@ -219,7 +219,7 @@ class AntigravityCollector(BaseCollector):
                     "health": "good" if rem > 30 else "warning",
                     "detail": f"{name} [IDE/File]",
                     "data_source": "local_file",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 })
             return res
         except Exception: return []

@@ -1,12 +1,15 @@
-import pytest
 import os
 import tempfile
-from sqlmodel import SQLModel, create_engine, Session
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+
+from app.core.db import get_session
 from app.main import app
 from app.models.db import UsageSnapshot
-from app.core.db import get_session
+
 
 # Create a temporary database for testing
 @pytest.fixture(name="session")
@@ -40,7 +43,7 @@ def test_get_history_empty(client: TestClient):
 
 def test_get_history_with_data(client: TestClient, session: Session):
     # Add some dummy data
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s1 = UsageSnapshot(
         provider_id="anthropic",
         account_id="user1",
@@ -69,7 +72,7 @@ def test_get_history_with_data(client: TestClient, session: Session):
     assert data[1]["provider_id"] == "openai"
 
 def test_get_history_filtering(client: TestClient, session: Session):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s1 = UsageSnapshot(
         provider_id="anthropic",
         account_id="user1",
@@ -95,7 +98,7 @@ def test_get_history_filtering(client: TestClient, session: Session):
     assert response.json()[0]["provider_id"] == "anthropic"
 
 def test_get_history_limit(client: TestClient, session: Session):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for i in range(10):
         s = UsageSnapshot(
             provider_id="test",

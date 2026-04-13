@@ -1,7 +1,6 @@
 """Service for managing the persistent sidecar fleet registry."""
 import logging
-from datetime import datetime, timezone
-from typing import Optional, List
+from datetime import UTC, datetime
 
 from sqlmodel import Session
 
@@ -19,7 +18,7 @@ class FleetRegistryService:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         row = session.get(SidecarRegistry, sidecar_id)
         if row:
-            row.last_seen = datetime.now(timezone.utc)
+            row.last_seen = datetime.now(UTC)
             row.ingest_count += 1
             row.last_ip = source_ip
             logger.debug(f"Updated sidecar '{sidecar_id}' (ingest #{row.ingest_count})")
@@ -38,10 +37,10 @@ class FleetRegistryService:
     def update_sidecar(
         self,
         sidecar_id: str,
-        custom_name: Optional[str],
-        tags: Optional[List[str]],
+        custom_name: str | None,
+        tags: list[str] | None,
         session: Session,
-    ) -> Optional[SidecarRegistry]:
+    ) -> SidecarRegistry | None:
         """Update custom_name and/or tags. Returns None if sidecar not found."""
         row = session.get(SidecarRegistry, sidecar_id)
         if not row:
@@ -71,8 +70,8 @@ class FleetRegistryService:
             "hostname": row.hostname,
             "custom_name": row.custom_name,
             "tags": row.tags,
-            "last_seen": row.last_seen.replace(tzinfo=timezone.utc).isoformat(),
-            "first_seen": row.first_seen.replace(tzinfo=timezone.utc).isoformat(),
+            "last_seen": row.last_seen.replace(tzinfo=UTC).isoformat(),
+            "first_seen": row.first_seen.replace(tzinfo=UTC).isoformat(),
             "last_ip": row.last_ip,
             "error_count": row.error_count,
             "ingest_count": row.ingest_count,

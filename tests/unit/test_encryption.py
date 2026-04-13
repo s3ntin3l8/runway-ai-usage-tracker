@@ -1,6 +1,7 @@
-import pytest
-from app.core.encryption import EncryptionService
 from cryptography.fernet import Fernet
+
+from app.core.encryption import EncryptionService
+
 
 def test_encryption_roundtrip():
     # Create a test key

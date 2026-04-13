@@ -1,15 +1,17 @@
-import os
+import asyncio
 import json
 import logging
+import os
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional
-import asyncio
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
+
+from app.core.browser_cookies import get_chatgpt_device_id, get_chatgpt_session_token
 from app.core.config import settings
-from app.services.credential_provider import credential_provider
 from app.core.utils import http_request_with_retry, safe_write_json
-from app.core.browser_cookies import get_chatgpt_session_token, get_chatgpt_device_id
+from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 class ChatGPTAuthMixin:
     """Mixin for ChatGPT authentication and token management."""
     
-    async def _get_auth_data(self, client: httpx.AsyncClient) -> Dict[str, Any]:
+    async def _get_auth_data(self, client: httpx.AsyncClient) -> dict[str, Any]:
         """
         Retrieve ChatGPT auth with priority: OAUTH -> Browser Cookies -> Sidecar Cache.
         """
@@ -33,7 +35,7 @@ class ChatGPTAuthMixin:
             if last_refresh and refresh_token:
                 try:
                     lr_dt = datetime.fromisoformat(last_refresh.replace("Z", "+00:00"))
-                    if (datetime.now(timezone.utc) - lr_dt).days >= 8:
+                    if (datetime.now(UTC) - lr_dt).days >= 8:
                         logger.info("ChatGPT OAuth token is stale (8+ days), refreshing...")
                         new_tokens = await self._refresh_oauth_token(client, refresh_token)
                         if new_tokens:
@@ -60,7 +62,7 @@ class ChatGPTAuthMixin:
 
         if session_token:
             # Try to get refreshed token from in-memory cache
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if (
                 getattr(self, "_refreshed_token", None)
                 and getattr(self, "_refreshed_token_expiry", None)
@@ -87,7 +89,7 @@ class ChatGPTAuthMixin:
 
     async def _refresh_oauth_token(
         self, client: httpx.AsyncClient, refresh_token: str
-    ) -> Optional[Dict[str, str]]:
+    ) -> dict[str, str] | None:
         """Refresh OAuth token using the OpenAI auth endpoint."""
         try:
             resp = await http_request_with_retry(
@@ -116,7 +118,7 @@ class ChatGPTAuthMixin:
             logger.debug(f"Error refreshing ChatGPT OAuth token: {e}")
         return None
 
-    async def _save_refreshed_oauth_token(self, data: Dict[str, str]):
+    async def _save_refreshed_oauth_token(self, data: dict[str, str]):
         """Persist refreshed OAuth tokens back to auth.json."""
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
             return
@@ -127,7 +129,7 @@ class ChatGPTAuthMixin:
 
         try:
             # Read existing
-            with open(auth_path, "r") as f:
+            with open(auth_path) as f:
                 existing = json.load(f)
 
             # Update
@@ -136,7 +138,7 @@ class ChatGPTAuthMixin:
                 existing["refresh_token"] = data["refresh_token"]
             if data.get("id_token"):
                 existing["id_token"] = data["id_token"]
-            existing["last_refresh"] = datetime.now(timezone.utc).isoformat()
+            existing["last_refresh"] = datetime.now(UTC).isoformat()
 
             # Write back
             safe_write_json(auth_path, existing)
@@ -157,7 +159,7 @@ class ChatGPTAuthMixin:
 
     async def _refresh_access_token(
         self, client: httpx.AsyncClient, session_token: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """Exchange session cookie for a Bearer accessToken."""
         try:
             url = "https://chatgpt.com/api/auth/session"
@@ -178,10 +180,9 @@ class ChatGPTAuthMixin:
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("accessToken")
-            else:
-                logger.debug(
-                    f"Failed to refresh ChatGPT token: HTTP {resp.status_code}"
-                )
+            logger.debug(
+                f"Failed to refresh ChatGPT token: HTTP {resp.status_code}"
+            )
         except Exception as e:
             logger.debug(f"Error refreshing ChatGPT token: {e}")
         return None

@@ -1,7 +1,6 @@
 import json
 import logging
 import sys
-import pytest
 
 
 def test_json_formatter_basic_fields():
@@ -57,8 +56,9 @@ def test_json_formatter_message_args_interpolated():
 
 def test_json_formatter_timestamp_is_iso8601():
     """Timestamp is a valid ISO 8601 string ending in +00:00 or Z."""
-    from app.core.logging import JsonFormatter
     from datetime import datetime
+
+    from app.core.logging import JsonFormatter
     formatter = JsonFormatter()
     record = logging.LogRecord(
         name="x", level=logging.INFO,

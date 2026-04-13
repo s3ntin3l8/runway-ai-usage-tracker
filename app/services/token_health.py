@@ -1,10 +1,10 @@
 """Token health inspection — expiry parsing, status classification."""
 import base64
 import json
-import time
 import logging
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+import time
+from datetime import UTC, datetime
+from typing import Any
 
 from app.services.token_cache import token_cache
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 EXPIRY_WARNING_SECS = 86400  # 24 hours
 
 
-def _parse_jwt_exp(token: str) -> Optional[float]:
+def _parse_jwt_exp(token: str) -> float | None:
     """Extract the 'exp' claim from a JWT without verifying the signature."""
     try:
         parts = token.split(".")
@@ -27,7 +27,7 @@ def _parse_jwt_exp(token: str) -> Optional[float]:
         return None
 
 
-def _classify_status(exp: Optional[float]) -> str:
+def _classify_status(exp: float | None) -> str:
     if exp is None:
         return "unknown"
     now = time.time()
@@ -39,14 +39,14 @@ def _classify_status(exp: Optional[float]) -> str:
 
 
 class TokenHealthService:
-    async def get_health(self) -> List[Dict[str, Any]]:
+    async def get_health(self) -> list[dict[str, Any]]:
         """Return a health record for each cached credential."""
         stats = await token_cache.get_all_stats()
         result = []
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
                 tokens = await token_cache.get(provider, acc_id) or {}
-                exp: Optional[float] = None
+                exp: float | None = None
                 for key in ("oauth_token", "access_token", "id_token"):
                     if key in tokens:
                         exp = _parse_jwt_exp(tokens[key])
@@ -60,7 +60,7 @@ class TokenHealthService:
                         "token_types": list(tokens.keys()),
                         "status": _classify_status(exp),
                         "expires_at": (
-                            datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+                            datetime.fromtimestamp(exp, tz=UTC).isoformat()
                             if exp is not None
                             else None
                         ),

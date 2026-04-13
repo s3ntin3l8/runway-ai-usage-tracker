@@ -1,9 +1,10 @@
 import asyncio
-import httpx
 import json
 import os
 import time
 from pathlib import Path
+
+import httpx
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -26,7 +27,7 @@ async def test_gemini_api():
         print(f"ERROR: Credentials not found at {CREDS_PATH}")
         return
 
-    with open(CREDS_PATH, "r") as f:
+    with open(CREDS_PATH) as f:
         creds = json.load(f)
 
     print("--- Token Expiry Check ---")
