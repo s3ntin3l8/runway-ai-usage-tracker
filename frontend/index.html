@@ -86,10 +86,34 @@
 
             <!-- History View -->
             <section id="view-history" class="view hidden">
-                <div class="glass-panel rounded-3xl p-8">
-                    <h2 class="text-xl font-bold text-zinc-100 mb-6 flex items-center gap-2">
+                <!-- Chart Panel (populated by 5A — canvas placeholders added now) -->
+                <div id="history-chart-panel" class="glass-panel rounded-3xl p-6 mb-6 hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Token Volume</h3>
+                        <div class="flex gap-2">
+                            <button id="chart-view-bar" class="toggle-btn active" onclick="setChartView('bar')">Bar</button>
+                            <button id="chart-view-line" class="toggle-btn" onclick="setChartView('line')">Line</button>
+                        </div>
+                    </div>
+                    <div id="chart-empty" class="hidden text-zinc-500 italic text-sm py-8 text-center">No data for selected range.</div>
+                    <div id="chart-bar-wrap"><canvas id="chart-bar" height="200"></canvas></div>
+                    <div id="chart-line-wrap" class="hidden"><canvas id="chart-line" height="200"></canvas></div>
+                </div>
+
+                <!-- Header + CSV download -->
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-zinc-100 flex items-center gap-2">
                         <span class="text-blue-400">🕒</span> Usage History
                     </h2>
+                    <a id="csv-download-btn"
+                       href="/api/v1/usage/history?format=csv"
+                       download
+                       class="toggle-btn text-sm">
+                        Download CSV
+                    </a>
+                </div>
+
+                <div class="glass-panel rounded-3xl p-8">
                     <div id="history-content" class="overflow-x-auto">
                         <p class="text-zinc-500 italic">No history data found.</p>
                     </div>

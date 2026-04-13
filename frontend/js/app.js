@@ -121,6 +121,8 @@ async function loadSettings() {
             // Non-critical — silently skip if token health unavailable
             console.warn('Token health unavailable:', err.message);
         }
+        // Append webhook alerts section
+        await renderWebhookSettings();
     } catch (err) {
         container.innerHTML = `<p class="text-red-400">Failed to load settings: ${err.message}</p>`;
     }
@@ -711,3 +713,80 @@ window.handleResetProvider = async function(provider, accountId) {
         }, 2000);
     }
 }
+
+// --- Webhook alert settings ---
+
+async function renderWebhookSettings() {
+    const container = document.getElementById('settings-extra');
+    if (!container) return;
+
+    let webhooks = [];
+    try {
+        const res = await fetch('/api/v1/system/webhooks');
+        webhooks = (await res.json()).webhooks || [];
+    } catch (e) { /* ignore */ }
+
+    container.insertAdjacentHTML('beforeend', `
+        <div class="mt-8 border-t border-zinc-800 pt-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide">Webhook Alerts</h3>
+                <button onclick="addWebhookRow()" class="toggle-btn text-xs">+ Add</button>
+            </div>
+            <div id="webhook-rows" class="space-y-3">
+                ${webhooks.map(w => webhookRowHtml(w)).join('')}
+            </div>
+        </div>
+    `);
+}
+
+function webhookRowHtml(w) {
+    return `
+        <div class="flex flex-wrap gap-2 items-center p-3 bg-zinc-900/50 rounded-xl" data-webhook-id="${w.id}">
+            <input type="text" value="${w.provider_id}" placeholder="provider or *"
+                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-24 text-zinc-200"
+                   onchange="patchWebhook(${w.id}, 'provider_id', this.value)">
+            <input type="number" value="${w.threshold_pct}" min="1" max="100" step="1"
+                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-16 text-zinc-200"
+                   onchange="patchWebhook(${w.id}, 'threshold_pct', parseFloat(this.value))">
+            <span class="text-zinc-600 text-xs">%</span>
+            <select class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200"
+                    onchange="patchWebhook(${w.id}, 'channel', this.value)">
+                <option value="discord" ${w.channel === 'discord' ? 'selected' : ''}>Discord</option>
+                <option value="slack" ${w.channel === 'slack' ? 'selected' : ''}>Slack</option>
+            </select>
+            <input type="url" value="${w.url}" placeholder="Webhook URL"
+                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 flex-1 min-w-[180px] text-zinc-200"
+                   onchange="patchWebhook(${w.id}, 'url', this.value)">
+            <button onclick="testWebhook(${w.id})" class="toggle-btn text-xs">Test</button>
+            <button onclick="deleteWebhook(${w.id})" class="toggle-btn text-xs text-red-400">✕</button>
+        </div>
+    `;
+}
+
+window.addWebhookRow = async function() {
+    const res = await fetch('/api/v1/system/webhooks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({provider_id: '*', threshold_pct: 90, url: '', channel: 'discord'}),
+    });
+    if (res.ok) loadSettings();
+};
+
+window.patchWebhook = async function(id, field, value) {
+    await fetch(`/api/v1/system/webhooks/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[field]: value}),
+    });
+};
+
+window.testWebhook = async function(id) {
+    const res = await fetch(`/api/v1/system/webhooks/${id}/test`, {method: 'POST'});
+    const data = await res.json();
+    alert(res.ok ? 'Test sent!' : `Failed: ${data.detail}`);
+};
+
+window.deleteWebhook = async function(id) {
+    await fetch(`/api/v1/system/webhooks/${id}`, {method: 'DELETE'});
+    loadSettings();
+};
