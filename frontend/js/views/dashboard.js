@@ -3,6 +3,7 @@ import { fetchLimits } from '../api.js';
 import { STATE } from '../state.js';
 import { buildProviderSummaryCard, buildHealthBar, buildProviderModal, buildModalSkeleton } from '../components.js';
 import { fetchHistoryCached } from './history.js';
+import { applyOrder, cardKey } from '../layout.js';
 
 let loadDataGeneration = 0;
 
@@ -34,7 +35,7 @@ export function renderGrid() {
     });
 
     const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const sorted = [...groups.keys()].sort((a, b) => {
+    const defaultSorted = [...groups.keys()].sort((a, b) => {
         if (a === '__other__') return 1;
         if (b === '__other__') return -1;
         const aWorst = groups.get(a).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
@@ -42,6 +43,11 @@ export function renderGrid() {
         if (bWorst !== aWorst) return bWorst - aWorst;
         return a.localeCompare(b);
     });
+    const sorted = applyOrder(
+        defaultSorted.map(pid => ({ pid })),
+        x => x.pid,
+        STATE.layout?.provider_order ?? []
+    ).map(x => x.pid);
 
     let html = '';
     let count = 0;
@@ -188,17 +194,17 @@ export function initDashboardView() {
 }
 
 export async function openProviderModal(providerId) {
-    const items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
+    let items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
+    items = applyOrder(items, cardKey, STATE.layout?.card_orders?.[providerId] ?? []);
     if (!items.length) return;
 
     const container = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
     if (!container || !content) return;
 
-    const HEALTH_SEVERITY_MODAL = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const sorted = [...items].sort((a, b) =>
-        (HEALTH_SEVERITY_MODAL[b.health] || 0) - (HEALTH_SEVERITY_MODAL[a.health] || 0)
-    );
+    // Keep order already applied by applyOrder (pinned first, then unpinned).
+    // For unpinned items, preserve API order; user can reorder via edit mode.
+    const sorted = items;
 
     // Show skeleton immediately while fetching
     content.innerHTML = buildModalSkeleton(items.length);

@@ -1,5 +1,6 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
+import { applyOrder, cardKey } from './layout.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
@@ -713,9 +714,9 @@ function renderGrid() {
         groups.get(key).push(item);
     });
 
-    // Sort: providers with worst health first, then alphabetically
+    // Default sort: providers with worst health first, then alphabetically
     const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const sorted = [...groups.keys()].sort((a, b) => {
+    const defaultSorted = [...groups.keys()].sort((a, b) => {
         if (a === '__other__') return 1;
         if (b === '__other__') return -1;
         const aWorst = groups.get(a).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
@@ -723,6 +724,13 @@ function renderGrid() {
         if (bWorst !== aWorst) return bWorst - aWorst;
         return a.localeCompare(b);
     });
+
+    // Apply user-defined provider order on top of the default sort
+    const sorted = applyOrder(
+        defaultSorted.map(pid => ({ pid })),
+        x => x.pid,
+        STATE.layout?.provider_order ?? []
+    ).map(x => x.pid);
 
     let html = '';
     let count = 0;
@@ -750,7 +758,8 @@ function renderGrid() {
  * @param {string} providerId
  */
 window.openProviderModal = async function(providerId) {
-    const items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
+    let items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
+    items = applyOrder(items, cardKey, STATE.layout?.card_orders?.[providerId] ?? []);
     if (!items.length) return;
 
     const container = document.getElementById('modal-container');
@@ -873,7 +882,7 @@ function applyTheme() {
 /**
  * Initialize UI elements based on initial state
  */
-function initUI() {
+async function initUI() {
     ['compact', 'remaining'].forEach(key => {
         const btn = document.getElementById(`toggle-${key}`);
         if (btn) {
@@ -908,6 +917,15 @@ function initUI() {
 
     // Refresh button
     document.getElementById('refresh-btn')?.addEventListener('click', () => forceRefresh());
+
+    // Load persisted dashboard layout (falls back to localStorage cache on failure)
+    try {
+        const layout = await getDashboardLayout();
+        STATE.layout = layout;
+        localStorage.setItem('runway_layout', JSON.stringify(layout));
+    } catch (err) {
+        console.warn('Failed to fetch dashboard layout; using cached/empty', err);
+    }
 
     // Route from URL hash (so reloads stay on the active tab)
     const initialView = (location.hash || '#dashboard').replace(/^#/, '');
