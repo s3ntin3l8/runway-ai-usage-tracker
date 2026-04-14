@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.10.1...v0.11.0) (2026-04-14)
+
+
+### Features
+
+* **backend:** add /api/v1/system/dashboard-layout GET+PUT ([04df5bd](https://github.com/s3ntin3l8/ai-usage-tracker/commit/04df5bdcc188659272848f4e14e500fa07200216))
+* **backend:** add dashboard_layout_json column to SystemConfig ([c0b2097](https://github.com/s3ntin3l8/ai-usage-tracker/commit/c0b209725cfccf9af61859aa4d3b582d262ff030))
+* **dashboard-reorder:** drag service rows on the dashboard summary card ([fb4a2f3](https://github.com/s3ntin3l8/ai-usage-tracker/commit/fb4a2f3833e93b3f5021a5440558fcd9e085be52))
+* **frontend:** add editMode + layout cache to STATE ([b986cd9](https://github.com/s3ntin3l8/ai-usage-tracker/commit/b986cd96d517a71298164478bcddfc8e8190e544))
+* **frontend:** add getDashboardLayout + putDashboardLayout ([46abe8f](https://github.com/s3ntin3l8/ai-usage-tracker/commit/46abe8f0acafcdb246c853b0072e9d0cb30258a6))
+* **frontend:** add layout helpers for dashboard reorder ([ef2411b](https://github.com/s3ntin3l8/ai-usage-tracker/commit/ef2411b36fa497f639133ba88b04d41fcd204167))
+* **frontend:** add Sortable.js lazy CDN loader ([33ab94a](https://github.com/s3ntin3l8/ai-usage-tracker/commit/33ab94a2a184810b766a984b43f7813f476d6d8e))
+* **frontend:** edit-mode toggle + drag-to-reorder via Sortable.js ([35f0414](https://github.com/s3ntin3l8/ai-usage-tracker/commit/35f041487239b849fc623d50404d0605df15276f))
+* **frontend:** persist active tab via URL hash ([b3eee58](https://github.com/s3ntin3l8/ai-usage-tracker/commit/b3eee58ec74c19cb80c9f598261318b1b220bf47))
+* **frontend:** render dashboard with saved layout applied ([07e6159](https://github.com/s3ntin3l8/ai-usage-tracker/commit/07e6159a74963664d6c565d2502f8743897c154f))
+* **frontend:** stamp data-provider-id/data-card-key + grip glyph ([cf7a6fa](https://github.com/s3ntin3l8/ai-usage-tracker/commit/cf7a6fa9f9b39db4217dcd037159f8a1cdea0faf))
+* **frontend:** unify header controls as icon-only buttons ([8235435](https://github.com/s3ntin3l8/ai-usage-tracker/commit/82354356e57b2969542a569c6c94fc718646076b))
+* **history:** adapt bucket granularity to selected time window ([d53365a](https://github.com/s3ntin3l8/ai-usage-tracker/commit/d53365a45a4c4119fcc48cb09125fad0252c857e))
+
+
+### Bug Fixes
+
+* **backend:** prevent duplicate cards when default + dynamic collectors coexist for same provider ([ccde053](https://github.com/s3ntin3l8/ai-usage-tracker/commit/ccde053d58a8c6fe9f85b573200c37fc515264c6))
+* **ci:** move Docker + sidecar builds into release-please.yml ([8c88844](https://github.com/s3ntin3l8/ai-usage-tracker/commit/8c8884463895de136806fcc0f7a7eddb8dd9b02f))
+* **dashboard-reorder:** allow modal open in edit mode, subtle smaller grip ([9e46dd8](https://github.com/s3ntin3l8/ai-usage-tracker/commit/9e46dd8d9a0e7bb387b02542ada1e927761fba58))
+* **dashboard-reorder:** bright-mode styles, exit on tab switch, whole-card drag, subitem reorder ([5d36fbe](https://github.com/s3ntin3l8/ai-usage-tracker/commit/5d36fbea6b3cc5c6e87c16082d97d7741a4c1a1c))
+* **frontend:** don't re-sort provider modal items after applyOrder ([084e76f](https://github.com/s3ntin3l8/ai-usage-tracker/commit/084e76ff3f265623cc0708efcff2fe171184c0f0))
+* **frontend:** remove purple square from provider icons ([7060779](https://github.com/s3ntin3l8/ai-usage-tracker/commit/7060779e6b9ef85ce79aafccdd673bc2e960d0b9))
+* **frontend:** remove TZ from modal, fix tier badge truncation, widen status line ([95abdeb](https://github.com/s3ntin3l8/ai-usage-tracker/commit/95abdeb6ad0b783aab2d30a11486b8b43331585c))
+* **history:** prevent LIMIT from hiding older days in history tab ([349b321](https://github.com/s3ntin3l8/ai-usage-tracker/commit/349b3218d4a7ffa4ee22348bbf6915586216b67f))
+* **token-refresh:** add settings fallback for client_id/secret and ChatGPT support ([993a4be](https://github.com/s3ntin3l8/ai-usage-tracker/commit/993a4bee19ba9561cb3ca8e227fc9de858047fb0))
+
 ## [0.10.1](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.10.0...v0.10.1) (2026-04-14)
 
 
