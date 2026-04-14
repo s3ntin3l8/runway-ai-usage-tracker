@@ -4,12 +4,20 @@ import logging
 
 import httpx
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
-# Known OAuth token endpoints per provider
 _REFRESH_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://platform.claude.com/v1/oauth/token",
     "gemini": "https://oauth2.googleapis.com/token",
+    "chatgpt": "https://auth.openai.com/oauth/token",
+}
+
+_PROVIDER_CLIENT_IDS: dict[str, str] = {
+    "anthropic": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    "gemini": "",
+    "chatgpt": "app_EMoamEEZ73f0CkXaXp7hrann",
 }
 
 
@@ -35,19 +43,23 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
 
     # Provider-specific extra params
     if provider == "anthropic":
-        if "client_id" in tokens:
-            payload["client_id"] = tokens["client_id"]
+        client_id = tokens.get("client_id") or settings.CLAUDE_OAUTH_CLIENT_ID
+        payload["client_id"] = client_id
     elif provider == "gemini":
-        if tokens.get("client_id"):
-            payload["client_id"] = tokens["client_id"]
-        if tokens.get("client_secret"):
-            payload["client_secret"] = tokens["client_secret"]
+        client_id = tokens.get("client_id") or settings.GEMINI_OAUTH_CLIENT_ID
+        if client_id:
+            payload["client_id"] = client_id
+        client_secret = tokens.get("client_secret") or settings.GEMINI_OAUTH_CLIENT_SECRET
+        if client_secret:
+            payload["client_secret"] = client_secret
+    elif provider == "chatgpt":
+        payload["client_id"] = _PROVIDER_CLIENT_IDS.get("chatgpt", "")
+        payload["scope"] = "openid profile email"
 
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
     }
-    # Anthropic OAuth endpoint requires these headers (matches anthropic_oauth.py)
     if provider == "anthropic":
         headers["User-Agent"] = "claude-code/2.1.69"
         headers["anthropic-beta"] = "oauth-2025-04-20"

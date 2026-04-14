@@ -76,6 +76,10 @@ class ChatGPTAuthMixin:
             if refreshed:
                 self._refreshed_token = refreshed
                 self._refreshed_token_expiry = now + timedelta(hours=1)
+                # Store in token cache for token health visibility
+                await token_cache.store(
+                    "chatgpt", {"oauth_token": refreshed}, account_id=self.account_id
+                )
                 return {"token": refreshed, "source": "cookies"}
 
         # Priority 4: Sidecar cache (direct OAuth token)

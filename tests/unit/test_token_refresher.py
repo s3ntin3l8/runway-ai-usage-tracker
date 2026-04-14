@@ -85,7 +85,7 @@ class TestRefreshOAuthTokenAnthropic:
             result = await refresh_oauth_token("anthropic", tokens)
 
         sent_data = ctx.__aenter__.return_value.post.call_args.kwargs["data"]
-        assert "client_id" not in sent_data
+        assert "client_id" in sent_data  # Falls back to settings
         assert sent_data["grant_type"] == "refresh_token"
         assert result["oauth_token"] == "new_access"
 
@@ -153,8 +153,8 @@ class TestRefreshOAuthTokenGemini:
             result = await refresh_oauth_token("gemini", tokens)
 
         sent_data = ctx.__aenter__.return_value.post.call_args.kwargs["data"]
-        assert "client_id" not in sent_data
-        assert "client_secret" not in sent_data
+        assert "client_id" in sent_data  # Falls back to settings
+        assert "client_secret" in sent_data  # Falls back to settings
         assert result["oauth_token"] == "gemini_access"
 
 

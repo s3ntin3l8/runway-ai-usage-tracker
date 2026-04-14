@@ -47,6 +47,7 @@ class TokenHealthService:
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
                 tokens = await token_cache.get(provider, acc_id) or {}
+                logger.debug(f"Token health check for {provider}/{acc_id}: {list(tokens.keys())}")
                 exp: float | None = None
                 for key in ("oauth_token", "access_token", "id_token"):
                     if key in tokens:
