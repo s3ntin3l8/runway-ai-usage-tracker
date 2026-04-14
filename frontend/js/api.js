@@ -198,3 +198,26 @@ export async function putProviderConfig(providerId, body) {
     }
     return await resp.json();
 }
+
+/**
+ * Dashboard Layout
+ */
+
+export async function getDashboardLayout() {
+    const resp = await fetch('/api/v1/system/dashboard-layout');
+    if (!resp.ok) throw new Error(`Failed to fetch dashboard layout: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function putDashboardLayout(layout) {
+    const resp = await fetch('/api/v1/system/dashboard-layout', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(layout),
+    });
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+}
