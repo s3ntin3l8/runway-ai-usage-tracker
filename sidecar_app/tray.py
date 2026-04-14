@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import webbrowser
+from collections.abc import Callable
 
 import pystray
 from PIL import Image
@@ -65,24 +66,31 @@ class SidecarTray:
         self._config_path = config_path
         self._icon: pystray.Icon | None = None
         self._paused = False
+        self._after_start: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------
     # Public
     # ------------------------------------------------------------------
 
-    def run(self) -> None:
+    def run(self, after_start: Callable[[], None] | None = None) -> None:
         """Build the pystray icon and start the event loop (blocks)."""
         status = self._daemon.status
         icon_name = _STATUS_ICON.get(status, "icon_warn")
         title = _STATUS_TITLE.get(status, "Runway Sidecar")
 
+        self._after_start = after_start
         self._icon = pystray.Icon(
             name="runway-sidecar",
             icon=_load_image(icon_name),
             title=title,
             menu=self._build_menu(),
         )
-        self._icon.run()
+        self._icon.run(setup=self._on_tray_ready)
+
+    def _on_tray_ready(self, icon: pystray.Icon) -> None:
+        """Called by pystray once the icon is running; fires the after_start hook."""
+        if self._after_start:
+            self._after_start()
 
     def _update_icon(self, status: str) -> None:
         """Swap the tray icon image and title to reflect the new status."""
@@ -133,8 +141,8 @@ class SidecarTray:
             webbrowser.open(RELEASES_URL)
 
         def on_quit(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-            self._daemon.stop()
             icon.stop()
+            self._daemon.stop()
 
         return pystray.Menu(
             pystray.MenuItem(title_text, None, enabled=False),
