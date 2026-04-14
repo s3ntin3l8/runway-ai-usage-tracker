@@ -142,3 +142,4 @@ class SystemConfig(SQLModel, table=True):
     default_poll_interval_seconds: int | None = None  # None = use per-collector default TTL
     local_collector_enabled: bool | None = None  # None = use env var default
     local_credential_scraping_enabled: bool | None = None  # None = use env var default
+    dashboard_layout_json: str | None = None

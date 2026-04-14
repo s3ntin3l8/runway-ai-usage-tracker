@@ -54,6 +54,8 @@ def _run_migrations():
         # provider_configs: browser_preference column removed from model but kept in DB for compatibility
         # provider_configs: separate session cookie storage (distinct from API key)
         "ALTER TABLE provider_configs ADD COLUMN session_cookie_encrypted TEXT",
+        # SystemConfig gained dashboard_layout_json (user-reorder persistence)
+        "ALTER TABLE system_config ADD COLUMN dashboard_layout_json TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:
