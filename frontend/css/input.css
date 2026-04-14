@@ -165,6 +165,45 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
     color: #eff6ff;
     background: rgba(59, 130, 246, 0.1);
 }
+.icon-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    border: 1px solid rgba(63, 63, 70, 0.5);
+    background: rgba(39, 39, 42, 0.4);
+    color: rgb(113, 113, 122);
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+    cursor: pointer;
+}
+.icon-btn:hover { color: rgb(228, 228, 231); background: rgba(63, 63, 70, 0.5); }
+.icon-btn[aria-pressed="true"] {
+    color: rgb(244, 244, 245);
+    background: rgb(63, 63, 70);
+    border-color: rgb(113, 113, 122);
+}
+
+/* Edit mode affordances (used in later tasks) */
+.edit-mode [data-provider-id],
+.edit-mode [data-card-key] {
+    cursor: grab;
+    outline: 1px dashed rgba(113, 113, 122, 0.4);
+    outline-offset: 4px;
+}
+.edit-mode [data-provider-id]:active,
+.edit-mode [data-card-key]:active { cursor: grabbing; }
+.drag-handle { display: none; }
+.edit-mode .drag-handle {
+    display: inline-flex;
+    color: rgb(113, 113, 122);
+    position: absolute;
+    top: 8px;
+    right: 8px;
+}
+.sortable-ghost { opacity: 0.4; }
+.sortable-chosen { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
