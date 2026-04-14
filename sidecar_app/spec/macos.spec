@@ -2,14 +2,20 @@
 # PyInstaller spec file for Runway Sidecar on macOS
 # Build with: pyinstaller sidecar_app/spec/macos.spec
 
+import os
+
+# PyInstaller 6+ resolves relative paths against the spec's directory.
+# Anchor everything to the repo root regardless of the invoking CWD.
+_ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
+
 a = Analysis(
-    ["sidecar_app/__main__.py"],
-    pathex=["."],
+    [os.path.join(_ROOT, "sidecar_app", "__main__.py")],
+    pathex=[_ROOT],
     binaries=[],
     datas=[
-        ("scripts/sidecar.py", "scripts"),
-        ("sidecar_app/assets", "assets"),
-        ("package.json", "."),
+        (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
+        (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
+        (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=["pystray._darwin", "PIL.Image", "PIL.PngImagePlugin", "pkg_resources"],
     hookspath=[],
