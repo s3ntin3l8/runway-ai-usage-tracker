@@ -177,6 +177,12 @@ class CollectorManager:
             active_keys = set()
             for p_id, acc_id, acc_name in active_accounts:
                 if p_id in self.collector_registry:
+                    default_key = f"{p_id}:default"
+                    if default_key in self.smart_collectors:
+                        logger.debug(
+                            f"Skipping dynamic collector for {p_id}, default already running"
+                        )
+                        continue
                     cls, name, ttl = self.collector_registry[p_id]
                     db_cfg = db_configs.get(p_id)
                     if db_cfg is not None and not db_cfg.enabled:
