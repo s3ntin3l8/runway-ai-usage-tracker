@@ -5,7 +5,7 @@ import os
 
 import httpx
 
-from app.core.config import settings
+from app.core.config import is_local_credential_scraping_enabled, settings
 from app.core.utils import safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
@@ -34,7 +34,7 @@ class OAuthBaseCollector(BaseCollector):
 
     async def _get_credentials(self) -> dict | None:
         """Load credentials from file or cache."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             return None
 
         try:
@@ -51,7 +51,7 @@ class OAuthBaseCollector(BaseCollector):
 
     def _persist_credentials(self, creds: dict):
         """Persist refreshed credentials to file."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             logger.info(
                 f"Skipping {self.provider_name} token persistence (local credential scraping disabled)"
             )
@@ -77,7 +77,13 @@ class OAuthBaseCollector(BaseCollector):
             new_creds = await self._execute_refresh(client)
             if new_creds:
                 self._persist_credentials(new_creds)
-                return new_creds.get("access_token")
+                access = new_creds.get("access_token")
+                if access:
+                    # Update cache so token health stays current after refresh
+                    await self._store_sidecar_token(
+                        self.provider_name, access, new_creds.get("refresh_token")
+                    )
+                return access
 
             return None
 

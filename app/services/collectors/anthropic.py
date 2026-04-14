@@ -3,6 +3,7 @@ Anthropic collector orchestrating OAuth, Web Scraping, and Local Log strategies.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -66,8 +67,43 @@ class AnthropicCollector(
         if not self.account_id:
             creds = await self._get_credentials()
             if creds:
-                return creds.get("claudeAiOauth", {}).get("accessToken")
+                oauth = creds.get("claudeAiOauth", {})
+                token = oauth.get("accessToken")
+                if token:
+                    # Mirror into token cache so the Tokens health tab can see it
+                    token_data: dict[str, str] = {"oauth_token": token}
+                    if oauth.get("refreshToken"):
+                        token_data["refresh_token"] = oauth["refreshToken"]
+                    label = creds.get("oauthAccount", {}).get("emailAddress")
+                    await token_cache.store("anthropic", token_data, account_id=None, account_label=label)
+                return token
         return None
+
+    async def _is_token_expired(self) -> bool:
+        """Check if Claude token is expired."""
+        try:
+            # Check sidecar cache for expiration info
+            token_data = await token_cache.get_all_tokens("anthropic", account_id=self.account_id)
+            if token_data and "expires_at" in token_data:
+                return datetime.now(UTC).timestamp() > token_data["expires_at"]
+
+            # Fallback to credentials file
+            creds = await self._get_credentials()
+            if creds:
+                expires_at = creds.get("claudeAiOauth", {}).get("expiresAt")
+                if expires_at:
+                    # Some formats use ms, some iso strings
+                    if isinstance(expires_at, (int, float)):
+                        if expires_at > 1e12:  # ms
+                            expires_at /= 1000
+                        return datetime.now(UTC).timestamp() > expires_at
+                    elif isinstance(expires_at, str):
+                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                        return datetime.now(UTC) > exp_dt
+            return False
+        except Exception as e:
+            logger.debug(f"Could not check Anthropic token expiration: {e}")
+            return False
 
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
         """Anthropic specific error check."""
@@ -95,7 +131,7 @@ class AnthropicCollector(
         # 2. Fetch from OAuth (Full API)
         token = await self._get_valid_token(client)
         if token:
-            oauth_results = await self._get_claude_oauth_with_cache(client, token)
+            oauth_results = await self._get_claude_oauth(client, token)
             if oauth_results:
                 # Simple deduplication: Prefer OAuth over Statusline for same window
                 seen_services = {r["service_name"] for r in oauth_results}
