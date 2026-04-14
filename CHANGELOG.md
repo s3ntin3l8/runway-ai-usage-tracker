@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.10.0...v0.10.1) (2026-04-14)
+
+
+### Bug Fixes
+
+* **ci:** trigger build-and-push on release published event ([9e579db](https://github.com/s3ntin3l8/ai-usage-tracker/commit/9e579db8cf8542e3f5f52ea737cc8dfef06f33d4))
+
 ## [0.10.0](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.9.0...v0.10.0) (2026-04-14)
 
 
