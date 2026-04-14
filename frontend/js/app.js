@@ -2,6 +2,8 @@ import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, lo
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
+import { loadHistoryView, initHistoryView } from './views/history.js';
+import { loadSettingsView } from './views/settings.js';
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -37,8 +39,8 @@ window.switchView = function(viewId) {
     
     // Load data for the view
     if (viewId === 'dashboard' && STATE.data.length === 0) loadData();
-    if (viewId === 'history') loadHistory();
-    if (viewId === 'settings') loadSettings();
+    if (viewId === 'history') loadHistoryView();
+    if (viewId === 'settings') loadSettingsView();
     if (viewId === 'fleet') loadFleet();
 }
 
@@ -1349,4 +1351,7 @@ window.viewRawProviderData = async function(providerId) {
         `;
     }
 };
+
+// Expose functions needed by inline onclick handlers in HTML
+window.switchView = switchView;
 

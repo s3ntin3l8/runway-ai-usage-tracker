@@ -77,8 +77,20 @@ async function ensureChartJS() {
         _chartJS = window.Chart;
         return _chartJS;
     }
-    const module = await import('./lib/chart.min.js');
-    _chartJS = module.default;
+    // Dynamically import and execute the script in global context
+    const chartModule = await import('./lib/chart.min.js');
+    // UMD attaches to 'this' (window in browser), not as default export
+    // Re-import via script tag to get it onto window
+    if (!window.Chart) {
+        await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = '/static/js/lib/chart.min.js';
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Failed to load Chart.js'));
+            document.head.appendChild(script);
+        });
+    }
+    _chartJS = window.Chart;
     return _chartJS;
 }
 
