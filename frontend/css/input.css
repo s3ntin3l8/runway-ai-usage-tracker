@@ -220,6 +220,7 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 #modal-container.active #modal-content {
     transform: scale(1);
     opacity: 1;
+    will-change: opacity, transform;
 }
 
 .modal-detail-item {

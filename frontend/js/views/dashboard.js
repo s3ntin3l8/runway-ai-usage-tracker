@@ -1,7 +1,8 @@
 // Dashboard view module - lazy loaded via dynamic import
 import { fetchLimits } from '../api.js';
 import { STATE } from '../state.js';
-import { buildProviderSummaryCard, buildHealthBar, buildProviderModal } from '../components.js';
+import { buildProviderSummaryCard, buildHealthBar, buildProviderModal, buildModalSkeleton } from '../components.js';
+import { fetchHistoryCached } from './history.js';
 
 let loadDataGeneration = 0;
 
@@ -187,7 +188,6 @@ export function initDashboardView() {
 }
 
 export async function openProviderModal(providerId) {
-    const { fetchHistory } = await import('../api.js');
     const items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
     if (!items.length) return;
 
@@ -200,7 +200,8 @@ export async function openProviderModal(providerId) {
         (HEALTH_SEVERITY_MODAL[b.health] || 0) - (HEALTH_SEVERITY_MODAL[a.health] || 0)
     );
 
-    content.innerHTML = buildProviderModal(providerId, sorted, []);
+    // Show skeleton immediately while fetching
+    content.innerHTML = buildModalSkeleton(items.length);
     container.classList.add('active');
     document.body.style.overflow = 'hidden';
     document.getElementById('modal-backdrop').onclick = () => {
@@ -213,7 +214,10 @@ export async function openProviderModal(providerId) {
     };
 
     try {
-        const history = await fetchHistory({ provider_id: providerId, days: 7, limit: 500 });
+        // Fetch history using cached fetch (may return stale data immediately)
+        const history = await fetchHistoryCached({ provider_id: providerId, days: 7, limit: 500 });
+        
+        // Only update if modal is still open
         if (container.classList.contains('active') && content.querySelector('#close-modal')) {
             content.innerHTML = buildProviderModal(providerId, sorted, history);
             document.getElementById('close-modal').onclick = () => {
@@ -223,5 +227,9 @@ export async function openProviderModal(providerId) {
         }
     } catch (e) {
         console.warn('Could not fetch history for modal sparklines:', e.message);
+        // Still show the modal without sparklines
+        if (container.classList.contains('active')) {
+            content.innerHTML = buildProviderModal(providerId, sorted, []);
+        }
     }
 }

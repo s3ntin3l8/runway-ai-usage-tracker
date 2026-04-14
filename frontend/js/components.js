@@ -1226,6 +1226,34 @@ function getTrendArrow(points) {
 }
 
 /**
+ * Build skeleton loading state for the provider modal.
+ * @param {number} count - number of service rows to show skeletons for
+ * @returns {string} HTML string
+ */
+export function buildModalSkeleton(count) {
+    const rows = Array(Math.min(count, 10)).fill(0).map(() => `
+        <div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4">
+            <div class="flex justify-between items-start mb-2.5">
+                <div class="flex-1 min-w-0">
+                    <div class="skeleton h-6 w-32 mb-2" style="border-radius: 6px;"></div>
+                    <div class="flex gap-2">
+                        <div class="skeleton h-4 w-16" style="border-radius: 6px;"></div>
+                        <div class="skeleton h-4 w-12" style="border-radius: 6px;"></div>
+                    </div>
+                </div>
+                <div class="skeleton w-16 h-7" style="border-radius: 6px;"></div>
+            </div>
+            <div class="skeleton h-5 w-full mb-2" style="border-radius: 6px;"></div>
+            <div class="h-1 bg-zinc-800 rounded-full overflow-hidden">
+                <div class="skeleton h-full w-3/4" style="border-radius: 0;"></div>
+            </div>
+        </div>
+    `).join('');
+    
+    return rows;
+}
+
+/**
  * Build the provider drill-down modal.
  * @param {string} providerId
  * @param {Array} items - LimitCard items for this provider (sorted worst-first)

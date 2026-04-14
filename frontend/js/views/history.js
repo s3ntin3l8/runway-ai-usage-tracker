@@ -9,6 +9,37 @@ const historyState = {
 };
 let _historyCache = [];
 
+// History cache for stale-while-revalidate pattern
+const CACHE_TTL_MS = 30_000; // 30 seconds
+const _historyCacheStore = new Map();
+
+function getCacheKey(params) {
+    return `${params.provider_id || 'all'}:${params.days}:${params.limit || 500}`;
+}
+
+export async function fetchHistoryCached(params) {
+    const key = getCacheKey(params);
+    const now = Date.now();
+    const cached = _historyCacheStore.get(key);
+    
+    // Return stale cache immediately if available
+    if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+        return cached.data;
+    }
+    
+    // Fetch fresh data
+    const data = await fetchHistory(params);
+    
+    // Update cache
+    _historyCacheStore.set(key, { data, timestamp: now });
+    
+    return data;
+}
+
+export function clearHistoryCache() {
+    _historyCacheStore.clear();
+}
+
 function escapeHTML(str) {
     if (!str) return '';
     const map = { '&': '&amp;', '<': '&gt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
@@ -105,7 +136,7 @@ export async function loadHistoryView() {
     container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
 
     try {
-        const history = await fetchHistory({ days: historyState.days, limit: 500 });
+        const history = await fetchHistoryCached({ days: historyState.days, limit: 500 });
         _historyCache = history || [];
         renderHistoryFromCache();
     } catch (err) {
