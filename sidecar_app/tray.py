@@ -12,7 +12,10 @@ from sidecar_app.daemon import TrayDaemon
 
 RELEASES_URL = "https://github.com/bjoernf73/runway/releases"
 
-_ASSETS_DIR = pathlib.Path(__file__).parent / "assets"
+if getattr(sys, "frozen", False):
+    _ASSETS_DIR = pathlib.Path(sys._MEIPASS) / "assets"  # type: ignore[attr-defined]
+else:
+    _ASSETS_DIR = pathlib.Path(__file__).parent / "assets"
 
 _STATUS_ICON: dict[str, str] = {
     "ok": "icon_ok",

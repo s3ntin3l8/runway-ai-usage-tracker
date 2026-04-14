@@ -5,7 +5,12 @@ import pathlib
 import sys
 
 # scripts/ is not a package; use sys.path injection to import it
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "scripts"))
+if getattr(sys, "frozen", False):
+    _BASE = pathlib.Path(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    _BASE = pathlib.Path(__file__).parent.parent
+
+sys.path.insert(0, str(_BASE / "scripts"))
 import sidecar as _sidecar  # noqa: E402
 
 load_config = _sidecar.load_config

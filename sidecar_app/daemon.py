@@ -7,7 +7,12 @@ import time
 from collections.abc import Callable
 
 # Import DaemonRunner from scripts/sidecar.py (not a package, use sys.path)
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "scripts"))
+if getattr(sys, "frozen", False):
+    _BASE = pathlib.Path(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    _BASE = pathlib.Path(__file__).parent.parent
+
+sys.path.insert(0, str(_BASE / "scripts"))
 import sidecar as _sidecar  # noqa: E402
 
 DaemonRunner = _sidecar.DaemonRunner
