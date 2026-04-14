@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import yaml
 
-from app.core.config import settings
 from app.services.credential_provider import CredentialProvider
 
 

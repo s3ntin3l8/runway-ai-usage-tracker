@@ -81,8 +81,6 @@ class KimiK2Collector(BaseCollector):
             credits_remaining = float(data.get("credits_remaining", 0))
             credits_consumed = float(data.get("credits_consumed", 0))
 
-            total = credits_remaining + credits_consumed
-
             return [
                 {
                     "service_name": "Kimi K2",

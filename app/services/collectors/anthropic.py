@@ -97,7 +97,7 @@ class AnthropicCollector(
                         if expires_at > 1e12:  # ms
                             expires_at /= 1000
                         return datetime.now(UTC).timestamp() > expires_at
-                    elif isinstance(expires_at, str):
+                    if isinstance(expires_at, str):
                         exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
                         return datetime.now(UTC) > exp_dt
             return False

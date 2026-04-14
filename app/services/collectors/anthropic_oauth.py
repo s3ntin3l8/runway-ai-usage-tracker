@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -9,7 +8,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.core.utils import error_card, http_request_with_retry, human_delta, PaceCalculator
+from app.core.utils import PaceCalculator, error_card, http_request_with_retry, human_delta
 from app.services.collectors.oauth_base import OAuthBaseCollector
 from app.services.token_cache import token_cache
 
@@ -169,8 +168,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 retry_after = resp.headers.get("Retry-After")
                 # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                if wait_sec < 300:
-                    wait_sec = 300
+                wait_sec = max(wait_sec, 300)
 
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
                 logger.warning(f"Anthropic API returned 429. Proactive backoff set for {wait_sec}s")
@@ -264,7 +262,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     def _get_local_config_hints(self) -> dict[str, Any]:
         """Read supplementary billing hints from ~/.claude.json if available."""
-        import os
 
         from app.core.config import is_local_collector_enabled
 

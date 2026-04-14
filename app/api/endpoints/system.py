@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from app.core.config import is_local_collector_enabled, is_local_credential_scraping_enabled, settings
+from app.core.config import (
+    is_local_collector_enabled,
+    is_local_credential_scraping_enabled,
+    settings,
+)
 from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
@@ -122,7 +126,6 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
         
         if not target_collectors:
             # Try to get one from registry if not active yet
-            from app.services.collector_manager import CollectorManager
             collector = manager._create_collector(provider_id)
             if collector:
                 target_collectors = [collector]

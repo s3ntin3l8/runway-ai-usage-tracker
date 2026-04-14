@@ -428,10 +428,11 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
     # Apply preference ordering — DB SystemConfig takes precedence over env var default
     def _get_browser_preference() -> str:
         try:
-            from app.core.db import engine
-            from app.models.db import SystemConfig
             from sqlmodel import Session
             from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import SystemConfig
 
             with Session(engine) as _s:
                 cfg = _s.exec(sqlselect(SystemConfig)).first()

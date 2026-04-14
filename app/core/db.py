@@ -25,7 +25,13 @@ engine = create_engine(
 def init_db():
     """Create database tables if they don't exist."""
     # Import all models here so they are registered with SQLModel.metadata
-    from app.models.db import ProviderConfig, SidecarRegistry, SystemConfig, UsageSnapshot, WebhookConfig  # noqa: F401
+    from app.models.db import (  # noqa: F401
+        ProviderConfig,
+        SidecarRegistry,
+        SystemConfig,
+        UsageSnapshot,
+        WebhookConfig,
+    )
 
     try:
         SQLModel.metadata.create_all(engine)

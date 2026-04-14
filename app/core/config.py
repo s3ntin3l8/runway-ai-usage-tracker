@@ -171,10 +171,11 @@ settings = Settings()
 def _get_system_config_flag(field: str, default: bool) -> bool:
     """Read a bool flag from SystemConfig DB, falling back to the env-var default."""
     try:
-        from app.core.db import engine
-        from app.models.db import SystemConfig
         from sqlmodel import Session
         from sqlmodel import select as sqlselect
+
+        from app.core.db import engine
+        from app.models.db import SystemConfig
 
         with Session(engine) as _s:
             cfg = _s.exec(sqlselect(SystemConfig)).first()

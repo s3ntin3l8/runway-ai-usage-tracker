@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import is_local_credential_scraping_enabled, settings
+from app.core.config import is_local_credential_scraping_enabled
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
@@ -125,10 +125,11 @@ class CollectorManager:
             db_configs: dict[str, Any] = {}
             global_poll_interval: int | None = None
             try:
-                from app.core.db import engine
-                from app.models.db import ProviderConfig, SystemConfig
                 from sqlmodel import Session
                 from sqlmodel import select as sqlselect
+
+                from app.core.db import engine
+                from app.models.db import ProviderConfig, SystemConfig
 
                 with Session(engine) as _s:
                     db_configs = {

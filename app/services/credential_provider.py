@@ -4,7 +4,7 @@ import os
 import platform
 from typing import Any
 
-from app.core.config import is_local_credential_scraping_enabled, settings
+from app.core.config import is_local_credential_scraping_enabled
 from app.core.keychain import get_keychain_secret
 from app.core.registry import registry
 
@@ -46,10 +46,11 @@ class CredentialProvider:
 
         # DB override: user-provided API key takes precedence over env/file/keychain
         try:
-            from app.core.db import engine
-            from app.models.db import ProviderConfig
             from sqlmodel import Session
             from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
 
             with Session(engine) as _s:
                 _cfg = _s.exec(
@@ -231,10 +232,11 @@ class CredentialProvider:
         scraped from the filesystem.
         """
         try:
-            from app.core.db import engine
-            from app.models.db import ProviderConfig
             from sqlmodel import Session
             from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
 
             with Session(engine) as _s:
                 cfg = _s.exec(
@@ -257,10 +259,11 @@ class CredentialProvider:
         reason as get_provider_api_key — the value was explicitly entered by the user.
         """
         try:
-            from app.core.db import engine
-            from app.models.db import ProviderConfig
             from sqlmodel import Session
             from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
 
             with Session(engine) as _s:
                 cfg = _s.exec(

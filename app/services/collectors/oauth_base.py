@@ -5,7 +5,7 @@ import os
 
 import httpx
 
-from app.core.config import is_local_credential_scraping_enabled, settings
+from app.core.config import is_local_credential_scraping_enabled
 from app.core.utils import safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
