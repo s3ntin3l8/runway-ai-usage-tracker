@@ -132,7 +132,7 @@ warn_no_return = true
 warn_unreachable = false
 strict_equality = false
 ignore_missing_imports = true
-exclude = ["tests", "scripts"]
+exclude = ["tests", "scripts", "sidecar_app"]
 
 [[tool.mypy.overrides]]
 module = "app.core.config"

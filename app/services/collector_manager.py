@@ -344,6 +344,18 @@ class CollectorManager:
         self._registry = kept + results
         return results
 
+    def _create_collector(self, provider_id: str) -> Any:
+        """Instantiate a one-off collector for *provider_id* (not added to smart_collectors).
+
+        Used by the debug endpoint to run a collector that is not currently active.
+        Returns None if the provider is not registered.
+        """
+        entry = self.collector_registry.get(provider_id)
+        if entry is None:
+            return None
+        cls, _name, _ttl = entry
+        return cls()
+
     async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""
         target_prefix = f"{provider_id}:"
