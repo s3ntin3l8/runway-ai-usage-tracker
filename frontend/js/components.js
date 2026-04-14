@@ -572,9 +572,6 @@ export function buildCard(item) {
         ? `<div class="source-badge" title="${escapeHTML(item.sidecar_id)}">${escapeHTML(item.sidecar_id[0].toUpperCase())}</div>`
         : '';
 
-    const isMax = item.tier && item.tier.toLowerCase().includes('max');
-    const iconStyle = isMax ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 8px; padding: 4px; margin: -4px; border: 1px solid rgba(192, 132, 252, 0.25);"' : '';
-
     return `
         <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
             ${sourceBadge}
@@ -583,7 +580,7 @@ export function buildCard(item) {
                 <!-- Header row -->
                 <div class="flex items-start justify-between gap-2">
                     <div class="flex items-center gap-2 min-w-0">
-                        <span class="text-xl leading-none" ${iconStyle}>${escapeHTML(item.icon)}</span>
+                        <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                         <div class="flex flex-col">
                             <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service_name)}</span>
                             ${getTierBadge(item.tier)}
@@ -671,14 +668,11 @@ export function buildModalContent(item) {
         </a>
     ` : '';
 
-    const isMax = item.tier && item.tier.toLowerCase().includes('max');
-    const iconStyleModal = isMax ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 10px; padding: 6px; margin: -6px; border: 1px solid rgba(192, 132, 252, 0.25); display: inline-flex; align-items: center; justify-content: center;"' : '';
-
     return `
         <div class="modal-header border-b border-zinc-800/80">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
-                    <span class="text-3xl" ${iconStyleModal}>${escapeHTML(item.icon)}</span>
+                    <span class="text-3xl">${escapeHTML(item.icon)}</span>
                     <div>
                         <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service_name)}</h2>
                         <div class="flex items-center gap-2 mt-0.5">
@@ -1153,17 +1147,13 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>`;
     }).join('');
 
-    const isMax = items.some(i => i.tier && i.tier.toLowerCase().includes('max'));
-    const iconStyle = isMax ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 6px; padding: 3px; margin: -3px; border: 1px solid rgba(192, 132, 252, 0.2); display: inline-flex; align-items: center; justify-content: center;"' : '';
-    const iconHTML = `<span ${iconStyle}>${icon}</span>`;
-
     return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 card-layout"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <div class="p-5">
             <div class="flex justify-between items-start mb-1">
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${iconHTML} ${escapeHTML(providerId)}</span>
+                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${icon} ${escapeHTML(providerId)}</span>
                         ${tierBadgeHTML}
                     </div>
                     ${accountHTML}
@@ -1337,14 +1327,10 @@ export function buildProviderModal(providerId, items, history) {
         </div>`;
     }).join('');
 
-    const isMaxProvider = items.some(i => i.tier && i.tier.toLowerCase().includes('max'));
-    const iconStyleModal = isMaxProvider ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 6px; padding: 3px; margin: -3px; border: 1px solid rgba(192, 132, 252, 0.2); display: inline-flex; align-items: center; justify-content: center;"' : '';
-    const iconHTMLModal = `<span ${iconStyleModal}>${icon}</span>`;
-
     return `<div>
         <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
             <div>
-                <div class="text-xl font-black text-zinc-100">${iconHTMLModal} ${escapeHTML(providerId)}</div>
+                <div class="text-xl font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
                 <div class="text-sm text-zinc-500 mt-1">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
             </div>
             <div class="flex items-center gap-1">
