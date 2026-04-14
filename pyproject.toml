@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "runway"
 version = "0.1.0"
@@ -9,6 +13,12 @@ desktop = [
     "Pillow>=10",
     "packaging>=24",
 ]
+
+# Explicit package discovery — setuptools can't auto-discover with multiple
+# top-level dirs (app, assets, frontend, sidecar_app) under flat layout.
+[tool.setuptools.packages.find]
+include = ["app*", "sidecar_app*", "scripts*"]
+exclude = ["tests*", "docs*", "assets*", "frontend*"]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
