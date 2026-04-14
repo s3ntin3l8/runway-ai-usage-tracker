@@ -9,7 +9,7 @@ Runway is a local-first monitoring tool for AI provider quotas with SQLite-backe
 
 ## Commands
 A `Makefile` wraps all common tasks — run `make help` for the full list. Key targets:
-- **Setup**: `make install`
+- **Setup**: `make install` (also wires up the pre-push hook that runs lint + tests)
 - **Dev server**: `make dev` (port 8765, hot reload)
 - **Tests**: `make test` (ignores `test_browser_cookies.py` — macOS-only crypto, fails on Linux/WSL)
 - **Single test**: `pytest tests/path/to/test_file.py`

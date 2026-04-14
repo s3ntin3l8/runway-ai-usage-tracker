@@ -28,16 +28,14 @@ class OllamaCollector(BaseCollector):
     PROVIDER_ID = "ollama"
     DEFAULT_WINDOW_TYPE = "session"
 
-    RECOGNIZED_COOKIE_NAMES = frozenset(
-        [
-            "session",
-            "ollama_session",
-            "__Host-ollama_session",
-            "__Secure-session",
-            "__Secure-next-auth.session-token",
-            "next-auth.session-token",
-            "access-token",
-        ]
+    RECOGNIZED_COOKIE_NAMES = (
+        "session",
+        "ollama_session",
+        "__Host-ollama_session",
+        "__Secure-session",
+        "__Secure-next-auth.session-token",
+        "next-auth.session-token",
+        "access-token",
     )
 
     # Pre-compiled regex patterns for performance
