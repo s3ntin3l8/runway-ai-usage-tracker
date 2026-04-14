@@ -18,15 +18,24 @@ export const STATE = {
     // Dashboard context filter
     activeFilter: (() => {
         const stored = JSON.parse(localStorage.getItem('runway_active_filter') || 'null');
-        // Discard stale filters with old dimensions (e.g. 'window_type' from pre-redesign)
         if (stored && !['account_label', 'sidecar_id', 'window_type'].includes(stored.dimension)) return null;
         return stored;
     })(),
-    // { dimension: 'sidecar_id'|'account_label'|'window_type', value: 'string' } | null
     filterDimension: (() => {
         const stored = localStorage.getItem('runway_filter_dimension');
         return ['account_label', 'sidecar_id', 'window_type'].includes(stored) ? stored : 'account_label';
-    })()
+    })(),
+    // Dashboard reordering
+    editMode: false,
+    layout: (() => {
+        try {
+            const stored = JSON.parse(localStorage.getItem('runway_layout') || 'null');
+            if (stored && Array.isArray(stored.provider_order) && stored.card_orders && typeof stored.card_orders === 'object') {
+                return stored;
+            }
+        } catch {}
+        return { provider_order: [], card_orders: {} };
+    })(),
 };
 
 /**
