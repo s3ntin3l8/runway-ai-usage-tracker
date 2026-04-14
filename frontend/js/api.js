@@ -75,6 +75,13 @@ export async function logoutGitHub() {
  * History, Settings & Status
  */
 
+export async function collectProvider(providerId, accountId) {
+    const params = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+    const resp = await fetch(`/api/v1/usage/collect/${encodeURIComponent(providerId)}${params}`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`Collect failed: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
 export async function fetchHistory(params = {}) {
     const query = new URLSearchParams(params).toString();
     const resp = await fetch(`/api/v1/usage/history?${query}`);
@@ -143,6 +150,48 @@ export async function postTokenRefresh(provider, accountId) {
         `/api/v1/system/token-health/refresh/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
         { method: 'POST' }
     );
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+}
+
+/**
+ * Provider Configuration
+ */
+
+export async function fetchProviderConfigs() {
+    const resp = await fetch('/api/v1/system/provider-configs');
+    if (!resp.ok) throw new Error(`Failed to fetch provider configs: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function fetchAppConfig() {
+    const resp = await fetch('/api/v1/system/app-config');
+    if (!resp.ok) throw new Error(`Failed to fetch app config: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function putAppConfig(body) {
+    const resp = await fetch('/api/v1/system/app-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+}
+
+export async function putProviderConfig(providerId, body) {
+    const resp = await fetch(`/api/v1/system/provider-config/${encodeURIComponent(providerId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
     if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
         throw new Error(data.detail || `HTTP ${resp.status}`);

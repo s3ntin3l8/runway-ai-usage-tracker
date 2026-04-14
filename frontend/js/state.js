@@ -12,8 +12,6 @@
 export const STATE = {
     compact: localStorage.getItem('runway_compact') === 'true',
     remaining: localStorage.getItem('runway_remaining') === 'true',
-    showHidden: localStorage.getItem('runway_show_hidden') === 'true',
-    disabledServices: JSON.parse(localStorage.getItem('runway_disabled_services') || '[]'),
     brightMode: localStorage.getItem('runway_bright_mode') === 'true',
     githubAuth: { authenticated: false, account: null },
     data: [],

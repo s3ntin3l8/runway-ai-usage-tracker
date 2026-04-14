@@ -31,7 +31,7 @@ export function escapeHTMLAttr(str) {
 const PROVIDER_ICONS = {
     anthropic: '🟠', gemini: '✨', github: '🐙', chatgpt: '🤖',
     openrouter: '🚀', opencode: '⚡', ollama: '🦙', minimax: '💎',
-    kimi_api: '🌊', kimi_coding: '💻', zai_api: '🔮', zai_plan: '📋',
+    kimi_api: '🌊', kimi_coding: '💻', kimi_k2: '🌙', zai: '🌐',
     antigravity: '🪐',
 };
 
@@ -66,8 +66,13 @@ function getTierBadge(tier) {
     if (tier === null || tier === undefined || tier === '') return '';
     const t = tier.toLowerCase();
     let classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50'; // Default/Free
+    let style = '';
 
-    if (t.includes('pro') || t.includes('premium') || t.includes('plus')) {
+    if (t.includes('max')) {
+        // Use inline style to bypass Tailwind JIT stripping
+        style = 'style="color: #c084fc; background-color: rgba(192, 132, 252, 0.1); border-color: rgba(192, 132, 252, 0.2)"';
+        classes = ''; 
+    } else if (t.includes('pro') || t.includes('premium') || t.includes('plus')) {
         classes = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
     } else if (t.includes('team') || t.includes('enterprise') || t.includes('organization')) {
         classes = 'bg-violet-500/10 text-violet-400 border-violet-500/20';
@@ -75,7 +80,7 @@ function getTierBadge(tier) {
         classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50';
     }
 
-    return `<span class="text-xs font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-tighter ${classes}">${escapeHTML(tier)}</span>`;
+    return `<span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest ${classes}" ${style}>${escapeHTML(tier)}</span>`;
 }
 
 /**
@@ -477,8 +482,6 @@ export function buildCard(item) {
     }
 
     const isPlaceholder = item.health === 'unknown';
-    const isDisabled = STATE.disabledServices.includes(item.service_name);
-    if (isDisabled && !STATE.showHidden) return '';
 
     // Handle Compact Mode
     if (STATE.compact) {
@@ -486,7 +489,7 @@ export function buildCard(item) {
         const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track mt-auto overflow-hidden rounded-full bg-zinc-800/50');
 
         return `
-            <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+            <div class="glass-panel ${h.card} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="text-base leading-none">${escapeHTML(item.icon)}</span>
@@ -568,15 +571,18 @@ export function buildCard(item) {
         ? `<div class="source-badge" title="${escapeHTML(item.sidecar_id)}">${escapeHTML(item.sidecar_id[0].toUpperCase())}</div>`
         : '';
 
+    const isMax = item.tier && item.tier.toLowerCase().includes('max');
+    const iconStyle = isMax ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 8px; padding: 4px; margin: -4px; border: 1px solid rgba(192, 132, 252, 0.25);"' : '';
+
     return `
-        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+        <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
             ${sourceBadge}
             <!-- Top zone (grid row: 1fr) -->
             <div class="p-5 flex flex-col gap-3">
                 <!-- Header row -->
                 <div class="flex items-start justify-between gap-2">
                     <div class="flex items-center gap-2 min-w-0">
-                        <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
+                        <span class="text-xl leading-none" ${iconStyle}>${escapeHTML(item.icon)}</span>
                         <div class="flex flex-col">
                             <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service_name)}</span>
                             ${getTierBadge(item.tier)}
@@ -584,7 +590,7 @@ export function buildCard(item) {
                     </div>
                     <div class="flex items-center gap-1.5 shrink-0">
                         <div class="dot ${h.dot}"></div>
-                        <span class="text-xs font-bold ${h.badge} mono">${h.label}</span>
+                        <span class="text-sm font-bold ${h.badge} mono">${h.label}</span>
                     </div>
                 </div>
 
@@ -637,7 +643,6 @@ export function buildModalContent(item) {
     };
 
     const usedPct = calculateUsedPct(item);
-    const isDisabled = STATE.disabledServices.includes(item.service_name);
 
     const formatted = formatUsageValues(
         item.used_value,
@@ -665,21 +670,27 @@ export function buildModalContent(item) {
         </a>
     ` : '';
 
+    const isMax = item.tier && item.tier.toLowerCase().includes('max');
+    const iconStyleModal = isMax ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 10px; padding: 6px; margin: -6px; border: 1px solid rgba(192, 132, 252, 0.25); display: inline-flex; align-items: center; justify-content: center;"' : '';
+
     return `
         <div class="modal-header border-b border-zinc-800/80">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
-                    <span class="text-3xl">${escapeHTML(item.icon)}</span>
+                    <span class="text-3xl" ${iconStyleModal}>${escapeHTML(item.icon)}</span>
                     <div>
                         <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service_name)}</h2>
                         <div class="flex items-center gap-2 mt-0.5">
-                            <span class="text-xs font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} ${healthBoxClasses[item.health] || healthBoxClasses.unknown}">${h.label}</span>
+                            <span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} ${healthBoxClasses[item.health] || healthBoxClasses.unknown}">${h.label}</span>
                             ${getTierBadge(item.tier)}
                         </div>
                     </div>
                 </div>
                 <div class="flex items-center gap-1">
                     ${linkButton}
+                    <button id="refresh-provider-btn" title="Refresh now" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-zinc-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                    </button>
                     <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
@@ -805,18 +816,6 @@ export function buildModalContent(item) {
         </div>
         ` : ''}
 
-        <div class="mt-8 pt-6 border-t border-zinc-800/80 flex items-center justify-between">
-            <div class="flex flex-col gap-1">
-                <span class="text-sm font-bold text-zinc-200">Show in Dashboard</span>
-                <span class="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Hide if not in use</span>
-            </div>
-            <button 
-                onclick="event.stopPropagation(); window.toggleService('${escapeHTML(item.service_name)}')"
-                class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${!isDisabled ? 'bg-blue-600' : 'bg-zinc-700'}"
-            >
-                <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${!isDisabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-            </button>
-        </div>
     `;
 }
 
@@ -1063,6 +1062,7 @@ export function buildHealthBar(data) {
 function getTierTextClass(tier) {
     if (!tier) return 'text-zinc-500';
     const t = tier.toLowerCase();
+    if (t.includes('max')) return 'text-purple-400';
     if (t.includes('pro') || t.includes('premium') || t.includes('plus')) return 'text-amber-400';
     if (t.includes('team') || t.includes('enterprise')) return 'text-violet-400';
     return 'text-zinc-500';
@@ -1083,10 +1083,14 @@ export function buildProviderSummaryCard(providerId, items) {
 
     const icon = PROVIDER_ICONS[providerId] || '🔧';
 
-    // Sort by health severity descending (worst first)
-    const sorted = [...items].sort((a, b) =>
-        (HEALTH_SEVERITY[b.health] || 0) - (HEALTH_SEVERITY[a.health] || 0)
-    );
+    // Sort by health severity descending (worst first); break ties by usage ratio
+    const sorted = [...items].sort((a, b) => {
+        const severityDiff = (HEALTH_SEVERITY[b.health] || 0) - (HEALTH_SEVERITY[a.health] || 0);
+        if (severityDiff !== 0) return severityDiff;
+        const aRatio = (a.limit_value > 0) ? a.used_value / a.limit_value : 0;
+        const bRatio = (b.limit_value > 0) ? b.used_value / b.limit_value : 0;
+        return bRatio - aRatio;
+    });
     const worst = sorted[0];
     const h = HEALTH_CONFIG[worst.health] || HEALTH_CONFIG.unknown;
 
@@ -1119,7 +1123,7 @@ export function buildProviderSummaryCard(providerId, items) {
 
     // Health badge (CRIT / WARN / GOOD / UNLM)
     const badgeLabels = { critical: 'CRIT', warning: 'WARN', good: 'GOOD', unlimited: 'UNLM', unknown: '——' };
-    const healthBadgeHTML = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded border ${h.badge} border-current/30">${badgeLabels[worst.health] || '——'}</span>`;
+    const healthBadgeHTML = `<span class="text-sm font-bold px-1.5 py-0.5 rounded border ${h.badge} border-current/30">${badgeLabels[worst.health] || '——'}</span>`;
 
     // Segmented bar (per-service health counts)
     const barCounts = { critical: 0, warning: 0, good: 0, unlimited: 0 };
@@ -1148,13 +1152,17 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>`;
     }).join('');
 
+    const isMax = items.some(i => i.tier && i.tier.toLowerCase().includes('max'));
+    const iconStyle = isMax ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 6px; padding: 3px; margin: -3px; border: 1px solid rgba(192, 132, 252, 0.2); display: inline-flex; align-items: center; justify-content: center;"' : '';
+    const iconHTML = `<span ${iconStyle}>${icon}</span>`;
+
     return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 card-layout"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <div class="p-5">
             <div class="flex justify-between items-start mb-1">
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${icon} ${escapeHTML(providerId)}</span>
+                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${iconHTML} ${escapeHTML(providerId)}</span>
                         ${tierBadgeHTML}
                     </div>
                     ${accountHTML}
@@ -1278,7 +1286,7 @@ export function buildProviderModal(providerId, items, history) {
                 <div class="flex-1 min-w-0">
                     <div class="text-2xl font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
                     <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        <span class="text-sm font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
+                        <span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
                         ${sourceLabel ? `<span class="text-sm text-zinc-500">${sourceLabel}</span>` : ''}
                         ${paceIcon ? `<span class="text-2xl">${paceIcon}</span>` : ''}
@@ -1300,13 +1308,22 @@ export function buildProviderModal(providerId, items, history) {
         </div>`;
     }).join('');
 
+    const isMaxProvider = items.some(i => i.tier && i.tier.toLowerCase().includes('max'));
+    const iconStyleModal = isMaxProvider ? 'style="background-color: rgba(192, 132, 252, 0.15); border-radius: 6px; padding: 3px; margin: -3px; border: 1px solid rgba(192, 132, 252, 0.2); display: inline-flex; align-items: center; justify-content: center;"' : '';
+    const iconHTMLModal = `<span ${iconStyleModal}>${icon}</span>`;
+
     return `<div>
         <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
             <div>
-                <div class="text-xl font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
+                <div class="text-xl font-black text-zinc-100">${iconHTMLModal} ${escapeHTML(providerId)}</div>
                 <div class="text-sm text-zinc-500 mt-1">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
             </div>
-            <button id="close-modal" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none mt-0.5 w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+            <div class="flex items-center gap-1">
+                <button id="refresh-provider-btn" title="Refresh now" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-zinc-100">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                </button>
+                <button id="close-modal" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+            </div>
         </div>
         <div class="space-y-3 max-h-[65vh] overflow-y-auto pr-1">${serviceRows}</div>
     </div>`;
