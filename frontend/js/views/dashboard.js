@@ -230,12 +230,14 @@ export async function openProviderModal(providerId) {
                 container.classList.remove('active');
                 document.body.style.overflow = '';
             };
+            if (typeof window.__reattachCardSortables === 'function') await window.__reattachCardSortables();
         }
     } catch (e) {
         console.warn('Could not fetch history for modal sparklines:', e.message);
         // Still show the modal without sparklines
         if (container.classList.contains('active')) {
             content.innerHTML = buildProviderModal(providerId, sorted, []);
+            if (typeof window.__reattachCardSortables === 'function') await window.__reattachCardSortables();
         }
     }
 }
