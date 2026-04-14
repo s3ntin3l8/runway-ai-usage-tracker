@@ -1,5 +1,6 @@
 import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
 import { pickBucketSeconds } from './charts.js';
+import { cardKey } from './layout.js';
 
 /**
  * Escapes HTML special characters to prevent XSS
@@ -47,7 +48,7 @@ export function buildProviderSection(providerId, items) {
     const icon = PROVIDER_ICONS[providerId] || '🔧';
     const cards = items.map(buildCard).filter(Boolean).join('');
     if (!cards) return '';
-    return `<div class="provider-section mb-8">
+    return `<div class="provider-section mb-8" data-provider-id="${escapeHTMLAttr(providerId)}">
         <div class="flex items-center gap-2 mb-3 pb-2 border-b border-zinc-800/40">
             <span>${icon}</span>
             <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${escapeHTML(title)}</h3>
@@ -490,7 +491,14 @@ export function buildCard(item) {
         const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track mt-auto overflow-hidden rounded-full bg-zinc-800/50');
 
         return `
-            <div class="glass-panel ${h.card} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+            <div class="glass-panel ${h.card} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+                <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+                        <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                        <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+                    </svg>
+                </span>
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="text-base leading-none">${escapeHTML(item.icon)}</span>
@@ -573,7 +581,14 @@ export function buildCard(item) {
         : '';
 
     return `
-        <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+        <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+            <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+                    <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                    <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+                </svg>
+            </span>
             ${sourceBadge}
             <!-- Top zone (grid row: 1fr) -->
             <div class="p-5 flex flex-col gap-3">
@@ -1147,8 +1162,16 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>`;
     }).join('');
 
-    return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 card-layout"
+    return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 card-layout relative"
+         data-provider-id="${escapeHTMLAttr(providerId)}"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
+        <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+                <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+            </svg>
+        </span>
         <div class="p-5">
             <div class="flex justify-between items-start mb-1">
                 <div class="min-w-0 flex-1">
