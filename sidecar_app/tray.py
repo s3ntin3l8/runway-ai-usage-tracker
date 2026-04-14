@@ -66,17 +66,25 @@ class SidecarTray:
         self._config_path = config_path
         self._icon: pystray.Icon | None = None
         self._paused = False
+        self._update_available = False
         self._after_start: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------
     # Public
     # ------------------------------------------------------------------
 
+    def set_update_available(self, flag: bool) -> None:
+        """Set the update-available flag and refresh the tray title/menu."""
+        self._update_available = flag
+        if self._icon is not None:
+            self._icon.title = self._build_title(self._daemon.status)
+            self._icon.update_menu()
+
     def run(self, after_start: Callable[[], None] | None = None) -> None:
         """Build the pystray icon and start the event loop (blocks)."""
         status = self._daemon.status
         icon_name = _STATUS_ICON.get(status, "icon_warn")
-        title = _STATUS_TITLE.get(status, "Runway Sidecar")
+        title = self._build_title(status)
 
         self._after_start = after_start
         self._icon = pystray.Icon(
@@ -92,13 +100,20 @@ class SidecarTray:
         if self._after_start:
             self._after_start()
 
+    def _build_title(self, status: str) -> str:
+        """Return the tray tooltip title, appending an update notice when available."""
+        base = _STATUS_TITLE.get(status, "Runway Sidecar")
+        if self._update_available:
+            return f"{base} (update available)"
+        return base
+
     def _update_icon(self, status: str) -> None:
         """Swap the tray icon image and title to reflect the new status."""
         if self._icon is None:
             return
         icon_name = _STATUS_ICON.get(status, "icon_warn")
         self._icon.icon = _load_image(icon_name)
-        self._icon.title = _STATUS_TITLE.get(status, "Runway Sidecar")
+        self._icon.title = self._build_title(status)
         self._icon.update_menu()
 
     # ------------------------------------------------------------------
@@ -109,8 +124,7 @@ class SidecarTray:
         """Construct the full context menu."""
 
         def title_text(item: pystray.MenuItem) -> str:
-            status = self._daemon.status
-            return _STATUS_TITLE.get(status, "Runway Sidecar")
+            return self._build_title(self._daemon.status)
 
         def pause_resume_text(item: pystray.MenuItem) -> str:
             return "Resume" if self._paused else "Pause"
@@ -158,7 +172,7 @@ class SidecarTray:
             pystray.MenuItem("Run Now", on_run_now),
             pystray.MenuItem(pause_resume_text, on_pause_resume),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Launch at Login", on_launch_at_login, checked=lambda item: is_login_item_installed()),
+            pystray.MenuItem("Launch at Login", on_launch_at_login, checked=lambda item: is_login_item_installed()),  # noqa: ARG005
             pystray.MenuItem("Edit Config…", on_edit_config),
             pystray.MenuItem("View Logs…", on_view_logs),
             pystray.Menu.SEPARATOR,

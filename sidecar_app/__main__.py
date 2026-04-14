@@ -3,6 +3,7 @@
 from sidecar_app.config import get_config_path, load_config, write_template_config
 from sidecar_app.daemon import TrayDaemon
 from sidecar_app.tray import SidecarTray
+from sidecar_app.updater import UpdateChecker
 
 _FALLBACK_CONFIG: dict = {
     "api_url": "http://localhost:8765",
@@ -37,12 +38,19 @@ def main() -> None:
     # 4. Wire status change callback
     daemon.on_status_change = tray._update_icon
 
-    # 5. Start daemon only when credentials are present
+    # 5. Wire update checker
+    def on_update_available(current: str, latest: str) -> None:
+        tray.set_update_available(True)
+
+    checker = UpdateChecker(on_update_available=on_update_available)
+    checker.start()
+
+    # 6. Start daemon only when credentials are present
     api_key = config.get("api_key", "")
     if api_key and api_key != "REPLACE_ME":
         daemon.start()
 
-    # 6. Run tray — blocks main thread
+    # 7. Run tray — blocks main thread
     if needs_setup_notification:
         def notify_setup() -> None:
             if tray._icon is not None:
@@ -53,6 +61,9 @@ def main() -> None:
         tray.run(after_start=notify_setup)
     else:
         tray.run()
+
+    # 8. Tray exited — stop background checker
+    checker.stop()
 
 
 if __name__ == "__main__":
