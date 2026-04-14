@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from app.core.browser_cookies import get_chatgpt_device_id, get_chatgpt_session_token
-from app.core.config import settings
+from app.core.config import is_local_credential_scraping_enabled, settings
 from app.core.utils import http_request_with_retry, safe_write_json
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -119,7 +119,7 @@ class ChatGPTAuthMixin:
 
     async def _save_refreshed_oauth_token(self, data: dict[str, str]):
         """Persist refreshed OAuth tokens back to auth.json."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             return
 
         auth_path = settings.CHATGPT_AUTH_PATH
