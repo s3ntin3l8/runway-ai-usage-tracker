@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 
 from app.core.browser_cookies import get_opencode_session_cookie
-from app.core.config import settings
+from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, error_card, http_request_with_retry
 from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
@@ -66,7 +66,7 @@ class OpenCodeCollector(BaseCollector):
 
     async def _strategy_local_db_fallback(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Third tier: Local database collection (if enabled)."""
-        if settings.LOCAL_COLLECTOR_ENABLED:
+        if is_local_collector_enabled():
             return await self._get_opencode_tui()
         return []
 
@@ -170,6 +170,12 @@ class OpenCodeCollector(BaseCollector):
 
             # Parse JavaScript response
             text = resp.text
+            
+            # Try to capture email here too
+            email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
+            if email_match:
+                self.account_label = email_match.group(1)
+
             # Look for workspace ID pattern: id:"wrk_..."
             match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
             if match:
@@ -212,6 +218,15 @@ class OpenCodeCollector(BaseCollector):
         now = datetime.now(UTC)
         now_iso = now.isoformat()
         usage_url = f"https://opencode.ai/workspace/{workspace_id}/go"
+
+        # Discover email for account_label
+        email = ""
+        email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
+        if email_match:
+            email = email_match.group(1)
+            self.account_label = email
+
+        identity_suffix = f" | {email}" if email else ""
 
         # Definition of windows to search for
         windows = [
@@ -258,12 +273,13 @@ class OpenCodeCollector(BaseCollector):
                     "reset": reset_label,
                     "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                     "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                    "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+                    "detail": f"${used:.2f} used ({pct:.1f}%) · Web API{identity_suffix}",
                     "used_value": used,
                     "limit_value": limit,
                     "is_unlimited": False,
                     "unit_type": "currency",
                     "currency": "USD",
+                    "account_label": email,
                     "reset_at": reset_at.isoformat(),
                     "data_source": "web_api",
                     "usage_url": usage_url,
@@ -305,6 +321,25 @@ class OpenCodeCollector(BaseCollector):
             import aiosqlite
 
             now = datetime.now(UTC)
+
+            # Discover identity from git config if missing (similar to GitHub)
+            if not self.account_label or self.account_label.lower() == "default":
+                import asyncio
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "git", "config", "--global", "user.email",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, _ = await proc.communicate()
+                    if proc.returncode == 0:
+                        git_email = stdout.decode().strip()
+                        if git_email:
+                            self.account_label = git_email
+                except Exception:
+                    pass
+
+            identity_suffix = f" | {self.account_label}" if self.account_label else ""
 
             # Calculate cutoff times for each window
             cutoffs = {
@@ -358,12 +393,13 @@ class OpenCodeCollector(BaseCollector):
                                 "good" if pct < 70 else "warning" if pct < 90 else "critical"
                             ),
                             "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
-                            "detail": f"${used:.2f} used · {count} msgs · Local DB",
+                            "detail": f"${used:.2f} used · {count} msgs · Local DB{identity_suffix}",
                             "used_value": used,
                             "limit_value": limit,
                             "is_unlimited": False,
                             "unit_type": "currency",
                             "currency": "USD",
+                            "account_label": self.account_label,
                             "reset_at": None,  # Rolling window has no fixed reset time
                             "data_source": "local",
                             "updated_at": datetime.now(UTC).isoformat(),

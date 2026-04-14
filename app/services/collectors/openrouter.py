@@ -5,16 +5,21 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.utils import http_request_with_retry
 from app.services.collectors.base import BaseCollector
+from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
 
 class OpenRouterCollector(BaseCollector):
     """
-    Collector for OpenRouter usage and credits.
-    Uses: https://openrouter.ai/api/v1/credits
+    Collector for OpenRouter usage, credits, and per-key limits.
+    Uses: https://openrouter.ai/api/v1/credits  (account-level)
+          https://openrouter.ai/api/v1/key      (per-key spending limit, best-effort)
     """
 
     PROVIDER_ID = "openrouter"
@@ -24,69 +29,127 @@ class OpenRouterCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
 
     async def _get_api_key(self) -> str | None:
-        """Discovery API key from cache or settings."""
-        # 1. Try account-specific token from cache
+        """Discover API key: DB (UI-set) → token cache → env var."""
+        db_key = credential_provider.get_provider_api_key("openrouter")
+        if db_key:
+            return db_key
+
         if self.account_id:
             token = await token_cache.get_token("openrouter", "api_key", account_id=self.account_id)
             if token:
                 return token
 
-        # 2. Fallback to settings
-        return settings.OPENROUTER_API_KEY
+        return settings.OPENROUTER_API_KEY or None
+
+    def _build_headers(self) -> dict[str, str]:
+        """Build request headers including optional OpenRouter attribution."""
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        if settings.OPENROUTER_HTTP_REFERER:
+            headers["HTTP-Referer"] = settings.OPENROUTER_HTTP_REFERER
+        if settings.OPENROUTER_X_TITLE:
+            headers["X-Title"] = settings.OPENROUTER_X_TITLE
+        return headers
+
+    async def _key_endpoint_request(self, client: httpx.AsyncClient, headers: dict[str, str]) -> httpx.Response | None:
+        """Make best-effort request to key endpoint with 1s timeout."""
+        try:
+            return await client.get(f"{OPENROUTER_BASE_URL}/key", headers=headers, timeout=1)
+        except Exception as e:
+            logger.debug(f"OpenRouter key API best-effort fetch failed: {e}")
+            return None
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Collect usage data from OpenRouter via API."""
+        """Collect usage data from OpenRouter via Credits + Key APIs."""
         api_key = await self._get_api_key()
         if not api_key:
             return []
 
-        try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
+        self._api_key = api_key
+        headers = self._build_headers()
+        cards: list[dict[str, Any]] = []
 
-            # Check credits/usage
-            resp = await client.get(
-                "https://openrouter.ai/api/v1/credits", headers=headers, timeout=10
+        try:
+            credits_resp = await http_request_with_retry(
+                client, "GET", f"{OPENROUTER_BASE_URL}/credits", headers=headers, timeout=10
             )
 
-            if resp.status_code == 200:
-                data = resp.json()
-                if "data" in data:
-                    info = data["data"]
-                    total_credits = info.get("total_credits", 0.0)
-                    usage = info.get("usage", 0.0)
-                    remaining = max(0, total_credits - usage)
+            if credits_resp.status_code != 200:
+                logger.error(f"OpenRouter credits API error (HTTP {credits_resp.status_code}): {credits_resp.text}")
+                return []
 
-                    return [
+            credits_data = credits_resp.json()
+            if "data" in credits_data:
+                info = credits_data["data"]
+                total_credits = info.get("total_credits", 0.0)
+                usage = info.get("usage", 0.0)
+                remaining = max(0, total_credits - usage)
+
+                cards.append(
+                    {
+                        "service_name": "OpenRouter Credits",
+                        "icon": "🚀",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": "USD",
+                        "reset": "Prepaid",
+                        "health": "good"
+                        if remaining > 5.0
+                        else "warning"
+                        if remaining > 1.0
+                        else "critical",
+                        "pace": "Stable",
+                        "detail": f"Used: ${usage:.2f} of ${total_credits:.2f} [API]",
+                        "used_value": usage,
+                        "limit_value": total_credits,
+                        "unit_type": "currency",
+                        "data_source": "api",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Failed to collect OpenRouter credits: {e}")
+            return []
+
+        try:
+            key_resp = await self._key_endpoint_request(client, headers)
+
+            if key_resp and key_resp.status_code == 200:
+                key_data = key_resp.json()
+                key_info = key_data.get("data", {})
+                key_limit = key_info.get("limit")
+                key_usage = key_info.get("usage", 0.0)
+
+                if key_limit is not None and key_limit > 0:
+                    key_remaining = max(0, key_limit - key_usage)
+                    cards.append(
                         {
-                            "service_name": "OpenRouter Credits",
-                            "icon": "🚀",
-                            "remaining": f"${remaining:.2f}",
+                            "service_name": "OpenRouter Key Limit",
+                            "icon": "🔑",
+                            "remaining": f"${key_remaining:.2f}",
                             "unit": "USD",
-                            "reset": "Prepaid",
+                            "reset": "Per-key",
                             "health": "good"
-                            if remaining > 5.0
+                            if key_remaining > key_limit * 0.5
                             else "warning"
-                            if remaining > 1.0
+                            if key_remaining > key_limit * 0.1
                             else "critical",
                             "pace": "Stable",
-                            "detail": f"Used: ${usage:.2f} of ${total_credits:.2f} [API]",
-                            "used_value": usage,
-                            "limit_value": total_credits,
+                            "detail": f"Key used: ${key_usage:.2f} of ${key_limit:.2f} [API]",
+                            "used_value": key_usage,
+                            "limit_value": key_limit,
                             "unit_type": "currency",
                             "data_source": "api",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
-                    ]
-            else:
-                logger.error(f"OpenRouter API error (HTTP {resp.status_code}): {resp.text}")
-
+                    )
+            elif key_resp:
+                logger.debug(f"OpenRouter key API non-200 (HTTP {key_resp.status_code}), skipping key card")
         except Exception as e:
-            logger.error(f"Failed to collect OpenRouter usage: {e}")
+            logger.debug(f"OpenRouter key API best-effort fetch failed: {e}")
 
-        return []
+        return cards
 
     def _fallback_strategies(self) -> list[Any]:
         """Return an ordered list of fallback async methods. Currently none for OpenRouter."""
