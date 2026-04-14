@@ -16,9 +16,11 @@ def main() -> None:
     config_path = get_config_path()
 
     # 2. Load config (handle missing without calling sys.exit)
+    needs_setup_notification = False
     if not config_path.exists():
         write_template_config(config_path)
         config = dict(_FALLBACK_CONFIG)
+        needs_setup_notification = True
     else:
         try:
             config = load_config(str(config_path))
@@ -41,7 +43,16 @@ def main() -> None:
         daemon.start()
 
     # 6. Run tray — blocks main thread
-    tray.run()
+    if needs_setup_notification:
+        def notify_setup() -> None:
+            if tray._icon is not None:
+                tray._icon.notify(
+                    "Edit config.json to connect to your Runway server, then restart.",
+                    "Runway Sidecar — Setup Required",
+                )
+        tray.run(after_start=notify_setup)
+    else:
+        tray.run()
 
 
 if __name__ == "__main__":
