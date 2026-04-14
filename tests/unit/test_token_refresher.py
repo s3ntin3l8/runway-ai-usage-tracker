@@ -142,7 +142,14 @@ class TestRefreshOAuthTokenGemini:
 
         assert result["oauth_token"] == "gemini_access"
 
-    async def test_works_without_optional_client_id_and_secret(self):
+    async def test_works_without_optional_client_id_and_secret(self, monkeypatch):
+        from app.services import token_refresher
+
+        monkeypatch.setattr(token_refresher.settings, "GEMINI_OAUTH_CLIENT_ID", "fallback_id")
+        monkeypatch.setattr(
+            token_refresher.settings, "GEMINI_OAUTH_CLIENT_SECRET", "fallback_secret"
+        )
+
         body = {"access_token": "gemini_access"}
         resp = _make_mock_response(200, body)
         ctx = _make_async_client(resp)
@@ -153,8 +160,8 @@ class TestRefreshOAuthTokenGemini:
             result = await refresh_oauth_token("gemini", tokens)
 
         sent_data = ctx.__aenter__.return_value.post.call_args.kwargs["data"]
-        assert "client_id" in sent_data  # Falls back to settings
-        assert "client_secret" in sent_data  # Falls back to settings
+        assert sent_data["client_id"] == "fallback_id"
+        assert sent_data["client_secret"] == "fallback_secret"
         assert result["oauth_token"] == "gemini_access"
 
 
