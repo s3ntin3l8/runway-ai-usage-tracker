@@ -1,3 +1,15 @@
+[project]
+name = "runway"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+desktop = [
+    "pystray>=0.19",
+    "Pillow>=10",
+    "packaging>=24",
+]
+
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
 exclude = [
