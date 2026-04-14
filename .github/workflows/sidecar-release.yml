@@ -1,10 +1,9 @@
 name: Sidecar Release Build
 
+# Superseded by release-please.yml build-sidecar job (triggered via release_created output).
+# Tag-push and release events are not triggered when GITHUB_TOKEN creates the tag/release.
 on:
-  push:
-    tags: [ 'v*' ]
-  release:
-    types: [ published ]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
