@@ -197,14 +197,16 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 .drag-handle { display: none; }
 .edit-mode .drag-handle {
     display: inline-flex;
-    color: rgb(161, 161, 170);
+    color: rgb(113, 113, 122);
+    opacity: 0.55;
     position: absolute;
-    top: 10px;
-    right: 10px;
-    padding: 4px;
-    background: rgba(24, 24, 27, 0.85);
-    border-radius: 6px;
+    top: 6px;
+    right: 6px;
     pointer-events: none;
+}
+body.bright-mode.edit-mode .drag-handle,
+body.bright-mode .edit-mode .drag-handle {
+    color: rgb(82, 82, 91);
 }
 .sortable-ghost { opacity: 0.4; }
 .sortable-chosen { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6); }
