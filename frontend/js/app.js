@@ -1,6 +1,7 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
-import { applyOrder, cardKey } from './layout.js';
+import { applyOrder, cardKey, extractProviderOrder, extractCardOrder } from './layout.js';
+import { ensureSortable } from './sortable.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
@@ -778,6 +779,7 @@ window.openProviderModal = async function(providerId) {
     document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
         refreshProviderModal(providerId)
     );
+    await window.__reattachCardSortables();
 
     // Load sparklines in the background — re-render only if modal is still open
     try {
@@ -788,6 +790,7 @@ window.openProviderModal = async function(providerId) {
             document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
                 refreshProviderModal(providerId)
             );
+            await window.__reattachCardSortables();
         }
     } catch (e) {
         console.warn('Could not fetch history for modal sparklines:', e.message);
@@ -877,6 +880,92 @@ function applyTheme() {
     }
 }
 
+let _providerSortable = null;
+let _cardSortables = [];
+
+async function enterEditMode() {
+    STATE.editMode = true;
+    document.body.classList.add('edit-mode');
+    const btn = document.getElementById('toggle-edit');
+    if (btn) { btn.setAttribute('aria-pressed', 'true'); btn.title = 'Done'; }
+
+    const Sortable = await ensureSortable();
+
+    // Provider grid (the inner flex/grid wrapper injected by renderGrid)
+    const providerGrid = document.querySelector('#grid > div');
+    if (providerGrid) {
+        _providerSortable = new Sortable(providerGrid, {
+            animation: 150,
+            draggable: '[data-provider-id]',
+            handle: '.drag-handle',
+            onEnd: onProviderDrop,
+        });
+    }
+
+    // Card grids inside any currently-open modal
+    document.querySelectorAll('#modal-content [data-provider-id]').forEach(section => {
+        const container = section.querySelector('.grid') || section;
+        const s = new Sortable(container, {
+            animation: 150,
+            draggable: '[data-card-key]',
+            handle: '.drag-handle',
+            onEnd: () => onCardDrop(section.dataset.providerId, container),
+        });
+        _cardSortables.push(s);
+    });
+}
+
+function exitEditMode() {
+    STATE.editMode = false;
+    document.body.classList.remove('edit-mode');
+    const btn = document.getElementById('toggle-edit');
+    if (btn) { btn.setAttribute('aria-pressed', 'false'); btn.title = 'Edit layout'; }
+
+    if (_providerSortable) { _providerSortable.destroy(); _providerSortable = null; }
+    _cardSortables.forEach(s => s.destroy());
+    _cardSortables = [];
+}
+
+async function onProviderDrop() {
+    const providerGrid = document.querySelector('#grid > div');
+    const order = extractProviderOrder(providerGrid);
+    STATE.layout = { ...STATE.layout, provider_order: order };
+    await persistLayout();
+}
+
+async function onCardDrop(providerId, container) {
+    const order = extractCardOrder(container);
+    STATE.layout = {
+        ...STATE.layout,
+        card_orders: { ...STATE.layout.card_orders, [providerId]: order },
+    };
+    await persistLayout();
+}
+
+async function persistLayout() {
+    localStorage.setItem('runway_layout', JSON.stringify(STATE.layout));
+    try {
+        await putDashboardLayout(STATE.layout);
+    } catch (err) {
+        console.warn('Failed to persist layout (kept in localStorage)', err);
+    }
+}
+
+window.__reattachCardSortables = async function() {
+    if (!STATE.editMode) return;
+    const Sortable = await ensureSortable();
+    document.querySelectorAll('#modal-content [data-provider-id]').forEach(section => {
+        const cardContainer = section.querySelector('.grid') || section;
+        const s = new Sortable(cardContainer, {
+            animation: 150,
+            draggable: '[data-card-key]',
+            handle: '.drag-handle',
+            onEnd: () => onCardDrop(section.dataset.providerId, cardContainer),
+        });
+        _cardSortables.push(s);
+    });
+};
+
 /**
  * Initialize UI elements based on initial state
  */
@@ -915,6 +1004,12 @@ async function initUI() {
 
     // Refresh button
     document.getElementById('refresh-btn')?.addEventListener('click', () => forceRefresh());
+
+    // Edit-mode toggle
+    document.getElementById('toggle-edit')?.addEventListener('click', () => {
+        if (STATE.editMode) exitEditMode();
+        else enterEditMode();
+    });
 
     // Load persisted dashboard layout (falls back to localStorage cache on failure)
     try {
