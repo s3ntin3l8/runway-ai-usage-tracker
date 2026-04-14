@@ -71,9 +71,9 @@
                 <div id="filter-bar" class="mb-5 flex flex-col gap-2">
                     <div class="flex gap-2 items-center">
                         <span class="text-[10px] text-zinc-600 uppercase tracking-wide">Filter by</span>
-                        <button class="dim-btn" data-dim="window_type">Window</button>
-                        <button class="dim-btn" data-dim="account_label">Account</button>
-                        <button id="dim-btn-sidecar" class="dim-btn hidden" data-dim="sidecar_id">Source</button>
+                        <button class="dim-btn" data-dim="window_type" onclick="setFilterDimension('window_type')">Window</button>
+                        <button class="dim-btn" data-dim="account_label" onclick="setFilterDimension('account_label')">Account</button>
+                        <button id="dim-btn-sidecar" class="dim-btn hidden" data-dim="sidecar_id" onclick="setFilterDimension('sidecar_id')">Source</button>
                     </div>
                     <div id="filter-pills" class="flex flex-wrap gap-1.5"></div>
                 </div>
@@ -91,18 +91,18 @@
                         <div class="flex items-center gap-3 flex-wrap">
                             <!-- Time range -->
                             <div class="flex gap-1" id="history-range-btns">
-                                <button class="toggle-btn" data-days="0.042">1h</button>
-                                <button class="toggle-btn" data-days="0.25">6h</button>
-                                <button class="toggle-btn" data-days="1">1d</button>
-                                <button class="toggle-btn active" data-days="7">7d</button>
-                                <button class="toggle-btn" data-days="30">30d</button>
-                                <button class="toggle-btn" data-days="90">90d</button>
+                                <button class="toggle-btn" data-days="0.042" onclick="setHistoryDays(0.042)">1h</button>
+                                <button class="toggle-btn" data-days="0.25" onclick="setHistoryDays(0.25)">6h</button>
+                                <button class="toggle-btn" data-days="1" onclick="setHistoryDays(1)">1d</button>
+                                <button class="toggle-btn active" data-days="7" onclick="setHistoryDays(7)">7d</button>
+                                <button class="toggle-btn" data-days="30" onclick="setHistoryDays(30)">30d</button>
+                                <button class="toggle-btn" data-days="90" onclick="setHistoryDays(90)">90d</button>
                             </div>
                             <!-- Metric -->
                             <div class="flex gap-1" id="history-metric-btns">
-                                <button class="toggle-btn active" data-metric="percent">% used</button>
-                                <button class="toggle-btn" data-metric="tokens">tokens</button>
-                                <button class="toggle-btn" data-metric="cost">cost</button>
+                                <button class="toggle-btn active" data-metric="percent" onclick="setHistoryMetric('percent')">% used</button>
+                                <button class="toggle-btn" data-metric="tokens" onclick="setHistoryMetric('tokens')">tokens</button>
+                                <button class="toggle-btn" data-metric="cost" onclick="setHistoryMetric('cost')">cost</button>
                             </div>
                         </div>
                     </div>

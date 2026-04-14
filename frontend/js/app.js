@@ -2,9 +2,13 @@ import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, lo
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
-import { loadHistoryView, initHistoryView } from './views/history.js';
+import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
 import { loadSettingsView } from './views/settings.js';
 import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar } from './views/fleet.js';
+import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
+
+// Alias for backwards compatibility
+window.loadDashboard = loadDashboard;
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -28,7 +32,7 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
 /**
  * View Management
  */
-window.switchView = function(viewId) {
+window.switchView = async function(viewId) {
     // Hide all views
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     // Show selected view
@@ -38,8 +42,10 @@ window.switchView = function(viewId) {
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     document.getElementById(`nav-${viewId}`).classList.add('active');
     
-    // Load data for the view
-    if (viewId === 'dashboard' && STATE.data.length === 0) loadData();
+    // Load data for the view (lazy loaded via dynamic imports)
+    if (viewId === 'dashboard' && STATE.data.length === 0) {
+        await loadDashboard();
+    }
     if (viewId === 'history') loadHistoryView();
     if (viewId === 'settings') loadSettingsView();
     if (viewId === 'fleet') loadFleetView();
@@ -827,48 +833,6 @@ function renderFilterPills() {
     });
 }
 
-window.setFilter = function(value) {
-    STATE.activeFilter = value ? { dimension: STATE.filterDimension, value } : null;
-    localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
-    renderFilterPills();
-    renderGrid();
-};
-
-window.setFilterDimension = function(dim) {
-    STATE.filterDimension = dim;
-    STATE.activeFilter = null;
-    localStorage.setItem('runway_filter_dimension', dim);
-    localStorage.removeItem('runway_active_filter');
-    renderFilterPills();
-    renderGrid();
-};
-
-/**
- * Toggle a configuration option in the global state
- * Updates the UI button state and optionally applies side effects (e.g., compact mode)
- * @param {string} key - Configuration key to toggle (e.g., 'compact', 'remaining')
- */
-window.toggleConfig = function (key) {
-    STATE[key] = !STATE[key];
-
-    // Persist to localStorage
-    const storageKey = `runway_${key}`;
-    localStorage.setItem(storageKey, STATE[key]);
-
-    const btn = document.getElementById(`toggle-${key}`);
-    if (btn) {
-        btn.classList.toggle('active', STATE[key]);
-        // Update button text for remaining toggle
-        if (key === 'remaining') {
-            btn.innerHTML = STATE[key] ? '📈 % Remaining' : '📊 % Used';
-        }
-    }
-    if (key === 'compact') {
-        document.body.classList.toggle('compact-mode', STATE[key]);
-    }
-    renderGrid();
-}
-
 /**
  * Toggle bright/dark mode
  */
@@ -940,10 +904,8 @@ function initUI() {
     // Refresh button
     document.getElementById('refresh-btn')?.addEventListener('click', () => forceRefresh());
 
-    // Filter dimension buttons
-    document.querySelectorAll('.dim-btn').forEach(btn => {
-        btn.addEventListener('click', () => setFilterDimension(btn.dataset.dim));
-    });
+    // Initialize dashboard view event listeners
+    initDashboardView();
 }
 
 /**
@@ -1052,63 +1014,8 @@ async function handleGitHubLogout() {
     }
 }
 
-/**
- * Load quota data from the API and render the grid
- * Handles loading states, error display, and timestamp updates
- * Gracefully degrades if the API fails with detailed error messaging
- * @async
- */
-async function loadData() {
-    const myGeneration = ++loadDataGeneration;
-
-    const grid = document.getElementById('grid');
-    const loading = document.getElementById('loading');
-    const errorBanner = document.getElementById('error-banner');
-    const lastUpdated = document.getElementById('last-updated');
-
-    grid.innerHTML = '';
-    grid.classList.add('hidden');
-    loading.classList.remove('hidden');
-    errorBanner.classList.add('hidden');
-
-    try {
-        const json = await fetchLimits();
-        if (myGeneration !== loadDataGeneration) return; // discard stale response
-        STATE.data = json.limits;
-        renderFilterPills();
-        renderGrid();
-        renderHealthBar();
-
-        const now = new Date();
-        lastUpdated.textContent = `Updated ${now.toLocaleTimeString()}`;
-        lastUpdated.classList.remove('hidden');
-
-    } catch (err) {
-        if (myGeneration !== loadDataGeneration) return; // discard stale error
-        console.error('Failed to fetch limits:', err);
-
-        // Extract error message and categorize the error type
-        const errorMsg = err.message || 'Unknown error occurred';
-        const errorType = getErrorType(err);
-
-        // Display user-friendly error message with technical details
-        const displayMsg = `⚠ ${errorMsg}`;
-        errorBanner.textContent = displayMsg;
-        errorBanner.title = `Error type: ${errorType}\nFull error: ${err.toString()}`;
-        errorBanner.classList.remove('hidden');
-
-        // Log detailed error for debugging
-        console.debug(`Error type detected: ${errorType}`);
-        if (err instanceof TypeError) {
-            console.debug('Likely network issue (CORS, no internet, etc.)');
-        } else if (err instanceof SyntaxError) {
-            console.debug('Invalid response format from server');
-        }
-    } finally {
-        loading.classList.add('hidden');
-        grid.classList.remove('hidden');
-    }
-}
+// Alias loadData to loadDashboard for backwards compatibility
+const loadData = loadDashboard;
 
 /**
  * Categorize error types for better debugging
@@ -1219,9 +1126,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initUI();
     initHistoryView();
-    loadData();
+    loadDashboard();
     // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
-    refreshTimer = setInterval(() => loadData(), 5 * 60 * 1000);
+    refreshTimer = setInterval(() => loadDashboard(), 5 * 60 * 1000);
 });
 
 window.handleResetProvider = async function(provider, accountId) {
@@ -1331,4 +1238,9 @@ window.switchView = switchView;
 window.editSidecarName = editSidecarName;
 window.addSidecarTag = addSidecarTag;
 window.deleteSidecar = deleteSidecar;
+window.setFilterDimension = setFilterDimension;
+window.setFilter = setFilter;
+window.setHistoryDays = setHistoryDays;
+window.setHistoryMetric = setHistoryMetric;
+window.toggleHistoryProvider = toggleHistoryProvider;
 
