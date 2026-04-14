@@ -1,8 +1,9 @@
 // frontend/js/charts.js
 // Chart.js wrapper for the History tab usage panel.
-// Depends on Chart.js being loaded globally (CDN in index.html).
+// Chart.js is lazy-loaded on first use of the History view.
 
 let _chart = null;
+let _chartJS = null;
 
 const PROVIDER_COLORS = {
     anthropic: "#f59e0b",
@@ -70,11 +71,22 @@ export function destroyCharts() {
     if (_chart) { _chart.destroy(); _chart = null; }
 }
 
+async function ensureChartJS() {
+    if (_chartJS) return _chartJS;
+    if (window.Chart) {
+        _chartJS = window.Chart;
+        return _chartJS;
+    }
+    const module = await import('./lib/chart.min.js');
+    _chartJS = module.default;
+    return _chartJS;
+}
+
 /**
  * @param {Array} snapshots - history snapshot objects
  * @param {'percent'|'tokens'|'cost'} [metric='percent'] - which value to plot
  */
-export function updateCharts(snapshots, metric = 'percent') {
+export async function updateCharts(snapshots, metric = 'percent') {
     destroyCharts();
 
     const canvas = document.getElementById("chart-usage");
@@ -149,11 +161,18 @@ export function updateCharts(snapshots, metric = 'percent') {
         },
     };
 
-    _chart = new Chart(canvas.getContext("2d"), {
-        type: "line",
-        data: { labels, datasets },
-        options,
-    });
+    try {
+        const Chart = await ensureChartJS();
+        _chart = new Chart(canvas.getContext("2d"), {
+            type: "line",
+            data: { labels, datasets },
+            options,
+        });
+    } catch (err) {
+        console.error('Failed to load Chart.js:', err);
+        emptyEl.textContent = 'Failed to load chart. Please refresh.';
+        emptyEl?.classList.remove("hidden");
+    }
 }
 
 export function setChartView(view) {

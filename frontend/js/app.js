@@ -94,6 +94,7 @@ function renderHistoryFromCache() {
     if (historyState.activeProviders) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
+    // Update chart (async - lazy loads Chart.js on first call)
     updateCharts(filtered, historyState.metric);
 
     // Table
