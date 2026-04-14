@@ -1,6 +1,6 @@
 {
   "name": "ai-usage-tracker",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "<p align=\"center\">   <img src=\"assets/logo.svg\" width=\"128\" alt=\"Runway Logo\"> </p>",
   "main": "index.js",
   "directories": {
