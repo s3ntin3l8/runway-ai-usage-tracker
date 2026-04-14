@@ -964,16 +964,6 @@ window.__reattachCardSortables = async function() {
     });
 };
 
-// Suppress card clicks (modal-open etc.) while editing; capture-phase
-// runs before any element-level onclick handlers.
-document.addEventListener('click', (e) => {
-    if (!STATE.editMode) return;
-    const card = e.target.closest('[data-provider-id], [data-card-key]');
-    if (card) {
-        e.stopPropagation();
-        e.preventDefault();
-    }
-}, true);
 
 /**
  * Initialize UI elements based on initial state

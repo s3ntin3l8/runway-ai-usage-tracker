@@ -493,7 +493,7 @@ export function buildCard(item) {
         return `
             <div class="glass-panel ${h.card} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
                 <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                         <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                         <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                         <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
@@ -583,7 +583,7 @@ export function buildCard(item) {
     return `
         <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                     <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                     <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
@@ -1166,7 +1166,7 @@ export function buildProviderSummaryCard(providerId, items) {
          data-provider-id="${escapeHTMLAttr(providerId)}"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                 <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                 <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
@@ -1323,7 +1323,7 @@ export function buildProviderModal(providerId, items, history) {
 
         return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4 relative" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="drag-handle" aria-hidden="true">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                     <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                     <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
