@@ -841,13 +841,15 @@ window.toggleTheme = function () {
     localStorage.setItem('runway_bright_mode', STATE.brightMode);
 
     applyTheme();
+    updateThemeIcon();
+}
 
-    // Update button UI
-    const btn = document.getElementById('toggle-theme');
-    if (btn) {
-        btn.innerHTML = STATE.brightMode ? '🌙' : '☀️';
-        btn.title = STATE.brightMode ? 'Switch to dark mode' : 'Switch to bright mode';
-    }
+function updateThemeIcon() {
+    const sunIcon = document.getElementById('theme-icon-sun');
+    const moonIcon = document.getElementById('theme-icon-moon');
+    if (!sunIcon || !moonIcon) return;
+    sunIcon.classList.toggle('hidden', STATE.brightMode);
+    moonIcon.classList.toggle('hidden', !STATE.brightMode);
 }
 
 /**
@@ -881,11 +883,7 @@ function initUI() {
 
     // Initialize theme
     applyTheme();
-    const themeBtn = document.getElementById('toggle-theme');
-    if (themeBtn) {
-        themeBtn.innerHTML = STATE.brightMode ? '🌙' : '☀️';
-        themeBtn.title = STATE.brightMode ? 'Switch to dark mode' : 'Switch to bright mode';
-    }
+    updateThemeIcon();
 
     checkGitHubStatus();
 
