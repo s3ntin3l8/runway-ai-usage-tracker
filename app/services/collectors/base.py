@@ -114,7 +114,8 @@ class BaseCollector(ABC):
                     break
 
                 # Standalone username after a dot/separator e.g. "· username" or "| username"
-                user_match = re.search(r"[·|]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)$", detail)
+                # This version handles trailing brackets like [Sidecar] or [Statusline]
+                user_match = re.search(r"[·|]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)(?:\s*\[[^\]]+\])?$", detail)
                 if user_match:
                     discovered_label = user_match.group(1)
                     break
@@ -137,6 +138,23 @@ class BaseCollector(ABC):
             if "window_type" not in card or card.get("window_type") == "unknown":
                 if self.DEFAULT_WINDOW_TYPE != "unknown":
                     card["window_type"] = self.DEFAULT_WINDOW_TYPE
+
+            # Phase 1: Ensure timestamps are timezone-aware ISO strings
+            from datetime import UTC, datetime
+            now_iso = datetime.now(UTC).isoformat()
+            
+            if "updated_at" not in card or not card.get("updated_at"):
+                card["updated_at"] = now_iso
+            elif isinstance(card.get("updated_at"), str):
+                # Ensure existing string has timezone offset
+                ua = card["updated_at"]
+                if "T" in ua and "+" not in ua and not ua.endswith("Z"):
+                    card["updated_at"] = f"{ua}Z"
+
+            if "reset_at" in card and card.get("reset_at") and isinstance(card.get("reset_at"), str):
+                ra = card["reset_at"]
+                if "T" in ra and "+" not in ra and not ra.endswith("Z"):
+                    card["reset_at"] = f"{ra}Z"
 
         return results
 
