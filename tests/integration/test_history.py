@@ -104,6 +104,7 @@ def test_get_history_filtering(client: TestClient, session: Session):
 
 def test_get_history_limit(client: TestClient, session: Session):
     now = datetime.now(UTC)
+    # Space across distinct hours so hourly bucketing doesn't collapse them.
     for i in range(10):
         s = UsageSnapshot(
             provider_id="test",
@@ -111,10 +112,52 @@ def test_get_history_limit(client: TestClient, session: Session):
             service_name=f"Service {i}",
             health="good",
             data_source="api",
-            timestamp=now - timedelta(minutes=i),
+            timestamp=now - timedelta(hours=i),
         )
         session.add(s)
     session.commit()
 
-    response = client.get("/api/v1/usage/history?limit=5")
+    response = client.get("/api/v1/usage/history?limit=5&days=1")
     assert len(response.json()) == 5
+
+
+def test_get_history_multi_day_not_truncated_by_limit(
+    client: TestClient, session: Session
+):
+    """Regression: high-volume today must not push older days out of the response.
+
+    With a flat `ORDER BY timestamp DESC LIMIT N`, a day with >N snapshots consumes
+    the whole budget and the caller never sees older days. Server-side hourly
+    bucketing per (provider, account, model, window, unit) must preserve coverage
+    across the full time window.
+    """
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    # 3 days × 600 rows/day, all same group key within each hour — real pollers
+    # produce many rows per hour for the same card (different values, same key).
+    for day in range(3):
+        for i in range(600):
+            s = UsageSnapshot(
+                provider_id="anthropic",
+                account_id="user1",
+                model_id="claude-sonnet",
+                window_type="5hr_limit",
+                unit_type="percent",
+                used_value=float(i % 100),
+                service_name="Claude",
+                health="good",
+                data_source="api",
+                timestamp=now - timedelta(days=day, minutes=i),
+            )
+            session.add(s)
+    session.commit()
+
+    response = client.get("/api/v1/usage/history?days=7&limit=500")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Each day should contribute roughly ~10 hourly buckets (600 rows spread over
+    # ~10 hours). All 3 days must appear — this is the bug being regressed.
+    days_present = {row["timestamp"][:10] for row in data}
+    assert len(days_present) == 3, (
+        f"Expected rows from 3 distinct days, got {len(days_present)}: {days_present}"
+    )

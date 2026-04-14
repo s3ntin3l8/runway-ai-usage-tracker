@@ -58,7 +58,7 @@ async def get_usage_history(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = Query(default=7.0, ge=0.01, le=90.0),
-    limit: int = Query(default=50, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=2000),
     export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
 ):
@@ -72,15 +72,44 @@ async def get_usage_history(
     if account_id:
         statement = statement.where(UsageSnapshot.account_id == account_id)
 
-    statement = statement.order_by(desc(UsageSnapshot.timestamp)).limit(limit)
-
-    results = session.exec(statement).all()
+    statement = statement.order_by(desc(UsageSnapshot.timestamp))
 
     if export_format == "csv":
+        # CSV is the archival dump — keep raw rows, apply limit directly.
+        results = session.exec(statement.limit(limit)).all()
         return _history_as_csv(results)
 
-    # Process snapshots to include decrypted metadata and flat structure for UI
-    return [_snapshot_to_dict(s) for s in results]
+    # JSON path: downsample to one row per (provider, account, model, window, unit, hour)
+    # so a high-volume day can't consume the entire LIMIT budget and hide older days.
+    # Fetch a wider raw slice, bucket, then apply the user-requested limit.
+    raw = session.exec(statement.limit(5000)).all()
+    deduped = _dedupe_hourly(raw)
+    return [_snapshot_to_dict(s) for s in deduped[:limit]]
+
+
+def _dedupe_hourly(rows: Sequence[UsageSnapshot]) -> list[UsageSnapshot]:
+    """Keep the most recent row per (provider, account, model, window, unit, hour) bucket.
+
+    Assumes `rows` is already sorted by timestamp descending — the first row seen
+    for each key wins.
+    """
+    seen: set[tuple] = set()
+    kept: list[UsageSnapshot] = []
+    for r in rows:
+        ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC)
+        key = (
+            r.provider_id,
+            r.account_id,
+            r.model_id,
+            r.window_type,
+            r.unit_type,
+            ts.strftime("%Y-%m-%d %H"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(r)
+    return kept
 
 
 def _snapshot_to_dict(s: UsageSnapshot) -> dict:
