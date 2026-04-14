@@ -924,6 +924,26 @@ function initUI() {
     }
 
     checkGitHubStatus();
+
+    // Event delegation for navigation links
+    document.querySelector('#main-nav')?.addEventListener('click', (e) => {
+        const link = e.target.closest('.nav-link');
+        if (link && link.id) {
+            const viewId = link.id.replace('nav-', '');
+            switchView(viewId);
+        }
+    });
+
+    // Theme toggle
+    document.getElementById('toggle-theme')?.addEventListener('click', () => toggleTheme());
+
+    // Refresh button
+    document.getElementById('refresh-btn')?.addEventListener('click', () => forceRefresh());
+
+    // Filter dimension buttons
+    document.querySelectorAll('.dim-btn').forEach(btn => {
+        btn.addEventListener('click', () => setFilterDimension(btn.dataset.dim));
+    });
 }
 
 /**
@@ -1198,6 +1218,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     initUI();
+    initHistoryView();
     loadData();
     // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
     refreshTimer = setInterval(() => loadData(), 5 * 60 * 1000);
