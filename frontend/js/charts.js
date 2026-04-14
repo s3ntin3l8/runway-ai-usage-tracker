@@ -20,23 +20,61 @@ function colorFor(providerId) {
     return PROVIDER_COLORS[providerId] || "#64748b";
 }
 
-function extractLabelsAndProviders(snapshots) {
-    const days = new Set();
-    const providers = new Set();
-    for (const s of snapshots) {
-        days.add(s.timestamp.slice(0, 10));
-        providers.add(s.provider_id || 'unknown');
-    }
-    return { labels: Array.from(days).sort(), providers: Array.from(providers) };
+/**
+ * Pick bucket granularity for a given window. Mirrors backend _pick_bucket_seconds.
+ * @param {number} days
+ * @returns {number} bucket size in seconds
+ */
+export function pickBucketSeconds(days) {
+    if (days >= 2) return 86400;  // 7d/30d/90d → daily
+    if (days >= 0.5) return 3600; // 1d → hourly
+    if (days >= 0.1) return 900;  // 6h → 15 min
+    return 60;                     // 1h → 1 min
 }
 
 /**
- * Bucket snapshots by day and provider, extracting the correct metric value.
- * @param {Array} snapshots
- * @param {'percent'|'tokens'|'cost'} metric
- * @returns {Object} { "YYYY-MM-DD": { provider_id: { sum, count } } }
+ * Canonical bucket key for an ISO timestamp at a given granularity.
+ * Returns the bucket-start epoch (number) for stable Map/Set equality.
  */
-function bucketByDayMetric(snapshots, metric) {
+export function bucketKeyFor(isoTs, bucketSeconds) {
+    const t = Math.floor(new Date(isoTs).getTime() / 1000);
+    return t - (t % bucketSeconds);
+}
+
+/**
+ * Human label for a bucket epoch, formatted at the granularity of the bucket.
+ */
+export function formatBucketLabel(bucketEpoch, bucketSeconds) {
+    const d = new Date(bucketEpoch * 1000);
+    if (bucketSeconds >= 86400) {
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+    if (bucketSeconds >= 3600) {
+        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' });
+    }
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function extractLabelsAndProviders(snapshots, bucketSeconds) {
+    const bucketEpochs = new Set();
+    const providers = new Set();
+    for (const s of snapshots) {
+        bucketEpochs.add(bucketKeyFor(s.timestamp, bucketSeconds));
+        providers.add(s.provider_id || 'unknown');
+    }
+    const sortedEpochs = Array.from(bucketEpochs).sort((a, b) => a - b);
+    return {
+        bucketEpochs: sortedEpochs,
+        labels: sortedEpochs.map(e => formatBucketLabel(e, bucketSeconds)),
+        providers: Array.from(providers),
+    };
+}
+
+/**
+ * Bucket snapshots by (bucket, provider) at the given granularity.
+ * @returns {Object} { [bucketEpoch]: { provider_id: { sum, count } } }
+ */
+function bucketByMetric(snapshots, metric, bucketSeconds) {
     const buckets = {};
     for (const snap of snapshots) {
         let value;
@@ -57,12 +95,12 @@ function bucketByDayMetric(snapshots, metric) {
                 continue;
             }
         }
-        const day = snap.timestamp.slice(0, 10);
+        const bucket = bucketKeyFor(snap.timestamp, bucketSeconds);
         const pid = snap.provider_id || "unknown";
-        if (!buckets[day]) buckets[day] = {};
-        if (!buckets[day][pid]) buckets[day][pid] = { sum: 0, count: 0 };
-        buckets[day][pid].sum += value;
-        buckets[day][pid].count += 1;
+        if (!buckets[bucket]) buckets[bucket] = {};
+        if (!buckets[bucket][pid]) buckets[bucket][pid] = { sum: 0, count: 0 };
+        buckets[bucket][pid].sum += value;
+        buckets[bucket][pid].count += 1;
     }
     return buckets;
 }
@@ -97,8 +135,9 @@ async function ensureChartJS() {
 /**
  * @param {Array} snapshots - history snapshot objects
  * @param {'percent'|'tokens'|'cost'} [metric='percent'] - which value to plot
+ * @param {number} [days=7] - active history window; picks bucket granularity
  */
-export async function updateCharts(snapshots, metric = 'percent') {
+export async function updateCharts(snapshots, metric = 'percent', days = 7) {
     destroyCharts();
 
     const canvas = document.getElementById("chart-usage");
@@ -113,11 +152,12 @@ export async function updateCharts(snapshots, metric = 'percent') {
     emptyEl?.classList.add("hidden");
     document.getElementById("chart-wrap")?.classList.remove("hidden");
 
-    const { labels, providers } = extractLabelsAndProviders(snapshots);
-    const buckets = bucketByDayMetric(snapshots, metric);
+    const bucketSeconds = pickBucketSeconds(days);
+    const { bucketEpochs, labels, providers } = extractLabelsAndProviders(snapshots, bucketSeconds);
+    const buckets = bucketByMetric(snapshots, metric, bucketSeconds);
 
     // Check if there's any data for this metric
-    const hasData = labels.some(day => providers.some(p => buckets[day]?.[p]));
+    const hasData = bucketEpochs.some(ep => providers.some(p => buckets[ep]?.[p]));
     if (!hasData) {
         emptyEl?.classList.remove("hidden");
         document.getElementById("chart-wrap")?.classList.add("hidden");
@@ -130,8 +170,8 @@ export async function updateCharts(snapshots, metric = 'percent') {
         const color = colorFor(provider);
         return {
             label: provider.toUpperCase(),
-            data: labels.map(day => {
-                const b = buckets[day]?.[provider];
+            data: bucketEpochs.map(ep => {
+                const b = buckets[ep]?.[provider];
                 return b ? parseFloat((b.sum / b.count).toFixed(2)) : null;
             }),
             borderColor: color,

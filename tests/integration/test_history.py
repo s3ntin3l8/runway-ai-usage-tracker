@@ -161,3 +161,42 @@ def test_get_history_multi_day_not_truncated_by_limit(
     assert len(days_present) == 3, (
         f"Expected rows from 3 distinct days, got {len(days_present)}: {days_present}"
     )
+
+
+def test_get_history_bucket_size_adapts_to_window(
+    client: TestClient, session: Session
+):
+    """Short windows must return sub-hour resolution.
+
+    Inserts minute-spaced snapshots for the past hour. A 1h window (days=0.042)
+    should preserve multiple points (5-min buckets → ~12 points); a 7d window
+    would collapse them to one hourly/daily bucket.
+    """
+    now = datetime.now(UTC)
+    for i in range(60):
+        s = UsageSnapshot(
+            provider_id="anthropic",
+            account_id="user1",
+            model_id="claude-sonnet",
+            window_type="5hr_limit",
+            unit_type="percent",
+            used_value=float(i),
+            service_name="Claude",
+            health="good",
+            data_source="api",
+            timestamp=now - timedelta(minutes=i),
+        )
+        session.add(s)
+    session.commit()
+
+    # 1h view: 1-minute buckets → expect ~60 rows (one per minute)
+    r1h = client.get("/api/v1/usage/history?days=0.042&limit=500").json()
+    assert 55 <= len(r1h) <= 60, f"1h window expected ~60 points, got {len(r1h)}"
+
+    # 6h view: 15-minute buckets → expect ~4 rows
+    r6h = client.get("/api/v1/usage/history?days=0.25&limit=500").json()
+    assert 3 <= len(r6h) <= 5, f"6h window expected ~4 points, got {len(r6h)}"
+
+    # 1d view: hourly buckets → 60min span crosses at most 2 hour boundaries
+    r1d = client.get("/api/v1/usage/history?days=1&limit=500").json()
+    assert 1 <= len(r1d) <= 2, f"1d window expected 1-2 hourly points, got {len(r1d)}"

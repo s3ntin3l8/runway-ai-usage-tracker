@@ -1,4 +1,5 @@
 import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
+import { pickBucketSeconds } from './charts.js';
 
 /**
  * Escapes HTML special characters to prevent XSS
@@ -1363,7 +1364,7 @@ export function buildProviderModal(providerId, items, history) {
  * @param {Set|null} activeProviders - Set of active provider IDs (null = all active)
  * @returns {string} HTML string
  */
-export function buildProviderSparklineStrip(history, activeProviders) {
+export function buildProviderSparklineStrip(history, activeProviders, days = 7) {
     if (!history || history.length === 0) return '';
 
     // Group history by provider
@@ -1383,22 +1384,25 @@ export function buildProviderSparklineStrip(history, activeProviders) {
         minimax: '#14b8a6', ollama: '#94a3b8',
     };
 
+    const bucketSeconds = pickBucketSeconds(days);
+
     const cards = [...byProvider.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([pid, snaps]) => {
         const icon = PROVIDER_ICONS[pid] || '🔧';
         const color = PROVIDER_HEX[pid] || '#64748b';
         const isActive = !activeProviders || activeProviders.has(pid);
 
-        // Build daily average series
-        const byDay = new Map();
+        // Build series averaged per bucket sized to match the active window.
+        const byBucket = new Map();
         for (const s of snaps) {
-            const day = s.timestamp.slice(0, 10);
-            if (!byDay.has(day)) byDay.set(day, { sum: 0, count: 0 });
-            const b = byDay.get(day);
+            const t = Math.floor(new Date(s.timestamp).getTime() / 1000);
+            const bucket = t - (t % bucketSeconds);
+            if (!byBucket.has(bucket)) byBucket.set(bucket, { sum: 0, count: 0 });
+            const b = byBucket.get(bucket);
             b.sum += s.used_value;
             b.count += 1;
         }
-        const points = [...byDay.entries()]
-            .sort(([a], [b]) => a.localeCompare(b))
+        const points = [...byBucket.entries()]
+            .sort(([a], [b]) => a - b)
             .map(([, b]) => ({ value: b.sum / b.count }));
 
         const sparkSVG = buildSparklineSVG(points, color, 56, 24);

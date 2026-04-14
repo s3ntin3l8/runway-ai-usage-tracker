@@ -79,16 +79,31 @@ async def get_usage_history(
         results = session.exec(statement.limit(limit)).all()
         return _history_as_csv(results)
 
-    # JSON path: downsample to one row per (provider, account, model, window, unit, hour)
-    # so a high-volume day can't consume the entire LIMIT budget and hide older days.
-    # Fetch a wider raw slice, bucket, then apply the user-requested limit.
-    raw = session.exec(statement.limit(5000)).all()
-    deduped = _dedupe_hourly(raw)
+    # JSON path: downsample to one row per (provider, account, model, window, unit, bucket).
+    # Bucket size adapts to the window so short views keep sub-hour resolution and
+    # long views stay compact. This also prevents a high-volume day from consuming
+    # the whole LIMIT budget and hiding older days.
+    bucket_seconds = _pick_bucket_seconds(days)
+    raw = session.exec(statement.limit(20000)).all()
+    deduped = _dedupe_by_bucket(raw, bucket_seconds)
     return [_snapshot_to_dict(s) for s in deduped[:limit]]
 
 
-def _dedupe_hourly(rows: Sequence[UsageSnapshot]) -> list[UsageSnapshot]:
-    """Keep the most recent row per (provider, account, model, window, unit, hour) bucket.
+def _pick_bucket_seconds(days: float) -> int:
+    """Bucket size for the history window. Matches the frontend pickBucketSeconds."""
+    if days >= 2:
+        return 86400  # 7d/30d/90d → daily
+    if days >= 0.5:
+        return 3600  # 1d → hourly (≤24 points)
+    if days >= 0.1:
+        return 900  # 6h → 15 min (≤24 points)
+    return 60  # 1h → 1 min (≤60 points)
+
+
+def _dedupe_by_bucket(
+    rows: Sequence[UsageSnapshot], bucket_seconds: int
+) -> list[UsageSnapshot]:
+    """Keep the most recent row per (provider, account, model, window, unit, bucket).
 
     Assumes `rows` is already sorted by timestamp descending — the first row seen
     for each key wins.
@@ -97,13 +112,14 @@ def _dedupe_hourly(rows: Sequence[UsageSnapshot]) -> list[UsageSnapshot]:
     kept: list[UsageSnapshot] = []
     for r in rows:
         ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC)
+        bucket = int(ts.timestamp()) // bucket_seconds
         key = (
             r.provider_id,
             r.account_id,
             r.model_id,
             r.window_type,
             r.unit_type,
-            ts.strftime("%Y-%m-%d %H"),
+            bucket,
         )
         if key in seen:
             continue

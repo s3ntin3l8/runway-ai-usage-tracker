@@ -93,13 +93,13 @@ function updateCsvHref() {
 function renderHistoryFromCache() {
     const history = _historyCache;
     const stripEl = document.getElementById('history-sparkline-strip');
-    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(history, historyState.activeProviders);
+    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(history, historyState.activeProviders, historyState.days);
 
     let filtered = history;
     if (historyState.activeProviders) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
-    updateCharts(filtered, historyState.metric);
+    updateCharts(filtered, historyState.metric, historyState.days);
 
     const container = document.getElementById('history-content');
     if (!filtered || filtered.length === 0) {
