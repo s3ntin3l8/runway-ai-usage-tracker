@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.11.0...v0.11.1) (2026-04-14)
+
+
+### Bug Fixes
+
+* **tests:** stub GEMINI_OAUTH_CLIENT_ID/SECRET in refresher fallback test ([74a744d](https://github.com/s3ntin3l8/ai-usage-tracker/commit/74a744db77b28e9ffa60ec945eb847fc28806bf2))
+
 ## [0.11.0](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.10.1...v0.11.0) (2026-04-14)
 
 
