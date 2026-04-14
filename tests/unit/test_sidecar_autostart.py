@@ -2,10 +2,7 @@
 
 import sys
 import types
-from unittest.mock import MagicMock, call, patch
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -18,7 +15,6 @@ def _reload_autostart(system: str, extra_modules: dict | None = None) -> types.M
     On non-Windows hosts we also inject a fake ``winreg`` module so that the
     conditional import at the top of autostart.py can succeed.
     """
-    import importlib
 
     # Inject a fake winreg before loading so the conditional import succeeds
     fake_winreg = extra_modules.get("winreg") if extra_modules else None
