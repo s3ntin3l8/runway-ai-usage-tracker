@@ -493,7 +493,7 @@ export function buildCard(item) {
         return `
             <div class="glass-panel ${h.card} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
                 <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                         <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                         <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                         <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
@@ -583,7 +583,7 @@ export function buildCard(item) {
     return `
         <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                     <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                     <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
@@ -1166,7 +1166,7 @@ export function buildProviderSummaryCard(providerId, items) {
          data-provider-id="${escapeHTMLAttr(providerId)}"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                 <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                 <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
@@ -1281,10 +1281,8 @@ export function buildProviderModal(providerId, items, history) {
     const windowType = items[0]?.window_type || '';
     const serviceCount = items.length;
 
-    const HEALTH_SEVERITY_LOCAL = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const sorted = [...items].sort((a, b) =>
-        (HEALTH_SEVERITY_LOCAL[b.health] || 0) - (HEALTH_SEVERITY_LOCAL[a.health] || 0)
-    );
+    // Preserve the order passed in — openProviderModal already applies the user's layout.
+    const sorted = items;
 
     const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6', unknown: '#3f3f46' };
     const MODAL_SOURCE_LABELS = { oauth: 'OAuth', web_api: 'Web API', local: 'Local', cache: 'Cache', fallback: 'Fallback', api: 'API', sidecar: 'Sidecar' };
@@ -1323,7 +1321,14 @@ export function buildProviderModal(providerId, items, history) {
         const paceIcon = getPaceIcon(item.pace);
         const tierBadge = item.tier ? getTierBadge(item.tier) : '';
 
-        return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4">
+        return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4 relative" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+            <span class="drag-handle" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+                    <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                    <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+                </svg>
+            </span>
             <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
                     <div class="text-2xl font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
@@ -1363,7 +1368,7 @@ export function buildProviderModal(providerId, items, history) {
                 <button id="close-modal" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
             </div>
         </div>
-        <div class="space-y-3 max-h-[65vh] overflow-y-auto pr-1">${serviceRows}</div>
+        <div class="space-y-3 max-h-[65vh] overflow-y-auto pr-1" data-provider-id="${escapeHTMLAttr(providerId)}">${serviceRows}</div>
     </div>`;
 }
 

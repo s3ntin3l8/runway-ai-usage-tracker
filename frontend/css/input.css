@@ -197,10 +197,14 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 .drag-handle { display: none; }
 .edit-mode .drag-handle {
     display: inline-flex;
-    color: rgb(113, 113, 122);
+    color: rgb(161, 161, 170);
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 10px;
+    right: 10px;
+    padding: 4px;
+    background: rgba(24, 24, 27, 0.85);
+    border-radius: 6px;
+    pointer-events: none;
 }
 .sortable-ghost { opacity: 0.4; }
 .sortable-chosen { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6); }
@@ -369,6 +373,22 @@ body.bright-mode #refresh-btn {
 body.bright-mode #refresh-btn:hover {
     background: #e4e4e7;
     border-color: #a1a1aa;
+}
+
+/* Header icon buttons in bright mode */
+body.bright-mode .icon-btn {
+    background: #f4f4f5;
+    border-color: #d4d4d8;
+    color: #52525b;
+}
+body.bright-mode .icon-btn:hover {
+    background: #e4e4e7;
+    color: #18181b;
+}
+body.bright-mode .icon-btn[aria-pressed="true"] {
+    background: #e4e4e7;
+    border-color: #a1a1aa;
+    color: #18181b;
 }
 
 /* Modal in bright mode */

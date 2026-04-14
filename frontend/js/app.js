@@ -38,6 +38,7 @@ const KNOWN_VIEWS = ['dashboard', 'history', 'fleet', 'settings'];
 
 window.switchView = async function(viewId) {
     if (!KNOWN_VIEWS.includes(viewId)) viewId = 'dashboard';
+    if (STATE.editMode) exitEditMode();
     // Hide all views
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     document.getElementById(`view-${viewId}`).classList.remove('hidden');
@@ -897,7 +898,6 @@ async function enterEditMode() {
         _providerSortable = new Sortable(providerGrid, {
             animation: 150,
             draggable: '[data-provider-id]',
-            handle: '.drag-handle',
             onEnd: onProviderDrop,
         });
     }
@@ -908,7 +908,6 @@ async function enterEditMode() {
         const s = new Sortable(container, {
             animation: 150,
             draggable: '[data-card-key]',
-            handle: '.drag-handle',
             onEnd: () => onCardDrop(section.dataset.providerId, container),
         });
         _cardSortables.push(s);
@@ -959,12 +958,22 @@ window.__reattachCardSortables = async function() {
         const s = new Sortable(cardContainer, {
             animation: 150,
             draggable: '[data-card-key]',
-            handle: '.drag-handle',
             onEnd: () => onCardDrop(section.dataset.providerId, cardContainer),
         });
         _cardSortables.push(s);
     });
 };
+
+// Suppress card clicks (modal-open etc.) while editing; capture-phase
+// runs before any element-level onclick handlers.
+document.addEventListener('click', (e) => {
+    if (!STATE.editMode) return;
+    const card = e.target.closest('[data-provider-id], [data-card-key]');
+    if (card) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+}, true);
 
 /**
  * Initialize UI elements based on initial state
