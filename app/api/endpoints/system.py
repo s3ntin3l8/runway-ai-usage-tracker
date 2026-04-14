@@ -333,6 +333,11 @@ class _AppConfigUpdate(BaseModel):
     local_credential_scraping_enabled: bool | None = None
 
 
+class _DashboardLayout(BaseModel):
+    provider_order: list[str] = Field(default_factory=list)
+    card_orders: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class _ProviderConfigUpdate(BaseModel):
     enabled: bool | None = None
     api_key: str | None = None  # empty string = clear, None = no change
@@ -465,5 +470,46 @@ async def upsert_app_config(
         cfg.local_collector_enabled = body.local_collector_enabled
     if body.local_credential_scraping_enabled is not None:
         cfg.local_credential_scraping_enabled = body.local_credential_scraping_enabled
+    session.commit()
+    return {"status": "saved"}
+
+
+@router.get("/dashboard-layout")
+@limiter.limit("30/minute")
+async def get_dashboard_layout(
+    request: Request, session: Session = Depends(get_session)
+) -> dict:
+    """Return the persisted dashboard layout. Empty default if unset."""
+    import json
+
+    cfg = session.exec(select(SystemConfig)).first()
+    raw = cfg.dashboard_layout_json if cfg else None
+    if not raw:
+        return {"provider_order": [], "card_orders": {}}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"provider_order": [], "card_orders": {}}
+    return {
+        "provider_order": parsed.get("provider_order", []) or [],
+        "card_orders": parsed.get("card_orders", {}) or {},
+    }
+
+
+@router.put("/dashboard-layout")
+@limiter.limit("30/minute")
+async def put_dashboard_layout(
+    request: Request,
+    body: _DashboardLayout,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Store a new dashboard layout. No admin key — matches other UI-facing settings."""
+    import json
+
+    cfg = session.exec(select(SystemConfig)).first()
+    if cfg is None:
+        cfg = SystemConfig()
+        session.add(cfg)
+    cfg.dashboard_layout_json = json.dumps(body.model_dump())
     session.commit()
     return {"status": "saved"}
