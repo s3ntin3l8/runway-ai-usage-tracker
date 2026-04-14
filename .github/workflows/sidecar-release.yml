@@ -1,0 +1,65 @@
+name: Sidecar Release Build
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-sidecar:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            spec: sidecar_app/spec/macos.spec
+            artifact_name: Runway-Sidecar-macOS
+            artifact_path: dist/Runway Sidecar.app
+            zip_name: Runway-Sidecar-macOS.zip
+          - os: windows-latest
+            spec: sidecar_app/spec/windows.spec
+            artifact_name: Runway-Sidecar-Windows
+            artifact_path: dist/RunwaySidecar.exe
+            zip_name: Runway-Sidecar-Windows.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pystray Pillow pyinstaller packaging
+
+      - name: Generate icons
+        run: python sidecar_app/assets/generate_icons.py
+
+      - name: Run PyInstaller
+        run: pyinstaller ${{ matrix.spec }}
+
+      - name: Create zip (macOS)
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r "../${{ matrix.zip_name }}" "Runway Sidecar.app"
+
+      - name: Create zip (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "${{ matrix.artifact_path }}" -DestinationPath "${{ matrix.zip_name }}"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.zip_name }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

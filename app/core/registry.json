@@ -66,6 +66,11 @@
           "type": "env",
           "variable": "MINIMAX_API_KEY",
           "mapping": { "value": "api_key" }
+        },
+        {
+          "type": "env",
+          "variable": "MINIMAX_COOKIE",
+          "mapping": { "value": "session_cookie" }
         }
       ]
     },
@@ -147,6 +152,17 @@
         }
       ]
     },
+    "kimi_coding": {
+      "name": "Kimi Coding",
+      "icon": "🌙",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "KIMI_AUTH_TOKEN",
+          "mapping": { "value": "session_cookie" }
+        }
+      ]
+    },
     "kimi": {
       "name": "Kimi API",
       "icon": "🌙",
@@ -176,6 +192,28 @@
         {
           "type": "env",
           "variable": "ZAI_API_KEY",
+          "mapping": { "value": "api_key" }
+        }
+      ]
+    },
+    "kimi_api": {
+      "name": "Kimi API",
+      "icon": "🌙",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "KIMI_API_KEY",
+          "mapping": { "value": "api_key" }
+        }
+      ]
+    },
+    "kimi_k2": {
+      "name": "Kimi K2",
+      "icon": "🌙",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "KIMI_K2_API_KEY",
           "mapping": { "value": "api_key" }
         }
       ]
@@ -235,7 +273,7 @@
         {
           "type": "env",
           "variable": "OLLAMA_SESSION_TOKEN",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",

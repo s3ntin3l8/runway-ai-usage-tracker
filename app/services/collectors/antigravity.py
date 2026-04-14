@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
+from app.core.config import is_local_collector_enabled, settings
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class AntigravityCollector(BaseCollector):
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Antigravity quota via LSP probing (Primary) or local file (Fallback)."""
-        if not settings.LOCAL_COLLECTOR_ENABLED:
+        if not is_local_collector_enabled():
             return []
 
         # Try LSP probe first

@@ -7,12 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from app.core.config import settings
+from app.core.config import (
+    is_local_collector_enabled,
+    is_local_credential_scraping_enabled,
+    settings,
+)
 from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
-from app.models.db import WebhookConfig
+from app.models.db import ProviderConfig, SystemConfig, WebhookConfig
 from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
 from app.services.token_cache import token_cache
@@ -42,8 +46,8 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
-        "local_collector_enabled": settings.LOCAL_COLLECTOR_ENABLED,
-        "local_credential_scraping": settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED,
+        "local_collector_enabled": is_local_collector_enabled(),
+        "local_credential_scraping": is_local_credential_scraping_enabled(),
         "ingest_api_key_is_default": settings.INGEST_API_KEY_IS_INSECURE_DEFAULT,
     }
 
@@ -80,6 +84,70 @@ async def get_token_health(request: Request) -> dict[str, Any]:
     """Return health status for all cached credentials."""
     tokens = await token_health_service.get_health()
     return {"tokens": tokens}
+
+
+@router.get("/debug/raw/{provider_id}")
+@limiter.limit("10/minute")
+async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str, Any]:
+    """
+    Run a specific collector and capture raw HTTP responses.
+    Useful for troubleshooting provider API changes.
+    """
+    raw_responses = {}
+
+    async def intercept_response(response: httpx.Response):
+        await response.aread()
+        try:
+            data = response.json()
+        except Exception:
+            data = response.text
+        
+        # Mask authorization headers for safety in debug output
+        safe_headers = dict(response.headers)
+        if "Authorization" in safe_headers:
+            safe_headers["Authorization"] = "Bearer [MASKED]"
+        if "Cookie" in safe_headers:
+            safe_headers["Cookie"] = "[MASKED]"
+
+        raw_responses[str(response.url)] = {
+            "status": response.status_code,
+            "headers": safe_headers,
+            "body": data,
+        }
+
+    try:
+        # 1. Ensure collectors are loaded
+        await manager._sync_collectors()
+        
+        # 2. Find and run the specific collector
+        # We look through all active collectors (handles multi-account)
+        # Note: manager uses 'smart_collectors' which are wrappers around the actual collectors
+        target_collectors = [sc.collector for key, sc in manager.smart_collectors.items() if key.startswith(f"{provider_id}:") or key == provider_id]
+        
+        if not target_collectors:
+            # Try to get one from registry if not active yet
+            collector = manager._create_collector(provider_id)
+            if collector:
+                target_collectors = [collector]
+
+        if not target_collectors:
+            raise HTTPException(status_code=404, detail=f"No collector found for provider: {provider_id}")
+
+        async with httpx.AsyncClient(
+            event_hooks={"response": [intercept_response]}, timeout=30.0
+        ) as client:
+            # Run the primary strategy for the first matching collector
+            # (In debug mode we usually just care about the strategy logic)
+            await target_collectors[0].collect(client)
+
+        return {
+            "provider_id": provider_id,
+            "responses": raw_responses,
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logger.error(f"Raw debug collection failed for {provider_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/token-health/refresh/{provider}/{account_id}")
@@ -234,3 +302,164 @@ async def test_webhook(
         return {"status": "sent"}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Webhook delivery failed: {e}")
+
+
+# --- Provider configuration ---
+
+# Icons for providers not in registry.json (fallback)
+_PROVIDER_ICONS: dict[str, str] = {
+    "anthropic": "🟠",
+    "gemini": "🔵",
+    "github": "🐙",
+    "chatgpt": "💬",
+    "openrouter": "🚀",
+    "minimax": "🤖",
+    "kimi_api": "🌙",
+    "kimi_coding": "🌙",
+    "zai": "🌐",
+    "opencode": "⚡",
+    "antigravity": "🛸",
+    "ollama": "🦙",
+}
+
+
+class _AppConfigUpdate(BaseModel):
+    browser_preference: str | None = None
+    default_poll_interval_seconds: int | None = None  # 0 = clear override
+    local_collector_enabled: bool | None = None
+    local_credential_scraping_enabled: bool | None = None
+
+
+class _ProviderConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    api_key: str | None = None  # empty string = clear, None = no change
+    session_cookie: str | None = None  # empty string = clear, None = no change
+    account_label: str | None = None
+    poll_interval_seconds: int | None = None
+
+
+@router.get("/provider-configs")
+@limiter.limit("30/minute")
+async def list_provider_configs(
+    request: Request, session: Session = Depends(get_session)
+) -> dict:
+    """Return all known providers merged with their DB configuration."""
+    from app.core.registry import registry
+
+    # Load DB configs keyed by provider_id
+    db_rows = session.exec(select(ProviderConfig)).all()
+    db_map: dict[str, ProviderConfig] = {r.provider_id: r for r in db_rows}
+
+    results = []
+    for p_id, (_, name, default_ttl) in manager.collector_registry.items():
+        provider_def = registry.get_provider(p_id) or {}
+        icon = provider_def.get("icon", _PROVIDER_ICONS.get(p_id, "🔌"))
+        db = db_map.get(p_id)
+        rules = provider_def.get("rules", [])
+        supports_api_key = any(
+            "api_key" in rule.get("mapping", {}).values()
+            for rule in rules
+            if rule.get("type") in ("env", "file", "keychain")
+        )
+        supports_session_cookie = any(
+            "session_cookie" in rule.get("mapping", {}).values()
+            for rule in rules
+            if rule.get("type") in ("env", "file", "keychain")
+        )
+        results.append(
+            {
+                "provider_id": p_id,
+                "name": name,
+                "icon": icon,
+                "enabled": db.enabled if db else True,
+                "api_key_set": bool(db and db.api_key_encrypted),
+                "session_cookie_set": bool(db and db.session_cookie_encrypted),
+                "account_label": db.account_label if db else None,
+                "poll_interval_seconds": db.poll_interval_seconds if db else None,
+                "default_ttl_seconds": default_ttl,
+                "supports_api_key": supports_api_key,
+                "supports_session_cookie": supports_session_cookie,
+            }
+        )
+
+    return {"providers": results}
+
+
+@router.put("/provider-config/{provider_id}")
+@limiter.limit("20/minute")
+async def upsert_provider_config(
+    request: Request,
+    provider_id: str,
+    body: _ProviderConfigUpdate,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Create or update provider configuration."""
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+
+    row = session.exec(
+        select(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+    ).first()
+    if row is None:
+        row = ProviderConfig(
+            provider_id=provider_id,
+            enabled=body.enabled if body.enabled is not None else True,
+        )
+        session.add(row)
+        session.flush()
+
+    if body.enabled is not None:
+        row.enabled = body.enabled
+    if body.account_label is not None:
+        row.account_label = body.account_label or None
+    if body.poll_interval_seconds is not None:
+        row.poll_interval_seconds = body.poll_interval_seconds if body.poll_interval_seconds > 0 else None
+    if body.api_key is not None:
+        # Empty string = clear the stored key; non-empty = encrypt and store
+        row.api_key = body.api_key if body.api_key else None
+    if body.session_cookie is not None:
+        row.session_cookie = body.session_cookie if body.session_cookie else None
+
+    session.commit()
+    return {"status": "saved"}
+
+
+@router.get("/app-config")
+@limiter.limit("30/minute")
+async def get_app_config(
+    request: Request, session: Session = Depends(get_session)
+) -> dict:
+    """Return global application configuration."""
+    cfg = session.exec(select(SystemConfig)).first()
+    return {
+        "browser_preference": (cfg.browser_preference if cfg else None) or settings.BROWSER_PREFERENCE,
+        "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
+        "local_collector_enabled": is_local_collector_enabled(),
+        "local_credential_scraping_enabled": is_local_credential_scraping_enabled(),
+    }
+
+
+@router.put("/app-config")
+@limiter.limit("10/minute")
+async def upsert_app_config(
+    request: Request,
+    body: _AppConfigUpdate,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Update global application configuration."""
+    cfg = session.exec(select(SystemConfig)).first()
+    if cfg is None:
+        cfg = SystemConfig()
+        session.add(cfg)
+    if body.browser_preference is not None:
+        cfg.browser_preference = body.browser_preference or None
+    if body.default_poll_interval_seconds is not None:
+        cfg.default_poll_interval_seconds = body.default_poll_interval_seconds if body.default_poll_interval_seconds > 0 else None
+    if body.local_collector_enabled is not None:
+        cfg.local_collector_enabled = body.local_collector_enabled
+    if body.local_credential_scraping_enabled is not None:
+        cfg.local_credential_scraping_enabled = body.local_credential_scraping_enabled
+    session.commit()
+    return {"status": "saved"}

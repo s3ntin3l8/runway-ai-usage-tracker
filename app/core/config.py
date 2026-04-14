@@ -61,11 +61,18 @@ class Settings(BaseSettings):
     CLAUDE_CODE_OAUTH_TOKEN: str = ""
     OLLAMA_SESSION_TOKEN: str = ""
     OPENROUTER_API_KEY: str = ""
+    OPENROUTER_HTTP_REFERER: str = ""
+    OPENROUTER_X_TITLE: str = "Runway"
     MINIMAX_API_KEY: str = ""
+    MINIMAX_HOST: str = ""  # Override: "platform.minimaxi.com" for China
+    MINIMAX_COOKIE: str = ""  # Manual cookie override for fallback
     OPENCODE_GO_API_KEY: str = ""
     ZAI_API_KEY: str = ""
+    ZAI_API_HOST: str = ""  # Override: "open.bigmodel.cn" for China
+    ZAI_QUOTA_URL: str = ""  # Override: full URL to quota endpoint
     KIMI_API_KEY: str = ""
     KIMI_AUTH_TOKEN: str = ""
+    KIMI_K2_API_KEY: str = ""
 
     INGEST_API_KEY: str = DEFAULT_INGEST_API_KEY
     ADMIN_API_KEY: str | None = None
@@ -78,6 +85,7 @@ class Settings(BaseSettings):
     KEYCHAIN_PROMPT_MODE: str = "always"
 
     # Quota limits
+    CLAUDE_MAX_LIMIT: int = 10000000
     CLAUDE_PRO_LIMIT: int = 2000000
     CLAUDE_FREE_LIMIT: int = 500000
 
@@ -158,6 +166,38 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _get_system_config_flag(field: str, default: bool) -> bool:
+    """Read a bool flag from SystemConfig DB, falling back to the env-var default."""
+    try:
+        from sqlmodel import Session
+        from sqlmodel import select as sqlselect
+
+        from app.core.db import engine
+        from app.models.db import SystemConfig
+
+        with Session(engine) as _s:
+            cfg = _s.exec(sqlselect(SystemConfig)).first()
+            if cfg is not None:
+                val = getattr(cfg, field, None)
+                if val is not None:
+                    return bool(val)
+    except Exception:
+        pass
+    return default
+
+
+def is_local_collector_enabled() -> bool:
+    """DB override > LOCAL_COLLECTOR_ENABLED env var."""
+    return _get_system_config_flag("local_collector_enabled", settings.LOCAL_COLLECTOR_ENABLED)
+
+
+def is_local_credential_scraping_enabled() -> bool:
+    """DB override > LOCAL_CREDENTIAL_SCRAPING_ENABLED env var."""
+    return _get_system_config_flag(
+        "local_credential_scraping_enabled", settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED
+    )
 
 # Security check: Warn if using default ingest secret
 if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:

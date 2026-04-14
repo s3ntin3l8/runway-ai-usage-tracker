@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
+from app.core.config import is_local_credential_scraping_enabled
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
@@ -23,12 +23,12 @@ from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
 from app.services.collectors.kimi_api import KimiApiCollector
 from app.services.collectors.kimi_coding import KimiCodingCollector
+from app.services.collectors.kimi_k2 import KimiK2Collector
 from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.ollama import OllamaCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
-from app.services.collectors.zai_api import ZaiApiCollector
-from app.services.collectors.zai_plan import ZaiPlanCollector
+from app.services.collectors.zai import ZaiCollector
 from app.services.external_metrics import external_metric_service
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
@@ -56,10 +56,10 @@ class CollectorManager:
             "chatgpt": (ChatGPTCollector, "ChatGPT", 600),
             "antigravity": (AntigravityCollector, "Antigravity", 900),
             "opencode": (OpenCodeCollector, "OpenCode", 1800),
-            "zai_api": (ZaiApiCollector, "zAI API", 900),
-            "zai_plan": (ZaiPlanCollector, "zAI Plan", 900),
+            "zai": (ZaiCollector, "zAI", 900),
             "kimi_api": (KimiApiCollector, "Kimi API", 900),
             "kimi_coding": (KimiCodingCollector, "Kimi Coding", 900),
+            "kimi_k2": (KimiK2Collector, "Kimi K2", 900),
             "openrouter": (OpenRouterCollector, "OpenRouter", 900),
             "minimax": (MiniMaxCollector, "MiniMax", 900),
             "ollama": (OllamaCollector, "Ollama Cloud", 900),
@@ -83,7 +83,7 @@ class CollectorManager:
         """Sequentially pre-fetch keychain secrets on macOS."""
         if self._keychain_warmed_up:
             return
-        if platform.system() != "Darwin" or not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if platform.system() != "Darwin" or not is_local_credential_scraping_enabled():
             self._keychain_warmed_up = True
             return
 
@@ -121,14 +121,55 @@ class CollectorManager:
             # are waiting on the lock simultaneously.
             if time.time() - self._last_sync_time < 60.0:
                 return
+            # Load DB provider configs (enabled flag + poll interval overrides)
+            db_configs: dict[str, Any] = {}
+            global_poll_interval: int | None = None
+            try:
+                from sqlmodel import Session
+                from sqlmodel import select as sqlselect
+
+                from app.core.db import engine
+                from app.models.db import ProviderConfig, SystemConfig
+
+                with Session(engine) as _s:
+                    db_configs = {
+                        r.provider_id: r
+                        for r in _s.exec(sqlselect(ProviderConfig)).all()
+                    }
+                    sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
+                    if sys_cfg and sys_cfg.default_poll_interval_seconds:
+                        global_poll_interval = sys_cfg.default_poll_interval_seconds
+            except Exception as e:
+                logger.debug(f"Could not load provider configs from DB: {e}")
+
             # 1. Ensure Default/Static collectors are present
             for p_id, (cls, name, ttl) in self.collector_registry.items():
+                db_cfg = db_configs.get(p_id)
+                if db_cfg is not None and not db_cfg.enabled:
+                    # Remove existing collector if it was previously running
+                    self.smart_collectors.pop(f"{p_id}:default", None)
+                    # Purge stale cards so the dashboard reflects the change immediately
+                    self._registry = [c for c in self._registry if c.get("provider_id") != p_id]
+                    continue
+                effective_ttl = (
+                    db_cfg.poll_interval_seconds
+                    if db_cfg and db_cfg.poll_interval_seconds
+                    else global_poll_interval or ttl
+                )
                 key = f"{p_id}:default"
+                db_label = db_cfg.account_label if db_cfg else None
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     self.smart_collectors[key] = SmartCollector(
-                        collector=cls(), collector_name=name, ttl=ttl
+                        collector=cls(account_label=db_label), collector_name=name, ttl=effective_ttl
                     )
+                else:
+                    sc = self.smart_collectors[key]
+                    if effective_ttl != sc.ttl:
+                        sc.ttl = effective_ttl
+                    # Propagate updated account_label from ProviderConfig
+                    if db_label and sc.collector.account_label != db_label:
+                        sc.collector.account_label = db_label
 
             # 2. Discover active dynamic collectors from TokenCache
             active_accounts = await token_cache.get_all_active_accounts()
@@ -136,6 +177,20 @@ class CollectorManager:
             for p_id, acc_id, acc_name in active_accounts:
                 if p_id in self.collector_registry:
                     cls, name, ttl = self.collector_registry[p_id]
+                    db_cfg = db_configs.get(p_id)
+                    if db_cfg is not None and not db_cfg.enabled:
+                        # Remove existing dynamic collector and purge its stale cards
+                        self.smart_collectors.pop(f"{p_id}:{acc_id}", None)
+                        self._registry = [
+                            c for c in self._registry
+                            if not (c.get("provider_id") == p_id and c.get("account_id") == acc_id)
+                        ]
+                        continue
+                    effective_ttl = (
+                        db_cfg.poll_interval_seconds
+                        if db_cfg and db_cfg.poll_interval_seconds
+                        else global_poll_interval or ttl
+                    )
                     key = f"{p_id}:{acc_id}"
                     active_keys.add(key)
                     if key not in self.smart_collectors:
@@ -144,7 +199,7 @@ class CollectorManager:
                         self.smart_collectors[key] = SmartCollector(
                             collector=cls(account_id=acc_id, account_label=acc_name),
                             collector_name=full_name,
-                            ttl=ttl,
+                            ttl=effective_ttl,
                         )
 
             # 3. Prune collectors whose accounts disappeared from the token cache
@@ -255,6 +310,32 @@ class CollectorManager:
     def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""
         return {"collectors": [sc.get_stats() for sc in self.smart_collectors.values()]}
+
+    async def collect_one(self, provider_id: str, account_id: str | None = None) -> list[dict[str, Any]]:
+        """Reset and immediately re-collect a single provider, merging results into the registry."""
+        target_prefix = f"{provider_id}:"
+        results: list[dict[str, Any]] = []
+        client = await self._get_client()
+
+        for key, sc in self.smart_collectors.items():
+            if key.startswith(target_prefix):
+                if account_id is None or key == f"{provider_id}:{account_id}":
+                    await sc.reset()
+                    try:
+                        res = await sc.collect(client)
+                        if isinstance(res, list):
+                            results.extend(res)
+                    except Exception as e:
+                        logger.error(f"Error collecting {key}: {e}")
+
+        # Merge: replace old cards for this provider (and account if specified)
+        if account_id:
+            kept = [c for c in self._registry
+                    if not (c.get("provider_id") == provider_id and c.get("account_id") == account_id)]
+        else:
+            kept = [c for c in self._registry if c.get("provider_id") != provider_id]
+        self._registry = kept + results
+        return results
 
     async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""

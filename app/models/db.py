@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.core.encryption import encryption_service
@@ -81,3 +82,61 @@ class WebhookConfig(SQLModel, table=True):
     channel: str  # "discord" or "slack" — validated by CRUD API at ingestion
     active: bool = Field(default=True)
     last_fired_at: datetime | None = Field(default=None)  # None = reset/ready to fire
+
+
+class ProviderConfig(SQLModel, table=True):
+    """Per-provider user configuration (API keys, labels, poll intervals, enabled toggle)."""
+
+    __tablename__ = "provider_configs"
+    __table_args__ = (UniqueConstraint("provider_id", "account_id", name="uq_provider_account"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    account_id: str = Field(default="default")
+    enabled: bool = Field(default=True)
+    api_key_encrypted: str | None = Field(default=None)  # encrypted via encryption_service
+    session_cookie_encrypted: str | None = Field(default=None)  # encrypted session/auth cookie override
+    account_label: str | None = None
+    poll_interval_seconds: int | None = None  # None = use collector default TTL
+
+    @property
+    def api_key(self) -> str | None:
+        """Decrypt and return the stored API key, or None if not set."""
+        if not self.api_key_encrypted:
+            return None
+        return encryption_service.decrypt_string(self.api_key_encrypted)
+
+    @api_key.setter
+    def api_key(self, value: str | None) -> None:
+        """Encrypt and store the API key."""
+        if value:
+            self.api_key_encrypted = encryption_service.encrypt_string(value)
+        else:
+            self.api_key_encrypted = None
+
+    @property
+    def session_cookie(self) -> str | None:
+        """Decrypt and return the stored session cookie, or None if not set."""
+        if not self.session_cookie_encrypted:
+            return None
+        return encryption_service.decrypt_string(self.session_cookie_encrypted)
+
+    @session_cookie.setter
+    def session_cookie(self, value: str | None) -> None:
+        """Encrypt and store the session cookie."""
+        if value:
+            self.session_cookie_encrypted = encryption_service.encrypt_string(value)
+        else:
+            self.session_cookie_encrypted = None
+
+
+class SystemConfig(SQLModel, table=True):
+    """Global application configuration (single row)."""
+
+    __tablename__ = "system_config"
+
+    id: int | None = Field(default=None, primary_key=True)
+    browser_preference: str | None = None  # e.g. "safari,chrome,firefox"
+    default_poll_interval_seconds: int | None = None  # None = use per-collector default TTL
+    local_collector_enabled: bool | None = None   # None = use env var default
+    local_credential_scraping_enabled: bool | None = None  # None = use env var default

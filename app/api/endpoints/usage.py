@@ -84,9 +84,14 @@ async def get_usage_history(
 
 
 def _snapshot_to_dict(s: UsageSnapshot) -> dict:
+    # Ensure timestamp is timezone-aware UTC before isoformat()
+    ts = s.timestamp
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    
     return {
         "id": s.id,
-        "timestamp": s.timestamp.isoformat(),
+        "timestamp": ts.isoformat(),
         "provider_id": s.provider_id,
         "account_id": s.account_id,
         "account_label": s.account_label,
@@ -146,3 +151,15 @@ async def reset_provider(
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     await manager.reset_collector(provider, account_id)
     return {"status": "reset", "provider": provider, "account_id": account_id}
+
+
+@router.post("/collect/{provider}")
+@limiter.limit("6/minute")
+async def collect_provider(
+    request: Request, provider: str, account_id: str | None = None
+) -> dict[str, Any]:
+    """Force an immediate re-collection for a specific provider."""
+    if provider not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
+    cards = await manager.collect_one(provider, account_id)
+    return {"status": "ok", "provider": provider, "cards": len(cards)}

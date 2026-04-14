@@ -4,7 +4,7 @@ import os
 import platform
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import is_local_credential_scraping_enabled
 from app.core.keychain import get_keychain_secret
 from app.core.registry import registry
 
@@ -39,10 +39,31 @@ class CredentialProvider:
     @staticmethod
     def get_credentials(provider_id: str) -> dict[str, str]:
         """Generic extraction based on registry rules for a provider."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             return {}
 
-        results = {}
+        results: dict[str, str] = {}
+
+        # DB override: user-provided API key takes precedence over env/file/keychain
+        try:
+            from sqlmodel import Session
+            from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
+
+            with Session(engine) as _s:
+                _cfg = _s.exec(
+                    sqlselect(ProviderConfig).where(
+                        ProviderConfig.provider_id == provider_id,
+                        ProviderConfig.enabled == True,  # noqa: E712
+                    )
+                ).first()
+                if _cfg and _cfg.api_key:
+                    results["api_key"] = _cfg.api_key
+        except Exception:
+            pass
+
         provider_config = registry.get_provider(provider_id)
         rules = provider_config.get("rules", [])
 
@@ -138,15 +159,20 @@ class CredentialProvider:
         return CredentialProvider._get_nested(data, parts)
 
     @staticmethod
+    def get_github_data() -> dict[str, str]:
+        """Get full GitHub OAuth data using registry rules."""
+        creds = CredentialProvider.get_credentials("github")
+        return creds
+
+    @staticmethod
     def get_github_token() -> str:
         """Get GitHub token using registry rules."""
-        creds = CredentialProvider.get_credentials("github")
-        return creds.get("api_key", "")
+        return CredentialProvider.get_github_data().get("api_key", "")
 
     @staticmethod
     def get_gemini_credentials_path() -> str | None:
         """Search for Gemini credentials file using registry rules."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             return None
 
         provider_config = registry.get_provider("gemini")
@@ -161,7 +187,7 @@ class CredentialProvider:
     @staticmethod
     def get_anthropic_credentials_path() -> str | None:
         """Search for Anthropic credentials file using registry rules."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             return None
 
         provider_config = registry.get_provider("anthropic")
@@ -176,7 +202,7 @@ class CredentialProvider:
     @staticmethod
     def get_chatgpt_credentials_path() -> str | None:
         """Search for ChatGPT credentials file using registry rules."""
-        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        if not is_local_credential_scraping_enabled():
             return None
 
         provider_config = registry.get_provider("chatgpt")
@@ -196,6 +222,60 @@ class CredentialProvider:
         if "oauth_token" in creds:
             creds["access_token"] = creds["oauth_token"]
         return creds
+
+    @staticmethod
+    def get_provider_api_key(provider_id: str) -> str | None:
+        """Return the user-supplied API key stored in ProviderConfig for a provider.
+
+        This bypasses the local-credential-scraping gate because the key was
+        explicitly entered by the user through the settings UI — it is not
+        scraped from the filesystem.
+        """
+        try:
+            from sqlmodel import Session
+            from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
+
+            with Session(engine) as _s:
+                cfg = _s.exec(
+                    sqlselect(ProviderConfig).where(
+                        ProviderConfig.provider_id == provider_id
+                    )
+                ).first()
+                if cfg and cfg.api_key:
+                    return cfg.api_key
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def get_provider_session_cookie(provider_id: str) -> str | None:
+        """Return the user-supplied session cookie stored in ProviderConfig.
+
+        Used by cookie-based collectors as a manual override that bypasses browser
+        cookie extraction. Bypasses the credential-scraping gate for the same
+        reason as get_provider_api_key — the value was explicitly entered by the user.
+        """
+        try:
+            from sqlmodel import Session
+            from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
+
+            with Session(engine) as _s:
+                cfg = _s.exec(
+                    sqlselect(ProviderConfig).where(
+                        ProviderConfig.provider_id == provider_id
+                    )
+                ).first()
+                if cfg and cfg.session_cookie:
+                    return cfg.session_cookie
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def get_chatgpt_token() -> str:

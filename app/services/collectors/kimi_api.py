@@ -3,12 +3,13 @@ Kimi API (Balance) collector with prepaid balance tracking.
 
 Collection Strategy:
 - Requires KIMI_API_KEY environment variable (Moonshot API key)
-- Calls https://api.moonshot.cn/v1/users/me/balance
+- Calls https://api.moonshot.ai/v1/users/me/balance
 - Returns prepaid account balance in USD ($)
 - Prepaid model: no quotas, just account balance
 
 See Also:
 - kimi_coding.py for IDE quota limits (weekly + rate limits)
+- kimi_k2.py for Kimi K2 credits tracking
 
 Error Handling:
 - Missing/invalid keys: Returns error card with key validation message
@@ -28,6 +29,7 @@ import httpx
 from app.core.config import settings
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
+from app.services.credential_provider import credential_provider
 
 
 class KimiApiCollector(BaseCollector):
@@ -43,9 +45,13 @@ class KimiApiCollector(BaseCollector):
         """Return the fallback strategies for Kimi API."""
         return []
 
+    def _get_api_key(self) -> str | None:
+        """DB (UI-set) → env var."""
+        return credential_provider.get_provider_api_key("kimi_api") or settings.KIMI_API_KEY or None
+
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi prepaid balance and history via API."""
-        key = settings.KIMI_API_KEY
+        key = self._get_api_key()
         if not key or len(key) < 10:
             return []
 
@@ -60,7 +66,7 @@ class KimiApiCollector(BaseCollector):
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when API fails."""
-        key = settings.KIMI_API_KEY
+        key = self._get_api_key()
         if not key or len(key) < 10:
             return [
                 error_card("Kimi API", "🌙", "Missing/Invalid Key", error_type="missing_config")
@@ -71,7 +77,7 @@ class KimiApiCollector(BaseCollector):
         """Collect Kimi prepaid balance via API."""
         try:
             resp = await client.get(
-                "https://api.moonshot.cn/v1/users/me/balance",
+                "https://api.moonshot.ai/v1/users/me/balance",
                 headers={"Authorization": f"Bearer {key}"},
                 timeout=10.0,
             )
@@ -89,7 +95,7 @@ class KimiApiCollector(BaseCollector):
                     "remaining": f"${bal:.2f}",
                     "unit": "balance",
                     "reset": "Manual",
-                    "health": "good" if bal > 5 else "warning",
+                    "health": "good" if bal > 5 else "warning" if bal > 0 else "critical",
                     "pace": "Stable",
                     "detail": "Prepaid balance (API)",
                     "data_source": "api_balance",

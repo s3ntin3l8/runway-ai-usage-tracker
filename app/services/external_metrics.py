@@ -126,12 +126,12 @@ class ExternalMetricService:
             "month": 60.0,
         }
 
-        # Track aggregated data per window
-        aggregated: dict[str, dict[str, Any]] = {
-            "5h": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
-            "week": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
-            "month": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
-        }
+        # Track aggregated data per account_label and window
+        # aggregated[account_label][window_key] = {"used": ..., "msgs": ..., "hosts": ..., "time_str": ...}
+        aggregated: dict[str, dict[str, dict[str, Any]]] = {}
+
+        def get_default_window_data():
+            return {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""}
 
         # Window name mappings
         window_map = {
@@ -154,6 +154,16 @@ class ExternalMetricService:
                 metadata = card.get("metadata", {})
                 used = metadata.get("used", 0.0)
                 msgs = metadata.get("count", 0)
+
+                # Capture account label if available
+                acc_label = card.get("account_label") or metadata.get("account_label") or "Default"
+                
+                if acc_label not in aggregated:
+                    aggregated[acc_label] = {
+                        "5h": get_default_window_data(),
+                        "week": get_default_window_data(),
+                        "month": get_default_window_data(),
+                    }
 
                 # Fallback to string parsing if metadata missing (backward compatibility)
                 if used == 0.0 and "$" in card.get("detail", ""):
@@ -181,12 +191,12 @@ class ExternalMetricService:
                     except IndexError:
                         host = card.get("_provider", "unknown")
 
-                aggregated[window_key]["hosts"].add(host)
-                aggregated[window_key]["used"] += used
-                aggregated[window_key]["msgs"] += msgs
-                aggregated[window_key]["time_str"] = card.get("_time_str", "")
+                aggregated[acc_label][window_key]["hosts"].add(host)
+                aggregated[acc_label][window_key]["used"] += used
+                aggregated[acc_label][window_key]["msgs"] += msgs
+                aggregated[acc_label][window_key]["time_str"] = card.get("_time_str", "")
 
-        # Create aggregated cards for each window
+        # Create aggregated cards for each window and account
         window_labels = {
             "5h": "5h Combined",
             "week": "7d Combined",
@@ -194,27 +204,29 @@ class ExternalMetricService:
         }
 
         result = []
-        for window, data in aggregated.items():
-            if data["hosts"]:  # Only create card if we have data
-                used = data["used"]
-                limit = limits[window]
-                remaining = max(0, limit - used)
-                pct = (used / limit * 100) if limit > 0 else 0
-                host_count = len(data["hosts"])
-                time_str = data["time_str"]
+        for acc_label, windows_data in aggregated.items():
+            for window, data in windows_data.items():
+                if data["hosts"]:  # Only create card if we have data
+                    used = data["used"]
+                    limit = limits[window]
+                    remaining = max(0, limit - used)
+                    pct = (used / limit * 100) if limit > 0 else 0
+                    host_count = len(data["hosts"])
+                    time_str = data["time_str"]
 
-                result.append(
-                    {
-                        "service_name": f"OpenCode ({window_labels[window]})",
-                        "icon": "⚡",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": f"${limit:.0f} limit",
-                        "reset": f"Rolling {window}",
-                        "health": ("good" if pct < 70 else "warning" if pct < 90 else "critical"),
-                        "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
-                        "detail": f"Combined from {host_count} hosts · ${used:.2f} used ({time_str})",
-                    }
-                )
+                    result.append(
+                        {
+                            "service_name": f"OpenCode ({window_labels[window]})",
+                            "icon": "⚡",
+                            "remaining": f"${remaining:.2f}",
+                            "unit": f"${limit:.0f} limit",
+                            "reset": f"Rolling {window}",
+                            "health": ("good" if pct < 70 else "warning" if pct < 90 else "critical"),
+                            "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
+                            "detail": f"Combined from {host_count} hosts · ${used:.2f} used ({time_str})",
+                            "account_label": acc_label if acc_label != "Default" else None,
+                        }
+                    )
 
         return result
 

@@ -17,8 +17,8 @@ def manager():
 class TestCollectorManagerInitialization:
     def test_init_registry_count(self, manager):
         """Test that default registry contains expected providers."""
-        # 13 providers as of Phase 2
-        assert len(manager.collector_registry) == 13
+        # 12 providers (zAI consolidated from 2 to 1)
+        assert len(manager.collector_registry) == 12
         assert "anthropic" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
 
@@ -69,8 +69,10 @@ class TestCollectorManagerWarmup:
     async def test_warmup_keychain_disabled(self, manager):
         """Test that warmup respects config."""
         with patch("platform.system", return_value="Darwin"):
-            with patch("app.services.collector_manager.settings") as mock_settings:
-                mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+            with patch(
+                "app.services.collector_manager.is_local_credential_scraping_enabled",
+                return_value=False,
+            ):
                 with patch("app.core.keychain.get_keychain_secret") as mock_secret:
                     await manager._warmup_keychain()
                     mock_secret.assert_not_called()

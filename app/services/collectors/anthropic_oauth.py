@@ -1,15 +1,6 @@
-"""
-Anthropic (Claude) OAuth token management and API client.
-
-Handles:
-- Access token retrieval and expiry checking
-- Automatic token refresh with Client ID auto-discovery
-- OAuth API calls to https://api.anthropic.com/api/oauth/usage
-- Response parsing for quota cards
-"""
-
 import json
 import logging
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -26,37 +17,32 @@ logger = logging.getLogger(__name__)
 
 class AnthropicOAuthMixin(OAuthBaseCollector):
     """
-    Mixin providing OAuth token management and API collection for Anthropic (Claude).
-    Intended to be composed into AnthropicCollector.
+    Anthropic (Claude) OAuth token management and API client.
+
+    Handles:
+    - Access token retrieval and expiry checking
+    - Automatic token refresh with Client ID auto-discovery
+    - OAuth API calls to https://api.anthropic.com/api/oauth/usage
+    - Response parsing for quota cards
     """
 
-    PROVIDER_ID = "anthropic"
-    DEFAULT_WINDOW_TYPE = "weekly"
-
-    # ──────────────────────────────── Token lifecycle ────────────────────────
-
-    async def _is_token_expired(self) -> bool:
-        """Check if OAuth token is expired by reading credentials file."""
-        try:
-            creds = await self._get_credentials()
-            if creds:
-                expires_at_ms = creds.get("claudeAiOauth", {}).get("expiresAt")
-                if expires_at_ms:
-                    expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=UTC)
-                    return datetime.now(UTC) >= expires_at
-        except Exception as e:
-            logger.debug(f"Could not check token expiration: {e}")
-        return False
+    def __init__(
+        self,
+        provider_name: str,
+        credentials_path: str,
+        account_id: str | None = None,
+        account_label: str | None = None,
+    ):
+        super().__init__(
+            provider_name=provider_name,
+            credentials_path=credentials_path,
+            account_id=account_id,
+            account_label=account_label,
+        )
+        self._last_api_fetch = None
 
     async def _execute_refresh(self, client: httpx.AsyncClient) -> dict | None:
-        """
-        Execute the HTTP request to refresh the Claude OAuth token.
-
-        Auto-discovers the OAuth client_id from:
-        1. Credentials file/keychain explicit clientId field
-        2. id_token JWT payload (azp/aud claim)
-        3. CLAUDE_OAUTH_CLIENT_ID setting (default fallback)
-        """
+        """Execute the HTTP request to refresh the Claude OAuth token."""
         creds = await self._get_credentials()
         refresh_token = creds.get("claudeAiOauth", {}).get("refreshToken") if creds else None
 
@@ -74,17 +60,12 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             oauth_payload = creds.get("claudeAiOauth", {})
             client_id = oauth_payload.get("clientId") or oauth_payload.get("client_id") or client_id
 
-            # Fallback: decode id_token JWT to find authorized party
             id_token = oauth_payload.get("idToken") or oauth_payload.get("id_token")
             if (not client_id or client_id == settings.CLAUDE_OAUTH_CLIENT_ID) and id_token:
                 from app.core.utils import IdentityExtractor
-
                 token_client_id = IdentityExtractor.get_client_id_from_jwt(id_token)
                 if token_client_id:
                     client_id = token_client_id
-                    logger.info(f"Auto-discovered Claude Client ID: {client_id[:10]}...")
-
-        from app.core.utils import http_request_with_retry
 
         try:
             resp = await http_request_with_retry(
@@ -107,23 +88,16 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 new_data = resp.json()
                 if not creds:
                     creds = {"claudeAiOauth": {}}
-
                 creds["claudeAiOauth"]["accessToken"] = new_data["access_token"]
-                creds["claudeAiOauth"]["refreshToken"] = new_data.get(
-                    "refresh_token", refresh_token
-                )
+                creds["claudeAiOauth"]["refreshToken"] = new_data.get("refresh_token", refresh_token)
                 creds["claudeAiOauth"]["expiresAt"] = int(time.time() * 1000) + (
                     new_data["expires_in"] * 1000
                 )
-
-                # Update sidecar cache
                 await self._store_sidecar_token(
                     "anthropic",
                     new_data["access_token"],
                     new_data.get("refresh_token", refresh_token),
                 )
-
-                # Return for base collector compatibility
                 creds["access_token"] = new_data["access_token"]
                 return creds
             if resp.status_code == 400:
@@ -135,47 +109,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         except Exception as e:
             logger.error(f"Failed to refresh Anthropic token: {e}")
             return None
-
-    # ──────────────────────────────── OAuth API client ───────────────────────
-
-    async def _get_claude_oauth_with_cache(
-        self, client: httpx.AsyncClient, token: str
-    ) -> list[dict[str, Any]]:
-        """
-        Fetch Claude OAuth usage with internal 10-minute caching for API calls.
-
-        This allows the Statusline to update frequently (via SmartCollector 60s TTL)
-        while keeping the expensive/rate-limited API calls on a slower cycle.
-        """
-        now = datetime.now(UTC)
-
-        # Check internal API cache (10 mins)
-        if (
-            hasattr(self, "_cached_api_results")
-            and self._cached_api_results is not None
-            and self._last_api_fetch
-        ):
-            if (now - self._last_api_fetch).total_seconds() < 600:
-                # If the cached result is a rate limit error, check if backoff expired
-                is_rate_limited = any(
-                    r.get("error_type") == "rate_limited" for r in self._cached_api_results
-                )
-                if is_rate_limited:
-                    backoff_until = getattr(self, "_last_429_backoff_until", None)
-                    if backoff_until and now < backoff_until:
-                        return self._cached_api_results
-                    # Backoff expired, fall through to fetch fresh
-                else:
-                    return self._cached_api_results
-
-        res = await self._get_claude_oauth(client, token)
-
-        # Only cache if not a transient connection error
-        if not any(r.get("error_type") == "timeout" for r in res):
-            self._cached_api_results = res
-            self._last_api_fetch = now
-
-        return res
 
     async def _get_claude_oauth(
         self, client: httpx.AsyncClient, token: str
@@ -233,8 +166,10 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if resp.status_code == 429:
                 # Set proactive backoff based on Retry-After or default 5m
                 retry_after = resp.headers.get("Retry-After")
-                # Default to 5 mins if no header, but trust the header if present
+                # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+                wait_sec = max(wait_sec, 300)
+
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
                 logger.warning(f"Anthropic API returned 429. Proactive backoff set for {wait_sec}s")
                 return [
@@ -257,7 +192,32 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             self._last_429_backoff_until = None
             data = resp.json()
             creds = await self._get_credentials()
-            return self._parse_oauth_response(data, name_map, creds)
+
+            # Attempt to fetch account info from API if missing in local credentials
+            api_account_info = {}
+            if not creds or not creds.get("oauthAccount", {}).get("emailAddress"):
+                try:
+                    org_resp = await http_request_with_retry(
+                        client, 
+                        "GET", 
+                        "https://api.anthropic.com/v1/organizations/me", 
+                        headers={
+                            **headers,
+                            "anthropic-version": "2023-06-01"
+                        },
+                        timeout=10.0
+                    )
+                    if org_resp.status_code == 200:
+                        org_data = org_resp.json()
+                        api_account_info["organization"] = org_data.get("name")
+                        api_account_info["email"] = org_data.get("contact_email") or org_data.get("email")
+                        plan = org_data.get("plan")
+                        if plan:
+                            api_account_info["tier"] = plan.capitalize()
+                except Exception as e:
+                    logger.debug(f"Failed to fetch Anthropic organization info: {e}")
+
+            return self._parse_oauth_response(data, name_map, creds, api_account_info)
 
         except Exception as e:
             logger.error(f"Claude OAuth collection failed: {e}")
@@ -270,6 +230,16 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         if not data:
             return ""
 
+        # api_account_info structure
+        email = data.get("email")
+        org = data.get("organization")
+        if email and org:
+            return f"{email} @ {org}"
+        if email:
+            return email
+        if org:
+            return f"org: {org}"
+
         # .claude.json credentials structure: oauthAccount.emailAddress
         oauth_account = data.get("oauthAccount", {})
         if oauth_account:
@@ -277,7 +247,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if email:
                 return email
 
-        # OAuth API response structure: account.email / account.organization
+        # OAuth API response structure (fallback)
         account = data.get("account", {})
         email = account.get("email", "")
         org = account.get("organization", "")
@@ -292,9 +262,10 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     def _get_local_config_hints(self) -> dict[str, Any]:
         """Read supplementary billing hints from ~/.claude.json if available."""
-        import os
 
-        if not settings.LOCAL_COLLECTOR_ENABLED:
+        from app.core.config import is_local_collector_enabled
+
+        if not is_local_collector_enabled():
             return {}
         path = os.path.expanduser("~/.claude.json")
         try:
@@ -310,16 +281,22 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         data: dict[str, Any],
         name_map: dict[str, str],
         creds: dict | None = None,
+        api_account_info: dict | None = None,
     ) -> list[dict[str, Any]]:
         """Parse OAuth API response into standardized quota cards."""
         results = []
         local_hints = self._get_local_config_hints()
 
-        # Infer plan/tier: Credentials > Local Config > API
-        tier = None
-        if creds:
-            raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
-            if raw_tier:
+        # Infer plan/tier: Credentials > API Info > Local Config
+        tier = api_account_info.get("tier") if api_account_info else None
+        if not tier and creds:
+            oauth = creds.get("claudeAiOauth", {})
+            raw_sub = oauth.get("subscriptionType")
+            raw_tier = oauth.get("rateLimitTier")
+            
+            if raw_sub:
+                tier = str(raw_sub).capitalize()
+            elif raw_tier:
                 tier_map = {
                     "tier_0": "Free",
                     "tier_1": "Pro",
@@ -327,6 +304,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "tier_3": "Team",
                     "tier_4": "Enterprise",
                     "tier_5": "Enterprise",
+                    "default_claude_ai": "Pro",
                 }
                 tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
 
@@ -335,10 +313,31 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if local_tier:
                 tier = str(local_tier).capitalize()
 
+        # Final fallback from data (if API ever includes it)
         if not tier:
             account = data.get("account", {})
             plan = account.get("plan", "")
             tier = plan.capitalize() if plan else None
+
+        # Resolve identity
+        identity_str = ""
+        if api_account_info:
+            identity_str = self._extract_identity_from_oauth(api_account_info)
+
+        if not identity_str:
+            identity_str = self._extract_identity_from_oauth(data)
+
+        if not identity_str and creds:
+            identity_str = self._extract_identity_from_oauth(creds)
+
+        if not identity_str and local_hints:
+            identity_str = self._extract_identity_from_oauth(local_hints)
+
+        identity_suffix = f" | {identity_str}" if identity_str else ""
+        
+        # Persist identity to collector
+        if identity_str:
+            self.account_label = identity_str
 
         # Guaranteed keys to show even if null from API
         core_keys = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"]
@@ -352,13 +351,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 return list(name_map.keys()).index(k)
             except ValueError:
                 return 999
-
-        # Identity: Try specific credentials (file/sidecar) first, fall back to API response data
-        identity_str = self._extract_identity_from_oauth(creds)
-        if not identity_str:
-            identity_str = self._extract_identity_from_oauth(data)
-
-        identity_suffix = f" | {identity_str}" if identity_str else ""
 
         for key in sorted(all_keys, key=sort_key):
             if key == "account":
@@ -381,14 +373,16 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                             "remaining": f"${bal:.2f}",
                             "unit": "USD",
                             "reset": "Prepaid",
-                            "health": "good" if bal > 5.0 else "warning",
+                            "health": "good" if bal > 5.0 else "warning" if bal > 0 else "critical",
                             "pace": "Manual Top-up",
                             "detail": f"Current Balance: ${bal:.2f} [OAuth]{identity_suffix}",
                             "used_value": 0.0,
                             "limit_value": bal,
                             "unit_type": "currency",
+                            "window_type": "prepaid",
                             "data_source": "oauth",
                             "tier": tier,
+                            "account_label": identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -420,8 +414,10 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                         "used_value": spend,
                         "limit_value": limit,
                         "unit_type": "currency",
+                        "window_type": "monthly",
                         "data_source": "oauth",
                         "tier": tier,
+                        "account_label": identity_str,
                         "usage_url": "https://claude.ai/settings/usage",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
@@ -441,6 +437,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 except (ValueError, TypeError):
                     pass
 
+            # Correct window type based on key
+            w_type = "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
+
             results.append(
                 {
                     "service_name": f"Claude ({u_type})",
@@ -459,9 +458,11 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "limit_value": 100.0,
                     "is_unlimited": False,
                     "unit_type": "percent",
+                    "window_type": w_type,
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": "oauth",
                     "tier": tier,
+                    "account_label": identity_str,
                     "usage_url": "https://claude.ai/settings/usage",
                     "updated_at": datetime.now(UTC).isoformat(),
                 }

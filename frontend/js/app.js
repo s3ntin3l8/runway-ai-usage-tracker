@@ -1,7 +1,14 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
+import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
+import { loadSettingsView } from './views/settings.js';
+import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar } from './views/fleet.js';
+import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
+
+// Alias for backwards compatibility
+window.loadDashboard = loadDashboard;
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -25,7 +32,7 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
 /**
  * View Management
  */
-window.switchView = function(viewId) {
+window.switchView = async function(viewId) {
     // Hide all views
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     // Show selected view
@@ -35,11 +42,13 @@ window.switchView = function(viewId) {
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     document.getElementById(`nav-${viewId}`).classList.add('active');
     
-    // Load data for the view
-    if (viewId === 'dashboard' && STATE.data.length === 0) loadData();
-    if (viewId === 'history') loadHistory();
-    if (viewId === 'settings') loadSettings();
-    if (viewId === 'fleet') loadFleet();
+    // Load data for the view (lazy loaded via dynamic imports)
+    if (viewId === 'dashboard' && STATE.data.length === 0) {
+        await loadDashboard();
+    }
+    if (viewId === 'history') loadHistoryView();
+    if (viewId === 'settings') loadSettingsView();
+    if (viewId === 'fleet') loadFleetView();
 }
 
 window.toggleHistoryProvider = function(pid) {
@@ -94,6 +103,7 @@ function renderHistoryFromCache() {
     if (historyState.activeProviders) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
+    // Update chart (async - lazy loads Chart.js on first call)
     updateCharts(filtered, historyState.metric);
 
     // Table
@@ -141,114 +151,528 @@ async function loadHistory() {
     }
 }
 
-async function loadSettings() {
-    const container = document.getElementById('settings-content');
-    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading settings...</p>';
-    
+// --- Settings tab ---
+
+// Module-level state for the settings section
+let _settingsSelectedProvider = null;
+let _settingsProviderOriginal = null; // snapshot for discard
+
+function loadSettings() {
+    const activeSection = localStorage.getItem('settings_section') || 'providers';
+    // Mark the correct nav item active
+    document.querySelectorAll('.settings-nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.section === activeSection);
+        btn.addEventListener('click', () => switchSettingsSection(btn.dataset.section));
+    });
+    renderSettingsSection(activeSection);
+}
+
+window.switchSettingsSection = function(name) {
+    localStorage.setItem('settings_section', name);
+    document.querySelectorAll('.settings-nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.section === name);
+    });
+    renderSettingsSection(name);
+};
+
+function renderSettingsSection(name) {
+    const pane = document.getElementById('settings-pane');
+    if (!pane) return;
+    pane.innerHTML = '<p class="text-zinc-500 animate-pulse text-sm">Loading…</p>';
+    if (name === 'providers') renderProvidersSection(pane);
+    else if (name === 'tokens') renderTokensSection(pane);
+    else if (name === 'webhooks') renderWebhooksSection(pane);
+    else if (name === 'system') renderSystemSection(pane);
+}
+
+// ── Providers section ─────────────────────────────────────────────────────────
+
+const POLL_OPTIONS = [
+    { label: '1 min',   value: 60 },
+    { label: '5 min',   value: 300 },
+    { label: '15 min',  value: 900 },
+    { label: '30 min',  value: 1800 },
+    { label: '1 hour',  value: 3600 },
+];
+
+async function renderProvidersSection(pane) {
     try {
-        const s = await fetchSettings();
-        container.innerHTML = `
-            <div class="space-y-4">
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
-                    <span class="text-zinc-400">Run Mode</span>
-                    <span class="text-zinc-100 mono bg-zinc-800 px-2 py-0.5 rounded text-xs">${s.run_mode}</span>
-                </div>
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
-                    <span class="text-zinc-400">Host / Port</span>
-                    <span class="text-zinc-100 mono text-sm">${s.app_host}:${s.app_port}</span>
-                </div>
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
-                    <span class="text-zinc-400">Local Collectors</span>
-                    <span class="${s.local_collector_enabled ? 'text-green-400' : 'text-zinc-500'} mono text-sm">${s.local_collector_enabled ? 'Enabled' : 'Disabled'}</span>
-                </div>
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
-                    <span class="text-zinc-400">Credential Scraping</span>
-                    <span class="${s.local_credential_scraping ? 'text-green-400' : 'text-zinc-500'} mono text-sm">${s.local_credential_scraping ? 'Enabled' : 'Disabled'}</span>
-                </div>
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
-                    <span class="text-zinc-400">Database Encryption</span>
-                    <span class="${s.encryption_enabled ? 'text-green-400' : 'text-yellow-500'} mono text-sm">${s.encryption_enabled ? '✅ Active' : '🔓 Plaintext'}</span>
-                </div>
-                ${!s.encryption_enabled ? '<p class="text-[10px] text-yellow-600 italic">Set DB_ENCRYPTION_KEY env var to secure your snapshots.</p>' : ''}
-            </div>
-            
-            <div class="mt-8 p-4 bg-blue-900/20 border border-blue-800/30 rounded-xl text-xs text-blue-300 leading-relaxed">
-                <strong>Tip:</strong> You can still use <code class="bg-blue-900/40 px-1 rounded">.env</code> for core configuration. This UI will eventually allow real-time changes.
-            </div>
-        `;
-        // Append token health panel
-        try {
-            const health = await fetchTokenHealth();
-            const extra = document.getElementById('settings-extra');
-            if (extra) extra.innerHTML = buildTokenHealthPanel(health.tokens);
-        } catch (err) {
-            // Non-critical — silently skip if token health unavailable
-            console.warn('Token health unavailable:', err.message);
+        const { providers } = await fetchProviderConfigs();
+        if (!_settingsSelectedProvider && providers.length > 0) {
+            _settingsSelectedProvider = providers[0].provider_id;
         }
-        // Append webhook alerts section
-        await renderWebhookSettings();
+        pane.innerHTML = buildProvidersSectionHTML(providers);
+        // Wire up provider list clicks
+        pane.querySelectorAll('.provider-list-item').forEach(item => {
+            item.addEventListener('click', () => {
+                _settingsSelectedProvider = item.dataset.providerId;
+                renderProvidersSection(pane);
+            });
+        });
+        // Wire up save/discard
+        const form = pane.querySelector('#provider-config-form');
+        if (form) {
+            const selected = providers.find(p => p.provider_id === _settingsSelectedProvider);
+            _settingsProviderOriginal = selected ? { ...selected } : null;
+
+            pane.querySelector('#provider-save-btn')?.addEventListener('click', () => saveProviderConfig(pane, form, _settingsSelectedProvider));
+            pane.querySelector('#provider-discard-btn')?.addEventListener('click', () => renderProvidersSection(pane));
+            pane.querySelector('#provider-raw-data-btn')?.addEventListener('click', () => viewRawProviderData(_settingsSelectedProvider));
+            // Wire up enabled toggle switch
+            pane.querySelector('#field-enabled-toggle')?.addEventListener('click', function() {
+                const next = this.dataset.enabled !== 'true';
+                this.dataset.enabled = String(next);
+                this.classList.toggle('bg-violet-600', next);
+                this.classList.toggle('bg-zinc-700', !next);
+                this.querySelector('span').classList.toggle('translate-x-5', next);
+                this.querySelector('span').classList.toggle('translate-x-0', !next);
+            });
+            // Wire up API key edit toggle
+            pane.querySelector('#api-key-edit-btn')?.addEventListener('click', () => toggleApiKeyEdit(pane));
+            // Wire up session cookie edit toggle
+            pane.querySelector('#session-cookie-edit-btn')?.addEventListener('click', () => toggleSessionCookieEdit(pane));
+        }
     } catch (err) {
-        container.innerHTML = `<p class="text-red-400">Failed to load settings: ${err.message}</p>`;
+        pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load providers: ${escapeHTML(err.message)}</p>`;
+    }
+}
+
+function buildProvidersSectionHTML(providers) {
+    const listHTML = providers.map(p => {
+        const isSelected = p.provider_id === _settingsSelectedProvider;
+        const badge = p.enabled
+            ? '<span class="text-[9px] text-green-400 mono">ON</span>'
+            : '<span class="text-[9px] text-zinc-600 mono">OFF</span>';
+        return `<button class="provider-list-item w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl transition-colors ${isSelected ? 'bg-zinc-700/50 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}" data-provider-id="${escapeHTMLAttr(p.provider_id)}">
+            <span class="text-base leading-none">${p.icon}</span>
+            <span class="text-xs font-medium truncate flex-1">${escapeHTML(p.name)}</span>
+            ${badge}
+        </button>`;
+    }).join('');
+
+    const selected = providers.find(p => p.provider_id === _settingsSelectedProvider);
+    const formHTML = selected ? buildProviderForm(selected) : '<p class="text-zinc-500 text-sm">Select a provider.</p>';
+
+    return `
+        <div class="flex gap-4 h-full">
+            <!-- Provider list -->
+            <div class="w-36 shrink-0 flex flex-col gap-0.5 overflow-y-auto">
+                <p class="text-[10px] uppercase tracking-widest text-zinc-600 px-3 mb-1">Providers</p>
+                ${listHTML}
+            </div>
+            <!-- Config form -->
+            <div class="flex-1 min-w-0">
+                ${formHTML}
+            </div>
+        </div>`;
+}
+
+function buildProviderForm(p) {
+    const defaultTtlLabel = POLL_OPTIONS.find(o => o.value === p.default_ttl_seconds)?.label
+        || `${p.default_ttl_seconds}s`;
+    const pollSelectOpts = POLL_OPTIONS.map(o =>
+        `<option value="${o.value}" ${p.poll_interval_seconds === o.value ? 'selected' : ''}>${o.label}</option>`
+    ).join('');
+
+    return `
+        <form id="provider-config-form" class="space-y-4" onsubmit="return false">
+            <h3 class="text-base font-semibold text-zinc-100 flex items-center gap-2">
+                <span>${p.icon}</span> ${escapeHTML(p.name)}
+            </h3>
+
+            <!-- Enabled toggle -->
+            <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                <div>
+                    <span class="text-sm text-zinc-400">Enabled</span>
+                    <p class="text-[10px] text-zinc-600 mt-0.5">Polling active for this provider</p>
+                </div>
+                <button type="button" id="field-enabled-toggle"
+                    data-enabled="${p.enabled}"
+                    class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${p.enabled ? 'bg-violet-600' : 'bg-zinc-700'}">
+                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${p.enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
+                </button>
+            </div>
+
+            ${p.supports_api_key ? `
+            <!-- API Key -->
+            <div class="py-3 border-b border-zinc-800/50">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm text-zinc-400">API Key</span>
+                    <button type="button" id="api-key-edit-btn" class="toggle-btn text-xs">Edit</button>
+                </div>
+                <div id="api-key-display" class="${p.api_key_set ? '' : 'hidden'}">
+                    <span class="mono text-xs text-zinc-500">••••••••••••••••</span>
+                </div>
+                <div id="api-key-input-row" class="${p.api_key_set ? 'hidden' : ''}">
+                    <input type="text" id="field-api-key" placeholder="${p.api_key_set ? 'Leave blank to keep current key' : 'Enter API key'}"
+                        class="w-full mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-violet-500">
+                </div>
+                ${!p.api_key_set ? '<p class="text-[10px] text-zinc-600 mt-1">No key stored — env var / file / keychain used as fallback.</p>' : ''}
+            </div>
+            ` : ''}
+
+            ${p.supports_session_cookie ? `
+            <!-- Session Cookie -->
+            <div class="py-3 border-b border-zinc-800/50">
+                <div class="flex items-center justify-between mb-2">
+                    <div>
+                        <span class="text-sm text-zinc-400">Session Cookie</span>
+                        <p class="text-[10px] text-zinc-600 mt-0.5">Manual override — bypasses browser cookie extraction</p>
+                    </div>
+                    <button type="button" id="session-cookie-edit-btn" class="toggle-btn text-xs">Edit</button>
+                </div>
+                <div id="session-cookie-display" class="${p.session_cookie_set ? '' : 'hidden'}">
+                    <span class="mono text-xs text-zinc-500">••••••••••••••••</span>
+                </div>
+                <div id="session-cookie-input-row" class="${p.session_cookie_set ? 'hidden' : ''}">
+                    <input type="text" id="field-session-cookie" placeholder="${p.session_cookie_set ? 'Leave blank to keep current value' : 'Paste session cookie value'}"
+                        class="w-full mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-violet-500">
+                </div>
+                ${!p.session_cookie_set ? '<p class="text-[10px] text-zinc-600 mt-1">No cookie stored — browser extraction used as fallback.</p>' : ''}
+            </div>
+            ` : ''}
+
+            ${p.provider_id === 'github' ? `
+            <!-- GitHub OAuth -->
+            <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                <div>
+                    <span class="text-sm text-zinc-400">GitHub OAuth</span>
+                    <p class="text-[10px] text-zinc-600 mt-0.5">${STATE.githubAuth?.authenticated ? `Connected as <span class="text-zinc-400">${escapeHTML(STATE.githubAuth.account?.login || '')}</span>` : 'Not connected'}</p>
+                </div>
+                ${STATE.githubAuth?.authenticated
+                    ? `<button type="button" onclick="handleGitHubLogout()" class="toggle-btn text-xs text-red-400" style="border-color:#f87171">Disconnect</button>`
+                    : `<button type="button" onclick="startGitHubLogin()" class="toggle-btn text-xs">Connect</button>`
+                }
+            </div>
+            ` : ''}
+
+            <!-- Account Label -->
+            <label class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                <span class="text-sm text-zinc-400">Account Label</span>
+                <input type="text" id="field-account-label" value="${escapeHTMLAttr(p.account_label || '')}"
+                    placeholder="Auto-detected"
+                    class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 w-48 focus:outline-none focus:border-violet-500">
+            </label>
+
+            <!-- Poll Interval -->
+            <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                <span class="text-sm text-zinc-400">Poll Interval Override</span>
+                <select id="field-poll-interval" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500">
+                    <option value="" ${!p.poll_interval_seconds ? 'selected' : ''}>Default (${defaultTtlLabel})</option>
+                    ${pollSelectOpts}
+                </select>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex justify-between items-center pt-2">
+                <button type="button" id="provider-raw-data-btn" class="toggle-btn text-xs" style="border-color:#3f3f46;color:#a1a1aa;">View Raw Data</button>
+                <div class="flex gap-2">
+                    <button type="button" id="provider-discard-btn" class="toggle-btn text-xs">Discard</button>
+                    <button type="button" id="provider-save-btn" class="toggle-btn text-xs" style="border-color:#7c3aed;color:#c4b5fd;">Save</button>
+                </div>
+            </div>
+        </form>`;
+}
+
+function toggleApiKeyEdit(pane) {
+    const display = pane.querySelector('#api-key-display');
+    const input = pane.querySelector('#api-key-input-row');
+    if (!display || !input) return;
+    display.classList.toggle('hidden');
+    input.classList.toggle('hidden');
+}
+
+function toggleSessionCookieEdit(pane) {
+    const display = pane.querySelector('#session-cookie-display');
+    const input = pane.querySelector('#session-cookie-input-row');
+    if (!display || !input) return;
+    display.classList.toggle('hidden');
+    input.classList.toggle('hidden');
+}
+
+async function saveProviderConfig(pane, form, providerId) {
+    const btn = pane.querySelector('#provider-save-btn');
+    if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+
+    const enabledToggle = pane.querySelector('#field-enabled-toggle');
+    const enabled = enabledToggle ? enabledToggle.dataset.enabled === 'true' : true;
+    const accountLabel = form.querySelector('#field-account-label')?.value || null;
+
+    // Only include api_key if the edit row is currently visible (user explicitly opened it)
+    const apiKeyInputRow = pane.querySelector('#api-key-input-row');
+    const apiKeyVisible = apiKeyInputRow && !apiKeyInputRow.classList.contains('hidden');
+    const apiKey = apiKeyVisible ? (form.querySelector('#field-api-key')?.value ?? '') : undefined;
+
+    // Only include session_cookie if the edit row is currently visible (user explicitly opened it)
+    const sessionCookieInputRow = pane.querySelector('#session-cookie-input-row');
+    const sessionCookieVisible = sessionCookieInputRow && !sessionCookieInputRow.classList.contains('hidden');
+    const sessionCookie = sessionCookieVisible ? (form.querySelector('#field-session-cookie')?.value ?? '') : undefined;
+
+    // Send 0 as sentinel for "use default" so the backend clears any stored override
+    const pollRaw = form.querySelector('#field-poll-interval')?.value;
+    const pollIntervalSeconds = pollRaw ? parseInt(pollRaw, 10) : 0;
+
+    try {
+        await putProviderConfig(providerId, {
+            enabled,
+            ...(apiKey !== undefined ? { api_key: apiKey } : {}),
+            ...(sessionCookie !== undefined ? { session_cookie: sessionCookie } : {}),
+            account_label: accountLabel,
+            poll_interval_seconds: pollIntervalSeconds,
+        });
+        renderProvidersSection(pane);
+    } catch (err) {
+        if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
+        alert(`Save failed: ${err.message}`);
+    }
+}
+
+// ── Tokens section ────────────────────────────────────────────────────────────
+
+async function renderTokensSection(pane) {
+    try {
+        const health = await fetchTokenHealth();
+        pane.innerHTML = `
+            <h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide mb-4">Token Health</h3>
+            ${buildTokenHealthPanel(health.tokens)}`;
+    } catch (err) {
+        pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load token health: ${escapeHTML(err.message)}</p>`;
     }
 }
 
 window.refreshToken = async function(provider, accountId) {
     try {
         const d = await postTokenRefresh(provider, accountId);
-        if (d.status === 'refreshed') loadSettings();
-        else alert('Refresh reported non-success: ' + JSON.stringify(d));
+        if (d.status === 'refreshed') {
+            const pane = document.getElementById('settings-pane');
+            if (pane) renderTokensSection(pane);
+        } else {
+            alert('Refresh reported non-success: ' + JSON.stringify(d));
+        }
     } catch (err) {
         alert('Token refresh failed: ' + err.message);
     }
 };
 
-async function loadFleet() {
-    const container = document.getElementById('fleet-content');
-    if (!container) return;
-    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading fleet...</p>';
+// ── Webhooks section ──────────────────────────────────────────────────────────
+
+async function renderWebhooksSection(pane) {
+    let webhooks = [];
     try {
-        const data = await fetchFleet();
-        container.innerHTML = buildFleetView(data.sidecars);
-    } catch (err) {
-        container.innerHTML = `<p class="text-red-400">Failed to load fleet: ${escapeHTML(err.message)}</p>`;
-    }
+        const res = await fetch('/api/v1/system/webhooks');
+        webhooks = (await res.json()).webhooks || [];
+    } catch (e) { /* ignore */ }
+
+    pane.innerHTML = `
+        <div>
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide">Webhook Alerts</h3>
+                <button onclick="addWebhookRow()" class="toggle-btn text-xs">+ Add</button>
+            </div>
+            <div id="webhook-rows" class="space-y-3">
+                ${webhooks.map(w => webhookRowHtml(w)).join('')}
+            </div>
+        </div>`;
 }
 
-window.editSidecarName = async function(sidecarId) {
-    const newName = prompt('Enter a custom name for this sidecar:', '');
-    if (newName === null) return; // cancelled
-    try {
-        await patchSidecar(sidecarId, { custom_name: newName.trim() || null });
-        loadFleet();
-    } catch (err) {
-        alert('Failed to rename: ' + err.message);
+function webhookRowHtml(w) {
+    return `
+        <div class="flex flex-wrap gap-2 items-center p-3 bg-zinc-900/50 rounded-xl" data-webhook-id="${w.id}">
+            <input type="text" value="${escapeHTMLAttr(w.provider_id)}" placeholder="provider or *"
+                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-24 text-zinc-200"
+                   onchange="patchWebhook(${w.id}, 'provider_id', this.value)">
+            <input type="number" value="${w.threshold_pct}" min="1" max="100" step="1"
+                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-16 text-zinc-200"
+                   onchange="patchWebhook(${w.id}, 'threshold_pct', parseFloat(this.value))">
+            <span class="text-zinc-600 text-xs">%</span>
+            <select class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200"
+                    onchange="patchWebhook(${w.id}, 'channel', this.value)">
+                <option value="discord" ${w.channel === 'discord' ? 'selected' : ''}>Discord</option>
+                <option value="slack" ${w.channel === 'slack' ? 'selected' : ''}>Slack</option>
+            </select>
+            <input type="url" value="${escapeHTMLAttr(w.url)}" placeholder="Webhook URL"
+                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 flex-1 min-w-[180px] text-zinc-200"
+                   onchange="patchWebhook(${w.id}, 'url', this.value)">
+            <button onclick="testWebhook(${w.id})" class="toggle-btn text-xs">Test</button>
+            <button onclick="deleteWebhook(${w.id})" class="toggle-btn text-xs text-red-400">✕</button>
+        </div>`;
+}
+
+window.addWebhookRow = async function() {
+    const res = await fetch('/api/v1/system/webhooks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({provider_id: '*', threshold_pct: 90, url: '', channel: 'discord'}),
+    });
+    if (res.ok) {
+        const pane = document.getElementById('settings-pane');
+        if (pane) renderWebhooksSection(pane);
     }
 };
 
-window.addSidecarTag = async function(sidecarId) {
-    const tag = prompt('Enter a tag for this sidecar:');
-    if (!tag || !tag.trim()) return;
-    try {
-        // Fetch current tags first, then append
-        const fleet = await fetchFleet();
-        const sidecar = fleet.sidecars.find(s => s.sidecar_id === sidecarId);
-        const tags = [...(sidecar?.tags || []), tag.trim()];
-        await patchSidecar(sidecarId, { tags });
-        loadFleet();
-    } catch (err) {
-        alert('Failed to add tag: ' + err.message);
-    }
+window.patchWebhook = async function(id, field, value) {
+    await fetch(`/api/v1/system/webhooks/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[field]: value}),
+    });
 };
 
-window.deleteSidecar = async function(sidecarId) {
-    if (!confirm(`Remove sidecar "${sidecarId}" from the registry?`)) return;
-    try {
-        await deleteSidecarAPI(sidecarId);
-        loadFleet();
-    } catch (err) {
-        alert('Failed to delete: ' + err.message);
-    }
+window.testWebhook = async function(id) {
+    const res = await fetch(`/api/v1/system/webhooks/${id}/test`, {method: 'POST'});
+    const data = await res.json();
+    alert(res.ok ? 'Test sent!' : `Failed: ${data.detail}`);
 };
+
+window.deleteWebhook = async function(id) {
+    await fetch(`/api/v1/system/webhooks/${id}`, {method: 'DELETE'});
+    const pane = document.getElementById('settings-pane');
+    if (pane) renderWebhooksSection(pane);
+};
+
+// ── System section ────────────────────────────────────────────────────────────
+
+async function renderSystemSection(pane) {
+    try {
+        const [s, cfg] = await Promise.all([fetchSettings(), fetchAppConfig()]);
+        const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
+        const globalPollVal = cfg.default_poll_interval_seconds ?? '';
+        const localCollectorOn = cfg.local_collector_enabled;
+        const credScrapingOn = cfg.local_credential_scraping_enabled;
+        const pollSelectOpts = POLL_OPTIONS.map(o =>
+            `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`
+        ).join('');
+        pane.innerHTML = `
+            <h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide mb-4">System</h3>
+            <div class="space-y-4">
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400 text-sm">Run Mode</span>
+                    <span class="text-zinc-100 mono bg-zinc-800 px-2 py-0.5 rounded text-xs">${escapeHTML(s.run_mode)}</span>
+                </div>
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400 text-sm">Host / Port</span>
+                    <span class="text-zinc-100 mono text-sm">${escapeHTML(s.app_host)}:${s.app_port}</span>
+                </div>
+                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                    <div>
+                        <span class="text-zinc-400 text-sm">Local Collectors</span>
+                        <p class="text-[10px] text-zinc-600 mt-0.5">Enable reading local files and DBs (CLI tools, logs)</p>
+                    </div>
+                    <button type="button" id="toggle-local-collector"
+                        data-enabled="${localCollectorOn}"
+                        class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${localCollectorOn ? 'bg-violet-600' : 'bg-zinc-700'}">
+                        <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${localCollectorOn ? 'translate-x-5' : 'translate-x-0'}"></span>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                    <div>
+                        <span class="text-zinc-400 text-sm">Credential Scraping</span>
+                        <p class="text-[10px] text-zinc-600 mt-0.5">Allow reading browser cookies and credential files</p>
+                    </div>
+                    <button type="button" id="toggle-cred-scraping"
+                        data-enabled="${credScrapingOn}"
+                        class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${credScrapingOn ? 'bg-violet-600' : 'bg-zinc-700'}">
+                        <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${credScrapingOn ? 'translate-x-5' : 'translate-x-0'}"></span>
+                    </button>
+                </div>
+                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50">
+                    <span class="text-zinc-400 text-sm">Database Encryption</span>
+                    <span class="${s.encryption_enabled ? 'text-green-400' : 'text-yellow-500'} mono text-sm">${s.encryption_enabled ? '✅ Active' : '🔓 Plaintext'}</span>
+                </div>
+                ${!s.encryption_enabled ? '<p class="text-[10px] text-yellow-600 italic mt-1">Set DB_ENCRYPTION_KEY env var to secure your snapshots.</p>' : ''}
+                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                    <div>
+                        <span class="text-zinc-400 text-sm">Default Poll Interval</span>
+                        <p class="text-[10px] text-zinc-600 mt-0.5">Applies to all providers; per-provider overrides take precedence</p>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <select id="field-global-poll" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500">
+                            <option value="" ${!globalPollVal ? 'selected' : ''}>Per-collector default</option>
+                            ${pollSelectOpts}
+                        </select>
+                        <button id="save-global-poll-btn" class="toggle-btn text-xs">Save</button>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+                    <div>
+                        <span class="text-zinc-400 text-sm">Browser Preference</span>
+                        <p class="text-[10px] text-zinc-600 mt-0.5">Cookie-auth order for Claude web, ChatGPT, Ollama… (e.g. safari,chrome,firefox)</p>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <input id="field-browser-pref" type="text" value="${browserPref}"
+                            class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 w-52 focus:outline-none focus:border-violet-500"
+                            placeholder="safari,chrome,chromium,edge,firefox">
+                        <button id="save-browser-pref-btn" class="toggle-btn text-xs">Save</button>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-8 p-4 bg-blue-900/20 border border-blue-800/30 rounded-xl text-xs text-blue-300 leading-relaxed">
+                <strong>Tip:</strong> Core configuration is still managed via <code class="bg-blue-900/40 px-1 rounded">.env</code>. Provider-specific overrides can be set in the Providers section above.
+            </div>`;
+
+        pane.querySelector('#save-global-poll-btn')?.addEventListener('click', async function() {
+            const select = pane.querySelector('#field-global-poll');
+            const val = select?.value ? parseInt(select.value, 10) : 0;
+            this.textContent = 'Saving…';
+            this.disabled = true;
+            try {
+                await putAppConfig({ default_poll_interval_seconds: val });
+                this.textContent = 'Saved';
+                setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
+            } catch (err) {
+                this.textContent = 'Error';
+                this.disabled = false;
+            }
+        });
+
+        pane.querySelector('#save-browser-pref-btn')?.addEventListener('click', async function() {
+            const input = pane.querySelector('#field-browser-pref');
+            const val = input?.value.trim() || null;
+            this.textContent = 'Saving…';
+            this.disabled = true;
+            try {
+                await putAppConfig({ browser_preference: val });
+                this.textContent = 'Saved';
+                setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
+            } catch (err) {
+                this.textContent = 'Error';
+                this.disabled = false;
+            }
+        });
+
+        function wireSystemToggle(btnId, cfgKey) {
+            const btn = pane.querySelector(`#${btnId}`);
+            if (!btn) return;
+            btn.addEventListener('click', async function() {
+                const newVal = this.dataset.enabled !== 'true';
+                this.dataset.enabled = newVal;
+                this.classList.toggle('bg-violet-600', newVal);
+                this.classList.toggle('bg-zinc-700', !newVal);
+                const knob = this.querySelector('span');
+                if (knob) {
+                    knob.classList.toggle('translate-x-5', newVal);
+                    knob.classList.toggle('translate-x-0', !newVal);
+                }
+                try {
+                    await putAppConfig({ [cfgKey]: newVal });
+                } catch (err) {
+                    // Revert on failure
+                    this.dataset.enabled = !newVal;
+                    this.classList.toggle('bg-violet-600', !newVal);
+                    this.classList.toggle('bg-zinc-700', newVal);
+                    if (knob) {
+                        knob.classList.toggle('translate-x-5', !newVal);
+                        knob.classList.toggle('translate-x-0', newVal);
+                    }
+                }
+            });
+        }
+        wireSystemToggle('toggle-local-collector', 'local_collector_enabled');
+        wireSystemToggle('toggle-cred-scraping', 'local_credential_scraping_enabled');
+    } catch (err) {
+        pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load system info: ${escapeHTML(err.message)}</p>`;
+    }
+}
 
 /**
  * Render quota cards to the grid
@@ -259,8 +683,7 @@ function applyFilters(data) {
     const f = STATE.activeFilter;
     return data.filter(item => {
         if (f && item[f.dimension] !== f.value) return false;
-        const isDisabled = STATE.disabledServices.includes(item.service_name);
-        return !isDisabled || STATE.showHidden;
+        return true;
     });
 }
 
@@ -316,7 +739,7 @@ function renderGrid() {
 }
 
 /**
- * Open the provider drill-down modal. Fetches 7d history for sparklines.
+ * Open the provider drill-down modal. Renders immediately, loads sparklines async.
  * @param {string} providerId
  */
 window.openProviderModal = async function(providerId) {
@@ -326,27 +749,54 @@ window.openProviderModal = async function(providerId) {
     const container = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
 
-    content.innerHTML = `<div class="p-8 text-center text-zinc-500 text-sm animate-pulse">Loading ${escapeHTML(providerId)}…</div>`;
-    container.classList.add('active');
-    document.body.style.overflow = 'hidden';
-    document.getElementById('modal-backdrop').onclick = closeModal;
-
-    let history = [];
-    try {
-        history = await fetchHistory({ provider_id: providerId, days: 7, limit: 500 });
-    } catch (e) {
-        console.warn('Could not fetch history for modal sparklines:', e.message);
-    }
-
     // Sort items worst-first
     const HEALTH_SEVERITY_MODAL = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
     const sorted = [...items].sort((a, b) =>
         (HEALTH_SEVERITY_MODAL[b.health] || 0) - (HEALTH_SEVERITY_MODAL[a.health] || 0)
     );
 
-    content.innerHTML = buildProviderModal(providerId, sorted, history);
+    // Render immediately without history so modal opens instantly
+    content.innerHTML = buildProviderModal(providerId, sorted, []);
+    container.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    document.getElementById('modal-backdrop').onclick = closeModal;
     document.getElementById('close-modal').onclick = closeModal;
+    document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
+        refreshProviderModal(providerId)
+    );
+
+    // Load sparklines in the background — re-render only if modal is still open
+    try {
+        const history = await fetchHistory({ provider_id: providerId, days: 7, limit: 500 });
+        if (container.classList.contains('active') && content.querySelector('#close-modal')) {
+            content.innerHTML = buildProviderModal(providerId, sorted, history);
+            document.getElementById('close-modal').onclick = closeModal;
+            document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
+                refreshProviderModal(providerId)
+            );
+        }
+    } catch (e) {
+        console.warn('Could not fetch history for modal sparklines:', e.message);
+    }
 };
+
+async function refreshProviderModal(providerId) {
+    const btn = document.getElementById('refresh-provider-btn');
+    if (btn) { btn.classList.add('animate-spin'); btn.disabled = true; }
+    try {
+        await collectProvider(providerId, null);
+        const json = await fetchLimits();
+        STATE.data = json.limits;
+        renderGrid();
+        // Re-open with fresh data
+        await window.openProviderModal(providerId);
+    } catch (err) {
+        console.error('Provider modal refresh failed:', err);
+    } finally {
+        const b = document.getElementById('refresh-provider-btn');
+        if (b) { b.classList.remove('animate-spin'); b.disabled = false; }
+    }
+}
 
 function renderFilterPills() {
     const container = document.getElementById('filter-pills');
@@ -383,48 +833,6 @@ function renderFilterPills() {
     });
 }
 
-window.setFilter = function(value) {
-    STATE.activeFilter = value ? { dimension: STATE.filterDimension, value } : null;
-    localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
-    renderFilterPills();
-    renderGrid();
-};
-
-window.setFilterDimension = function(dim) {
-    STATE.filterDimension = dim;
-    STATE.activeFilter = null;
-    localStorage.setItem('runway_filter_dimension', dim);
-    localStorage.removeItem('runway_active_filter');
-    renderFilterPills();
-    renderGrid();
-};
-
-/**
- * Toggle a configuration option in the global state
- * Updates the UI button state and optionally applies side effects (e.g., compact mode)
- * @param {string} key - Configuration key to toggle (e.g., 'compact', 'remaining')
- */
-window.toggleConfig = function (key) {
-    STATE[key] = !STATE[key];
-
-    // Persist to localStorage
-    const storageKey = `runway_${key === 'showHidden' ? 'show_hidden' : key}`;
-    localStorage.setItem(storageKey, STATE[key]);
-
-    const btn = document.getElementById(`toggle-${key}`);
-    if (btn) {
-        btn.classList.toggle('active', STATE[key]);
-        // Update button text for remaining toggle
-        if (key === 'remaining') {
-            btn.innerHTML = STATE[key] ? '📈 % Remaining' : '📊 % Used';
-        }
-    }
-    if (key === 'compact') {
-        document.body.classList.toggle('compact-mode', STATE[key]);
-    }
-    renderGrid();
-}
-
 /**
  * Toggle bright/dark mode
  */
@@ -457,7 +865,7 @@ function applyTheme() {
  * Initialize UI elements based on initial state
  */
 function initUI() {
-    ['compact', 'remaining', 'showHidden'].forEach(key => {
+    ['compact', 'remaining'].forEach(key => {
         const btn = document.getElementById(`toggle-${key}`);
         if (btn) {
             btn.classList.toggle('active', STATE[key]);
@@ -480,6 +888,24 @@ function initUI() {
     }
 
     checkGitHubStatus();
+
+    // Event delegation for navigation links
+    document.querySelector('#main-nav')?.addEventListener('click', (e) => {
+        const link = e.target.closest('.nav-link');
+        if (link && link.id) {
+            const viewId = link.id.replace('nav-', '');
+            switchView(viewId);
+        }
+    });
+
+    // Theme toggle
+    document.getElementById('toggle-theme')?.addEventListener('click', () => toggleTheme());
+
+    // Refresh button
+    document.getElementById('refresh-btn')?.addEventListener('click', () => forceRefresh());
+
+    // Initialize dashboard view event listeners
+    initDashboardView();
 }
 
 /**
@@ -488,6 +914,11 @@ function initUI() {
 async function checkGitHubStatus() {
     const status = await getGitHubOAuthStatus();
     STATE.githubAuth = status;
+    // Refresh provider form if GitHub is currently selected in Settings
+    const pane = document.getElementById('settings-pane');
+    if (pane && document.querySelector('.settings-nav-item.settings-nav-active')?.dataset.section === 'providers') {
+        renderProvidersSection(pane);
+    }
 }
 
 // Expose these for onclick handlers in modal
@@ -583,90 +1014,8 @@ async function handleGitHubLogout() {
     }
 }
 
-/**
- * Toggle a service's disabled state
- * @param {string} serviceName - Name of the service to toggle
- */
-window.toggleService = function (serviceName) {
-    const index = STATE.disabledServices.indexOf(serviceName);
-    if (index === -1) {
-        STATE.disabledServices.push(serviceName);
-    } else {
-        STATE.disabledServices.splice(index, 1);
-    }
-
-    // Persist to localStorage
-    localStorage.setItem('runway_disabled_services', JSON.stringify(STATE.disabledServices));
-
-    // Refresh UI
-    renderGrid();
-
-    // Update modal content if it's open
-    const item = STATE.data.find(d => d.service_name === serviceName);
-    if (item) {
-        document.getElementById('modal-content').innerHTML = buildModalContent(item);
-        // Re-attach close listener
-        document.getElementById('close-modal').onclick = closeModal;
-    }
-}
-
-/**
- * Load quota data from the API and render the grid
- * Handles loading states, error display, and timestamp updates
- * Gracefully degrades if the API fails with detailed error messaging
- * @async
- */
-async function loadData() {
-    const myGeneration = ++loadDataGeneration;
-
-    const grid = document.getElementById('grid');
-    const loading = document.getElementById('loading');
-    const errorBanner = document.getElementById('error-banner');
-    const lastUpdated = document.getElementById('last-updated');
-
-    grid.innerHTML = '';
-    grid.classList.add('hidden');
-    loading.classList.remove('hidden');
-    errorBanner.classList.add('hidden');
-
-    try {
-        const json = await fetchLimits();
-        if (myGeneration !== loadDataGeneration) return; // discard stale response
-        STATE.data = json.limits;
-        renderFilterPills();
-        renderGrid();
-        renderHealthBar();
-
-        const now = new Date();
-        lastUpdated.textContent = `Updated ${now.toLocaleTimeString()}`;
-        lastUpdated.classList.remove('hidden');
-
-    } catch (err) {
-        if (myGeneration !== loadDataGeneration) return; // discard stale error
-        console.error('Failed to fetch limits:', err);
-
-        // Extract error message and categorize the error type
-        const errorMsg = err.message || 'Unknown error occurred';
-        const errorType = getErrorType(err);
-
-        // Display user-friendly error message with technical details
-        const displayMsg = `⚠ ${errorMsg}`;
-        errorBanner.textContent = displayMsg;
-        errorBanner.title = `Error type: ${errorType}\nFull error: ${err.toString()}`;
-        errorBanner.classList.remove('hidden');
-
-        // Log detailed error for debugging
-        console.debug(`Error type detected: ${errorType}`);
-        if (err instanceof TypeError) {
-            console.debug('Likely network issue (CORS, no internet, etc.)');
-        } else if (err instanceof SyntaxError) {
-            console.debug('Invalid response format from server');
-        }
-    } finally {
-        loading.classList.add('hidden');
-        grid.classList.remove('hidden');
-    }
-}
+// Alias loadData to loadDashboard for backwards compatibility
+const loadData = loadDashboard;
 
 /**
  * Categorize error types for better debugging
@@ -695,8 +1044,34 @@ function openModal(serviceName) {
     container.classList.add('active');
     document.body.style.overflow = 'hidden';
 
-    // Add close listener after injection
     document.getElementById('close-modal').onclick = closeModal;
+    document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
+        refreshModalProvider(item.provider_id, item.account_id, item.service_name)
+    );
+}
+
+async function refreshModalProvider(providerId, accountId, serviceName) {
+    const btn = document.getElementById('refresh-provider-btn');
+    if (btn) { btn.classList.add('animate-spin'); btn.disabled = true; }
+    try {
+        await collectProvider(providerId, accountId);
+        // Reload global state then re-render modal with fresh data
+        const json = await fetchLimits();
+        STATE.data = json.limits;
+        renderGrid();
+        const fresh = STATE.data.find(d => d.service_name === serviceName);
+        if (fresh) {
+            document.getElementById('modal-content').innerHTML = buildModalContent(fresh);
+            document.getElementById('close-modal').onclick = closeModal;
+            document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
+                refreshModalProvider(fresh.provider_id, fresh.account_id, fresh.service_name)
+            );
+        }
+    } catch (err) {
+        console.error('Provider refresh failed:', err);
+    } finally {
+        if (btn) { btn.classList.remove('animate-spin'); btn.disabled = false; }
+    }
 }
 
 /**
@@ -750,9 +1125,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     initUI();
-    loadData();
+    initHistoryView();
+    loadDashboard();
     // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
-    refreshTimer = setInterval(() => loadData(), 5 * 60 * 1000);
+    refreshTimer = setInterval(() => loadDashboard(), 5 * 60 * 1000);
 });
 
 window.handleResetProvider = async function(provider, accountId) {
@@ -791,79 +1167,80 @@ window.handleResetProvider = async function(provider, accountId) {
     }
 }
 
-// --- Webhook alert settings ---
+window.viewRawProviderData = async function(providerId) {
+    const modal = document.getElementById('modal-container');
+    const content = document.getElementById('modal-content');
+    if (!modal || !content) return;
 
-async function renderWebhookSettings() {
-    const container = document.getElementById('settings-extra');
-    if (!container) return;
-
-    let webhooks = [];
-    try {
-        const res = await fetch('/api/v1/system/webhooks');
-        webhooks = (await res.json()).webhooks || [];
-    } catch (e) { /* ignore */ }
-
-    container.insertAdjacentHTML('beforeend', `
-        <div class="mt-8 border-t border-zinc-800 pt-6">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide">Webhook Alerts</h3>
-                <button onclick="addWebhookRow()" class="toggle-btn text-xs">+ Add</button>
-            </div>
-            <div id="webhook-rows" class="space-y-3">
-                ${webhooks.map(w => webhookRowHtml(w)).join('')}
-            </div>
-        </div>
-    `);
-}
-
-function webhookRowHtml(w) {
-    return `
-        <div class="flex flex-wrap gap-2 items-center p-3 bg-zinc-900/50 rounded-xl" data-webhook-id="${w.id}">
-            <input type="text" value="${w.provider_id}" placeholder="provider or *"
-                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-24 text-zinc-200"
-                   onchange="patchWebhook(${w.id}, 'provider_id', this.value)">
-            <input type="number" value="${w.threshold_pct}" min="1" max="100" step="1"
-                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-16 text-zinc-200"
-                   onchange="patchWebhook(${w.id}, 'threshold_pct', parseFloat(this.value))">
-            <span class="text-zinc-600 text-xs">%</span>
-            <select class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200"
-                    onchange="patchWebhook(${w.id}, 'channel', this.value)">
-                <option value="discord" ${w.channel === 'discord' ? 'selected' : ''}>Discord</option>
-                <option value="slack" ${w.channel === 'slack' ? 'selected' : ''}>Slack</option>
-            </select>
-            <input type="url" value="${w.url}" placeholder="Webhook URL"
-                   class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 flex-1 min-w-[180px] text-zinc-200"
-                   onchange="patchWebhook(${w.id}, 'url', this.value)">
-            <button onclick="testWebhook(${w.id})" class="toggle-btn text-xs">Test</button>
-            <button onclick="deleteWebhook(${w.id})" class="toggle-btn text-xs text-red-400">✕</button>
+    content.innerHTML = `
+        <div class="p-12 text-center">
+            <div class="inline-block w-8 h-8 border-4 border-violet-500/30 border-t-violet-500 rounded-full animate-spin mb-4"></div>
+            <p class="text-zinc-500 font-bold tracking-widest text-xs uppercase">Fetching raw API data from ${escapeHTML(providerId)}...</p>
+            <p class="text-[10px] text-zinc-600 mt-2">This may take up to 30 seconds if it triggers a fresh collection cycle.</p>
         </div>
     `;
-}
+    modal.classList.add('active');
 
-window.addWebhookRow = async function() {
-    const res = await fetch('/api/v1/system/webhooks', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({provider_id: '*', threshold_pct: 90, url: '', channel: 'discord'}),
-    });
-    if (res.ok) loadSettings();
+    try {
+        const resp = await fetch(`/api/v1/system/debug/raw/${providerId}`);
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || 'Failed to fetch raw data');
+        }
+        const data = await resp.json();
+        
+        content.innerHTML = `
+            <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
+                <div>
+                    <div class="text-xl font-black text-zinc-100 uppercase tracking-tight">Raw Data: ${escapeHTML(providerId)}</div>
+                    <div class="text-[10px] text-zinc-500 mono mt-1">Provider-specific HTTP interception bundle</div>
+                </div>
+                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none mt-0.5 w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+            </div>
+            <div class="max-h-[70vh] overflow-y-auto space-y-6 pr-2">
+                ${Object.keys(data.responses).length === 0 ? `
+                    <div class="bg-zinc-900/50 rounded-xl p-8 text-center border border-dashed border-zinc-800">
+                        <p class="text-zinc-500 text-sm italic">No HTTP requests were captured during the collection cycle.</p>
+                        <p class="text-[10px] text-zinc-600 mt-2">This usually means the data was served from the local cache.</p>
+                    </div>
+                ` : Object.entries(data.responses).map(([url, res]) => `
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 mono text-[10px] font-bold border border-zinc-700/50">${res.status}</span>
+                            <span class="text-[10px] text-zinc-500 mono truncate max-w-md">${escapeHTML(url)}</span>
+                        </div>
+                        <div class="bg-black/40 rounded-xl p-4 border border-zinc-800/60">
+                            <pre class="text-[11px] text-zinc-300 mono whitespace-pre-wrap overflow-x-auto leading-relaxed max-h-[400px]">${escapeHTML(JSON.stringify(res.body, null, 2))}</pre>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="mt-6 flex justify-end">
+                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CLOSE</button>
+            </div>
+        `;
+    } catch (err) {
+        content.innerHTML = `
+            <div class="p-8 text-center">
+                <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                </div>
+                <h2 class="text-xl font-black text-zinc-50 mb-2">Debug Fetch Failed</h2>
+                <p class="text-zinc-400 text-sm mb-6">${escapeHTML(err.message)}</p>
+                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">DISMISS</button>
+            </div>
+        `;
+    }
 };
 
-window.patchWebhook = async function(id, field, value) {
-    await fetch(`/api/v1/system/webhooks/${id}`, {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({[field]: value}),
-    });
-};
+// Expose functions needed by inline onclick handlers in HTML
+window.switchView = switchView;
+window.editSidecarName = editSidecarName;
+window.addSidecarTag = addSidecarTag;
+window.deleteSidecar = deleteSidecar;
+window.setFilterDimension = setFilterDimension;
+window.setFilter = setFilter;
+window.setHistoryDays = setHistoryDays;
+window.setHistoryMetric = setHistoryMetric;
+window.toggleHistoryProvider = toggleHistoryProvider;
 
-window.testWebhook = async function(id) {
-    const res = await fetch(`/api/v1/system/webhooks/${id}/test`, {method: 'POST'});
-    const data = await res.json();
-    alert(res.ok ? 'Test sent!' : `Failed: ${data.detail}`);
-};
-
-window.deleteWebhook = async function(id) {
-    await fetch(`/api/v1/system/webhooks/${id}`, {method: 'DELETE'});
-    loadSettings();
-};

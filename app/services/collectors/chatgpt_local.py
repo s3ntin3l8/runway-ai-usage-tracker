@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
+from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, human_delta
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ class ChatGPTLocalMixin:
 
     async def _strategy_local_logs(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Local log parsing fallback."""
-        if not settings.LOCAL_COLLECTOR_ENABLED:
+        if not is_local_collector_enabled():
             return []
         path = settings.CHATGPT_SESSIONS_DIR
         try:

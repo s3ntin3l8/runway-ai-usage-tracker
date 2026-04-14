@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import get_platform_config_dir, settings
+from app.core.config import get_platform_config_dir, is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, human_delta
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class AnthropicLocalMixin:
 
     async def _strategy_cli_pty(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Third tier: CLI PTY fallback."""
-        if not settings.LOCAL_COLLECTOR_ENABLED:
+        if not is_local_collector_enabled():
             return []
         return await self._collect_via_cli_pty()
 
@@ -62,13 +62,42 @@ class AnthropicLocalMixin:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await process.communicate(input=b"/usage\n")
+            stdout, stderr = await process.communicate(input=b"/usage\nexit\n")
             output = self._strip_ansi(stdout.decode(errors="ignore"))
 
             if not output or not any(x in output.lower() for x in ["usage", "used", "current"]):
                 return []
 
-            return self._parse_cli_usage_output(output)
+            # Load credentials for identity and tier
+            creds = None
+            identity_str = ""
+            tier = None
+            if hasattr(self, "_get_credentials") and hasattr(self, "_extract_identity_from_oauth"):
+                creds = await self._get_credentials()
+                identity_str = self._extract_identity_from_oauth(creds)
+                
+                if creds:
+                    raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
+                    if raw_tier:
+                        tier_map = {
+                            "tier_0": "Free",
+                            "tier_1": "Pro",
+                            "tier_2": "Max",
+                            "tier_3": "Team",
+                            "tier_4": "Enterprise",
+                            "tier_5": "Enterprise",
+                        }
+                        tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
+            
+            if not tier and hasattr(self, "_get_local_config_hints"):
+                local_hints = self._get_local_config_hints()
+                local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
+                if local_tier:
+                    tier = str(local_tier).capitalize()
+
+            identity_suffix = f" | {identity_str}" if identity_str else ""
+
+            return self._parse_cli_usage_output(output, identity_suffix, tier, identity_str)
 
         except Exception as e:
             logger.debug(f"Claude CLI PTY fallback failed: {e}")
@@ -79,7 +108,9 @@ class AnthropicLocalMixin:
         ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         return ansi_escape.sub("", text)
 
-    def _parse_cli_usage_output(self, output: str) -> list[dict[str, Any]]:
+    def _parse_cli_usage_output(
+        self, output: str, identity_suffix: str = "", tier: str | None = None, account_label: str | None = None
+    ) -> list[dict[str, Any]]:
         """Parse the text output of 'claude /usage' into quota cards."""
         results = []
         now = datetime.now(UTC)
@@ -103,6 +134,9 @@ class AnthropicLocalMixin:
             }
             u_type = label_map.get(label_raw, label_raw)
             remaining_pct = 100.0 - pct_used
+
+            # Correct window type
+            w_type = "session" if "Session" in u_type or "Window" in u_type else "weekly" if "Week" in u_type else "unknown"
 
             # Parse reset duration string "2h 15m", "3d 4h", etc.
             reset_at = None
@@ -133,10 +167,13 @@ class AnthropicLocalMixin:
                     if pct_used < 90
                     else "critical",
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [CLI PTY]",
+                    "detail": f"{pct_used:.1f}% used [CLI PTY]{identity_suffix}",
                     "used_value": pct_used,
                     "limit_value": 100.0,
                     "unit_type": "percent",
+                    "window_type": w_type,
+                    "tier": tier,
+                    "account_label": account_label,
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": "cli",
                     "updated_at": now.isoformat(),
@@ -149,7 +186,7 @@ class AnthropicLocalMixin:
 
     async def _strategy_local_enhanced(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fourth tier: Enhanced local logs fallback."""
-        if not settings.LOCAL_COLLECTOR_ENABLED:
+        if not is_local_collector_enabled():
             return []
         return await self._get_claude_local_enhanced()
 
@@ -185,20 +222,82 @@ class AnthropicLocalMixin:
             logger.debug("No Claude project log files found in any config directory")
             return []
 
-        # Read credentials file for tier info
+        # Read credentials file for identity and tier info
         tier = None
+        email = ""
         try:
+            # 1. Check primary credentials file (.credentials.json usually)
             if os.path.exists(self._credentials_path):
                 with open(self._credentials_path) as f:
                     data = json.load(f)
-                    plan = data.get("account", {}).get("plan", "").lower()
-                    if plan:
-                        tier = plan.capitalize()
-        except Exception as e:
-            logger.debug(f"Could not read tier from credentials: {e}")
+                    # Try claudeAiOauth subscriptionType or rateLimitTier
+                    oauth = data.get("claudeAiOauth", {})
+                    raw_sub = oauth.get("subscriptionType")
+                    raw_tier = oauth.get("rateLimitTier")
+                    
+                    if raw_sub:
+                        tier = str(raw_sub).capitalize()
+                    elif raw_tier:
+                        tier_map = {
+                            "tier_0": "Free",
+                            "tier_1": "Pro",
+                            "tier_2": "Max",
+                            "tier_3": "Team",
+                            "tier_4": "Enterprise",
+                            "tier_5": "Enterprise",
+                            "default_claude_ai": "Pro",
+                        }
+                        tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
+                    
+                    if not tier:
+                        plan = data.get("account", {}).get("plan", "").lower()
+                        if plan:
+                            tier = plan.capitalize()
+                    
+                    oauth_acc = data.get("oauthAccount", {})
+                    email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
 
-        limit = settings.CLAUDE_FREE_LIMIT if tier == "Free" else settings.CLAUDE_PRO_LIMIT
+            # 2. Fallback to ~/.claude.json for identity/billing hints
+            if not email or not tier:
+                path = os.path.expanduser("~/.claude.json")
+                if os.path.exists(path):
+                    with open(path) as f:
+                        data = json.load(f)
+                        if not email:
+                            oauth_acc = data.get("oauthAccount", {})
+                            email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
+                        if not tier:
+                            oa = data.get("oauthAccount", {})
+                            bt = oa.get("billingType")
+                            if bt:
+                                if "pro" in bt.lower():
+                                    tier = "Pro"
+                                elif "free" in bt.lower():
+                                    tier = "Free"
+                                elif bt == "default_claude_ai":
+                                    tier = "Pro"  # Most likely Pro if using Claude Code
+                                else:
+                                    tier = str(bt).capitalize()
+                            
+                            if not tier:
+                                local_tier = data.get("billing_tier") or data.get("tier")
+                                if local_tier:
+                                    tier = str(local_tier).capitalize()
+        except Exception as e:
+            logger.debug(f"Could not read tier/email from credentials: {e}")
+
+        limit = (
+            settings.CLAUDE_FREE_LIMIT
+            if tier == "Free"
+            else settings.CLAUDE_MAX_LIMIT
+            if tier == "Max"
+            else settings.CLAUDE_PRO_LIMIT
+        )
         cutoff = datetime.now(UTC) - timedelta(hours=5)
+        
+        # Persist identity if found
+        if email:
+            self.account_label = email
 
         total_tokens = 0
         seen_messages: set = set()  # Deduplicate by (message_id, request_id)
@@ -258,6 +357,9 @@ class AnthropicLocalMixin:
         pct = (total_tokens / limit * 100) if limit > 0 else 0
         reset_at = (oldest + timedelta(hours=5)) if oldest else None
 
+        # Put email at the end for regex discovery fallback
+        identity_suffix = f" | {email}" if email else ""
+
         return [
             {
                 "service_name": "Claude Pro",
@@ -267,12 +369,14 @@ class AnthropicLocalMixin:
                 "reset": human_delta(reset_at),
                 "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                 "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
+                "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local{identity_suffix}",
                 "used_value": float(total_tokens),
                 "limit_value": float(limit),
                 "is_unlimited": False,
                 "tier": tier,
+                "account_label": email,
                 "unit_type": "tokens",
+                "window_type": "session",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "local",
                 "usage_url": "https://claude.ai/settings/usage",

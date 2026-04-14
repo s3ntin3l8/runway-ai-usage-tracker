@@ -10,6 +10,7 @@ Tests cover:
 """
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
@@ -23,11 +24,11 @@ from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
 from app.services.collectors.kimi_api import KimiApiCollector
 from app.services.collectors.kimi_coding import KimiCodingCollector
+from app.services.collectors.kimi_k2 import KimiK2Collector
 from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
-from app.services.collectors.zai_api import ZaiApiCollector
-from app.services.collectors.zai_plan import ZaiPlanCollector
+from app.services.collectors.zai import ZaiCollector
 
 
 class TestAnthropicCollector:
@@ -85,7 +86,7 @@ class TestAnthropicCollector:
                 return_value={"claudeAiOauth": {}},
             ),
             patch(
-                "app.services.collectors.anthropic_oauth.token_cache.get_token",
+                "app.services.collectors.oauth_base.token_cache.get_token",
                 new_callable=AsyncMock,
                 return_value="refresh_a",
             ) as mock_get_token,
@@ -275,9 +276,9 @@ class TestAnthropicCollector:
             "expires_in": 28800,
         }
 
-        # Control the flow by mocking _get_valid_token and _get_claude_oauth_with_cache
+        # Control the flow by mocking _get_valid_token and _get_claude_oauth
         with patch.object(collector, "_get_valid_token", return_value="refreshed_token"):
-            with patch.object(collector, "_get_claude_oauth_with_cache") as mock_get_oauth:
+            with patch.object(collector, "_get_claude_oauth") as mock_get_oauth:
                 # First call returns 401 error card, second (after refresh) returns success
                 mock_get_oauth.side_effect = [
                     [
@@ -1198,9 +1199,9 @@ class TestGitHubCollector:
         collector = GitHubCollector()
 
         with patch(
-            "app.services.credential_provider.CredentialProvider.get_github_token",
-            return_value=None,
-        ):
+            "app.services.credential_provider.CredentialProvider.get_github_data",
+            return_value={},
+        ), patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
             result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
@@ -1237,14 +1238,15 @@ class TestGitHubCollector:
 
         with (
             patch(
-                "app.services.collectors.github.credential_provider.get_github_token",
-                return_value=None,
+                "app.services.collectors.github.credential_provider.get_github_data",
+                return_value={},
             ),
             patch(
                 "app.services.collectors.github.token_cache.get_token",
                 new_callable=AsyncMock,
                 return_value="scoped_token",
             ) as mock_get_token,
+            patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
         ):
             token = await collector._get_token()
 
@@ -1258,13 +1260,14 @@ class TestGitHubCollector:
 
         with (
             patch(
-                "app.services.collectors.github.credential_provider.get_github_token",
-                return_value=None,
+                "app.services.collectors.github.credential_provider.get_github_data",
+                return_value={},
             ),
             patch(
                 "app.services.collectors.github.token_cache.get_token",
                 new_callable=AsyncMock,
             ) as mock_get_token,
+            patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
         ):
             token = await collector._get_token()
 
@@ -1542,145 +1545,146 @@ class TestOpenCodeCollector:
         assert result == []
 
 
-class TestZaiApiCollector:
-    """Test suite for zAI API (Balance) collector."""
+class TestZaiCollector:
+    """Test suite for zAI (consolidated) collector."""
 
     @pytest.mark.asyncio
-    async def test_collect_success(self, mock_http_client, mock_zai_response):
-        """Test successful zAI API balance collection."""
-        collector = ZaiApiCollector()
-
-        response = MagicMock(spec=httpx.Response)
-        response.status_code = 200
-        response.json.return_value = mock_zai_response
-
-        mock_http_client.get.return_value = response
-
-        with patch("app.services.collectors.zai_api.settings") as mock_settings:
-            mock_settings.ZAI_API_KEY = "zai_valid_key"
-            result = await collector.collect(mock_http_client)
-
-        assert len(result) == 1
-        assert result[0]["service_name"] == "zAI API"
-        assert "¥125.45" in result[0]["remaining"]
-        assert result[0]["health"] == "good"
-
-    @pytest.mark.asyncio
-    async def test_collect_invalid_key(self, mock_http_client):
-        """Test zAI API collection with invalid/placeholder key."""
-        collector = ZaiApiCollector()
-
-        with patch("app.services.collectors.zai_api.settings") as mock_settings:
-            mock_settings.ZAI_API_KEY = "zai"  # Placeholder
-            result = await collector.collect(mock_http_client)
-
-        assert len(result) == 1
-        assert "zAI" in result[0]["service_name"]
-        assert result[0]["remaining"] == "ERR"
-        assert "Missing/Invalid Key" in result[0]["detail"]
-
-    @pytest.mark.asyncio
-    async def test_collect_api_error(self, mock_http_client):
-        """Test zAI API collection when API returns error."""
-        collector = ZaiApiCollector()
-
-        response = MagicMock(spec=httpx.Response)
-        response.status_code = 401
-
-        mock_http_client.get.return_value = response
-
-        with patch("app.services.collectors.zai_api.settings") as mock_settings:
-            mock_settings.ZAI_API_KEY = "invalid_key"
-            result = await collector.collect(mock_http_client)
-
-        assert len(result) == 1
-        assert result[0]["remaining"] == "ERR"
-        assert "API Error" in result[0]["detail"]
-
-
-class TestZaiPlanCollector:
-    """Test suite for zAI Plan (Quota) collector."""
-
-    @pytest.mark.asyncio
-    async def test_collect_success_token_limit(self, mock_http_client):
+    async def test_collect_quota_success_token_limit(self, mock_http_client):
         """Test successful zAI plan collection with token limit."""
-        collector = ZaiPlanCollector()
+        collector = ZaiCollector()
 
         response = MagicMock(spec=httpx.Response)
         response.status_code = 200
         response.json.return_value = {
+            "code": 200,
+            "success": True,
             "data": {
                 "planName": "Basic Plan",
                 "limits": [
                     {
                         "type": "TOKENS_LIMIT",
-                        "limit": 1000000,
-                        "used": 450000,
+                        "unit": 3,
+                        "number": 168,
+                        "usage": 1000000,
+                        "currentValue": 450000,
+                        "remaining": 550000,
+                        "percentage": 45,
                         "nextResetTime": 1775570736000,
                     }
                 ],
-            }
+            },
         }
 
         mock_http_client.get.return_value = response
 
-        with patch("app.services.collectors.zai_plan.settings") as mock_settings:
+        with patch("app.services.collectors.zai.settings") as mock_settings:
             mock_settings.ZAI_API_KEY = "zai_valid_key"
             result = await collector.collect(mock_http_client)
 
-        assert len(result) == 1
-        assert result[0]["service_name"] == "zAI Plan (Tokens)"
-        assert "550,000" in result[0]["remaining"]  # 1M - 450K
-        assert result[0]["health"] == "good"  # 45% used is still good
+        assert len(result) >= 1
+        token_card = next((c for c in result if "Tokens" in c.get("service_name", "")), None)
+        assert token_card is not None
+        assert "550,000" in token_card["remaining"]
+        assert token_card["health"] == "good"
 
     @pytest.mark.asyncio
-    async def test_collect_success_both_limits(self, mock_http_client):
+    async def test_collect_quota_success_both_limits(self, mock_http_client):
         """Test successful zAI plan collection with both token and time limits."""
-        collector = ZaiPlanCollector()
+        collector = ZaiCollector()
 
         response = MagicMock(spec=httpx.Response)
         response.status_code = 200
         response.json.return_value = {
+            "code": 200,
+            "success": True,
             "data": {
                 "planName": "Pro Plan",
                 "limits": [
                     {
                         "type": "TOKENS_LIMIT",
-                        "limit": 1000000,
-                        "used": 200000,
+                        "unit": 3,
+                        "number": 168,
+                        "usage": 1000000,
+                        "currentValue": 200000,
+                        "remaining": 800000,
+                        "percentage": 20,
                         "nextResetTime": 1775570736000,
                     },
                     {
                         "type": "TIME_LIMIT",
-                        "limit": 3600,
-                        "used": 900,
+                        "unit": 5,
+                        "number": 43200,
+                        "usage": 3600,
+                        "currentValue": 900,
+                        "remaining": 2700,
+                        "percentage": 25,
                         "nextResetTime": 1775570736000,
                     },
                 ],
-            }
+            },
         }
 
         mock_http_client.get.return_value = response
 
-        with patch("app.services.collectors.zai_plan.settings") as mock_settings:
+        with patch("app.services.collectors.zai.settings") as mock_settings:
             mock_settings.ZAI_API_KEY = "zai_valid_key"
             result = await collector.collect(mock_http_client)
 
-        assert len(result) == 2
-        assert any("Tokens" in card["service_name"] for card in result)
-        assert any("Time" in card["service_name"] for card in result)
+        assert len(result) >= 2
+        assert any("Tokens" in c.get("service_name", "") for c in result)
+        assert any("Time" in c.get("service_name", "") for c in result)
 
     @pytest.mark.asyncio
-    async def test_collect_no_auth(self, mock_http_client):
-        """Test zAI plan collection without API key."""
-        collector = ZaiPlanCollector()
+    async def test_collect_no_plan_returns_info_card(self, mock_http_client):
+        """Test zAI returns info card when no plan/limits available."""
+        collector = ZaiCollector()
 
-        with patch("app.services.collectors.zai_plan.settings") as mock_settings:
-            mock_settings.ZAI_API_KEY = ""
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "code": 200,
+            "success": True,
+            "data": {"limits": []},
+        }
+
+        mock_http_client.get.return_value = response
+
+        with patch("app.services.collectors.zai.settings") as mock_settings:
+            mock_settings.ZAI_API_KEY = "zai_valid_key"
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["remaining"] == "ERR"
+        assert result[0]["remaining"] == "No active plan"
+        assert result[0]["health"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_collect_invalid_key_returns_info_card(self, mock_http_client):
+        """Test zAI returns info card when key is placeholder."""
+        collector = ZaiCollector()
+
+        with patch("app.services.collectors.zai.settings") as mock_settings:
+            mock_settings.ZAI_API_KEY = "zai"
+            with patch("app.services.collectors.zai.credential_provider.get_provider_api_key", return_value=None):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert "zAI" in result[0]["service_name"]
+        assert result[0]["remaining"] == "No API key configured"
+        assert result[0]["health"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_collect_no_key_returns_info_card(self, mock_http_client):
+        """Test zAI returns info card when no API key."""
+        collector = ZaiCollector()
+
+        with patch("app.services.collectors.zai.settings") as mock_settings:
+            mock_settings.ZAI_API_KEY = ""
+            with patch("app.services.collectors.zai.credential_provider.get_provider_api_key", return_value=None):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "No API key configured"
+        assert result[0]["health"] == "good"
 
 
 class TestKimiApiCollector:
@@ -1712,8 +1716,9 @@ class TestKimiApiCollector:
         collector = KimiApiCollector()
 
         with patch("app.services.collectors.kimi_api.settings") as mock_settings:
-            mock_settings.KIMI_API_KEY = "short"  # Too short
-            result = await collector.collect(mock_http_client)
+            mock_settings.KIMI_API_KEY = "short"
+            with patch("app.services.collectors.kimi_api.credential_provider.get_provider_api_key", return_value=None):
+                result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
         assert "Kimi API" in result[0]["service_name"]
@@ -1732,6 +1737,110 @@ class TestKimiApiCollector:
 
         with patch("app.services.collectors.kimi_api.settings") as mock_settings:
             mock_settings.KIMI_API_KEY = "invalid_key_long"
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "Unauthorized" in result[0]["detail"]
+
+
+class TestKimiK2Collector:
+    """Test suite for Kimi K2 credits collector."""
+
+    @pytest.mark.asyncio
+    async def test_collect_success(self, mock_http_client):
+        """Test successful Kimi K2 credits collection."""
+        collector = KimiK2Collector()
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "credits_remaining": 500.00,
+            "credits_consumed": 150.00,
+        }
+
+        mock_http_client.get.return_value = response
+
+        with patch("app.services.collectors.kimi_k2.settings") as mock_settings:
+            mock_settings.KIMI_K2_API_KEY = "kimi_k2_valid_key_long"
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["service_name"] == "Kimi K2"
+        assert result[0]["remaining"] == "500.00"
+        assert "credits" in result[0]["unit"]
+        assert result[0]["health"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_collect_low_credits_warning(self, mock_http_client):
+        """Test Kimi K2 shows warning when credits are low."""
+        collector = KimiK2Collector()
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "credits_remaining": 50.00,
+            "credits_consumed": 450.00,
+        }
+
+        mock_http_client.get.return_value = response
+
+        with patch("app.services.collectors.kimi_k2.settings") as mock_settings:
+            mock_settings.KIMI_K2_API_KEY = "kimi_k2_valid_key_long"
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "50.00"
+        assert result[0]["health"] == "warning"
+
+    @pytest.mark.asyncio
+    async def test_collect_zero_credits_critical(self, mock_http_client):
+        """Test Kimi K2 shows critical when credits are zero."""
+        collector = KimiK2Collector()
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.json.return_value = {
+            "credits_remaining": 0,
+            "credits_consumed": 600.00,
+        }
+
+        mock_http_client.get.return_value = response
+
+        with patch("app.services.collectors.kimi_k2.settings") as mock_settings:
+            mock_settings.KIMI_K2_API_KEY = "kimi_k2_valid_key_long"
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "0.00"
+        assert result[0]["health"] == "critical"
+
+    @pytest.mark.asyncio
+    async def test_collect_invalid_key(self, mock_http_client):
+        """Test Kimi K2 collection with short/invalid key."""
+        collector = KimiK2Collector()
+
+        with patch("app.services.collectors.kimi_k2.settings") as mock_settings:
+            mock_settings.KIMI_K2_API_KEY = "short"
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert "Kimi K2" in result[0]["service_name"]
+        assert result[0]["remaining"] == "ERR"
+        assert "Missing/Invalid Key" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_unauthorized(self, mock_http_client):
+        """Test Kimi K2 collection with 401 Unauthorized."""
+        collector = KimiK2Collector()
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 401
+
+        mock_http_client.get.return_value = response
+
+        with patch("app.services.collectors.kimi_k2.settings") as mock_settings:
+            mock_settings.KIMI_K2_API_KEY = "invalid_key_long"
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
@@ -1801,8 +1910,8 @@ class TestKimiCodingCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert "No usage recorded yet" in result[0]["detail"]
-        assert result[0]["remaining"] == "100%"
+        assert "No active plan" in result[0]["detail"]
+        assert result[0]["remaining"] == "No active plan"
 
     @pytest.mark.asyncio
     async def test_collect_no_auth(self, mock_http_client):
@@ -1841,17 +1950,27 @@ class TestOpenRouterCollector:
 
     @pytest.mark.asyncio
     async def test_collect_success(self, mock_http_client):
-        """Test successful OpenRouter API collection."""
+        """Test successful OpenRouter credits-only collection."""
         with patch("app.services.collectors.openrouter.settings") as mock_settings:
             mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
             collector = OpenRouterCollector()
 
-            response = MagicMock(spec=httpx.Response)
-            response.status_code = 200
-            response.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+            credits_resp = MagicMock(spec=httpx.Response)
+            credits_resp.status_code = 200
+            credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
 
-            mock_http_client.get.return_value = response
-            result = await collector.collect(mock_http_client)
+            key_resp = MagicMock(spec=httpx.Response)
+            key_resp.status_code = 200
+            key_resp.json.return_value = {"data": {"limit": None, "usage": 0.0}}
+
+            with patch(
+                "app.services.collectors.openrouter.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=credits_resp,
+            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+                result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
         assert result[0]["service_name"] == "OpenRouter Credits"
@@ -1859,10 +1978,151 @@ class TestOpenRouterCollector:
         assert result[0]["health"] == "good"
 
     @pytest.mark.asyncio
-    async def test_collect_api_error(self, mock_http_client):
-        """Test OpenRouter collection with API error."""
+    async def test_collect_success_with_key_limit(self, mock_http_client):
+        """Test collection returns two cards when key endpoint has a spending limit."""
         with patch("app.services.collectors.openrouter.settings") as mock_settings:
             mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
+            collector = OpenRouterCollector()
+
+            credits_resp = MagicMock(spec=httpx.Response)
+            credits_resp.status_code = 200
+            credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+
+            key_resp = MagicMock(spec=httpx.Response)
+            key_resp.status_code = 200
+            key_resp.json.return_value = {"data": {"limit": 20.0, "usage": 0.5}}
+
+            with patch(
+                "app.services.collectors.openrouter.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=credits_resp,
+            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 2
+        services = {c["service_name"]: c for c in result}
+        assert "OpenRouter Credits" in services
+        assert "OpenRouter Key Limit" in services
+        key_card = services["OpenRouter Key Limit"]
+        assert "$19.50" in key_card["remaining"]
+        assert key_card["health"] == "good"
+        assert key_card["limit_value"] == 20.0
+        assert key_card["used_value"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_collect_key_endpoint_failure_graceful(self, mock_http_client):
+        """Test that key endpoint failure still returns the credits card."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
+            collector = OpenRouterCollector()
+
+            credits_resp = MagicMock(spec=httpx.Response)
+            credits_resp.status_code = 200
+            credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+
+            key_resp = MagicMock(spec=httpx.Response)
+            key_resp.status_code = 500
+            key_resp.text = "Internal Server Error"
+
+            with patch(
+                "app.services.collectors.openrouter.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=credits_resp,
+            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["service_name"] == "OpenRouter Credits"
+
+    @pytest.mark.asyncio
+    async def test_collect_key_timeout_still_returns_credits(self, mock_http_client):
+        """Test that key endpoint timeout still returns the credits card."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
+            collector = OpenRouterCollector()
+
+            credits_resp = MagicMock(spec=httpx.Response)
+            credits_resp.status_code = 200
+            credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+
+            with patch(
+                "app.services.collectors.openrouter.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=credits_resp,
+            ), patch.object(
+                collector, "_key_endpoint_request", new_callable=AsyncMock, side_effect=httpx.TimeoutException("timeout")
+            ):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["service_name"] == "OpenRouter Credits"
+
+    @pytest.mark.asyncio
+    async def test_collect_key_no_limit_configured(self, mock_http_client):
+        """Test that key endpoint with no limit configured only returns credits card."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
+            collector = OpenRouterCollector()
+
+            credits_resp = MagicMock(spec=httpx.Response)
+            credits_resp.status_code = 200
+            credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+
+            key_resp = MagicMock(spec=httpx.Response)
+            key_resp.status_code = 200
+            key_resp.json.return_value = {"data": {"limit": None, "usage": 0.0}}
+
+            with patch(
+                "app.services.collectors.openrouter.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=credits_resp,
+            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["service_name"] == "OpenRouter Credits"
+
+    @pytest.mark.asyncio
+    async def test_headers_include_referer_and_title(self, mock_http_client):
+        """Test that HTTP-Referer and X-Title headers are sent when configured."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = "https://example.com"
+            mock_settings.OPENROUTER_X_TITLE = "MyApp"
+            collector = OpenRouterCollector()
+
+            credits_resp = MagicMock(spec=httpx.Response)
+            credits_resp.status_code = 200
+            credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+
+            key_resp = MagicMock(spec=httpx.Response)
+            key_resp.status_code = 500
+            key_resp.text = "error"
+
+            mock_http_client.get.side_effect = [credits_resp, key_resp]
+            await collector.collect(mock_http_client)
+
+        calls = mock_http_client.get.call_args_list
+        for call in calls:
+            headers = call.kwargs.get("headers", {})
+            assert headers.get("HTTP-Referer") == "https://example.com"
+            assert headers.get("X-Title") == "MyApp"
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error(self, mock_http_client):
+        """Test OpenRouter collection with credits API error."""
+        with patch("app.services.collectors.openrouter.settings") as mock_settings:
+            mock_settings.OPENROUTER_API_KEY = "or_valid_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
             collector = OpenRouterCollector()
 
             response = MagicMock(spec=httpx.Response)
@@ -1919,6 +2179,24 @@ class TestMiniMaxCollector:
         assert result[0]["remaining"] == "ERR"
         assert "API connection failed" in result[0]["detail"]
 
+    @pytest.mark.asyncio
+    async def test_collect_no_active_plan(self, mock_http_client):
+        """Test MiniMax returns 'No active plan' when API returns empty model_remains."""
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = {"model_remains": []}
+
+            mock_http_client.get.return_value = response
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert "No active plan" in result[0]["detail"]
+        assert result[0]["remaining"] == "No active plan"
+
 
 class TestHttpTimeouts:
     """I2: All collector HTTP calls must pass an explicit timeout."""
@@ -1943,23 +2221,23 @@ class TestHttpTimeouts:
             assert "timeout" in call.kwargs, f"GitHub HTTP call #{i} missing timeout=: {call}"
 
     @pytest.mark.asyncio
-    async def test_zai_api_collector_passes_timeout(self, mock_http_client):
-        """ZAI API collector must pass timeout= on its HTTP call."""
-        from app.services.collectors.zai_api import ZaiApiCollector
+    async def test_zai_collector_passes_timeout(self, mock_http_client):
+        """ZAI collector must pass timeout= on its HTTP call."""
+        from app.services.collectors.zai import ZaiCollector
 
-        collector = ZaiApiCollector()
+        collector = ZaiCollector()
 
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": {"available_balance": "10.0"}}
         mock_http_client.get = AsyncMock(return_value=mock_resp)
 
-        with patch("app.services.collectors.zai_api.settings") as mock_settings:
+        with patch("app.services.collectors.zai.settings") as mock_settings:
             mock_settings.ZAI_API_KEY = "test_key"
             await collector.collect(mock_http_client)
 
         for i, call in enumerate(mock_http_client.get.call_args_list):
-            assert "timeout" in call.kwargs, f"ZAI API HTTP call #{i} missing timeout=: {call}"
+            assert "timeout" in call.kwargs, f"ZAI HTTP call #{i} missing timeout=: {call}"
 
     @pytest.mark.asyncio
     async def test_kimi_coding_collector_passes_timeout(self, mock_http_client):
@@ -1981,35 +2259,23 @@ class TestHttpTimeouts:
             assert "timeout" in call.kwargs, f"Kimi Coding HTTP call #{i} missing timeout=: {call}"
 
     @pytest.mark.asyncio
-    async def test_zai_plan_collector_passes_timeout(self, mock_http_client):
-        """ZAI Plan collector must pass timeout= on its HTTP call."""
-        from app.services.collectors.zai_plan import ZaiPlanCollector
-
-        collector = ZaiPlanCollector()
-
-        mock_resp = MagicMock(spec=httpx.Response)
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {}
-        mock_http_client.get = AsyncMock(return_value=mock_resp)
-
-        with patch("app.services.collectors.zai_plan.settings") as mock_settings:
-            mock_settings.ZAI_API_KEY = "test_key"
-            await collector.collect(mock_http_client)
-
-        for i, call in enumerate(mock_http_client.get.call_args_list):
-            assert "timeout" in call.kwargs, f"ZAI Plan HTTP call #{i} missing timeout=: {call}"
-
-    @pytest.mark.asyncio
     async def test_openrouter_collector_passes_timeout(self, mock_http_client):
         """OpenRouter collector must pass timeout= on its HTTP call."""
         collector = OpenRouterCollector()
-        mock_resp = MagicMock(spec=httpx.Response)
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
-        mock_http_client.get = AsyncMock(return_value=mock_resp)
+        credits_resp = MagicMock(spec=httpx.Response)
+        credits_resp.status_code = 200
+        credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
+
+        key_resp = MagicMock(spec=httpx.Response)
+        key_resp.status_code = 200
+        key_resp.json.return_value = {"data": {"limit": None, "usage": 0.0}}
+
+        mock_http_client.get = AsyncMock(side_effect=[credits_resp, key_resp])
 
         with patch("app.services.collectors.openrouter.settings") as mock_settings:
             mock_settings.OPENROUTER_API_KEY = "test_key"
+            mock_settings.OPENROUTER_HTTP_REFERER = ""
+            mock_settings.OPENROUTER_X_TITLE = "Runway"
             await collector.collect(mock_http_client)
 
         for i, call in enumerate(mock_http_client.get.call_args_list):

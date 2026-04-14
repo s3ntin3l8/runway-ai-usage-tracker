@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 
 from app.core.browser_cookies import get_claude_session_cookie
-from app.core.config import settings
+from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, http_request_with_retry, human_delta
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class AnthropicWebMixin:
         Choice #1: Read the local Claude statusline file (Fast Path).
         Returns metrics if the file exists and is fresh (< 5 mins old).
         """
-        if not settings.LOCAL_COLLECTOR_ENABLED:
+        if not is_local_collector_enabled():
             return []
 
         # Try multiple potential paths
@@ -76,15 +76,49 @@ class AnthropicWebMixin:
                 data = json.load(f)
 
             self._last_statusline_data = data
-            return self._parse_statusline_response(data)
+
+            # Extract identity from local credentials to ensure account_label is set
+            identity_str = ""
+            creds = None
+            if hasattr(self, "_get_credentials") and hasattr(self, "_extract_identity_from_oauth"):
+                creds = await self._get_credentials()
+                identity_str = self._extract_identity_from_oauth(creds)
+            
+            identity_suffix = f" | {identity_str}" if identity_str else ""
+
+            return self._parse_statusline_response(data, identity_suffix, creds)
         except Exception as e:
             logger.debug(f"Failed to read Claude statusline: {e}")
             return []
 
-    def _parse_statusline_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _parse_statusline_response(
+        self, data: dict[str, Any], identity_suffix: str = "", creds: dict | None = None
+    ) -> list[dict[str, Any]]:
         """Parse statusline.json into standardized quota cards."""
         results = []
         now = datetime.now(UTC)
+
+        # Extract identity from suffix (strip " | ")
+        identity_str = identity_suffix.lstrip(" |") if identity_suffix else ""
+
+        tier = None
+        if creds:
+            raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
+            if raw_tier:
+                tier_map = {
+                    "tier_0": "Free",
+                    "tier_1": "Pro",
+                    "tier_2": "Max",
+                    "tier_3": "Team",
+                    "tier_4": "Enterprise",
+                    "tier_5": "Enterprise",
+                }
+                tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
+        if not tier and hasattr(self, "_get_local_config_hints"):
+            local_hints = self._get_local_config_hints()
+            local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
+            if local_tier:
+                tier = str(local_tier).capitalize()
 
         # 1. Rate Limits
         limits = data.get("rate_limits", {})
@@ -93,6 +127,9 @@ class AnthropicWebMixin:
             pct_used = float(info.get("used_percentage", 0.0))
             reset_ts = info.get("resets_at")
             reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
+
+            # Correct window type based on key
+            w_type = "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
 
             results.append(
                 {
@@ -107,12 +144,15 @@ class AnthropicWebMixin:
                     if pct_used < 90
                     else "critical",
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [Statusline]",
+                    "detail": f"{pct_used:.1f}% used [Statusline]{identity_suffix}",
                     "used_value": pct_used,
                     "limit_value": 100.0,
                     "unit_type": "percent",
+                    "window_type": w_type,
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": "statusline",
+                    "tier": tier,
+                    "account_label": identity_str,
                     "updated_at": now.isoformat(),
                 }
             )
@@ -134,11 +174,14 @@ class AnthropicWebMixin:
                     "reset": data.get("model", {}).get("display_name", "Sonnet"),
                     "health": "good",
                     "pace": "Active",
-                    "detail": f"IN: {input_tokens:,} | OUT: {output_tokens:,} [Statusline]",
+                    "detail": f"IN: {input_tokens:,} | OUT: {output_tokens:,} [Statusline]{identity_suffix}",
                     "used_value": float(total),
                     "limit_value": float(max_tokens),
                     "unit_type": "tokens",
+                    "window_type": "session",
                     "data_source": "statusline",
+                    "tier": tier,
+                    "account_label": identity_str,
                     "updated_at": now.isoformat(),
                 }
             )
@@ -155,8 +198,11 @@ class AnthropicWebMixin:
                     "reset": "This Session",
                     "health": "good",
                     "pace": "Stable",
-                    "detail": f"+{cost.get('total_lines_added', 0)} / -{cost.get('total_lines_deleted', 0)} lines [Statusline]",
+                    "detail": f"+{cost.get('total_lines_added', 0)} / -{cost.get('total_lines_deleted', 0)} lines [Statusline]{identity_suffix}",
+                    "window_type": "session",
                     "data_source": "statusline",
+                    "tier": tier,
+                    "account_label": identity_str,
                     "updated_at": now.isoformat(),
                 }
             )
@@ -333,6 +379,9 @@ class AnthropicWebMixin:
                 except (ValueError, TypeError):
                     pass
 
+            # Correct window type based on key
+            w_type = "session" if api_key == "five_hour" else "weekly" if "seven_day" in api_key else "unknown"
+
             results.append(
                 {
                     "service_name": f"Claude ({display_name})",
@@ -351,9 +400,11 @@ class AnthropicWebMixin:
                     "limit_value": 100.0,
                     "is_unlimited": False,
                     "unit_type": "percent",
+                    "window_type": w_type,
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": "web_api",
                     "tier": tier,
+                    "account_label": identity_str,
                     "usage_url": "https://claude.ai/settings/usage",
                     "updated_at": datetime.now(UTC).isoformat(),
                 }
@@ -373,14 +424,16 @@ class AnthropicWebMixin:
                             "remaining": f"${bal:.2f}",
                             "unit": "USD",
                             "reset": "Prepaid",
-                            "health": "good" if bal > 5.0 else "warning",
+                            "health": "good" if bal > 5.0 else "warning" if bal > 0 else "critical",
                             "pace": "Manual Top-up",
                             "detail": f"Credits: ${bal:.2f} [Web API]{identity_suffix}",
                             "used_value": 0.0,
                             "limit_value": bal,
                             "unit_type": "currency",
+                            "window_type": "prepaid",
                             "data_source": "web_api",
                             "tier": tier,
+                            "account_label": identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -413,8 +466,10 @@ class AnthropicWebMixin:
                         "used_value": spend,
                         "limit_value": limit,
                         "unit_type": "currency",
+                        "window_type": "monthly",
                         "data_source": "web_api",
                         "tier": tier,
+                        "account_label": identity_str,
                         "usage_url": "https://claude.ai/settings/usage",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }

@@ -85,7 +85,9 @@ __REGISTRY__ = {
             "name": "OpenRouter",
             "icon": "\ud83d\ude80",
             "rules": [
-                {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}}
+                {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}},
+                {"type": "env", "variable": "OPENROUTER_HTTP_REFERER", "mapping": {"value": "http_referer"}},
+                {"type": "env", "variable": "OPENROUTER_X_TITLE", "mapping": {"value": "x_title"}},
             ],
         },
         "minimax": {
@@ -96,7 +98,7 @@ __REGISTRY__ = {
             ],
         },
         "github": {
-            "name": "GitHub API",
+            "name": "GitHub Copilot",
             "icon": "\ud83d\udc19",
             "rules": [
                 {"type": "env", "variable": "GITHUB_TOKEN", "mapping": {"value": "api_key"}},
@@ -116,6 +118,11 @@ __REGISTRY__ = {
                     "type": "windows_credential",
                     "target": "github.com",
                     "mapping": {"value": "api_key"},
+                },
+                {
+                    "type": "exec",
+                    "command": ["git", "config", "--global", "user.email"],
+                    "mapping": {"value": "name"},
                 },
             ],
         },
@@ -1217,7 +1224,22 @@ class GenericCollector:
                             tokens[target] = val
                             break
 
-            # 6. Specialized: SQLite (OpenCode)
+            # 6. Execute Command (e.g. git config)
+            elif rule_type == "exec":
+                try:
+                    cmd = rule.get("command")
+                    if cmd:
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            val = result.stdout.strip()
+                            if val:
+                                target = mapping.get("value")
+                                if target:
+                                    tokens[target] = val
+                except Exception:
+                    pass
+
+            # 7. Specialized: SQLite (OpenCode)
             elif rule_type == "sqlite":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)

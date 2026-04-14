@@ -9,7 +9,8 @@
     <title>Runway — AI Subscription Limits</title>
     <meta name="description" content="Live dashboard tracking remaining AI subscription limits and reset timers across all your developer tools.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap">
     <link rel="stylesheet" href="/static/css/styles.css?v=3">
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
@@ -28,19 +29,18 @@
                     <h1 class="text-3xl font-black tracking-tight text-zinc-50">Runway</h1>
                 </div>
                 
-                <nav class="flex items-center gap-6 ml-5">
-                    <button onclick="switchView('dashboard')" class="nav-link active" id="nav-dashboard">Dashboard</button>
-                    <button onclick="switchView('history')" class="nav-link" id="nav-history">History</button>
-                    <button onclick="switchView('fleet')" class="nav-link" id="nav-fleet">Fleet</button>
-                    <button onclick="switchView('settings')" class="nav-link" id="nav-settings">Settings</button>
+                <nav id="main-nav" class="flex items-center gap-6 ml-5">
+                    <button class="nav-link active" id="nav-dashboard">Dashboard</button>
+                    <button class="nav-link" id="nav-history">History</button>
+                    <button class="nav-link" id="nav-fleet">Fleet</button>
+                    <button class="nav-link" id="nav-settings">Settings</button>
                 </nav>
             </div>
 
             <div class="flex flex-col items-end gap-3 ml-5 sm:ml-0">
                 <div class="flex items-center gap-2">
-                    <button id="toggle-showHidden" class="toggle-btn" onclick="toggleConfig('showHidden')">👁 SHOW HIDDEN</button>
-                    <button id="toggle-theme" class="toggle-btn" onclick="toggleTheme()" title="Switch to bright mode">☀️</button>
-                    <button id="refresh-btn" class="toggle-btn flex items-center gap-1.5" onclick="forceRefresh()" title="Force poll all providers">
+                    <button id="toggle-theme" class="toggle-btn" title="Switch to bright mode">☀️</button>
+                    <button id="refresh-btn" class="toggle-btn flex items-center gap-1.5" title="Force poll all providers">
                         <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                         SYNC
                     </button>
@@ -91,18 +91,18 @@
                         <div class="flex items-center gap-3 flex-wrap">
                             <!-- Time range -->
                             <div class="flex gap-1" id="history-range-btns">
-                                <button class="toggle-btn"        data-days="0.042" onclick="setHistoryDays(0.042)">1h</button>
-                                <button class="toggle-btn"        data-days="0.25"  onclick="setHistoryDays(0.25)">6h</button>
-                                <button class="toggle-btn"        data-days="1"     onclick="setHistoryDays(1)">1d</button>
-                                <button class="toggle-btn active" data-days="7"     onclick="setHistoryDays(7)">7d</button>
-                                <button class="toggle-btn"        data-days="30"    onclick="setHistoryDays(30)">30d</button>
-                                <button class="toggle-btn"        data-days="90"    onclick="setHistoryDays(90)">90d</button>
+                                <button class="toggle-btn" data-days="0.042" onclick="setHistoryDays(0.042)">1h</button>
+                                <button class="toggle-btn" data-days="0.25" onclick="setHistoryDays(0.25)">6h</button>
+                                <button class="toggle-btn" data-days="1" onclick="setHistoryDays(1)">1d</button>
+                                <button class="toggle-btn active" data-days="7" onclick="setHistoryDays(7)">7d</button>
+                                <button class="toggle-btn" data-days="30" onclick="setHistoryDays(30)">30d</button>
+                                <button class="toggle-btn" data-days="90" onclick="setHistoryDays(90)">90d</button>
                             </div>
                             <!-- Metric -->
                             <div class="flex gap-1" id="history-metric-btns">
                                 <button class="toggle-btn active" data-metric="percent" onclick="setHistoryMetric('percent')">% used</button>
-                                <button class="toggle-btn"        data-metric="tokens"  onclick="setHistoryMetric('tokens')">tokens</button>
-                                <button class="toggle-btn"        data-metric="cost"    onclick="setHistoryMetric('cost')">cost</button>
+                                <button class="toggle-btn" data-metric="tokens" onclick="setHistoryMetric('tokens')">tokens</button>
+                                <button class="toggle-btn" data-metric="cost" onclick="setHistoryMetric('cost')">cost</button>
                             </div>
                         </div>
                     </div>
@@ -146,14 +146,18 @@
 
             <!-- Settings View -->
             <section id="view-settings" class="view hidden">
-                <div class="glass-panel rounded-3xl p-8 max-w-2xl mx-auto">
-                    <h2 class="text-xl font-bold text-zinc-100 mb-6 flex items-center gap-2">
-                        <span class="text-violet-400">⚙️</span> Settings
-                    </h2>
-                    <div id="settings-content" class="space-y-6">
-                        <!-- Settings will be injected here -->
+                <div class="flex gap-0 min-h-[560px]">
+                    <!-- Sidebar nav -->
+                    <nav id="settings-nav" class="w-36 shrink-0 flex flex-col gap-1 pt-2 pr-5">
+                        <button class="settings-nav-item" data-section="providers">🔌 Providers</button>
+                        <button class="settings-nav-item" data-section="tokens">🔑 Tokens</button>
+                        <button class="settings-nav-item" data-section="webhooks">🔔 Webhooks</button>
+                        <button class="settings-nav-item" data-section="system">⚙️ System</button>
+                    </nav>
+                    <!-- Content pane -->
+                    <div id="settings-pane" class="flex-1 glass-panel rounded-3xl p-8 min-h-[400px]">
+                        <!-- Injected by JS -->
                     </div>
-                    <div id="settings-extra"></div>
                 </div>
             </section>
         </main>
@@ -166,15 +170,14 @@
     </div>
 
     <!-- Modal Backdrop & Content -->
-    <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 opacity-0 pointer-events-none transition-all duration-300">
-        <div id="modal-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div id="modal-content" class="relative w-full max-w-4xl glass-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 transition-all duration-300 overflow-hidden max-h-[90vh] overflow-y-auto">
+    <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 opacity-0 pointer-events-none" style="transition: opacity 0.15s ease;">
+        <div id="modal-backdrop" class="absolute inset-0 bg-black/75"></div>
+        <div id="modal-content" class="relative w-full max-w-4xl modal-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 overflow-hidden max-h-[90vh] overflow-y-auto" style="transition: opacity 0.15s ease, transform 0.15s ease;">
             <!-- Content will be injected here -->
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
     <!-- Application script -->
-    <script type="module" src="/static/js/app.js?v=3"></script>
+    <script type="module" src="/static/js/app.js?v=3" defer></script>
 </body>
 </html>

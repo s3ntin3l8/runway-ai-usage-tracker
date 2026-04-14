@@ -187,36 +187,72 @@ class GitHubCollector(BaseCollector):
             self._last_429_backoff_until = None
 
             # Try to discover identity — call the standard /user endpoint (not Copilot internal)
-            identity = None
-            try:
-                user_std_resp = await http_request_with_retry(
-                    client,
-                    "GET",
-                    "https://api.github.com/user",
-                    headers=headers,
-                    timeout=10.0,
-                )
-                if user_std_resp.status_code == 200:
-                    std_data = user_std_resp.json()
-                    identity = std_data.get("email") or std_data.get("name") or std_data.get("login")
-                    # Also try /user/emails for private email addresses
-                    if not std_data.get("email"):
-                        emails_resp = await http_request_with_retry(
-                            client,
-                            "GET",
-                            "https://api.github.com/user/emails",
-                            headers=headers,
-                            timeout=10.0,
-                        )
-                        if emails_resp.status_code == 200:
-                            emails = emails_resp.json()
-                            primary = next((e["email"] for e in emails if e.get("primary")), None)
-                            if primary:
-                                identity = primary
-            except Exception as e:
-                logger.debug(f"GitHub /user identity fetch failed: {e}")
+            identity = getattr(self, "_identity", None)
+            
+            # Use sidecar-provided label if it looks like an email
+            if not identity and self.account_label and "@" in self.account_label:
+                identity = self.account_label
 
-            # Fallback: local gh config
+            if not identity:
+                try:
+                    # Use clean headers for standard endpoints (avoid futuristic Copilot API version)
+                    std_headers = {
+                        "Authorization": f"token {token}",
+                        "Accept": "application/json",
+                        "User-Agent": "Runway-AI-Usage-Tracker",
+                    }
+                    
+                    user_std_resp = await http_request_with_retry(
+                        client,
+                        "GET",
+                        "https://api.github.com/user",
+                        headers=std_headers,
+                        timeout=10.0,
+                    )
+                    if user_std_resp.status_code == 200:
+                        std_data = user_std_resp.json()
+                        # Try email from main profile
+                        identity = std_data.get("email")
+                        
+                        # Try /user/emails for private email addresses
+                        if not identity:
+                            emails_resp = await http_request_with_retry(
+                                client,
+                                "GET",
+                                "https://api.github.com/user/emails",
+                                headers=std_headers,
+                                timeout=10.0,
+                            )
+                            if emails_resp.status_code == 200:
+                                emails = emails_resp.json()
+                                primary = next((e["email"] for e in emails if e.get("primary")), None)
+                                if primary:
+                                    identity = primary
+                        
+                        # Fallback to local git config user.email if still missing
+                        if not identity:
+                            import asyncio
+                            try:
+                                proc = await asyncio.create_subprocess_exec(
+                                    "git", "config", "--global", "user.email",
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE
+                                )
+                                stdout, _ = await proc.communicate()
+                                if proc.returncode == 0:
+                                    git_email = stdout.decode().strip()
+                                    if git_email:
+                                        identity = git_email
+                            except Exception as e:
+                                logger.debug(f"Failed to fetch git config user.email: {e}")
+
+                        # Final fallback to name or login if NO email found anywhere
+                        if not identity:
+                            identity = std_data.get("name") or std_data.get("login")
+                except Exception as e:
+                    logger.debug(f"GitHub /user identity fetch failed: {e}")
+
+            # Fallback: local gh config (only if identity still None)
             if not identity:
                 gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
                 if os.path.exists(gh_config_path):
@@ -254,10 +290,19 @@ class GitHubCollector(BaseCollector):
 
     async def _get_token(self) -> str | None:
         """Internal helper to get token from multiple sources."""
-        token = credential_provider.get_github_token()
+        # Check standard credentials
+        creds = credential_provider.get_github_data()
+        token = creds.get("api_key")
+        
+        # If we have email/name in creds, cache them as identity
         if token:
+            identity = creds.get("email") or creds.get("name")
+            if identity:
+                self._identity = identity
+                self.account_label = identity
             return token
 
+        # Check account-specific token cache
         if self.account_id:
             token = await token_cache.get_token("github", "api_key", account_id=self.account_id)
         return token

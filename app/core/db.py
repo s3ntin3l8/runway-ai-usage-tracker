@@ -25,13 +25,43 @@ engine = create_engine(
 def init_db():
     """Create database tables if they don't exist."""
     # Import all models here so they are registered with SQLModel.metadata
-    from app.models.db import SidecarRegistry, UsageSnapshot, WebhookConfig  # noqa: F401
+    from app.models.db import (  # noqa: F401
+        ProviderConfig,
+        SidecarRegistry,
+        SystemConfig,
+        UsageSnapshot,
+        WebhookConfig,
+    )
 
     try:
         SQLModel.metadata.create_all(engine)
         logger.info(f"Database initialized at {settings.DATABASE_PATH}")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
+
+    # Additive column migrations (SQLite doesn't support DROP COLUMN, only ADD COLUMN)
+    _run_migrations()
+
+
+def _run_migrations():
+    """Apply additive schema migrations that CREATE TABLE won't cover."""
+    migrations = [
+        # system_config gained default_poll_interval_seconds after initial release
+        "ALTER TABLE system_config ADD COLUMN default_poll_interval_seconds INTEGER",
+        # system_config gained local_collector / credential toggles
+        "ALTER TABLE system_config ADD COLUMN local_collector_enabled INTEGER",
+        "ALTER TABLE system_config ADD COLUMN local_credential_scraping_enabled INTEGER",
+        # provider_configs: browser_preference column removed from model but kept in DB for compatibility
+        # provider_configs: separate session cookie storage (distinct from API key)
+        "ALTER TABLE provider_configs ADD COLUMN session_cookie_encrypted TEXT",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(__import__("sqlalchemy").text(sql))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists or table doesn't exist yet — both are fine
 
 
 def get_session():

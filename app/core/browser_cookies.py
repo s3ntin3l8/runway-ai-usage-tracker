@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import is_local_credential_scraping_enabled, settings
 from app.core.keychain import get_keychain_secret
 from app.core.registry import registry
 
@@ -425,8 +425,24 @@ def get_all_browser_cookies_paths() -> list[dict[str, Any]]:
                     results.append({"browser": "Firefox", "type": "firefox", "path": cookie_sqlite})
         return results
 
-    # Apply preference ordering
-    pref_str = settings.BROWSER_PREFERENCE.lower()
+    # Apply preference ordering — DB SystemConfig takes precedence over env var default
+    def _get_browser_preference() -> str:
+        try:
+            from sqlmodel import Session
+            from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import SystemConfig
+
+            with Session(engine) as _s:
+                cfg = _s.exec(sqlselect(SystemConfig)).first()
+                if cfg and cfg.browser_preference:
+                    return cfg.browser_preference
+        except Exception:
+            pass
+        return settings.BROWSER_PREFERENCE
+
+    pref_str = _get_browser_preference().lower()
     prefs = [p.strip() for p in pref_str.split(",") if p.strip()]
 
     # Lazy-loaded cache for chromium variants to avoid redundant discovery calls
@@ -491,7 +507,7 @@ def get_session_cookies(
     Returns:
         List of decrypted/parsed cookie values.
     """
-    if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+    if not is_local_credential_scraping_enabled():
         return []
 
     targets = get_all_browser_cookies_paths()

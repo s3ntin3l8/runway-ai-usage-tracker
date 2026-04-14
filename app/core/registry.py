@@ -11,29 +11,36 @@ logger = logging.getLogger(__name__)
 class Registry:
     """
     Centralized registry for AI provider extraction rules.
-    Loads from app/core/registry.json.
+    Loads from app/core/registry.json on each call so the file can be edited
+    without restarting the server.
     """
 
     def __init__(self):
-        self._registry = self._load()
+        self._path = os.path.join(os.path.dirname(__file__), "registry.json")
+        self._cache: dict[str, Any] = {}
+        self._mtime: float = 0.0
 
     def _load(self) -> dict[str, Any]:
-        """Load registry.json from disk."""
-        path = os.path.join(os.path.dirname(__file__), "registry.json")
+        """Load registry.json, using a mtime-based cache to avoid redundant reads."""
         try:
-            with open(path) as f:
-                return json.load(f)
+            mtime = os.path.getmtime(self._path)
+            if mtime != self._mtime:
+                with open(self._path) as f:
+                    self._cache = json.load(f)
+                self._mtime = mtime
         except Exception as e:
             logger.error(f"Failed to load registry.json: {e}")
-            return {"providers": {}}
+            if not self._cache:
+                self._cache = {"providers": {}}
+        return self._cache
 
     def get_provider(self, provider_id: str) -> dict[str, Any]:
         """Get rules for a specific provider."""
-        return self._registry.get("providers", {}).get(provider_id, {})
+        return self._load().get("providers", {}).get(provider_id, {})
 
     def get_all_providers(self) -> dict[str, dict[str, Any]]:
         """Get all providers."""
-        return self._registry.get("providers", {})
+        return self._load().get("providers", {})
 
     def resolve_path(self, path_str: str) -> str:
         """Resolve placeholders in path strings."""

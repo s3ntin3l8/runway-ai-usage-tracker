@@ -56,6 +56,7 @@ from app.core.browser_cookies import get_kimi_auth_cookie
 from app.core.config import settings
 from app.core.utils import error_card, human_delta
 from app.services.collectors.base import BaseCollector
+from app.services.credential_provider import credential_provider
 
 
 class KimiCodingCollector(BaseCollector):
@@ -131,12 +132,17 @@ class KimiCodingCollector(BaseCollector):
         Returns:
             Token string or None
         """
-        # Priority 1: Environment variable
+        # Priority 1: DB-stored session cookie (manual override set via settings UI)
+        db_token = credential_provider.get_provider_session_cookie("kimi_coding")
+        if db_token:
+            return db_token
+
+        # Priority 2: Environment variable
         token = settings.KIMI_AUTH_TOKEN
         if token:
             return token
 
-        # Priority 2: Chrome cookie
+        # Priority 3: Chrome cookie
         return await asyncio.to_thread(get_kimi_auth_cookie)
 
     def _parse_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -151,18 +157,19 @@ class KimiCodingCollector(BaseCollector):
         """
         usages = data.get("usages", [])
         if not usages:
-            # If authorized (200 OK) but no usages, it usually means no coding usage yet
             return [
                 {
                     "service_name": "Kimi Coding",
                     "icon": "🌙",
-                    "remaining": "100%",
+                    "remaining": "No active plan",
                     "unit": "quota",
-                    "reset": "Weekly",
+                    "reset": "—",
                     "health": "good",
-                    "pace": "Stable",
-                    "detail": "No usage recorded yet",
+                    "pace": "N/A",
+                    "detail": "No active plan",
                     "data_source": "api",
+                    "is_unlimited": False,
+                    "unit_type": "unknown",
                     "updated_at": datetime.now(UTC).isoformat(),
                 }
             ]
