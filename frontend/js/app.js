@@ -32,24 +32,31 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
 /**
  * View Management
  */
+const KNOWN_VIEWS = ['dashboard', 'history', 'fleet', 'settings'];
+
 window.switchView = async function(viewId) {
+    if (!KNOWN_VIEWS.includes(viewId)) viewId = 'dashboard';
     // Hide all views
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-    // Show selected view
     document.getElementById(`view-${viewId}`).classList.remove('hidden');
-    
+
     // Update nav links
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     document.getElementById(`nav-${viewId}`).classList.add('active');
-    
-    // Load data for the view (lazy loaded via dynamic imports)
+
+    // Sync URL (no scroll jump)
+    const target = `#${viewId}`;
+    if (location.hash !== target) {
+        history.replaceState(null, '', target);
+    }
+
     if (viewId === 'dashboard' && STATE.data.length === 0) {
         await loadDashboard();
     }
     if (viewId === 'history') loadHistoryView();
     if (viewId === 'settings') loadSettingsView();
     if (viewId === 'fleet') loadFleetView();
-}
+};
 
 window.toggleHistoryProvider = function(pid) {
     if (!historyState.activeProviders) {
@@ -901,6 +908,15 @@ function initUI() {
 
     // Refresh button
     document.getElementById('refresh-btn')?.addEventListener('click', () => forceRefresh());
+
+    // Route from URL hash (so reloads stay on the active tab)
+    const initialView = (location.hash || '#dashboard').replace(/^#/, '');
+    await switchView(initialView);
+
+    window.addEventListener('hashchange', () => {
+        const v = (location.hash || '#dashboard').replace(/^#/, '');
+        switchView(v);
+    });
 
     // Initialize dashboard view event listeners
     initDashboardView();
