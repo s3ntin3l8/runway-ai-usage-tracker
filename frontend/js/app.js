@@ -902,6 +902,16 @@ async function enterEditMode() {
         });
     }
 
+    // Per-service breakdown rows inside each provider summary card on the dashboard
+    document.querySelectorAll('[data-subitems-for]').forEach(container => {
+        const s = new Sortable(container, {
+            animation: 150,
+            draggable: '[data-card-key]',
+            onEnd: () => onCardDrop(container.dataset.subitemsFor, container),
+        });
+        _cardSortables.push(s);
+    });
+
     // Card grids inside any currently-open modal
     document.querySelectorAll('#modal-content [data-provider-id]').forEach(section => {
         const container = section.querySelector('.grid') || section;

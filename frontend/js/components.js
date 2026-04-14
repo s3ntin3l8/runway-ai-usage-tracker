@@ -1,6 +1,6 @@
 import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
 import { pickBucketSeconds } from './charts.js';
-import { cardKey } from './layout.js';
+import { cardKey, applyOrder } from './layout.js';
 
 /**
  * Escapes HTML special characters to prevent XSS
@@ -1093,15 +1093,23 @@ export function buildProviderSummaryCard(providerId, items) {
 
     const icon = PROVIDER_ICONS[providerId] || '🔧';
 
-    // Sort by health severity descending (worst first); break ties by usage ratio
-    const sorted = [...items].sort((a, b) => {
+    // Health-sorted copy — drives the "worst" metric display only.
+    const healthSorted = [...items].sort((a, b) => {
         const severityDiff = (HEALTH_SEVERITY[b.health] || 0) - (HEALTH_SEVERITY[a.health] || 0);
         if (severityDiff !== 0) return severityDiff;
         const aRatio = (a.limit_value > 0) ? a.used_value / a.limit_value : 0;
         const bRatio = (b.limit_value > 0) ? b.used_value / b.limit_value : 0;
         return bRatio - aRatio;
     });
-    const worst = sorted[0];
+    const worst = healthSorted[0];
+
+    // Breakdown rows follow the user's saved order; new/unpinned items keep
+    // the health-first order as their default.
+    const ordered = applyOrder(
+        healthSorted,
+        cardKey,
+        STATE.layout?.card_orders?.[providerId] ?? []
+    );
     const h = HEALTH_CONFIG[worst.health] || HEALTH_CONFIG.unknown;
 
     // Worst metric display
@@ -1144,8 +1152,8 @@ export function buildProviderSummaryCard(providerId, items) {
         .map(([k, c]) => `<div style="flex:${c};background:${BAR_HEX[k]};"></div>`)
         .join('');
 
-    // Per-service breakdown rows
-    const breakdownRows = sorted.map(item => {
+    // Per-service breakdown rows (draggable in edit mode — see data-card-key).
+    const breakdownRows = ordered.map(item => {
         const dot = HEALTH_CONFIG[item.health]?.dot || 'dot-unknown';
         let pct = null;
         if (!item.is_unlimited && item.used_value != null && item.limit_value > 0) {
@@ -1153,7 +1161,7 @@ export function buildProviderSummaryCard(providerId, items) {
         }
         const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
         const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 flex-shrink-0">${escapeHTML(item.tier.toUpperCase())}</span>` : '';
-        return `<div class="flex justify-between items-center text-xs py-0.5">
+        return `<div class="flex justify-between items-center text-xs py-0.5" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="flex items-center gap-1.5 min-w-0">
                 <span class="dot ${dot} flex-shrink-0" style="width:6px;height:6px;"></span>
                 <span class="text-zinc-300 truncate">${escapeHTML(item.service_name)}</span>
@@ -1188,7 +1196,7 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>
         <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5 flex flex-col justify-start">
             <div class="h-0.5 rounded-full overflow-hidden flex gap-0.5 mb-3">${barSegments}</div>
-            <div class="space-y-1">${breakdownRows}</div>
+            <div class="space-y-1" data-subitems-for="${escapeHTMLAttr(providerId)}">${breakdownRows}</div>
         </div>
     </div>`;
 }
