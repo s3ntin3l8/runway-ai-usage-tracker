@@ -105,6 +105,8 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/system/token-health` | OAuth/cookie expiry status for all credentials |
 | `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh |
 
+**Desktop App (macOS & Windows):** Download the pre-built sidecar binary from the [releases page](https://github.com/bjoernf73/runway/releases/latest).
+
 See [Sidecar Documentation](docs/sidecar.md) for ingest authentication and payload format.
 
 ### LimitCard Schema

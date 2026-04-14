@@ -63,6 +63,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             id_token = oauth_payload.get("idToken") or oauth_payload.get("id_token")
             if (not client_id or client_id == settings.CLAUDE_OAUTH_CLIENT_ID) and id_token:
                 from app.core.utils import IdentityExtractor
+
                 token_client_id = IdentityExtractor.get_client_id_from_jwt(id_token)
                 if token_client_id:
                     client_id = token_client_id
@@ -89,7 +90,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 if not creds:
                     creds = {"claudeAiOauth": {}}
                 creds["claudeAiOauth"]["accessToken"] = new_data["access_token"]
-                creds["claudeAiOauth"]["refreshToken"] = new_data.get("refresh_token", refresh_token)
+                creds["claudeAiOauth"]["refreshToken"] = new_data.get(
+                    "refresh_token", refresh_token
+                )
                 creds["claudeAiOauth"]["expiresAt"] = int(time.time() * 1000) + (
                     new_data["expires_in"] * 1000
                 )
@@ -198,19 +201,18 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if not creds or not creds.get("oauthAccount", {}).get("emailAddress"):
                 try:
                     org_resp = await http_request_with_retry(
-                        client, 
-                        "GET", 
-                        "https://api.anthropic.com/v1/organizations/me", 
-                        headers={
-                            **headers,
-                            "anthropic-version": "2023-06-01"
-                        },
-                        timeout=10.0
+                        client,
+                        "GET",
+                        "https://api.anthropic.com/v1/organizations/me",
+                        headers={**headers, "anthropic-version": "2023-06-01"},
+                        timeout=10.0,
                     )
                     if org_resp.status_code == 200:
                         org_data = org_resp.json()
                         api_account_info["organization"] = org_data.get("name")
-                        api_account_info["email"] = org_data.get("contact_email") or org_data.get("email")
+                        api_account_info["email"] = org_data.get("contact_email") or org_data.get(
+                            "email"
+                        )
                         plan = org_data.get("plan")
                         if plan:
                             api_account_info["tier"] = plan.capitalize()
@@ -293,7 +295,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             oauth = creds.get("claudeAiOauth", {})
             raw_sub = oauth.get("subscriptionType")
             raw_tier = oauth.get("rateLimitTier")
-            
+
             if raw_sub:
                 tier = str(raw_sub).capitalize()
             elif raw_tier:
@@ -334,7 +336,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             identity_str = self._extract_identity_from_oauth(local_hints)
 
         identity_suffix = f" | {identity_str}" if identity_str else ""
-        
+
         # Persist identity to collector
         if identity_str:
             self.account_label = identity_str
@@ -438,7 +440,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     pass
 
             # Correct window type based on key
-            w_type = "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
+            w_type = (
+                "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
+            )
 
             results.append(
                 {

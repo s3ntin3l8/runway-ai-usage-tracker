@@ -121,26 +121,28 @@ async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> dic
                     user_resp = await client.get(
                         "https://api.github.com/user",
                         headers={"Authorization": f"token {data['access_token']}"},
-                        timeout=10.0
+                        timeout=10.0,
                     )
                     if user_resp.status_code == 200:
                         user_data = user_resp.json()
                         user_info = {
                             "login": user_data.get("login"),
                             "name": user_data.get("name"),
-                            "email": user_data.get("email")
+                            "email": user_data.get("email"),
                         }
-                        
+
                         # Also try private emails if email still null
                         if not user_info["email"]:
                             email_resp = await client.get(
                                 "https://api.github.com/user/emails",
                                 headers={"Authorization": f"token {data['access_token']}"},
-                                timeout=10.0
+                                timeout=10.0,
                             )
                             if email_resp.status_code == 200:
                                 emails = email_resp.json()
-                                primary = next((e["email"] for e in emails if e.get("primary")), None)
+                                primary = next(
+                                    (e["email"] for e in emails if e.get("primary")), None
+                                )
                                 if primary:
                                     user_info["email"] = primary
                 except Exception as e:

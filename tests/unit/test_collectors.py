@@ -1198,10 +1198,13 @@ class TestGitHubCollector:
         """Test that missing GitHub token returns an error card."""
         collector = GitHubCollector()
 
-        with patch(
-            "app.services.credential_provider.CredentialProvider.get_github_data",
-            return_value={},
-        ), patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
+        with (
+            patch(
+                "app.services.credential_provider.CredentialProvider.get_github_data",
+                return_value={},
+            ),
+            patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
+        ):
             result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
@@ -1664,7 +1667,10 @@ class TestZaiCollector:
 
         with patch("app.services.collectors.zai.settings") as mock_settings:
             mock_settings.ZAI_API_KEY = "zai"
-            with patch("app.services.collectors.zai.credential_provider.get_provider_api_key", return_value=None):
+            with patch(
+                "app.services.collectors.zai.credential_provider.get_provider_api_key",
+                return_value=None,
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
@@ -1679,7 +1685,10 @@ class TestZaiCollector:
 
         with patch("app.services.collectors.zai.settings") as mock_settings:
             mock_settings.ZAI_API_KEY = ""
-            with patch("app.services.collectors.zai.credential_provider.get_provider_api_key", return_value=None):
+            with patch(
+                "app.services.collectors.zai.credential_provider.get_provider_api_key",
+                return_value=None,
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
@@ -1717,7 +1726,10 @@ class TestKimiApiCollector:
 
         with patch("app.services.collectors.kimi_api.settings") as mock_settings:
             mock_settings.KIMI_API_KEY = "short"
-            with patch("app.services.collectors.kimi_api.credential_provider.get_provider_api_key", return_value=None):
+            with patch(
+                "app.services.collectors.kimi_api.credential_provider.get_provider_api_key",
+                return_value=None,
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
@@ -1965,11 +1977,19 @@ class TestOpenRouterCollector:
             key_resp.status_code = 200
             key_resp.json.return_value = {"data": {"limit": None, "usage": 0.0}}
 
-            with patch(
-                "app.services.collectors.openrouter.http_request_with_retry",
-                new_callable=AsyncMock,
-                return_value=credits_resp,
-            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+            with (
+                patch(
+                    "app.services.collectors.openrouter.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=credits_resp,
+                ),
+                patch.object(
+                    collector,
+                    "_key_endpoint_request",
+                    new_callable=AsyncMock,
+                    return_value=key_resp,
+                ),
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
@@ -1994,11 +2014,19 @@ class TestOpenRouterCollector:
             key_resp.status_code = 200
             key_resp.json.return_value = {"data": {"limit": 20.0, "usage": 0.5}}
 
-            with patch(
-                "app.services.collectors.openrouter.http_request_with_retry",
-                new_callable=AsyncMock,
-                return_value=credits_resp,
-            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+            with (
+                patch(
+                    "app.services.collectors.openrouter.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=credits_resp,
+                ),
+                patch.object(
+                    collector,
+                    "_key_endpoint_request",
+                    new_callable=AsyncMock,
+                    return_value=key_resp,
+                ),
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 2
@@ -2028,11 +2056,19 @@ class TestOpenRouterCollector:
             key_resp.status_code = 500
             key_resp.text = "Internal Server Error"
 
-            with patch(
-                "app.services.collectors.openrouter.http_request_with_retry",
-                new_callable=AsyncMock,
-                return_value=credits_resp,
-            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+            with (
+                patch(
+                    "app.services.collectors.openrouter.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=credits_resp,
+                ),
+                patch.object(
+                    collector,
+                    "_key_endpoint_request",
+                    new_callable=AsyncMock,
+                    return_value=key_resp,
+                ),
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
@@ -2051,12 +2087,18 @@ class TestOpenRouterCollector:
             credits_resp.status_code = 200
             credits_resp.json.return_value = {"data": {"total_credits": 10.0, "usage": 2.5}}
 
-            with patch(
-                "app.services.collectors.openrouter.http_request_with_retry",
-                new_callable=AsyncMock,
-                return_value=credits_resp,
-            ), patch.object(
-                collector, "_key_endpoint_request", new_callable=AsyncMock, side_effect=httpx.TimeoutException("timeout")
+            with (
+                patch(
+                    "app.services.collectors.openrouter.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=credits_resp,
+                ),
+                patch.object(
+                    collector,
+                    "_key_endpoint_request",
+                    new_callable=AsyncMock,
+                    side_effect=httpx.TimeoutException("timeout"),
+                ),
             ):
                 result = await collector.collect(mock_http_client)
 
@@ -2080,11 +2122,19 @@ class TestOpenRouterCollector:
             key_resp.status_code = 200
             key_resp.json.return_value = {"data": {"limit": None, "usage": 0.0}}
 
-            with patch(
-                "app.services.collectors.openrouter.http_request_with_retry",
-                new_callable=AsyncMock,
-                return_value=credits_resp,
-            ), patch.object(collector, "_key_endpoint_request", new_callable=AsyncMock, return_value=key_resp):
+            with (
+                patch(
+                    "app.services.collectors.openrouter.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=credits_resp,
+                ),
+                patch.object(
+                    collector,
+                    "_key_endpoint_request",
+                    new_callable=AsyncMock,
+                    return_value=key_resp,
+                ),
+            ):
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1

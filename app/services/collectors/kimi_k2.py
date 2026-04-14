@@ -46,7 +46,9 @@ class KimiK2Collector(BaseCollector):
 
     def _get_api_key(self) -> str | None:
         """DB (UI-set) → env var."""
-        return credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
+        return (
+            credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
+        )
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi K2 credits via API."""
@@ -60,9 +62,7 @@ class KimiK2Collector(BaseCollector):
         """Return fallback error when API fails."""
         key = self._get_api_key()
         if not key or len(key) < 10:
-            return [
-                error_card("Kimi K2", "🌙", "Missing/Invalid Key", error_type="missing_config")
-            ]
+            return [error_card("Kimi K2", "🌙", "Missing/Invalid Key", error_type="missing_config")]
         return [error_card("Kimi K2", "🌙", "Unauthorized", error_type="api_error")]
 
     async def _strategy_credits(self, client: httpx.AsyncClient, key: str) -> list[dict[str, Any]]:
@@ -88,7 +88,11 @@ class KimiK2Collector(BaseCollector):
                     "remaining": f"{credits_remaining:.2f}",
                     "unit": "credits",
                     "reset": "Manual",
-                    "health": "good" if credits_remaining > 100 else "warning" if credits_remaining > 0 else "critical",
+                    "health": "good"
+                    if credits_remaining > 100
+                    else "warning"
+                    if credits_remaining > 0
+                    else "critical",
                     "pace": "Stable",
                     "detail": f"Credits (consumed: {credits_consumed:.2f})",
                     "data_source": "api_credits",

@@ -188,7 +188,7 @@ class GitHubCollector(BaseCollector):
 
             # Try to discover identity — call the standard /user endpoint (not Copilot internal)
             identity = getattr(self, "_identity", None)
-            
+
             # Use sidecar-provided label if it looks like an email
             if not identity and self.account_label and "@" in self.account_label:
                 identity = self.account_label
@@ -201,7 +201,7 @@ class GitHubCollector(BaseCollector):
                         "Accept": "application/json",
                         "User-Agent": "Runway-AI-Usage-Tracker",
                     }
-                    
+
                     user_std_resp = await http_request_with_retry(
                         client,
                         "GET",
@@ -213,7 +213,7 @@ class GitHubCollector(BaseCollector):
                         std_data = user_std_resp.json()
                         # Try email from main profile
                         identity = std_data.get("email")
-                        
+
                         # Try /user/emails for private email addresses
                         if not identity:
                             emails_resp = await http_request_with_retry(
@@ -225,18 +225,24 @@ class GitHubCollector(BaseCollector):
                             )
                             if emails_resp.status_code == 200:
                                 emails = emails_resp.json()
-                                primary = next((e["email"] for e in emails if e.get("primary")), None)
+                                primary = next(
+                                    (e["email"] for e in emails if e.get("primary")), None
+                                )
                                 if primary:
                                     identity = primary
-                        
+
                         # Fallback to local git config user.email if still missing
                         if not identity:
                             import asyncio
+
                             try:
                                 proc = await asyncio.create_subprocess_exec(
-                                    "git", "config", "--global", "user.email",
+                                    "git",
+                                    "config",
+                                    "--global",
+                                    "user.email",
                                     stdout=asyncio.subprocess.PIPE,
-                                    stderr=asyncio.subprocess.PIPE
+                                    stderr=asyncio.subprocess.PIPE,
                                 )
                                 stdout, _ = await proc.communicate()
                                 if proc.returncode == 0:
@@ -263,7 +269,8 @@ class GitHubCollector(BaseCollector):
                             config = yaml.safe_load(f)
                             host_config = config.get("github.com", {})
                             identity = (
-                                host_config.get("user") or list(host_config.get("users", {}).keys())[0]
+                                host_config.get("user")
+                                or list(host_config.get("users", {}).keys())[0]
                             )
                     except Exception:
                         pass
@@ -273,8 +280,11 @@ class GitHubCollector(BaseCollector):
                 self.account_label = identity
                 if self.account_id:
                     import asyncio
+
                     asyncio.create_task(
-                        token_cache.update_account_metadata("github", self.account_id, name=identity)
+                        token_cache.update_account_metadata(
+                            "github", self.account_id, name=identity
+                        )
                     )
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
             # Cache results (including empty/error cards) to avoid hammering API
@@ -293,7 +303,7 @@ class GitHubCollector(BaseCollector):
         # Check standard credentials
         creds = credential_provider.get_github_data()
         token = creds.get("api_key")
-        
+
         # If we have email/name in creds, cache them as identity
         if token:
             identity = creds.get("email") or creds.get("name")

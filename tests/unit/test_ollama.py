@@ -141,7 +141,10 @@ async def test_ollama_cookie_header_selection():
     with patch("app.services.collectors.ollama.get_session_cookies") as mock_get:
         mock_get.side_effect = lambda domain, name: ["val"] if name == "__Secure-session" else []
         with patch.object(settings, "OLLAMA_SESSION_TOKEN", ""):
-            with patch("app.services.collectors.ollama.credential_provider.get_provider_session_cookie", return_value=None):
+            with patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ):
                 header = collector._get_cookie_header()
                 assert header == "__Secure-session=val"
                 assert mock_get.call_count > 1  # Should have tried previous names

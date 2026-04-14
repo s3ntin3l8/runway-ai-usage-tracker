@@ -170,7 +170,7 @@ class OpenCodeCollector(BaseCollector):
 
             # Parse JavaScript response
             text = resp.text
-            
+
             # Try to capture email here too
             email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
             if email_match:
@@ -325,11 +325,15 @@ class OpenCodeCollector(BaseCollector):
             # Discover identity from git config if missing (similar to GitHub)
             if not self.account_label or self.account_label.lower() == "default":
                 import asyncio
+
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        "git", "config", "--global", "user.email",
+                        "git",
+                        "config",
+                        "--global",
+                        "user.email",
                         stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
+                        stderr=asyncio.subprocess.PIPE,
                     )
                     stdout, _ = await proc.communicate()
                     if proc.returncode == 0:

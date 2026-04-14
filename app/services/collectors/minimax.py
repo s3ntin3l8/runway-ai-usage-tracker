@@ -36,11 +36,17 @@ class MiniMaxCollector(BaseCollector):
 
     def _get_api_key(self) -> str | None:
         """DB (UI-set) → env var."""
-        return credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
+        return (
+            credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
+        )
 
     def _get_session_cookie(self) -> str | None:
         """DB (UI-set) → env var."""
-        return credential_provider.get_provider_session_cookie("minimax") or settings.MINIMAX_COOKIE or None
+        return (
+            credential_provider.get_provider_session_cookie("minimax")
+            or settings.MINIMAX_COOKIE
+            or None
+        )
 
     def _get_host(self) -> str:
         """Get host from config or default."""
@@ -220,11 +226,7 @@ class MiniMaxCollector(BaseCollector):
                 "remaining": f"{remains:,}",
                 "unit": "requests",
                 "reset": reset_text,
-                "health": "good"
-                if remains > 100
-                else "warning"
-                if remains > 20
-                else "critical",
+                "health": "good" if remains > 100 else "warning" if remains > 20 else "critical",
                 "pace": "Active",
                 "detail": f"{plan_name} [HTML]",
                 "used_value": 0.0,
@@ -241,7 +243,9 @@ class MiniMaxCollector(BaseCollector):
 
         if not self.api_key and not self._get_session_cookie():
             return [
-                error_card("MiniMax", "🤖", "Missing API key or cookie", error_type="missing_config")
+                error_card(
+                    "MiniMax", "🤖", "Missing API key or cookie", error_type="missing_config"
+                )
             ]
 
         return [error_card("MiniMax", "🤖", "API connection failed", error_type="api_error")]

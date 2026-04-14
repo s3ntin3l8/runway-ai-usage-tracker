@@ -199,6 +199,7 @@ def is_local_credential_scraping_enabled() -> bool:
         "local_credential_scraping_enabled", settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED
     )
 
+
 # Security check: Warn if using default ingest secret
 if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
     logger.warning("=" * 60)

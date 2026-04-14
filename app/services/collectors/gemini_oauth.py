@@ -27,7 +27,9 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                     token_data: dict[str, str] = {"oauth_token": token}
                     if creds.get("refresh_token"):
                         token_data["refresh_token"] = creds["refresh_token"]
-                    await token_cache.store("gemini", token_data, account_id=None, account_label=None)
+                    await token_cache.store(
+                        "gemini", token_data, account_id=None, account_label=None
+                    )
         return token
 
     async def _is_token_expired(self) -> bool:

@@ -17,8 +17,8 @@ def manager():
 class TestCollectorManagerInitialization:
     def test_init_registry_count(self, manager):
         """Test that default registry contains expected providers."""
-        # 12 providers (zAI consolidated from 2 to 1)
-        assert len(manager.collector_registry) == 12
+        # 13 providers (added kimi_k2 for Kimi K2 credits)
+        assert len(manager.collector_registry) == 13
         assert "anthropic" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
 

@@ -1,5 +1,71 @@
 # Universal Sidecar Collector
 
+## Desktop App (macOS & Windows)
+
+### Download
+
+Download the latest release from the [GitHub Releases page](https://github.com/bjoernf73/runway/releases/latest):
+- **macOS**: `Runway-Sidecar-macOS.zip` → unzip → drag `Runway Sidecar.app` to `/Applications`
+- **Windows**: `Runway-Sidecar-Windows.zip` → unzip → run `RunwaySidecar.exe`
+
+### First Run
+
+On first launch, if no config file exists, the app creates a template config and opens it in the default editor.
+
+The config is located at:
+- **macOS/Linux**: `~/.config/runway/sidecar/config.json`
+- **Windows**: `%APPDATA%\runway\sidecar\config.json`
+
+Set the following required fields:
+- `api_url`: The address of your Runway server (e.g., `http://localhost:8765` for local, or `https://your-server.com:8765` for remote)
+- `api_key`: The HMAC key from your Runway instance's Fleet settings page
+
+Restart the app after editing the config for changes to take effect.
+
+### Unsigned Binary Warning
+
+**macOS (Gatekeeper):**
+
+The app is not code-signed. On first launch, right-click `Runway Sidecar.app` → **Open**, then click **Open** in the dialog that appears to bypass Gatekeeper.
+
+**Windows (SmartScreen):**
+
+Click **More info** → **Run anyway** to bypass SmartScreen on first launch.
+
+### Tray / Menubar
+
+The sidecar runs as a background app with a menu icon showing its status:
+
+**Icon Color:**
+- **Green**: All systems healthy
+- **Amber**: Warning or stale data
+- **Red**: Error or config needed
+- **Grey**: Paused
+
+**Menu Items:**
+- **Open Dashboard**: Launch the Runway web interface
+- **Run Now**: Trigger an immediate collection cycle
+- **Pause / Resume**: Temporarily stop or restart collection
+- **Launch at Login**: Register the app to start automatically on system boot
+- **Edit Config**: Open the config file in your default editor
+- **View Logs**: Open the log file for debugging
+- **Check for Updates…**: Open the releases page to download a newer version
+- **Quit**: Exit the app
+
+### Automatic Startup
+
+Click **Launch at Login** in the menu to register the sidecar as a login item (macOS) or startup task (Windows). Click again to remove it.
+
+### Updates
+
+The sidecar checks for updates daily. When a newer version is available, the menu title shows **(update available)**. Click **Check for Updates…** to open the releases page and download the latest version.
+
+---
+
+## Headless / CLI Mode (Linux, Advanced Users)
+
+> The sections below describe running the sidecar as a headless script or system daemon. This is the recommended approach on Linux and for server/Docker deployments.
+
 The **Runway Sidecar** is a lightweight, zero-dependency Python script that collects AI usage metrics from your host machine and pushes them to a Runway instance.
 
 ## Quick Start

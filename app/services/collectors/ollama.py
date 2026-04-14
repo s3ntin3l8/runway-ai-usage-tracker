@@ -28,7 +28,7 @@ class OllamaCollector(BaseCollector):
     PROVIDER_ID = "ollama"
     DEFAULT_WINDOW_TYPE = "session"
 
-    RECOGNIZED_COOKIE_NAMES = frozenset([
+    RECOGNIZED_COOKIE_NAMES = (
         "session",
         "ollama_session",
         "__Host-ollama_session",
@@ -36,11 +36,11 @@ class OllamaCollector(BaseCollector):
         "__Secure-next-auth.session-token",
         "next-auth.session-token",
         "access-token",
-    ])
+    )
 
     # Pre-compiled regex patterns for performance
-    RE_PLAN_NAME = re.compile(r'Cloud Usage\s*</span>\s*<span[^>]*>([^<]+)</span>')
-    RE_PLAN_NAME_FALLBACK = re.compile(r'<span[^>]*capitalize[^>]*>([^<]+)</span>')
+    RE_PLAN_NAME = re.compile(r"Cloud Usage\s*</span>\s*<span[^>]*>([^<]+)</span>")
+    RE_PLAN_NAME_FALLBACK = re.compile(r"<span[^>]*capitalize[^>]*>([^<]+)</span>")
     RE_EMAIL = re.compile(r'id="header-email"[^>]*>([^<]+)<')
     RE_PERCENT_USED = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*used", re.IGNORECASE)
     RE_PERCENT_REMAINING = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*remaining", re.IGNORECASE)
@@ -49,7 +49,10 @@ class OllamaCollector(BaseCollector):
 
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
-    RE_AUTH_FORM = re.compile(r"<form.*(type=[\"']email[\"']|name=[\"']email[\"']|type=[\"']password[\"']|name=[\"']password[\"'])", re.IGNORECASE | re.DOTALL)
+    RE_AUTH_FORM = re.compile(
+        r"<form.*(type=[\"']email[\"']|name=[\"']email[\"']|type=[\"']password[\"']|name=[\"']password[\"'])",
+        re.IGNORECASE | re.DOTALL,
+    )
 
     # Magic numbers
     WINDOW_PLAN = 400
@@ -68,8 +71,7 @@ class OllamaCollector(BaseCollector):
 
     # Pre-compiled regex for cookie validation
     RE_COOKIE_PATTERN = re.compile(
-        r"(" + "|".join(RECOGNIZED_COOKIE_NAMES) + r")(?:\.|\=)",
-        re.IGNORECASE
+        r"(" + "|".join(RECOGNIZED_COOKIE_NAMES) + r")(?:\.|\=)", re.IGNORECASE
     )
 
     # Static HTTP headers (Cookie is injected per-request)
@@ -168,7 +170,12 @@ class OllamaCollector(BaseCollector):
         try:
             # CRITICAL: set follow_redirects=True as Ollama often redirects to www. or /
             resp = await http_request_with_retry(
-                client, "GET", self.target_url, headers=headers, timeout=self.TIMEOUT_SECONDS, follow_redirects=True
+                client,
+                "GET",
+                self.target_url,
+                headers=headers,
+                timeout=self.TIMEOUT_SECONDS,
+                follow_redirects=True,
             )
             if resp.status_code == 200:
                 return self._parse_html(resp.text)
@@ -183,7 +190,7 @@ class OllamaCollector(BaseCollector):
 
     def _parse_html(self, html: str) -> list[dict[str, Any]]:
         """Parse the settings page HTML for usage data.
-        
+
         Returns:
             Empty list if not logged in (signals to try fallback/error handler).
             Cards list if usage data found.
@@ -197,7 +204,7 @@ class OllamaCollector(BaseCollector):
         # Check if no usage blocks found (but not logged out)
         # Parse both blocks in one pass to avoid double html.find() calls
         session_block, weekly_block = self._get_usage_blocks(html)
-        
+
         if not session_block and not weekly_block:
             logger.debug("Ollama: no usage data found in response")
             self._last_error_reason = "missing_data"
@@ -244,7 +251,7 @@ class OllamaCollector(BaseCollector):
 
             # Take a window of 800 chars after the label
             window = html[idx : idx + self.WINDOW_USAGE]
-            
+
             # Parse percentage
             pct = None
             # Pattern 1a: "XX% used"
@@ -281,22 +288,22 @@ class OllamaCollector(BaseCollector):
 
     def _get_usage_blocks(self, html: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Parse both session and weekly usage blocks in one pass.
-        
+
         Returns:
             Tuple of (session_block, weekly_block)
         """
         session_block = None
         weekly_block = None
-        
+
         session_labels = ["Session usage", "Hourly usage"]
-        
+
         for label in session_labels + ["Weekly usage"]:
             idx = html.find(label)
             if idx == -1:
                 continue
-                
+
             window = html[idx : idx + self.WINDOW_USAGE]
-            
+
             pct = None
             pct_match = self.RE_PERCENT_USED.search(window)
             if pct_match:
@@ -309,10 +316,10 @@ class OllamaCollector(BaseCollector):
                     pct_match = self.RE_WIDTH.search(window)
                     if pct_match:
                         pct = 100.0 - float(pct_match.group(1))
-            
+
             if pct is None:
                 continue
-                
+
             resets_at = None
             date_match = self.RE_DATA_TIME.search(window)
             if date_match:
@@ -321,14 +328,14 @@ class OllamaCollector(BaseCollector):
                     resets_at = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
                 except ValueError:
                     pass
-            
+
             block = {"used_percent": pct, "resets_at": resets_at}
-            
+
             if label in session_labels and session_block is None:
                 session_block = block
             elif label == "Weekly usage" and weekly_block is None:
                 weekly_block = block
-                
+
         return session_block, weekly_block
 
     def _make_card(
@@ -372,8 +379,8 @@ class OllamaCollector(BaseCollector):
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         error_type = self.ERROR_TYPE_MAP.get(self._last_error_reason, "unknown")
-        message = self.ERROR_MESSAGES.get(self._last_error_reason, "Not logged in or parsing failed")
-        
-        return [
-            error_card("Ollama Cloud", "🦙", message, error_type=error_type)
-        ]
+        message = self.ERROR_MESSAGES.get(
+            self._last_error_reason, "Not logged in or parsing failed"
+        )
+
+        return [error_card("Ollama Cloud", "🦙", message, error_type=error_type)]

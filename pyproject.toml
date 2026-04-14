@@ -1,3 +1,15 @@
+[project]
+name = "runway"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+desktop = [
+    "pystray>=0.19",
+    "Pillow>=10",
+    "packaging>=24",
+]
+
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
 exclude = [
@@ -27,6 +39,7 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
+    "sidecar_app/spec",
 ]
 
 # Same as Black.
@@ -119,7 +132,7 @@ warn_no_return = true
 warn_unreachable = false
 strict_equality = false
 ignore_missing_imports = true
-exclude = ["tests", "scripts"]
+exclude = ["tests", "scripts", "sidecar_app"]
 
 [[tool.mypy.overrides]]
 module = "app.core.config"

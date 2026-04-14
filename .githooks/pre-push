@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-push hook: mirrors the CI lint-python + test jobs.
+# Installed automatically by `make install` via `git config core.hooksPath .githooks`.
+set -euo pipefail
+
+VENV=".venv"
+
+if [ ! -d "$VENV" ]; then
+    echo "pre-push: .venv not found — run 'make install' first" >&2
+    exit 1
+fi
+
+echo "pre-push: ruff check..."
+"$VENV/bin/ruff" check .
+
+echo "pre-push: ruff format..."
+"$VENV/bin/ruff" format --check .
+
+echo "pre-push: mypy..."
+"$VENV/bin/mypy" .
+
+echo "pre-push: pytest..."
+"$VENV/bin/pytest" --ignore=tests/unit/test_browser_cookies.py -q
+
+echo "pre-push: all checks passed."

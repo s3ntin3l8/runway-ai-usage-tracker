@@ -27,7 +27,9 @@ import sqlite3
 import struct
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -84,7 +86,11 @@ __REGISTRY__ = {
             "icon": "\ud83d\ude80",
             "rules": [
                 {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}},
-                {"type": "env", "variable": "OPENROUTER_HTTP_REFERER", "mapping": {"value": "http_referer"}},
+                {
+                    "type": "env",
+                    "variable": "OPENROUTER_HTTP_REFERER",
+                    "mapping": {"value": "http_referer"},
+                },
                 {"type": "env", "variable": "OPENROUTER_X_TITLE", "mapping": {"value": "x_title"}},
             ],
         },
@@ -1435,6 +1441,198 @@ def run_collection(config: dict[str, Any]) -> list[dict[str, Any]]:
     return all_metrics
 
 
+class DaemonRunner:
+    """Owns the daemon lifecycle: collection loop, status tracking, threading."""
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        on_status_change: Callable[[str], None] | None = None,
+    ) -> None:
+        self._config = config
+        self._interval: int = config.get("interval_seconds", 1800)
+        self.on_status_change = on_status_change
+
+        # Readable state attributes
+        self.last_cycle_at: float | None = None
+        self.last_metrics_count: int = 0
+        self.last_http_code: int | None = None
+        self.last_error: str | None = None
+
+        # Internal state flags
+        self._status_reason: str = "starting"  # "starting"|"success"|"queued"|"error"|"paused"
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._paused = False
+        self._thread: threading.Thread | None = None
+
+    # ------------------------------------------------------------------
+    # Status property (computed)
+    # ------------------------------------------------------------------
+
+    @property
+    def status(self) -> str:
+        """Return one of: 'starting' | 'ok' | 'warn' | 'err' | 'paused'."""
+        with self._lock:
+            reason = self._status_reason
+
+        if reason == "starting":
+            return "starting"
+        if reason == "paused":
+            return "paused"
+        if reason == "error":
+            return "err"
+        if reason == "queued":
+            return "warn"
+        # reason == "success"
+        # Check staleness: warn if last cycle was more than 2× interval ago
+        if self.last_cycle_at is not None:
+            age = time.time() - self.last_cycle_at
+            if age > 2 * self._interval:
+                return "warn"
+        return "ok"
+
+    # ------------------------------------------------------------------
+    # Public methods
+    # ------------------------------------------------------------------
+
+    def run_once(self) -> bool:
+        """Run one collection+ingest cycle synchronously. Returns True on success."""
+        api_url = self._config["api_url"]
+        api_key = self._config["api_key"]
+
+        try:
+            logging.info("Starting collection cycle...")
+            metrics = run_collection(self._config)
+
+            if metrics:
+                payload = {"provider": f"sidecar-{get_hostname()}", "metrics": metrics}
+
+                # Try to flush queue first
+                queue_flush(api_url, api_key)
+
+                # Send fresh metrics
+                success, result, code = http_post_signed_with_retry(
+                    f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
+                    payload,
+                    api_key,
+                    max_attempts=self._config.get("retry_attempts", 3),
+                    backoff_seconds=self._config.get("retry_backoff_seconds", 5),
+                )
+
+                with self._lock:
+                    self.last_cycle_at = time.time()
+                    self.last_metrics_count = len(metrics)
+                    self.last_http_code = code
+
+                if success:
+                    logging.info(f"Successfully sent {len(metrics)} metrics")
+                    with self._lock:
+                        self.last_error = None
+                        self._status_reason = "success"
+                    self._fire_status_change()
+                    return True
+                # Check for clock skew error (400 timestamp_expired)
+                if (
+                    code == 400
+                    and isinstance(result, dict)
+                    and result.get("detail", {}).get("error") == "timestamp_expired"
+                ):
+                    skew = result.get("detail", {}).get("skew_seconds", "?")
+                    logging.error("=" * 60)
+                    logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")
+                    logging.error(f"Server reported skew of {skew} seconds.")
+                    logging.error("Please check NTP sync on this machine.")
+                    logging.error("=" * 60)
+                else:
+                    logging.error(f"Failed to send metrics (HTTP {code}): {result}")
+                queue_push(payload)
+                with self._lock:
+                    self.last_error = str(result)
+                    # "error" if we got a real HTTP response (non-2xx), "queued" for
+                    # network-level failures (no connectivity, code 0)
+                    self._status_reason = "error" if code > 0 else "queued"
+                self._fire_status_change()
+                return False
+            logging.info("No metrics collected in this cycle")
+            with self._lock:
+                self.last_cycle_at = time.time()
+                self.last_metrics_count = 0
+                self.last_http_code = None
+                self._status_reason = "success"
+            self._fire_status_change()
+            return True
+
+        except Exception as e:
+            logging.error(f"Unexpected error in collection loop: {e}")
+            with self._lock:
+                self.last_cycle_at = time.time()
+                self.last_error = str(e)
+                self._status_reason = "error"
+            self._fire_status_change()
+            return False
+
+    def start(self) -> None:
+        """Spawn a background daemon thread running the collection loop."""
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop, name="DaemonRunner", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Signal the loop to exit and join the background thread."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+
+    def pause(self) -> None:
+        """Temporarily skip collection cycles."""
+        with self._lock:
+            self._paused = True
+            self._status_reason = "paused"
+        self._fire_status_change()
+
+    def resume(self) -> None:
+        """Unpause collection cycles."""
+        with self._lock:
+            self._paused = False
+            # Restore status based on last cycle result; treat as starting if no cycle yet
+            if self.last_cycle_at is None:
+                self._status_reason = "starting"
+            else:
+                # Restore to "success" so the status property can recompute ok/warn from
+                # last_cycle_at staleness rather than remaining stuck on "paused"
+                self._status_reason = "success"
+        self._fire_status_change()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _fire_status_change(self) -> None:
+        """Invoke on_status_change callback if provided."""
+        if self.on_status_change is not None:
+            self.on_status_change(self.status)
+
+    def _loop(self) -> None:
+        """Background thread: run collection cycles until stopped."""
+        while not self._stop_event.is_set():
+            if self._paused:
+                # While paused, sleep in short bursts so stop() is responsive
+                self._stop_event.wait(timeout=1)
+                continue
+
+            self.run_once()
+
+            if self._stop_event.is_set():
+                break
+
+            # Wait for the next interval, waking early if stopped
+            self._stop_event.wait(timeout=self._interval)
+
+        logging.info("DaemonRunner loop exited.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Runway Sidecar")
     parser.add_argument("--config", help="Path to config.json")
@@ -1452,7 +1650,6 @@ def main():
     atexit.register(cleanup)
 
     api_url = config["api_url"]
-    api_key = config["api_key"]
     interval = config.get("interval_seconds", 1800)
 
     logging.info(f"Sidecar started for {api_url} (Interval: {interval}s)")
@@ -1460,58 +1657,18 @@ def main():
     global _daemon_running
     _daemon_running = True
 
-    while _daemon_running:
+    runner = DaemonRunner(config)
+
+    if args.run_once:
+        runner.run_once()
+    else:
+        runner.start()
         try:
-            logging.info("Starting collection cycle...")
-            metrics = run_collection(config)
-
-            if metrics:
-                payload = {"provider": f"sidecar-{get_hostname()}", "metrics": metrics}
-
-                # Try to flush queue first
-                queue_flush(api_url, api_key)
-
-                # Send fresh metrics
-                success, result, code = http_post_signed_with_retry(
-                    f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
-                    payload,
-                    api_key,
-                    max_attempts=config.get("retry_attempts", 3),
-                    backoff_seconds=config.get("retry_backoff_seconds", 5),
-                )
-
-                if success:
-                    logging.info(f"Successfully sent {len(metrics)} metrics")
-                else:
-                    # Check for clock skew error (400 timestamp_expired)
-                    if (
-                        code == 400
-                        and isinstance(result, dict)
-                        and result.get("detail", {}).get("error") == "timestamp_expired"
-                    ):
-                        skew = result.get("detail", {}).get("skew_seconds", "?")
-                        logging.error("=" * 60)
-                        logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")
-                        logging.error(f"Server reported skew of {skew} seconds.")
-                        logging.error("Please check NTP sync on this machine.")
-                        logging.error("=" * 60)
-                    else:
-                        logging.error(f"Failed to send metrics (HTTP {code}): {result}")
-                    queue_push(payload)
-            else:
-                logging.info("No metrics collected in this cycle")
-
-        except Exception as e:
-            logging.error(f"Unexpected error in collection loop: {e}")
-
-        if args.run_once:
-            break
-
-        # Wait for next interval
-        for _ in range(interval):
-            if not _daemon_running:
-                break
-            time.sleep(1)
+            # Block until signal handler sets _daemon_running = False
+            while _daemon_running:
+                time.sleep(1)
+        finally:
+            runner.stop()
 
     logging.info("Sidecar stopping...")
 

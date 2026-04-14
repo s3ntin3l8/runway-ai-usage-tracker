@@ -68,6 +68,7 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
 async def force_collect(request: Request) -> dict[str, Any]:
     """Trigger an immediate collection cycle and update the registry."""
     from app.services.poller import poller
+
     try:
         poller.wake()  # reset dormancy before polling
         await poller.poll_now()
@@ -101,7 +102,7 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
             data = response.json()
         except Exception:
             data = response.text
-        
+
         # Mask authorization headers for safety in debug output
         safe_headers = dict(response.headers)
         if "Authorization" in safe_headers:
@@ -118,12 +119,16 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
     try:
         # 1. Ensure collectors are loaded
         await manager._sync_collectors()
-        
+
         # 2. Find and run the specific collector
         # We look through all active collectors (handles multi-account)
         # Note: manager uses 'smart_collectors' which are wrappers around the actual collectors
-        target_collectors = [sc.collector for key, sc in manager.smart_collectors.items() if key.startswith(f"{provider_id}:") or key == provider_id]
-        
+        target_collectors = [
+            sc.collector
+            for key, sc in manager.smart_collectors.items()
+            if key.startswith(f"{provider_id}:") or key == provider_id
+        ]
+
         if not target_collectors:
             # Try to get one from registry if not active yet
             collector = manager._create_collector(provider_id)
@@ -131,7 +136,9 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
                 target_collectors = [collector]
 
         if not target_collectors:
-            raise HTTPException(status_code=404, detail=f"No collector found for provider: {provider_id}")
+            raise HTTPException(
+                status_code=404, detail=f"No collector found for provider: {provider_id}"
+            )
 
         async with httpx.AsyncClient(
             event_hooks={"response": [intercept_response]}, timeout=30.0
@@ -140,11 +147,7 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
             # (In debug mode we usually just care about the strategy logic)
             await target_collectors[0].collect(client)
 
-        return {
-            "provider_id": provider_id,
-            "responses": raw_responses,
-            "timestamp": time.time()
-        }
+        return {"provider_id": provider_id, "responses": raw_responses, "timestamp": time.time()}
     except Exception as e:
         logger.error(f"Raw debug collection failed for {provider_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -340,9 +343,7 @@ class _ProviderConfigUpdate(BaseModel):
 
 @router.get("/provider-configs")
 @limiter.limit("30/minute")
-async def list_provider_configs(
-    request: Request, session: Session = Depends(get_session)
-) -> dict:
+async def list_provider_configs(request: Request, session: Session = Depends(get_session)) -> dict:
     """Return all known providers merged with their DB configuration."""
     from app.core.registry import registry
 
@@ -414,7 +415,9 @@ async def upsert_provider_config(
     if body.account_label is not None:
         row.account_label = body.account_label or None
     if body.poll_interval_seconds is not None:
-        row.poll_interval_seconds = body.poll_interval_seconds if body.poll_interval_seconds > 0 else None
+        row.poll_interval_seconds = (
+            body.poll_interval_seconds if body.poll_interval_seconds > 0 else None
+        )
     if body.api_key is not None:
         # Empty string = clear the stored key; non-empty = encrypt and store
         row.api_key = body.api_key if body.api_key else None
@@ -427,13 +430,12 @@ async def upsert_provider_config(
 
 @router.get("/app-config")
 @limiter.limit("30/minute")
-async def get_app_config(
-    request: Request, session: Session = Depends(get_session)
-) -> dict:
+async def get_app_config(request: Request, session: Session = Depends(get_session)) -> dict:
     """Return global application configuration."""
     cfg = session.exec(select(SystemConfig)).first()
     return {
-        "browser_preference": (cfg.browser_preference if cfg else None) or settings.BROWSER_PREFERENCE,
+        "browser_preference": (cfg.browser_preference if cfg else None)
+        or settings.BROWSER_PREFERENCE,
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
         "local_collector_enabled": is_local_collector_enabled(),
         "local_credential_scraping_enabled": is_local_credential_scraping_enabled(),
@@ -456,7 +458,9 @@ async def upsert_app_config(
     if body.browser_preference is not None:
         cfg.browser_preference = body.browser_preference or None
     if body.default_poll_interval_seconds is not None:
-        cfg.default_poll_interval_seconds = body.default_poll_interval_seconds if body.default_poll_interval_seconds > 0 else None
+        cfg.default_poll_interval_seconds = (
+            body.default_poll_interval_seconds if body.default_poll_interval_seconds > 0 else None
+        )
     if body.local_collector_enabled is not None:
         cfg.local_collector_enabled = body.local_collector_enabled
     if body.local_credential_scraping_enabled is not None:

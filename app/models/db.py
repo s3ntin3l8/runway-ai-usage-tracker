@@ -95,7 +95,9 @@ class ProviderConfig(SQLModel, table=True):
     account_id: str = Field(default="default")
     enabled: bool = Field(default=True)
     api_key_encrypted: str | None = Field(default=None)  # encrypted via encryption_service
-    session_cookie_encrypted: str | None = Field(default=None)  # encrypted session/auth cookie override
+    session_cookie_encrypted: str | None = Field(
+        default=None
+    )  # encrypted session/auth cookie override
     account_label: str | None = None
     poll_interval_seconds: int | None = None  # None = use collector default TTL
 
@@ -138,5 +140,5 @@ class SystemConfig(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     browser_preference: str | None = None  # e.g. "safari,chrome,firefox"
     default_poll_interval_seconds: int | None = None  # None = use per-collector default TTL
-    local_collector_enabled: bool | None = None   # None = use env var default
+    local_collector_enabled: bool | None = None  # None = use env var default
     local_credential_scraping_enabled: bool | None = None  # None = use env var default

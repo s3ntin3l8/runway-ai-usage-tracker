@@ -83,7 +83,7 @@ class AnthropicWebMixin:
             if hasattr(self, "_get_credentials") and hasattr(self, "_extract_identity_from_oauth"):
                 creds = await self._get_credentials()
                 identity_str = self._extract_identity_from_oauth(creds)
-            
+
             identity_suffix = f" | {identity_str}" if identity_str else ""
 
             return self._parse_statusline_response(data, identity_suffix, creds)
@@ -129,7 +129,9 @@ class AnthropicWebMixin:
             reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
 
             # Correct window type based on key
-            w_type = "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
+            w_type = (
+                "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
+            )
 
             results.append(
                 {
@@ -331,7 +333,9 @@ class AnthropicWebMixin:
                 or account_data.get("subscription")
                 or ""
             )
-            logger.warning(f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}")
+            logger.warning(
+                f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}"
+            )
         if not plan and org_data:
             # Org response sometimes has plan/capabilities info
             plan = (
@@ -380,7 +384,13 @@ class AnthropicWebMixin:
                     pass
 
             # Correct window type based on key
-            w_type = "session" if api_key == "five_hour" else "weekly" if "seven_day" in api_key else "unknown"
+            w_type = (
+                "session"
+                if api_key == "five_hour"
+                else "weekly"
+                if "seven_day" in api_key
+                else "unknown"
+            )
 
             results.append(
                 {

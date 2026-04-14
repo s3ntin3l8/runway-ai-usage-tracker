@@ -6,12 +6,16 @@ PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 
-.PHONY: help install dev run sidecar test test-cov lint format css watch secrets clean
+.PHONY: help install install-hooks dev run sidecar test test-cov lint format css watch secrets clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Set up venv, install Python and Node dependencies
+install-hooks: ## Wire up tracked .githooks/ as the git hooks directory
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-push
+
+install: install-hooks ## Set up venv, install Python and Node dependencies
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt

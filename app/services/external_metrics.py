@@ -157,7 +157,7 @@ class ExternalMetricService:
 
                 # Capture account label if available
                 acc_label = card.get("account_label") or metadata.get("account_label") or "Default"
-                
+
                 if acc_label not in aggregated:
                     aggregated[acc_label] = {
                         "5h": get_default_window_data(),
@@ -221,7 +221,9 @@ class ExternalMetricService:
                             "remaining": f"${remaining:.2f}",
                             "unit": f"${limit:.0f} limit",
                             "reset": f"Rolling {window}",
-                            "health": ("good" if pct < 70 else "warning" if pct < 90 else "critical"),
+                            "health": (
+                                "good" if pct < 70 else "warning" if pct < 90 else "critical"
+                            ),
                             "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
                             "detail": f"Combined from {host_count} hosts · ${used:.2f} used ({time_str})",
                             "account_label": acc_label if acc_label != "Default" else None,

@@ -135,14 +135,14 @@ class ZaiCollector(BaseCollector):
         code = data.get("code", 0)
         success = data.get("success", False)
         if not (success and code == 200):
-            logger.debug(f"zAI quota response invalid at {endpoint}: code={code}, success={success}")
+            logger.debug(
+                f"zAI quota response invalid at {endpoint}: code={code}, success={success}"
+            )
             return None
 
         plan_data = data.get("data", {})
         plan_name = (
-            plan_data.get("planName")
-            or plan_data.get("plan")
-            or plan_data.get("packageName")
+            plan_data.get("planName") or plan_data.get("plan") or plan_data.get("packageName")
         )
         limits = plan_data.get("limits", [])
 
@@ -211,8 +211,20 @@ class ZaiCollector(BaseCollector):
             except (ValueError, OSError, OverflowError):
                 reset_str = "Unknown"
 
-        health = "good" if pct_used < self.HEALTH_WARNING_THRESHOLD else "warning" if pct_used < self.HEALTH_CRITICAL_THRESHOLD else "critical"
-        pace = "Stable" if pct_used < self.HEALTH_WARNING_THRESHOLD else "High" if pct_used < self.HEALTH_CRITICAL_THRESHOLD else "Critical"
+        health = (
+            "good"
+            if pct_used < self.HEALTH_WARNING_THRESHOLD
+            else "warning"
+            if pct_used < self.HEALTH_CRITICAL_THRESHOLD
+            else "critical"
+        )
+        pace = (
+            "Stable"
+            if pct_used < self.HEALTH_WARNING_THRESHOLD
+            else "High"
+            if pct_used < self.HEALTH_CRITICAL_THRESHOLD
+            else "Critical"
+        )
 
         return {
             "service_name": service,

@@ -240,9 +240,7 @@ class CredentialProvider:
 
             with Session(engine) as _s:
                 cfg = _s.exec(
-                    sqlselect(ProviderConfig).where(
-                        ProviderConfig.provider_id == provider_id
-                    )
+                    sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
                 ).first()
                 if cfg and cfg.api_key:
                     return cfg.api_key
@@ -267,9 +265,7 @@ class CredentialProvider:
 
             with Session(engine) as _s:
                 cfg = _s.exec(
-                    sqlselect(ProviderConfig).where(
-                        ProviderConfig.provider_id == provider_id
-                    )
+                    sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
                 ).first()
                 if cfg and cfg.session_cookie:
                     return cfg.session_cookie

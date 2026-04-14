@@ -53,7 +53,9 @@ class OpenRouterCollector(BaseCollector):
             headers["X-Title"] = settings.OPENROUTER_X_TITLE
         return headers
 
-    async def _key_endpoint_request(self, client: httpx.AsyncClient, headers: dict[str, str]) -> httpx.Response | None:
+    async def _key_endpoint_request(
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> httpx.Response | None:
         """Make best-effort request to key endpoint with 1s timeout."""
         try:
             return await client.get(f"{OPENROUTER_BASE_URL}/key", headers=headers, timeout=1)
@@ -77,7 +79,9 @@ class OpenRouterCollector(BaseCollector):
             )
 
             if credits_resp.status_code != 200:
-                logger.error(f"OpenRouter credits API error (HTTP {credits_resp.status_code}): {credits_resp.text}")
+                logger.error(
+                    f"OpenRouter credits API error (HTTP {credits_resp.status_code}): {credits_resp.text}"
+                )
                 return []
 
             credits_data = credits_resp.json()
@@ -145,7 +149,9 @@ class OpenRouterCollector(BaseCollector):
                         }
                     )
             elif key_resp:
-                logger.debug(f"OpenRouter key API non-200 (HTTP {key_resp.status_code}), skipping key card")
+                logger.debug(
+                    f"OpenRouter key API non-200 (HTTP {key_resp.status_code}), skipping key card"
+                )
         except Exception as e:
             logger.debug(f"OpenRouter key API best-effort fetch failed: {e}")
 

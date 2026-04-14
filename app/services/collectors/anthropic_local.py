@@ -75,7 +75,7 @@ class AnthropicLocalMixin:
             if hasattr(self, "_get_credentials") and hasattr(self, "_extract_identity_from_oauth"):
                 creds = await self._get_credentials()
                 identity_str = self._extract_identity_from_oauth(creds)
-                
+
                 if creds:
                     raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
                     if raw_tier:
@@ -88,7 +88,7 @@ class AnthropicLocalMixin:
                             "tier_5": "Enterprise",
                         }
                         tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
-            
+
             if not tier and hasattr(self, "_get_local_config_hints"):
                 local_hints = self._get_local_config_hints()
                 local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
@@ -109,7 +109,11 @@ class AnthropicLocalMixin:
         return ansi_escape.sub("", text)
 
     def _parse_cli_usage_output(
-        self, output: str, identity_suffix: str = "", tier: str | None = None, account_label: str | None = None
+        self,
+        output: str,
+        identity_suffix: str = "",
+        tier: str | None = None,
+        account_label: str | None = None,
     ) -> list[dict[str, Any]]:
         """Parse the text output of 'claude /usage' into quota cards."""
         results = []
@@ -136,7 +140,13 @@ class AnthropicLocalMixin:
             remaining_pct = 100.0 - pct_used
 
             # Correct window type
-            w_type = "session" if "Session" in u_type or "Window" in u_type else "weekly" if "Week" in u_type else "unknown"
+            w_type = (
+                "session"
+                if "Session" in u_type or "Window" in u_type
+                else "weekly"
+                if "Week" in u_type
+                else "unknown"
+            )
 
             # Parse reset duration string "2h 15m", "3d 4h", etc.
             reset_at = None
@@ -234,7 +244,7 @@ class AnthropicLocalMixin:
                     oauth = data.get("claudeAiOauth", {})
                     raw_sub = oauth.get("subscriptionType")
                     raw_tier = oauth.get("rateLimitTier")
-                    
+
                     if raw_sub:
                         tier = str(raw_sub).capitalize()
                     elif raw_tier:
@@ -248,12 +258,12 @@ class AnthropicLocalMixin:
                             "default_claude_ai": "Pro",
                         }
                         tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
-                    
+
                     if not tier:
                         plan = data.get("account", {}).get("plan", "").lower()
                         if plan:
                             tier = plan.capitalize()
-                    
+
                     oauth_acc = data.get("oauthAccount", {})
                     email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
 
@@ -278,7 +288,7 @@ class AnthropicLocalMixin:
                                     tier = "Pro"  # Most likely Pro if using Claude Code
                                 else:
                                     tier = str(bt).capitalize()
-                            
+
                             if not tier:
                                 local_tier = data.get("billing_tier") or data.get("tier")
                                 if local_tier:
@@ -294,7 +304,7 @@ class AnthropicLocalMixin:
             else settings.CLAUDE_PRO_LIMIT
         )
         cutoff = datetime.now(UTC) - timedelta(hours=5)
-        
+
         # Persist identity if found
         if email:
             self.account_label = email

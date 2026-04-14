@@ -75,7 +75,9 @@ class AnthropicCollector(
                     if oauth.get("refreshToken"):
                         token_data["refresh_token"] = oauth["refreshToken"]
                     label = creds.get("oauthAccount", {}).get("emailAddress")
-                    await token_cache.store("anthropic", token_data, account_id=None, account_label=label)
+                    await token_cache.store(
+                        "anthropic", token_data, account_id=None, account_label=label
+                    )
                 return token
         return None
 

@@ -88,7 +88,7 @@ def _snapshot_to_dict(s: UsageSnapshot) -> dict:
     ts = s.timestamp
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
-    
+
     return {
         "id": s.id,
         "timestamp": ts.isoformat(),

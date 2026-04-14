@@ -115,7 +115,10 @@ class BaseCollector(ABC):
 
                 # Standalone username after a dot/separator e.g. "· username" or "| username"
                 # This version handles trailing brackets like [Sidecar] or [Statusline]
-                user_match = re.search(r"[·|]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)(?:\s*\[[^\]]+\])?$", detail)
+                user_match = re.search(
+                    r"[·|]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)(?:\s*\[[^\]]+\])?$",
+                    detail,
+                )
                 if user_match:
                     discovered_label = user_match.group(1)
                     break
@@ -127,9 +130,13 @@ class BaseCollector(ABC):
         for card in results:
             if "account_id" not in card or not card.get("account_id"):
                 card["account_id"] = self.account_id or "default"
-            
+
             # Use self.account_label if set, otherwise try to use card's existing label, fallback to "Default"
-            if "account_label" not in card or not card.get("account_label") or card.get("account_label").lower() == "default":
+            if (
+                "account_label" not in card
+                or not card.get("account_label")
+                or card.get("account_label").lower() == "default"
+            ):
                 card["account_label"] = self.account_label or "Default"
 
             # Phase 0B: inject provider_id and window_type from class constants
@@ -141,8 +148,9 @@ class BaseCollector(ABC):
 
             # Phase 1: Ensure timestamps are timezone-aware ISO strings
             from datetime import UTC, datetime
+
             now_iso = datetime.now(UTC).isoformat()
-            
+
             if "updated_at" not in card or not card.get("updated_at"):
                 card["updated_at"] = now_iso
             elif isinstance(card.get("updated_at"), str):
@@ -151,7 +159,11 @@ class BaseCollector(ABC):
                 if "T" in ua and "+" not in ua and not ua.endswith("Z"):
                     card["updated_at"] = f"{ua}Z"
 
-            if "reset_at" in card and card.get("reset_at") and isinstance(card.get("reset_at"), str):
+            if (
+                "reset_at" in card
+                and card.get("reset_at")
+                and isinstance(card.get("reset_at"), str)
+            ):
                 ra = card["reset_at"]
                 if "T" in ra and "+" not in ra and not ra.endswith("Z"):
                     card["reset_at"] = f"{ra}Z"

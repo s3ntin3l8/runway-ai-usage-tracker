@@ -133,8 +133,7 @@ class CollectorManager:
 
                 with Session(engine) as _s:
                     db_configs = {
-                        r.provider_id: r
-                        for r in _s.exec(sqlselect(ProviderConfig)).all()
+                        r.provider_id: r for r in _s.exec(sqlselect(ProviderConfig)).all()
                     }
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
@@ -161,7 +160,9 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     self.smart_collectors[key] = SmartCollector(
-                        collector=cls(account_label=db_label), collector_name=name, ttl=effective_ttl
+                        collector=cls(account_label=db_label),
+                        collector_name=name,
+                        ttl=effective_ttl,
                     )
                 else:
                     sc = self.smart_collectors[key]
@@ -182,7 +183,8 @@ class CollectorManager:
                         # Remove existing dynamic collector and purge its stale cards
                         self.smart_collectors.pop(f"{p_id}:{acc_id}", None)
                         self._registry = [
-                            c for c in self._registry
+                            c
+                            for c in self._registry
                             if not (c.get("provider_id") == p_id and c.get("account_id") == acc_id)
                         ]
                         continue
@@ -311,7 +313,9 @@ class CollectorManager:
         """Get flattened statistics for all active collectors."""
         return {"collectors": [sc.get_stats() for sc in self.smart_collectors.values()]}
 
-    async def collect_one(self, provider_id: str, account_id: str | None = None) -> list[dict[str, Any]]:
+    async def collect_one(
+        self, provider_id: str, account_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Reset and immediately re-collect a single provider, merging results into the registry."""
         target_prefix = f"{provider_id}:"
         results: list[dict[str, Any]] = []
@@ -330,12 +334,27 @@ class CollectorManager:
 
         # Merge: replace old cards for this provider (and account if specified)
         if account_id:
-            kept = [c for c in self._registry
-                    if not (c.get("provider_id") == provider_id and c.get("account_id") == account_id)]
+            kept = [
+                c
+                for c in self._registry
+                if not (c.get("provider_id") == provider_id and c.get("account_id") == account_id)
+            ]
         else:
             kept = [c for c in self._registry if c.get("provider_id") != provider_id]
         self._registry = kept + results
         return results
+
+    def _create_collector(self, provider_id: str) -> Any:
+        """Instantiate a one-off collector for *provider_id* (not added to smart_collectors).
+
+        Used by the debug endpoint to run a collector that is not currently active.
+        Returns None if the provider is not registered.
+        """
+        entry = self.collector_registry.get(provider_id)
+        if entry is None:
+            return None
+        cls, _name, _ttl = entry
+        return cls()
 
     async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""
