@@ -49,6 +49,24 @@ docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/user/runway:latest
 
 Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metrics.
 
+### Sidecar desktop app (macOS / Windows)
+
+Pre-built installers are attached to every [GitHub release](https://github.com/s3ntin3l8/ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`.
+
+The binaries are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS's built-in malware gatekeeper will block the first launch.
+
+**macOS** (Gatekeeper: *"Apple could not verify this app is free of malware"*):
+
+```bash
+# After unzipping, strip the quarantine attribute:
+xattr -cr ~/Downloads/Runway\ Sidecar.app
+open ~/Downloads/Runway\ Sidecar.app
+```
+
+Alternatively: right-click the app in Finder → **Open** → **Open** again in the dialog. Only required on the first launch.
+
+**Windows** (SmartScreen: *"Windows protected your PC"*): click **More info** → **Run anyway**.
+
 ## Supported Providers
 
 | Provider | Collection Method | Cards | Env Var | Docs |

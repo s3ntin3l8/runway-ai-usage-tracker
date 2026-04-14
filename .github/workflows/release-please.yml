@@ -77,16 +77,18 @@ jobs:
         include:
           - os: macos-latest
             spec: sidecar_app/spec/macos.spec
-            artifact: Runway-Sidecar-macOS.zip
+            platform: macOS
             dist_path: "dist/Runway Sidecar.app"
           - os: windows-latest
             spec: sidecar_app/spec/windows.spec
-            artifact: Runway-Sidecar-Windows.zip
+            platform: Windows
             dist_path: dist/RunwaySidecar.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
       contents: write
+    env:
+      ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-${{ needs.release-please.outputs.tag_name }}.zip
     steps:
       - uses: actions/checkout@v6
         with:
@@ -105,15 +107,15 @@ jobs:
 
       - name: Zip artifact (macOS)
         if: runner.os == 'macOS'
-        run: zip -r "${{ matrix.artifact }}" "${{ matrix.dist_path }}"
+        run: zip -r "${{ env.ARTIFACT }}" "${{ matrix.dist_path }}"
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path "${{ matrix.dist_path }}" -DestinationPath "${{ matrix.artifact }}"
+        run: Compress-Archive -Path "${{ matrix.dist_path }}" -DestinationPath "${{ env.ARTIFACT }}"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: ${{ matrix.artifact }}
+          files: ${{ env.ARTIFACT }}
