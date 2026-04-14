@@ -3,6 +3,8 @@ name: Sidecar Release Build
 on:
   push:
     tags: [ 'v*' ]
+  release:
+    types: [ published ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
