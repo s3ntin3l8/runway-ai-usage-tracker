@@ -39,6 +39,7 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
+    "sidecar_app/spec",
 ]
 
 # Same as Black.
