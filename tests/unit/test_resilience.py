@@ -8,7 +8,7 @@ import pytest
 
 from app.core.utils import extract_token_regex, human_delta
 from app.services.collectors.base import BaseCollector
-from app.services.collectors.zai_plan import ZaiPlanCollector
+from app.services.collectors.zai import ZaiCollector
 from app.services.smart_collector import SmartCollector
 
 
@@ -89,14 +89,18 @@ class TestUtilityResilience:
 class TestCollectorResilience:
     @pytest.mark.asyncio
     async def test_zai_plan_timestamp_overflow(self):
-        """Verify ZaiPlanCollector handles extreme timestamps without crashing."""
-        collector = ZaiPlanCollector()
+        """Verify ZaiCollector handles extreme timestamps without crashing."""
+        collector = ZaiCollector()
 
         # Mock API limit with extreme/malformed timestamp
         limit_data = {
             "type": "TOKENS_LIMIT",
-            "limit": 1000,
-            "used": 100,
+            "unit": 3,
+            "number": 168,
+            "usage": 1000,
+            "currentValue": 100,
+            "remaining": 900,
+            "percentage": 10,
             "nextResetTime": 9999999999999999,  # Extreme far future / overflow risk
         }
 

@@ -72,9 +72,8 @@ def test_gemini_path_discovery():
 
 def test_disabled_scraping():
     """Test that discovery returns empty/None if scraping is disabled."""
-    # Note: We patch settings at the instance level used in the provider
     with (
-        patch.object(settings, "LOCAL_CREDENTIAL_SCRAPING_ENABLED", False),
+        patch("app.services.credential_provider.is_local_credential_scraping_enabled", return_value=False),
         patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
     ):
         assert CredentialProvider.get_github_token() == ""
