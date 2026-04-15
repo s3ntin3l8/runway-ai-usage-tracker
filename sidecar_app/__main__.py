@@ -1,9 +1,16 @@
 """Bootstrap entry point for the Runway sidecar desktop app."""
 
+import sys
+import traceback
+
+print("[DIAG] __main__ imports starting", flush=True)
+
 from sidecar_app.config import get_config_path, load_config, write_template_config
 from sidecar_app.daemon import TrayDaemon
 from sidecar_app.tray import SidecarTray
 from sidecar_app.updater import UpdateChecker
+
+print("[DIAG] __main__ imports done", flush=True)
 
 _FALLBACK_CONFIG: dict = {
     "api_url": "http://localhost:8765",
@@ -13,8 +20,10 @@ _FALLBACK_CONFIG: dict = {
 
 
 def main() -> None:
+    print("[DIAG] main() entered", flush=True)
     # 1. Find config path
     config_path = get_config_path()
+    print(f"[DIAG] config_path={config_path}", flush=True)
 
     # 2. Load config (handle missing without calling sys.exit)
     needs_setup_notification = False
@@ -32,7 +41,9 @@ def main() -> None:
             config = dict(_FALLBACK_CONFIG)
 
     # 3. Create daemon + tray
+    print("[DIAG] creating TrayDaemon", flush=True)
     daemon = TrayDaemon(config)
+    print("[DIAG] creating SidecarTray", flush=True)
     tray = SidecarTray(daemon, config, config_path)
 
     # 4. Wire status change callback
@@ -51,6 +62,7 @@ def main() -> None:
         daemon.start()
 
     # 7. Run tray — blocks main thread
+    print("[DIAG] calling tray.run()", flush=True)
     if needs_setup_notification:
 
         def notify_setup() -> None:
@@ -69,4 +81,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        print("[DIAG] UNHANDLED EXCEPTION in main():", flush=True)
+        traceback.print_exc()
+        input("Press Enter to exit...")  # keep window open
