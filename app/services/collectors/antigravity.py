@@ -17,6 +17,26 @@ from app.services.collectors.base import BaseCollector
 logger = logging.getLogger(__name__)
 
 
+def _format_reset(unix_ts: int | float | None) -> tuple[str, str | None]:
+    """Convert a Unix timestamp to (human-readable display, ISO 8601 string).
+
+    Returns ("Dynamic", None) when timestamp is absent or invalid.
+    """
+    if not unix_ts:
+        return "Dynamic", None
+    try:
+        dt = datetime.fromtimestamp(float(unix_ts), UTC)
+        reset_at = dt.isoformat()
+        seconds = int((dt - datetime.now(UTC)).total_seconds())
+        if seconds < 0:
+            return "Expired", reset_at
+        if seconds < 3600:
+            return f"in {seconds // 60}m", reset_at
+        return f"in {seconds // 3600}h {(seconds % 3600) // 60}m", reset_at
+    except Exception:
+        return "Dynamic", None
+
+
 class AntigravityCollector(BaseCollector):
     PROVIDER_ID = "antigravity"
     DEFAULT_WINDOW_TYPE = "session"
@@ -182,22 +202,32 @@ class AntigravityCollector(BaseCollector):
             if rem_frac is None:
                 continue
 
-            service_name = config.get("label", "Unknown Model")
+            label = config.get("label", "Unknown Model")
+            model_id = config.get("modelOrAlias", label)
             rem_pct = float(rem_frac) * 100
+            reset_display, reset_at = _format_reset(quota.get("resetTime"))
 
             results.append(
                 {
-                    "service_name": f"AG: {service_name}",
+                    "service_name": label,
                     "icon": "🛸",
                     "remaining": f"{rem_pct:.1f}%",
                     "unit": "capacity",
-                    "reset": "Dynamic",
+                    "reset": reset_display,
                     "pace": "Continuous",
                     "health": "good" if rem_pct > 30 else "warning",
                     "detail": f"{plan} | {email} [LSP]",
                     "tier": plan,
                     "data_source": "lsp",
                     "updated_at": datetime.now(UTC).isoformat(),
+                    "provider_id": "antigravity",
+                    "account_label": email or None,
+                    "model_id": model_id,
+                    "used_value": round(100.0 - rem_pct, 4),
+                    "limit_value": 100.0,
+                    "unit_type": "percent",
+                    "window_type": "session",
+                    "reset_at": reset_at,
                 }
             )
 
@@ -205,7 +235,7 @@ class AntigravityCollector(BaseCollector):
         credits_data = user_status.get("userTier", {}).get("availableCredits", [])
         for cred in credits_data:
             c_type = cred.get("creditType", "AI Credits")
-            amount = cred.get("creditAmount", "0")
+            amount = str(cred.get("creditAmount", "0"))
 
             # Map types to human names
             name_map = {
@@ -214,18 +244,29 @@ class AntigravityCollector(BaseCollector):
             }
             display_name = name_map.get(c_type, c_type.replace("_", " ").title())
 
+            try:
+                health = "good" if int(amount) > 100 else "warning"
+            except ValueError:
+                health = "warning"
+
             results.append(
                 {
-                    "service_name": f"AG: {display_name}",
+                    "service_name": display_name,
                     "icon": "💰",
                     "remaining": amount,
                     "unit": "credits",
                     "reset": "Prepaid",
                     "pace": "N/A",
-                    "health": "good" if int(amount) > 100 else "warning",
+                    "health": health,
                     "detail": f"{display_name} | {email} [LSP]",
                     "data_source": "lsp",
                     "updated_at": datetime.now(UTC).isoformat(),
+                    "provider_id": "antigravity",
+                    "account_label": email or None,
+                    "used_value": None,
+                    "limit_value": None,
+                    "unit_type": "credits",
+                    "window_type": "session",
                 }
             )
         return results
@@ -239,18 +280,27 @@ class AntigravityCollector(BaseCollector):
             res = []
             for name, usage in data.get("models", {}).items():
                 rem = usage.get("remaining_percent", 0.0)
+                reset_display, reset_at = _format_reset(usage.get("resets_at"))
                 res.append(
                     {
-                        "service_name": f"AG: {name}",
+                        "service_name": name,
                         "icon": "🛸",
                         "remaining": f"{rem:.1f}%",
                         "unit": "remaining",
-                        "reset": "Unknown",
+                        "reset": reset_display,
                         "pace": "N/A",
                         "health": "good" if rem > 30 else "warning",
                         "detail": f"{name} [IDE/File]",
                         "data_source": "local_file",
                         "updated_at": datetime.now(UTC).isoformat(),
+                        "provider_id": "antigravity",
+                        "account_label": None,
+                        "model_id": name,
+                        "used_value": round(100.0 - rem, 4),
+                        "limit_value": 100.0,
+                        "unit_type": "percent",
+                        "window_type": "session",
+                        "reset_at": reset_at,
                     }
                 )
             return res

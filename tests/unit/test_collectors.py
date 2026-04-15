@@ -1445,7 +1445,14 @@ class TestAntigravityCollector:
 
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all("AG:" in card.get("service_name", "") for card in result)
+        assert all("AG:" not in card.get("service_name", "") for card in result)
+        assert all(card.get("provider_id") == "antigravity" for card in result)
+        assert all(card.get("model_id") is not None for card in result)
+        assert all(
+            card.get("used_value") == pytest.approx(100.0 - card_rem, abs=0.01)
+            for card in result
+            for card_rem in [float(card["remaining"].rstrip("%"))]
+        )
 
     @pytest.mark.asyncio
     async def test_collect_missing_file(self, mock_http_client):
@@ -1512,9 +1519,76 @@ class TestAntigravityCollector:
         credit_cards = [c for c in result if "credits" in c["service_name"].lower()]
         assert len(credit_cards) == 1, "Credits card not found"
         assert credit_cards[0]["remaining"] == "854"
-        assert credit_cards[0]["service_name"] == "AG: Google AI Credits"
+        assert credit_cards[0]["service_name"] == "Google AI Credits"
         assert credit_cards[0]["icon"] == "💰"
         assert credit_cards[0]["unit"] == "credits"
+        assert credit_cards[0]["provider_id"] == "antigravity"
+        assert credit_cards[0]["account_label"] == "test@example.com"
+        assert credit_cards[0]["used_value"] is None
+        assert credit_cards[0]["limit_value"] is None
+
+        # Check quota card enriched fields
+        assert quota_cards[0]["provider_id"] == "antigravity"
+        assert quota_cards[0]["account_label"] == "test@example.com"
+        assert quota_cards[0]["used_value"] == pytest.approx(50.0, abs=0.01)
+        assert quota_cards[0]["limit_value"] == 100.0
+        assert quota_cards[0]["unit_type"] == "percent"
+        assert quota_cards[0]["window_type"] == "session"
+
+    def test_format_reset_with_future_timestamp(self):
+        """_format_reset returns display string and ISO string for future timestamps."""
+        import time
+
+        from app.services.collectors.antigravity import _format_reset
+
+        future_ts = int(time.time()) + 7320  # 2 hours 2 minutes from now
+        display, reset_at = _format_reset(future_ts)
+
+        assert "2h" in display
+        assert reset_at is not None
+        assert "T" in reset_at  # ISO 8601 contains T separator
+
+    def test_format_reset_with_none(self):
+        """_format_reset returns Dynamic and None for missing timestamps."""
+        from app.services.collectors.antigravity import _format_reset
+
+        display, reset_at = _format_reset(None)
+        assert display == "Dynamic"
+        assert reset_at is None
+
+    @pytest.mark.asyncio
+    async def test_local_file_includes_reset_at(self, mock_http_client):
+        """Local file cards include reset_at when resets_at is present."""
+        import time
+        from unittest.mock import mock_open, patch
+
+        collector = AntigravityCollector()
+
+        quota_data = {
+            "models": {
+                "claude-sonnet-4": {
+                    "remaining_percent": 75.5,
+                    "resets_at": int(time.time()) + 3600,
+                }
+            }
+        }
+
+        with patch("builtins.open", mock_open(read_data=json.dumps(quota_data))):
+            with patch("app.services.collectors.antigravity.settings") as mock_settings:
+                mock_settings.ANTIGRAVITY_QUOTA_PATH = "/fake/quota.json"
+                mock_settings.LOCAL_COLLECTOR_ENABLED = True
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        card = result[0]
+        assert card["service_name"] == "claude-sonnet-4"
+        assert card["provider_id"] == "antigravity"
+        assert card["model_id"] == "claude-sonnet-4"
+        assert card["reset_at"] is not None
+        assert card["used_value"] == pytest.approx(24.5, abs=0.1)
+        assert (
+            card["account_label"] == "Default"
+        )  # no email from file; base collector fills in "Default"
 
 
 class TestOpenCodeCollector:
