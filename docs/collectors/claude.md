@@ -14,7 +14,11 @@ Anthropic Claude quota collector with 4-tier fallback: OAuth API → Web API →
 
 ### Primary: OAuth API
 **Endpoint:** `https://api.anthropic.com/api/oauth/usage`
-**Auth:** Bearer token from `CLAUDE_CODE_OAUTH_TOKEN`, `~/.claude/.credentials.json`, or macOS keychain
+**Auth:** Bearer token from:
+- `CLAUDE_CODE_OAUTH_TOKEN` environment variable (preferred)
+- `~/.config/claude/oauth_creds.json` (auto-discovered, created by `claude login`)
+- macOS Keychain (auto-discovered on macOS)
+
 **Quota Windows:** 5h session, 7d weekly, Sonnet weekly, Opus weekly, Extra usage
 
 ### Secondary: Web API (Chrome Cookies)
@@ -54,8 +58,11 @@ Anthropic Claude quota collector with 4-tier fallback: OAuth API → Web API →
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access |
-| `CLAUDE_CONFIG_DIR` | Optional | Comma-separated paths to config directories |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (auto-discovered from `~/.config/claude/oauth_creds.json` or macOS Keychain if not set) |
+
+**Auto-Discovery:**
+- Credentials file: `~/.config/claude/oauth_creds.json` (Linux/Windows) or Keychain (macOS)
+- Projects directory: `~/.config/claude/projects/` (auto-discovered for local logs)
 
 ## Sidecar Support
 

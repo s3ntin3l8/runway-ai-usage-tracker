@@ -93,7 +93,7 @@ python3 scripts/sidecar.py --daemon
 - **Offline Queue:** Caches metrics locally when server unreachable
 - **Retry Logic:** Exponential backoff for failed pushes
 - **PID File:** Prevents multiple daemon instances
-- **12 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, zAI, Kimi, Antigravity
+- **14 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2, Antigravity
 - **HMAC-SHA256 Signing:** Secure payload verification
 
 ## Configuration
@@ -229,6 +229,8 @@ launchctl start com.runway.sidecar
 | **Kimi Coding** | JWT/cookie | `KIMI_AUTH_TOKEN` or Chrome cookie |
 | **OpenRouter** | API key | `OPENROUTER_API_KEY` |
 | **MiniMax** | API key | `MINIMAX_API_KEY` |
+| **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |
+| **Kimi K2** | API key | `KIMI_K2_API_KEY` |
 | **Antigravity** | JSON file | `~/.antigravity/state/quota.json` |
 
 ## Deployment Modes
@@ -282,7 +284,8 @@ Example queue file:
 |              |                  |              |
 | - Files      | ---------------> | - Signature  |
 | - Keychain   |     POST         |   Verification
-| - Cookies    |   /api/ingest    | - API Calls  |
+| - Cookies    | /api/v1/fleet/   | - API Calls  |
+|              |   ingest         |              |
 +--------------+                  +--------------+
 ```
 
@@ -325,7 +328,7 @@ env | grep -E "(GITHUB|ZAI|KIMI|CLAUDE)"
 ```
 
 ### Push failures
-- Verify API URL is reachable: `curl http://server:8765/api/health`
+- Verify API URL is reachable: `curl http://server:8765/api/v1/system/health`
 - Check config has correct `api_key`
 - View logs: `tail -f ~/.config/runway/sidecar/sidecar.log`
 - Check queue: `ls -la ~/.config/runway/sidecar/queue/`

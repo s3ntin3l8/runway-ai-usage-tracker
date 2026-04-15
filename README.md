@@ -10,7 +10,7 @@
 
 ## Key Features
 
-- **12 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, and more
+- **14 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
 - **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
 - **Smart Caching**: Per-collector TTL (5-30 min) reduces API calls while keeping data fresh
 - **Instant Serving**: `/limits` returns from an in-memory registry — never blocks on collection
@@ -44,7 +44,7 @@ Access at `http://localhost:8765`
 ### Docker (Headless/Server)
 
 ```bash
-docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/user/runway:latest
+docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/s3ntin3l8/ai-usage-tracker:latest
 ```
 
 Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metrics.
@@ -77,11 +77,13 @@ Alternatively: right-click the app in Finder → **Open** → **Open** again in 
 | **ChatGPT** | OAuth API → Chrome cookie → Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
 | **OpenRouter** | REST API (Credits) | 1 | `OPENROUTER_API_KEY` | [📖](docs/collectors/openrouter.md) |
 | **MiniMax** | REST API (IDE Quotas) | 1-3 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
+| **Ollama** | Web API (Cloud) + Session cookie | 2 | `OLLAMA_SESSION_TOKEN` (opt) | [📖](docs/collectors/ollama.md) |
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
 | **zAI API** | REST API (Balance) | 1 | `ZAI_API_KEY` | [📖](docs/collectors/zai_api.md) |
 | **zAI Plan** | REST API (Quotas) | 1-2 | `ZAI_API_KEY` | [📖](docs/collectors/zai_plan.md) |
 | **Kimi API** | REST API (Balance) | 1 | `KIMI_API_KEY` | [📖](docs/collectors/kimi_api.md) |
 | **Kimi Coding** | Web API (IDE Quotas) | 2 | `KIMI_AUTH_TOKEN` (opt) | [📖](docs/collectors/kimi_coding.md) |
+| **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
 | **Antigravity** | Local JSON file | 1-3 | — (IDE running) | [📖](docs/collectors/antigravity.md) |
 
 **Env Var Legend:** (opt) = Optional, has fallback | — = Detected automatically

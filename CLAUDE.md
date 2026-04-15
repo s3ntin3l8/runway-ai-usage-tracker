@@ -5,7 +5,7 @@ Runway is a local-first monitoring tool for AI provider quotas with SQLite-backe
 ## Architecture
 - **Three Modes**: Standalone, Multi-Host (Sidecar), Docker (Sidecar required).
 - **Docker Rule**: No native desktop UI/keychains — use ENV vars or sidecar-fed data.
-- **Cookie Collectors**: Claude, ChatGPT, Ollama need browser cookies; in Docker provide via ENV.
+- **Cookie Collectors**: Claude, ChatGPT, Ollama, Kimi Coding, OpenCode need browser cookies; in Docker provide via ENV.
 
 ## Commands
 A `Makefile` wraps all common tasks — run `make help` for the full list. Key targets:
