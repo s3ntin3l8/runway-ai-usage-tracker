@@ -80,7 +80,7 @@ The Antigravity collector obtains quota information using two main strategies:
 
 ## Sidecar Support
 
-Sidecar can read file and forward contents. See [sidecar documentation](../sidecar.md).
+Sidecar can perform LSP probing and read local files, then forward contents. See [sidecar documentation](../sidecar.md).
 
 ## Troubleshooting
 
