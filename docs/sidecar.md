@@ -234,7 +234,7 @@ launchctl start com.runway.sidecar
 | **MiniMax** | API key | `MINIMAX_API_KEY` |
 | **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |
 | **Kimi K2** | API key | `KIMI_K2_API_KEY` |
-| **Antigravity** | JSON file | `~/.antigravity/state/quota.json` |
+| **Antigravity** | LSP probe / JSON file | LSP process (running IDE) or `~/.antigravity/state/quota.json` |
 
 ## Deployment Modes
 
