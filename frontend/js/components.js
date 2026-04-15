@@ -946,7 +946,9 @@ export function buildTokenHealthPanel(tokens) {
                 REFRESH
             </button>` : '';
 
-        const sourceBadge = t.source
+        const sourceBadge = t.source === 'config'
+            ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/20 text-sky-400" title="Configured in Settings → Providers">⚙ settings</span>`
+            : t.source
             ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-violet-400" title="Delivered by sidecar">⬡ ${escapeHTML(t.source)}</span>`
             : `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40 text-zinc-500" title="Collected locally">local</span>`;
 

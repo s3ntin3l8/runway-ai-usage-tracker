@@ -3,11 +3,20 @@
 import base64
 import json
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.token_health import TokenHealthService, _classify_status, _parse_jwt_exp
+
+
+def _mock_no_db_configs():
+    """Return a context manager patch that makes ProviderConfig return no rows."""
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.all.return_value = []
+    return patch("app.services.token_health.Session", return_value=mock_session)
 
 
 def _make_jwt(exp: float) -> str:
@@ -86,6 +95,7 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value=mock_tokens),
             ),
+            _mock_no_db_configs(),
         ):
             result = await service.get_health()
 
@@ -120,6 +130,7 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value=mock_tokens),
             ),
+            _mock_no_db_configs(),
         ):
             result = await service.get_health()
 
@@ -146,8 +157,47 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value=mock_tokens),
             ),
+            _mock_no_db_configs(),
         ):
             result = await service.get_health()
 
         assert result[0]["status"] == "unknown"
         assert result[0]["expires_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_provider_config_api_key_appears_in_health(self):
+        """API keys stored in ProviderConfig (Settings → Providers) show in Token Health."""
+        service = TokenHealthService()
+
+        mock_cfg = MagicMock()
+        mock_cfg.provider_id = "openai"
+        mock_cfg.account_label = "my-account"
+        mock_cfg.api_key = "sk-proj-xxx"
+        mock_cfg.session_cookie = None
+
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.return_value = [mock_cfg]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={}),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        r = result[0]
+        assert r["provider"] == "openai"
+        assert r["account_id"] == "config"
+        assert r["source"] == "config"
+        assert r["token_types"] == ["api_key"]
+        assert r["status"] == "unknown"
+        assert r["can_refresh"] is False

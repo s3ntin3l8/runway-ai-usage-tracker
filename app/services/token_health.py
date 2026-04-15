@@ -7,6 +7,9 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlmodel import Session
+from sqlmodel import select as sqlselect
+
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -71,6 +74,51 @@ class TokenHealthService:
                         "can_refresh": "refresh_token" in tokens,
                     }
                 )
+
+        # Also surface API keys / session cookies configured in Settings → Providers.
+        # These are stored encrypted in ProviderConfig but never flow through token_cache,
+        # so they would otherwise be invisible to the Token Health panel.
+        try:
+            from app.core.db import engine
+            from app.models.db import ProviderConfig
+
+            with Session(engine) as _s:
+                configs = _s.exec(
+                    sqlselect(ProviderConfig).where(ProviderConfig.enabled == True)  # noqa: E712
+                ).all()
+
+            for cfg in configs:
+                if cfg.api_key:
+                    result.append(
+                        {
+                            "provider": cfg.provider_id,
+                            "account_id": "config",
+                            "account_label": cfg.account_label,
+                            "source": "config",
+                            "token_types": ["api_key"],
+                            "status": "unknown",
+                            "expires_at": None,
+                            "ttl_remaining_seconds": 0,
+                            "can_refresh": False,
+                        }
+                    )
+                if cfg.session_cookie:
+                    result.append(
+                        {
+                            "provider": cfg.provider_id,
+                            "account_id": "config-cookie",
+                            "account_label": cfg.account_label,
+                            "source": "config",
+                            "token_types": ["session_cookie"],
+                            "status": "unknown",
+                            "expires_at": None,
+                            "ttl_remaining_seconds": 0,
+                            "can_refresh": False,
+                        }
+                    )
+        except Exception as e:
+            logger.warning(f"Could not load ProviderConfig credentials for token health: {e}")
+
         return result
 
 
