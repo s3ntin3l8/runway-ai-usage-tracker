@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import socket
 import threading
 import traceback
@@ -117,12 +118,14 @@ def main() -> None:
         }
 
     def _settings_save_config(new_config: dict) -> None:
-        config_path.write_text(
+        tmp = config_path.with_suffix(".tmp")
+        tmp.write_text(
             json.dumps(
                 {k: v for k, v in new_config.items() if not k.startswith("sidecar_")},
                 indent=2,
             )
         )
+        os.replace(tmp, config_path)
         _on_config_change(new_config)
 
     def _open_dashboard() -> None:

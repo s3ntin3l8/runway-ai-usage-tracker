@@ -117,7 +117,7 @@ __REGISTRY__ = {
                     "type": "file",
                     "paths": ["~/.config/gh/hosts.yml", "{{CONFIG_DIR:gh}}/hosts.yml"],
                     "format": "yaml",
-                    "mapping": {"github.com.oauth_token": "api_key"},
+                    "mapping": {"oauth_token": "api_key"},
                 },
                 {
                     "type": "windows_credential",
@@ -660,7 +660,7 @@ def http_post_signed(url: str, data: dict[str, Any], api_key: str) -> tuple[bool
         except Exception:
             return False, e.reason, e.code
     except Exception as e:
-        return False, str(e), 500
+        return False, str(e), 0
 
 
 def http_post_signed_with_retry(
@@ -1288,51 +1288,53 @@ class GenericCollector:
                     if path.exists():
                         try:
                             conn = sqlite3.connect(str(path))
-                            cursor = conn.cursor()
-                            now = datetime.datetime.now(datetime.UTC)
-                            hostname = get_hostname()
+                            try:
+                                cursor = conn.cursor()
+                                now = datetime.datetime.now(datetime.UTC)
+                                hostname = get_hostname()
 
-                            for q in rule.get("queries", []):
-                                query_str = q.get("query")
-                                for window_name, seconds in q.get("windows", {}).items():
-                                    cutoff = int(
-                                        (now - datetime.timedelta(seconds=seconds)).timestamp()
-                                        * 1000
-                                    )
-                                    cursor.execute(query_str, (cutoff,))
-                                    row = cursor.fetchone()
-                                    used = float(row[0] or 0.0)
-                                    count = int(row[1] or 0)
-                                    limit = q.get("limits", {}).get(window_name, 1.0)
-                                    remaining = max(0, limit - used)
-                                    pct = (used / limit * 100) if limit > 0 else 0
+                                for q in rule.get("queries", []):
+                                    query_str = q.get("query")
+                                    for window_name, seconds in q.get("windows", {}).items():
+                                        cutoff = int(
+                                            (now - datetime.timedelta(seconds=seconds)).timestamp()
+                                            * 1000
+                                        )
+                                        cursor.execute(query_str, (cutoff,))
+                                        row = cursor.fetchone()
+                                        used = float(row[0] or 0.0)
+                                        count = int(row[1] or 0)
+                                        limit = q.get("limits", {}).get(window_name, 1.0)
+                                        remaining = max(0, limit - used)
+                                        pct = (used / limit * 100) if limit > 0 else 0
 
-                                    results.append(
-                                        {
-                                            "service_name": f"{provider_id.capitalize()} ({window_name})",
-                                            "icon": icon,
-                                            "remaining": f"${remaining:.2f}"
-                                            if "$" in q.get("name", "") or "cost" in query_str
-                                            else f"{remaining}",
-                                            "unit": f"{limit} limit",
-                                            "reset": f"Rolling {window_name}",
-                                            "health": "good"
-                                            if pct < 70
-                                            else "warning"
-                                            if pct < 90
-                                            else "critical",
-                                            "pace": "Stable" if pct < 50 else "High",
-                                            "detail": f"{used} used · {count} msgs · {hostname} [Sidecar]",
-                                            "data_source": "local",
-                                            "metadata": {
-                                                "used": used,
-                                                "count": count,
-                                                "window": window_name,
-                                                "hostname": hostname,
-                                            },
-                                        }
-                                    )
-                            conn.close()
+                                        results.append(
+                                            {
+                                                "service_name": f"{provider_id.capitalize()} ({window_name})",
+                                                "icon": icon,
+                                                "remaining": f"${remaining:.2f}"
+                                                if "$" in q.get("name", "") or "cost" in query_str
+                                                else f"{remaining}",
+                                                "unit": f"{limit} limit",
+                                                "reset": f"Rolling {window_name}",
+                                                "health": "good"
+                                                if pct < 70
+                                                else "warning"
+                                                if pct < 90
+                                                else "critical",
+                                                "pace": "Stable" if pct < 50 else "High",
+                                                "detail": f"{used} used · {count} msgs · {hostname} [Sidecar]",
+                                                "data_source": "local",
+                                                "metadata": {
+                                                    "used": used,
+                                                    "count": count,
+                                                    "window": window_name,
+                                                    "hostname": hostname,
+                                                },
+                                            }
+                                        )
+                            finally:
+                                conn.close()
                         except Exception as e:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
 

@@ -430,6 +430,14 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        # CSRF guard: browsers always send Origin on cross-origin POSTs.
+        # Reject any request whose Origin header doesn't match our own address.
+        origin = self.headers.get("Origin", "")
+        allowed = f"http://127.0.0.1:{self.server.server_address[1]}"
+        if origin and not origin.startswith(allowed):
+            self.send_error(403, "Forbidden")
+            return
+
         path = urlparse(self.path).path
         if path == "/save":
             self._handle_save()
