@@ -34,7 +34,7 @@ The Antigravity collector obtains quota information using two main strategies:
 **Location:** Platform-specific (configurable via `ANTIGRAVITY_QUOTA_PATH`):
 - **Linux:** `~/.local/share/antigravity/state/quota.json`
 - **macOS:** `~/Library/Application Support/antigravity/state/quota.json`
-- **Windows:** `%APPDATA%\antigravity\state/quota.json`
+- **Windows:** TBD — path unconfirmed; LSP probing is the primary collection method on Windows
 **Format:**
 ```json
 {
@@ -51,24 +51,27 @@ The Antigravity collector obtains quota information using two main strategies:
 ## Output Format
 
 ```python
+# LSP source
 {
-    "service": "AG: claude-sonnet-4",
+    "service_name": "claude-sonnet-4-5",           # model label — no "AG: " prefix
     "icon": "🛸",
     "remaining": "75.5%",
-    "unit": "remaining",
-    "reset": "in 2h 15m",
+    "unit": "capacity",
+    "reset": "in 2h 15m",                          # computed from resetTime
+    "reset_at": "2026-04-15T12:00:00+00:00",       # ISO 8601 from quotaInfo.resetTime
     "health": "good",
-    "pace": "Stable",
-    "detail": "claude-sonnet-4 [IDE]",
-    "used_value": 24.5,
+    "pace": "Continuous",
+    "detail": "Pro | user@example.com [LSP]",
+    "tier": "Pro",
+    "data_source": "lsp",
+    "provider_id": "antigravity",
+    "account_label": "user@example.com",           # email from userStatus
+    "model_id": "claude-sonnet-4-5-20251001",      # modelOrAlias from LSP
+    "used_value": 24.5,                            # 100 - remaining_percent
     "limit_value": 100.0,
-    "is_unlimited": False,
     "unit_type": "percent",
-    "reset_at": "2026-04-07T15:00:00+00:00",
-    "data_source": "local",
-    "tier": None,
-    "usage_url": None,
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "window_type": "session",
+    "updated_at": "2026-04-15T10:30:00+00:00"
 }
 ```
 
@@ -92,7 +95,7 @@ Sidecar can perform LSP probing and read local files, then forward contents. See
 3.  If still no cards, check the local quota file (fallback):
     -   **Linux:** `ls ~/.local/share/antigravity/state/quota.json`
     -   **macOS:** `ls ~/Library/Application\ Support/antigravity/state/quota.json`
-    -   **Windows:** `ls %APPDATA%\antigravity\state\quota.json`
+    -   **Windows:** Path not confirmed — LSP probing is the primary method on Windows
 4.  Verify permissions for the local quota file: `chmod 644 <path-to-quota.json>`
 
 ### LSP connection failed / Timeout
