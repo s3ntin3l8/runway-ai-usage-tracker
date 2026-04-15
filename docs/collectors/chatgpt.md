@@ -6,25 +6,29 @@ ChatGPT Codex quota collector with OAuth-backed API and local session cache fall
 
 ## Overview
 
-- **Collection Strategy**: OAuth API → Local session cache
+- **Collection Strategy**: OAuth API → Codex CLI RPC → Local session cache
 - **Cards**: 1 card (primary window usage)
 - **Authentication**: `CHATGPT_OAUTH_TOKEN` env var → `~/.codex/auth.json` → Chrome browser cookies
 
 ## Setup Methods Quick Overview
 
-The ChatGPT collector supports multiple authentication methods:
+The ChatGPT collector supports multiple authentication and data collection methods:
 
-1.  **OAuth Token (CHATGPT_OAUTH_TOKEN)**:
-    *   **Method**: Set the `CHATGPT_OAUTH_TOKEN` environment variable with a valid OAuth token.
-    *   **Details**: See [Configuration](#configuration) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
+1.  **OAuth Token (CHATGPT_OAUTH_TOKEN) / Browser Cookie**:
+    *   **Method**: Set the `CHATGPT_OAUTH_TOKEN` environment variable with a valid OAuth token, or log in to [chatgpt.com](https://chatgpt.com) in Chrome to allow automatic cookie extraction.
+    *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 2.  **Codex CLI Cache (`~/.codex/auth.json`)**:
     *   **Method**: Log in using the `codex` CLI (`codex auth login`). Runway will automatically discover the token from `~/.codex/auth.json`.
     *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
-3.  **Chrome Browser Cookie**:
-    *   **Method**: Log in to [chatgpt.com](https://chatgpt.com) in Chrome. Runway will attempt to extract the `__Secure-next-auth.session-token` cookie and exchange it for a Bearer token.
-    *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
+3.  **Codex CLI RPC**:
+    *   **Method**: Install the `@openai/codex` CLI and ensure it's in your PATH. Runway will execute `codex -s read-only` to get quota data.
+    *   **Details**: See [Secondary: Codex CLI RPC](#secondary-codex-cli-rpc) below.
+
+4.  **Local Session Cache**:
+    *   **Method**: If the Codex CLI is used, it generates session log files. Runway can read these as a last resort.
+    *   **Details**: See [Tertiary: Local Session Cache](#tertiary-local-session-cache) below.
 
 ## Data Sources
 
@@ -37,7 +41,12 @@ The ChatGPT collector supports multiple authentication methods:
 2. `~/.codex/auth.json` (Codex CLI cache)
 3. Chrome browser cookie (`__Secure-next-auth.session-token`) — auto-exchanged for Bearer token
 
-### Secondary: Local Session Cache
+### Secondary: Codex CLI RPC
+**Mechanism:** Runway executes the `codex -s read-only` command to interface with the running Codex CLI and extract usage data directly.
+**Auth:** Requires the Codex CLI to be installed and authenticated (`codex auth login`).
+**Behavior:** This data source is attempted if the primary API call fails or no token is available for the API.
+
+### Tertiary: Local Session Cache
 **Location:** `~/.codex/sessions/*.jsonl`
 **Tracks:** `used_percent`, `resets_at` from latest session file
 
@@ -79,15 +88,15 @@ Sidecar extracts token from `~/.codex/auth.json`. See [sidecar documentation](..
 
 ### "No logs/auth" error
 **Fix:**
-1. `export CHATGPT_OAUTH_TOKEN="your-token"`
-2. Or install Codex CLI: `npm install -g @openai/codex && codex auth login`
-3. Or log in to chatgpt.com in Chrome — session cookie is extracted automatically
+1. Set `export CHATGPT_OAUTH_TOKEN="your-token"`.
+2. Or install Codex CLI: `npm install -g @openai/codex` and run `codex auth login`.
+3. Or log in to chatgpt.com in Chrome — session cookie is extracted automatically.
 
 ### API Error (401/403 on accounts endpoint)
 **Expected:** The `accounts/check` endpoint may return 403 depending on account type — this is non-fatal and usage data is still collected from `wham/usage`.
 
 ### API Error (401) on wham/usage
-**Fix:** Token expired - re-authenticate with Codex CLI or set a fresh `CHATGPT_OAUTH_TOKEN`
+**Fix:** Token expired - re-authenticate with Codex CLI or set a fresh `CHATGPT_OAUTH_TOKEN`.
 
 ## Related Files
 
