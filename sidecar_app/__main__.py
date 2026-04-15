@@ -1,6 +1,5 @@
 """Bootstrap entry point for the Runway sidecar desktop app."""
 
-import sys
 import traceback
 
 print("[DIAG] __main__ imports starting", flush=True)
