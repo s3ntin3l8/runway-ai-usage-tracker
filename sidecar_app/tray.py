@@ -87,6 +87,15 @@ def _build_status_icon_macos(status: str) -> Image.Image:
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
+    # Draw circle outline — matches the Runway logo's circular background
+    RING = 3
+    PAD = 4
+    draw.ellipse(
+        (PAD, PAD, SIZE - PAD, SIZE - PAD),
+        outline=(255, 255, 255, 255),
+        width=RING,
+    )
+
     # Draw the main pill: rounded vertical rectangle, opaque white
     draw.rounded_rectangle(
         (PILL_X, PILL_Y, PILL_X + PILL_W, PILL_Y + PILL_H),
