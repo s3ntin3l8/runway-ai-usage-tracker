@@ -46,17 +46,50 @@ _STATUS_DOT_COLOR: dict[str, tuple[int, int, int]] = {
 
 
 def _build_status_icon(status: str) -> Image.Image:
-    """Return a 64×64 RGBA image: the app logo with a status-colour dot."""
-    img = Image.open(_LOGO_PATH).convert("RGBA").resize((64, 64), Image.LANCZOS)
+    """Return a 128×128 RGBA icon: logo with transparent background + status dot.
+
+    The source image has a white/light-gray background (JPEG-in-PNG).  We strip
+    any pixel with all channels > 220, tight-crop the result, add a small pad,
+    then scale to 128×128 so the logo fills the full icon area.
+    """
+    SIZE = 128
+    DOT = 24
+    MARGIN = 2
+
+    # Resize to workable intermediate size before per-pixel background removal
+    WORK = 256
+    work = Image.open(_LOGO_PATH).convert("RGBA").resize((WORK, WORK), Image.LANCZOS)
+
+    # Strip white/near-white background — threshold: all channels > 220
+    px = work.load()
+    for y in range(WORK):
+        for x in range(WORK):
+            r, g, b, a = px[x, y]  # type: ignore[misc]
+            if r > 220 and g > 220 and b > 220:
+                px[x, y] = (r, g, b, 0)  # type: ignore[index]
+
+    # Tight crop to the non-transparent bounding box
+    bbox = work.getbbox()
+    if bbox:
+        work = work.crop(bbox)
+
+    # Add ~5 % padding on each side so the logo doesn't touch the icon edge
+    w, h = work.size
+    pad = max(int(w * 0.05), int(h * 0.05), 4)
+    canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
+    canvas.paste(work, (pad, pad), work)
+
+    # Scale to final target size
+    img = canvas.resize((SIZE, SIZE), Image.LANCZOS)
+
+    # Draw status dot in bottom-right corner
     r, g, b = _STATUS_DOT_COLOR.get(status, (0xF5, 0x9E, 0x0B))
-    dot_size = 18
-    margin = 2
-    x0 = 64 - dot_size - margin
-    y0 = 64 - dot_size - margin
+    x0 = SIZE - DOT - MARGIN
+    y0 = SIZE - DOT - MARGIN
     draw = ImageDraw.Draw(img)
-    # White border around dot for contrast
-    draw.ellipse((x0 - 2, y0 - 2, x0 + dot_size + 1, y0 + dot_size + 1), fill=(255, 255, 255, 255))
-    draw.ellipse((x0, y0, x0 + dot_size, y0 + dot_size), fill=(r, g, b, 255))
+    # White border for contrast on any background
+    draw.ellipse((x0 - 2, y0 - 2, x0 + DOT + 2, y0 + DOT + 2), fill=(255, 255, 255, 255))
+    draw.ellipse((x0, y0, x0 + DOT, y0 + DOT), fill=(r, g, b, 255))
     return img
 
 
