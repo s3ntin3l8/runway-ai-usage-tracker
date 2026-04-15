@@ -103,7 +103,9 @@ class SidecarTray:
 
     def _on_tray_ready(self, icon: pystray.Icon) -> None:
         """Called by pystray once the icon is running; fires the after_start hook."""
-        print("[DIAG] _on_tray_ready fired — icon IS visible in tray", flush=True)
+        print(f"[DIAG] _on_tray_ready: icon.visible before={icon.visible}", flush=True)
+        icon.visible = True
+        print(f"[DIAG] _on_tray_ready: icon.visible after={icon.visible}", flush=True)
         if self._after_start:
             self._after_start()
 
