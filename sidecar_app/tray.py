@@ -86,17 +86,24 @@ class SidecarTray:
         icon_name = _STATUS_ICON.get(status, "icon_warn")
         title = self._build_title(status)
 
+        print(f"[DIAG] tray.run: status={status} icon={icon_name}", flush=True)
+        img = _load_image(icon_name)
+        print(f"[DIAG] icon image loaded: size={img.size} mode={img.mode}", flush=True)
+
         self._after_start = after_start
         self._icon = pystray.Icon(
             name="runway-sidecar",
-            icon=_load_image(icon_name),
+            icon=img,
             title=title,
             menu=self._build_menu(),
         )
+        print(f"[DIAG] pystray.Icon created, calling run()...", flush=True)
         self._icon.run(setup=self._on_tray_ready)
+        print("[DIAG] pystray.Icon.run() returned (tray exited)", flush=True)
 
     def _on_tray_ready(self, icon: pystray.Icon) -> None:
         """Called by pystray once the icon is running; fires the after_start hook."""
+        print("[DIAG] _on_tray_ready fired — icon IS visible in tray", flush=True)
         if self._after_start:
             self._after_start()
 
