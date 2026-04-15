@@ -1,13 +1,14 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# Runway — AI Usage Tracker | Docker Compose Configuration
-# ──────────────────────────────────────────────────────────────────────────────
+#  ╔─────────────────────────────────────────────────────────────────────────────╗
+#  ║  🏃 Runway — AI Usage Tracker                                               ║
+#  ║  📦 Docker Compose Configuration                                            ║
+#  ╚─────────────────────────────────────────────────────────────────────────────╝
 #
-# Quick Start:
-#   1. Copy .env.example to .env and configure your API keys
-#   2. docker-compose up -d
-#   3. Access dashboard at http://localhost:8765
+#  Quick Start:
+#    1. Copy .env.example to .env and configure your API keys
+#    2. docker-compose up -d
+#    3. Access dashboard at http://localhost:8765
 #
-# ──────────────────────────────────────────────────────────────────────────────
+#  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 version: '3.8'
 
