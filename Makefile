@@ -13,7 +13,7 @@ help:
 
 install-hooks: ## Wire up tracked .githooks/ as the git hooks directory
 	git config core.hooksPath .githooks
-	chmod +x .githooks/pre-push
+	chmod +x .githooks/pre-commit .githooks/pre-push
 
 install: install-hooks ## Set up venv, install Python and Node dependencies
 	python3 -m venv $(VENV)
