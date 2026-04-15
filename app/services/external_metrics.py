@@ -232,6 +232,28 @@ class ExternalMetricService:
 
         return result
 
+    def _dedupe_antigravity_cards(
+        self,
+        candidates: list[tuple[datetime, str, dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Deduplicate Antigravity cards from multiple sidecars.
+
+        For each (service_name, account_label) pair, keeps the card from the
+        most recently updated sidecar. Appends "(time_str)" to service_name.
+        """
+        best: dict[tuple[str, str], tuple[datetime, str, dict[str, Any]]] = {}
+        for sidecar_ts, time_str, card in candidates:
+            key = (card.get("service_name", ""), card.get("account_label") or "")
+            if key not in best or sidecar_ts > best[key][0]:
+                best[key] = (sidecar_ts, time_str, card)
+
+        result = []
+        for sidecar_ts, time_str, card in best.values():
+            updated = card.copy()
+            updated["service_name"] = f"{updated['service_name']} ({time_str})"
+            result.append(updated)
+        return result
+
     async def get_opencode_aggregated(self) -> list[dict[str, Any]]:
         """
         Get aggregated OpenCode metrics from sidecar data.
@@ -259,10 +281,12 @@ class ExternalMetricService:
         return self._aggregate_opencode_cards(opencode_cards)
 
     async def get_all_metrics(self) -> list[dict[str, Any]]:
-        all_cards = []
-        opencode_cards = []  # Collect all opencode-* cards for aggregation
+        all_cards: list[dict[str, Any]] = []
+        opencode_cards: list[dict[str, Any]] = []
+        # (sidecar_timestamp, time_str, card_dict)
+        antigravity_candidates: list[tuple[datetime, str, dict[str, Any]]] = []
         now = datetime.now(UTC)
-        STALE_HOURS = 2  # Drop providers silent for more than 2 hours
+        STALE_HOURS = 2
 
         async with self._lock:
             stale = [
@@ -281,27 +305,40 @@ class ExternalMetricService:
                 ts = datetime.fromisoformat(data["timestamp"])
                 diff = now - ts
                 minutes = int(diff.total_seconds() / 60)
-
                 time_str = f"{minutes}m ago" if minutes > 0 else "just now"
 
-                # Check if this is an opencode sidecar provider
                 if provider.startswith("opencode-"):
-                    # Collect cards for later aggregation
                     for card in data["cards"]:
                         card_copy = card.copy()
                         card_copy["_provider"] = provider
                         card_copy["_time_str"] = time_str
                         opencode_cards.append(card_copy)
                 else:
-                    # Keep non-opencode cards as-is
+                    # Separate antigravity cards from the rest
+                    sidecar_ag: list[dict[str, Any]] = []
                     for card in data["cards"]:
-                        updated_card = card.copy()
-                        updated_card["service_name"] += f" ({time_str})"
-                        all_cards.append(updated_card)
+                        if card.get("provider_id") == "antigravity":
+                            sidecar_ag.append(card)
+                        else:
+                            updated = card.copy()
+                            updated["service_name"] += f" ({time_str})"
+                            all_cards.append(updated)
 
-        # Aggregate opencode cards and add to result
+                    if sidecar_ag:
+                        # Within one sidecar, file-fallback cards (no account_label) inherit
+                        # the label from LSP cards in the same batch.
+                        known_label = next(
+                            (c["account_label"] for c in sidecar_ag if c.get("account_label")),
+                            None,
+                        )
+                        for card in sidecar_ag:
+                            if not card.get("account_label") and known_label:
+                                card = card.copy()
+                                card["account_label"] = known_label
+                            antigravity_candidates.append((ts, time_str, card))
+
+        all_cards.extend(self._dedupe_antigravity_cards(antigravity_candidates))
         all_cards.extend(self._aggregate_opencode_cards(opencode_cards))
-
         return all_cards
 
 
