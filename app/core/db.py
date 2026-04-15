@@ -59,6 +59,7 @@ def _run_migrations():
         # SidecarRegistry: sidecar app version + host OS reported on each ingest
         "ALTER TABLE sidecar_registry ADD COLUMN sidecar_version TEXT",
         "ALTER TABLE sidecar_registry ADD COLUMN os_platform TEXT",
+        "ALTER TABLE sidecar_registry ADD COLUMN recent_logs TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:

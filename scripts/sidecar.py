@@ -329,6 +329,17 @@ def get_log_path() -> Path:
     return get_sidecar_dir() / "sidecar.log"
 
 
+def _tail_log(n: int = 20) -> list[str]:
+    """Return the last *n* lines of the sidecar log file (best-effort)."""
+    try:
+        path = get_log_path()
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return [line.rstrip() for line in lines[-n:]]
+    except Exception:
+        return []
+
+
 def get_pid_file_path() -> Path:
     """Get the PID file path."""
     return get_sidecar_dir() / "sidecar.pid"
@@ -1791,6 +1802,7 @@ class DaemonRunner:
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
                     "collection_errors": collection_errors,
+                    "last_log_lines": _tail_log(20),
                 }
 
                 # Try to flush queue first

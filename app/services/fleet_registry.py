@@ -1,5 +1,6 @@
 """Service for managing the persistent sidecar fleet registry."""
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -42,6 +43,7 @@ class FleetRegistryService:
         sidecar_version: str | None = None,
         os_platform: str | None = None,
         collection_errors: int = 0,
+        last_log_lines: list[str] | None = None,
     ) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         row = session.get(SidecarRegistry, sidecar_id)
@@ -55,6 +57,8 @@ class FleetRegistryService:
                 row.os_platform = os_platform
             if collection_errors > 0:
                 row.error_count += collection_errors
+            if last_log_lines is not None:
+                row.recent_logs = json.dumps(last_log_lines[-20:])
             logger.debug(f"Updated sidecar '{sidecar_id}' (ingest #{row.ingest_count})")
         else:
             row = SidecarRegistry(
@@ -64,6 +68,7 @@ class FleetRegistryService:
                 sidecar_version=sidecar_version,
                 os_platform=os_platform,
                 error_count=collection_errors,
+                recent_logs=json.dumps(last_log_lines[-20:]) if last_log_lines else None,
             )
             session.add(row)
             logger.info(f"Registered new sidecar: '{sidecar_id}' from {source_ip}")
@@ -118,6 +123,7 @@ class FleetRegistryService:
             "os_platform": row.os_platform,
             "stale": stale,
             "stale_threshold_minutes": _STALE_THRESHOLD_MINUTES,
+            "recent_logs": json.loads(row.recent_logs) if row.recent_logs else [],
         }
 
 

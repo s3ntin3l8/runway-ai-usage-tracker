@@ -73,9 +73,9 @@ def _build_status_icon(status: str) -> Image.Image:
     if bbox:
         work = work.crop(bbox)
 
-    # Add ~5 % padding on each side so the logo doesn't touch the icon edge
+    # Add ~1 % padding so the logo fills as much of the icon as possible
     w, h = work.size
-    pad = max(int(w * 0.05), int(h * 0.05), 4)
+    pad = max(int(w * 0.01), int(h * 0.01), 2)
     canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
     canvas.paste(work, (pad, pad), work)
 
@@ -225,14 +225,6 @@ class SidecarTray:
             if self._on_reload_config is not None:
                 self._on_reload_config()
 
-        def on_edit_config(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-            _open_in_editor(self._config_path)
-
-        def on_view_logs(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-            from sidecar_app.config import get_log_path
-
-            _open_in_editor(get_log_path())
-
         def on_check_updates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             webbrowser.open(RELEASES_URL)
 
@@ -268,9 +260,7 @@ class SidecarTray:
                 on_launch_at_login,
                 checked=lambda item: is_login_item_installed(),  # noqa: ARG005
             ),
-            pystray.MenuItem("Edit Config…", on_edit_config),
             pystray.MenuItem("Reload Config", on_reload_config),
-            pystray.MenuItem("View Logs…", on_view_logs),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check for Updates…", on_check_updates),
             pystray.MenuItem("About", on_about),

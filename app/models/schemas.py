@@ -68,4 +68,5 @@ class IngestRequest(BaseModel):
     sidecar_version: str | None = None  # App version from package.json
     os_platform: str | None = None  # platform.system() + "/" + platform.release()
     collection_errors: int = 0  # Number of provider collection failures in this cycle
+    last_log_lines: list[str] = []  # Tail of sidecar log from the sending machine
     # api_key is now passed via X-Signature header for security
