@@ -27,6 +27,8 @@ Running on single machine with coding tools?
 | **Kimi Coding** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Sidecar extracts cookie or uses env var |
 | **OpenRouter** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
 | **MiniMax** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
+| **Ollama** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Cookie extraction needs host access |
+| **Kimi K2** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
 | **Antigravity** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Sidecar reads local JSON |
 
 **Legend:**
@@ -124,15 +126,20 @@ services:
     build: .
     ports:
       - "8765:8765"
+    env_file:
+      - .env
     environment:
-      - INGEST_API_KEY=${INGEST_API_KEY:-sidecar-default-secret}
       - LOCAL_COLLECTOR_ENABLED=false
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - ZAI_API_KEY=${ZAI_API_KEY:-}
-      - KIMI_API_KEY=${KIMI_API_KEY:-}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - LOCAL_CREDENTIAL_SCRAPING_ENABLED=false
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/api/v1/system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 ```
 
 **Workstation Sidecars:**

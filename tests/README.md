@@ -48,7 +48,7 @@ pytest --cov=app --cov-report=html tests/
 
 Unit tests isolate individual components and test them in isolation with mocked dependencies.
 
-- **test_collectors.py**: Tests for all 7 provider collectors
+- **test_collectors.py**: Tests for 12 provider collectors (Claude, Gemini, GitHub, ChatGPT, Antigravity, OpenCode, zAI, Kimi, Kimi K2, Kimi Coding, OpenRouter, MiniMax)
   - OAuth API success and failure scenarios
   - Fallback logic between primary and secondary sources
   - Token caching and refresh behavior
@@ -185,9 +185,9 @@ pytest -s tests/
 
 ## CI/CD Integration
 
-The project uses GitHub Actions for CI/CD, defined in `.github/workflows/ci-cd.yml`:
+The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/`:
 
-- **Linting**: Checks code style with `black` and scans for secrets.
+- **Linting**: Checks code style with `ruff` and scans for secrets using `detect-secrets`.
 - **Testing**: Runs the full suite with coverage reporting.
 - **Build & Push**: Automatically builds and pushes Docker images to **GHCR** on push to `main` or version tags.
 

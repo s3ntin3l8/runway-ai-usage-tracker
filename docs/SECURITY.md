@@ -2,7 +2,7 @@
 
 ## 🛡️ Core Principles
 
-1. **Local-First & Stateless**: Runway does not use a persistent database. All credentials and tokens are stored in memory or environment variables.
+1. **Local-First & Database-Backed**: Runway uses an encrypted SQLite database to store credentials, configuration, and usage history. The `DB_ENCRYPTION_KEY` (from `.env`) encrypts sensitive fields at rest. Credentials and tokens can also be supplied via environment variables for stateless deployments.
 2. **Server-Side API Calls**: All external provider API calls are made from the main application server, never the sidecar.
 3. **Signed Ingestion**: Data sent from sidecars to the server is cryptographically signed to ensure integrity and authenticity.
 
@@ -53,4 +53,3 @@ When using GitHub Actions or other CI/CD pipelines:
 
 ## 👮 Reporting Vulnerabilities
 If you discover a security vulnerability, please open a private security advisory on GitHub or contact the maintainer directly.
-: add security guidelines)

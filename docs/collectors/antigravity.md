@@ -13,7 +13,10 @@ File-based quota collector for the Antigravity IDE.
 ## Data Source
 
 ### Primary: Local JSON Quota File
-**Location:** `~/.antigravity/quota.json` (configurable via `ANTIGRAVITY_QUOTA_PATH`)
+**Location:** Platform-specific (configurable via `ANTIGRAVITY_QUOTA_PATH`):
+- **Linux:** `~/.local/share/antigravity/state/quota.json`
+- **macOS:** `~/Library/Application Support/antigravity/state/quota.json`
+- **Windows:** `%APPDATA%\antigravity\state\quota.json`
 **Format:**
 ```json
 {
@@ -56,7 +59,7 @@ File-based quota collector for the Antigravity IDE.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTIGRAVITY_QUOTA_PATH` | Optional | Path to quota JSON file (default: `~/.antigravity/quota.json`) |
+| `ANTIGRAVITY_QUOTA_PATH` | Optional | Path to quota JSON file (auto-discovered on Linux/macOS/Windows) |
 
 ## Sidecar Support
 
@@ -67,9 +70,11 @@ Sidecar can read file and forward contents. See [sidecar documentation](../sidec
 ### No Antigravity cards in dashboard
 **Cause:** File not found or IDE not running
 **Fix:**
-1. Check file exists: `ls ~/.antigravity/quota.json`
+1. Check file exists:
+   - **Linux:** `ls ~/.local/share/antigravity/state/quota.json`
+   - **macOS:** `ls ~/Library/Application\ Support/antigravity/state/quota.json`
 2. Open Antigravity IDE to trigger quota write
-3. Verify permissions: `chmod 644 ~/.antigravity/quota.json`
+3. Verify permissions: `chmod 644 <path-to-quota.json>`
 
 ### Shows 0% for all models
 **Cause:** Quota file has zero values
