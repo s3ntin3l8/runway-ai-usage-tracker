@@ -8,7 +8,16 @@ File-based quota collector for the Antigravity IDE.
 
 - **Collection Strategy**: Local JSON file only (no API calls)
 - **Cards**: 1-3 cards (one per model)
-- **Authentication:** None (reads local file)
+- **Authentication**: None (reads local JSON file)
+
+## Setup Methods Quick Overview
+
+The Antigravity collector operates by reading a local JSON quota file. No API keys or external authentication are required.
+
+1.  **Local JSON Quota File**:
+    *   **Method**: Use the Antigravity IDE. The IDE automatically creates and updates a `quota.json` file on your local machine.
+    *   **Configuration**: The path to this file is auto-discovered, but can be overridden using the `ANTIGRAVITY_QUOTA_PATH` environment variable.
+    *   **Details**: See [Primary: Local JSON Quota File](#primary-local-json-quota-file) and [Configuration section](#configuration).
 
 ## Data Source
 

@@ -8,7 +8,19 @@ Google Gemini CLI quota collector with OAuth-backed API and local log fallback.
 
 - **Collection Strategy**: OAuth API (with auto-refresh) → Local session logs
 - **Cards**: 1-7 cards (one per model family: Flash, Pro, Flash Lite, etc.)
-- **Authentication**: OAuth credentials from `~/.gemini/oauth_creds.json`
+- **Authentication**: OAuth credentials (auto-discovered from `~/.gemini/oauth_creds.json`) or custom OAuth client ID/secret for refresh.
+
+## Setup Methods Quick Overview
+
+The Gemini collector supports the following authentication methods:
+
+1.  **OAuth Credentials (Preferred)**:
+    *   **Method**: Log in via the Gemini CLI, which stores credentials in `~/.gemini/oauth_creds.json`. Runway will automatically discover and use these.
+    *   **Details**: See [Primary: Google Cloud Code API](#primary-google-cloud-code-api).
+
+2.  **Custom OAuth Client ID/Secret**: Required if token auto-refresh fails.
+    *   **Method**: Set `GEMINI_OAUTH_CLIENT_ID` and `GEMINI_OAUTH_CLIENT_SECRET` environment variables.
+    *   **Details**: See [Configuration](#configuration) and [Troubleshooting: Token refresh fails](#token-refresh-fails).
 
 ## Data Sources
 

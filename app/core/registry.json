@@ -86,7 +86,7 @@
         {
           "type": "file",
           "paths": [
-            "{{CONFIG_DIR:usage-tracker}}/github_oauth.json"
+            "{{CONFIG_DIR:runway-tracker}}/github_oauth.json"
           ],
           "format": "json",
           "mapping": { "access_token": "api_key" }

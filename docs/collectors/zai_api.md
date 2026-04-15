@@ -8,7 +8,15 @@ Zhipu AI (GLM) prepaid balance collector in Chinese Yuan (¥).
 
 - **Collection Strategy**: REST API only
 - **Cards**: 1 card (account balance)
-- **Authentication:** `ZAI_API_KEY` environment variable
+- **Authentication**: `ZAI_API_KEY` environment variable
+
+## Setup Methods Quick Overview
+
+The zAI API collector uses a single API key for authentication:
+
+1.  **API Key (ZAI_API_KEY)**:
+    *   **Method**: Obtain your API key from the Zhipu AI platform and set it as an environment variable.
+    *   **Details**: Refer to the [Configuration section](#configuration) for `ZAI_API_KEY` and [Troubleshooting: "Missing/Invalid Key" error](#missinginvalid-key-error).
 
 ## Data Source
 

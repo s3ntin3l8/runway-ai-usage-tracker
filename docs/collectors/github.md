@@ -8,7 +8,25 @@ GitHub Copilot quota collector with tier-aware multi-endpoint strategy.
 
 - **Collection Strategy**: Copilot Internal APIs → Standard GitHub API (fallback)
 - **Cards**: 2 cards (Completions, Chat for free tier) or 3 cards (Premium, Chat, Autocomplete for Pro)
-- **Authentication**: `GITHUB_TOKEN` environment variable
+- **Authentication**: `GITHUB_TOKEN` environment variable or [Credential Discovery](#credential-discovery)
+
+## Setup Methods Quick Overview
+
+The GitHub Copilot collector supports multiple authentication methods:
+
+1.  **Personal Access Token (PAT)**: Provide a static GitHub Personal Access Token (PAT) with `copilot` scope.
+    *   **Method**: Set the `GITHUB_TOKEN` environment variable.
+    *   **Details**: Refer to the [Configuration section](#configuration) for `GITHUB_TOKEN` and the [Authentication section](#authentication) in the Overview.
+
+2.  **OAuth Device Flow**: Interactively log in via GitHub's OAuth Device Flow to obtain a token.
+    *   **Method 1 (Default)**: Uses Runway's bundled public `GITHUB_CLIENT_ID`.
+    *   **Method 2 (Custom)**: Use your own GitHub OAuth App by setting `GITHUB_CLIENT_ID`.
+    *   **Details**: See the [GitHub OAuth Setup section](#github-oauth-setup) below.
+
+3.  **`gh` CLI Credential Discovery**: Automatically discover credentials from the `gh` CLI's configuration.
+    *   **Method**: Log in via `gh auth login`, and Runway will read the `oauth_token` from `~/.config/gh/hosts.yml` (or Windows equivalent).
+    *   **App/Sidecar**: Supported by both the main Runway app and the Sidecar.
+    *   **Details**: See the [Credential Discovery section](#credential-discovery) below.
 
 ## Data Sources
 
@@ -57,7 +75,7 @@ GitHub Copilot quota collector with tier-aware multi-endpoint strategy.
 
 ## GitHub OAuth Setup
 
-If you prefer to use the interactive "Connect GitHub" flow instead of a static `GITHUB_TOKEN`:
+Runway uses the public GitHub OAuth Client ID (`Iv1.b507a08c87ecfe98`) to enable the interactive "Connect GitHub" flow. If you prefer to use your own OAuth App instead of a static `GITHUB_TOKEN`:
 
 1.  Create a new **OAuth App** at [GitHub Developer Settings](https://github.com/settings/developers).
 2.  Set the **Homepage URL** to any valid URL (e.g., `http://localhost:8765`).
@@ -67,6 +85,13 @@ If you prefer to use the interactive "Connect GitHub" flow instead of a static `
     GITHUB_CLIENT_ID=your_new_client_id_here
     ```
 5.  Restart Runway.
+
+## Credential Discovery
+
+Runway supports automatic credential discovery for GitHub. If you have logged in via the `gh` CLI (`gh auth login`), Runway will attempt to read your `oauth_token` from the `gh` CLI's configuration file (`~/.config/gh/hosts.yml` on Linux/macOS, or `%APPDATA%\GitHub CLI\hosts.yml` on Windows).
+
+**Custom Config Directory**:
+The default location for Runway's configuration files (including where GitHub OAuth tokens are saved) is platform-specific (e.g., `~/.config/runway-tracker` on Linux). You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. This is particularly useful for Docker or custom multi-host deployments.
 
 ## Sidecar Support
 

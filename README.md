@@ -169,6 +169,8 @@ interface LimitCard {
 
 ## Optional Security
 
+**`RUNWAY_CONFIG_DIR`** — Override the default platform-specific configuration directory. This controls where Runway stores its database (`runway.db`), external metrics, and OAuth tokens. This is especially useful for Docker deployments or when you need to store configuration in a non-default location.
+
 **`ADMIN_API_KEY`** — When set, mutation endpoints (`PATCH`/`DELETE` sidecars, token refresh) require an `X-Admin-Key` header. Unset by default (local-first, single-user).
 
 **`DB_ENCRYPTION_KEY`** — Fernet key for encrypting sensitive metadata in SQLite. Unset = plaintext (acceptable for local deployments). Back up this key alongside the database file.

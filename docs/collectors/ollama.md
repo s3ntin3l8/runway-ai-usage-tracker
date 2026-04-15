@@ -1,36 +1,86 @@
 # Ollama Cloud Collector
 
+**File:** `app/services/collectors/ollama.py`
+
 The Ollama provider scrapes the **Plan & Settings** page at `https://ollama.com/settings` to extract Cloud Usage limits for session and weekly windows.
 
-## Features
+## Overview
 
-- **Plan Badge**: Reads the plan tier (Free/Pro/Max) from the Cloud Usage header.
-- **Session & Weekly Usage**: Parses the percent-used values shown in the usage bars.
-- **Reset Timestamps**: Extracts ISO timestamps for when usage limits will reset.
-- **Browser Cookie Auth**: Automatically imports cookies from your local browser (Chrome/Safari/Firefox/Edge).
+- **Collection Strategy**: Web scraping (plan badge, session & weekly usage, reset timestamps)
+- **Cards**: 2 cards (Session and Weekly usage windows)
+- **Authentication**: Browser cookie (auto-extracted) or `OLLAMA_SESSION_TOKEN` environment variable
 
-## Setup
+## Setup Methods Quick Overview
 
-### Automatic (Recommended)
-1. Log in to `https://ollama.com/settings` in your browser (e.g., Chrome).
-2. Runway will automatically pick up the session cookie.
+The Ollama collector supports the following authentication methods:
 
-### Manual Environment Variable
-If you are running Runway in a container or on a headless server, you can provide the session token via an environment variable:
+1.  **Browser Cookie**: Automatically extracted from your local browser.
+    *   **Method**: Log in to `https://ollama.com/settings` in your browser (Chrome/Safari/Firefox/Edge). Runway will automatically pick up the session cookie.
+    *   **Details**: See [Primary: Ollama Plan & Settings Page](#primary-ollama-plan--settings-page).
 
-```bash
-export OLLAMA_SESSION_TOKEN="your-session-cookie-value"
+2.  **Session Token (OLLAMA_SESSION_TOKEN)**:
+    *   **Method**: If running headless, obtain your session token from browser Developer Tools and set it as the `OLLAMA_SESSION_TOKEN` environment variable.
+    *   **Details**: See [Configuration](#configuration).
+
+## Data Source
+
+### Primary: Ollama Plan & Settings Page
+**Endpoint:** `https://ollama.com/settings`
+**Auth:** Browser `session` or `ollama_session` cookie
+**Details:** The collector fetches the HTML, uses regex to find usage blocks, parses percentage used, and extracts `data-time` for reset timestamps. Reads plan tier (Free/Pro/Max) from the Cloud Usage header. If multiple session cookies are available, it uses the first one found in the registry-defined order.
+
+## Output Format
+
+```python
+# Example output format (similar to other collectors)
+{
+    "service": "Ollama (Session Usage)",
+    "icon": "🦙",
+    "remaining": "70%",
+    "unit": "capacity",
+    "reset": "in 1h 30m",
+    "health": "good",
+    "pace": "Stable",
+    "detail": "30% used (Free Plan)",
+    "used_value": 30.0,
+    "limit_value": 100.0,
+    "is_unlimited": False,
+    "unit_type": "percent",
+    "reset_at": "2026-04-07T12:00:00+00:00",
+    "data_source": "web_scrape",
+    "tier": "free",
+    "usage_url": "https://ollama.com/settings",
+    "updated_at": "2026-04-07T10:30:00+00:00"
+}
 ```
 
-To find your session token:
-1. Open `https://ollama.com/settings` in your browser.
-2. Open Developer Tools (F12) -> Network tab.
-3. Refresh the page and click on the `settings` request.
-4. Look for the `Cookie` header and copy the value of the `session` or `ollama_session` cookie.
+## Configuration
 
-## How it works
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OLLAMA_SESSION_TOKEN` | Optional* | Ollama session cookie value (auto-discovered if not set) |
 
-- The collector fetches the HTML from `https://ollama.com/settings`.
-- It uses regex to find the usage blocks (labeled "Session usage" or "Weekly usage").
-- It parses the percentage used and the `data-time` attribute for the reset timestamp.
-- If multiple session cookies are available, it uses the first one found in the registry-defined order.
+*Either auto-discovery or environment variable required.
+
+## Sidecar Support
+
+Sidecar can extract cookies. See [sidecar documentation](../sidecar.md).
+
+## Troubleshooting
+
+### No Ollama cards in dashboard
+**Fix:**
+1. Log in to `https://ollama.com/settings` in your browser.
+2. Verify browser cookie extraction is enabled and working (check `LOCAL_CREDENTIAL_SCRAPING_ENABLED` in `.env`).
+3. If running headless, ensure `OLLAMA_SESSION_TOKEN` is set correctly.
+
+## Related Files
+
+| File | Purpose |
+|------|---------|
+| `app/services/collectors/ollama.py` | Main collector |
+| `app/core/browser_cookies.py` | Browser cookie extraction logic |
+
+## References
+
+- **Ollama:** `https://ollama.com/settings`
