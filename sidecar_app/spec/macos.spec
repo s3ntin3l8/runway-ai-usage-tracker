@@ -15,6 +15,7 @@ a = Analysis(
     datas=[
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
+        (os.path.join(_ROOT, "assets", "logo_reference.png"), "assets"),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=[

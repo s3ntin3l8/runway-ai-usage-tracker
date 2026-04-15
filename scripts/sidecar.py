@@ -1516,7 +1516,11 @@ class DaemonRunner:
             metrics = run_collection(self._config)
 
             if metrics:
-                payload = {"provider": f"sidecar-{get_hostname()}", "metrics": metrics}
+                payload = {
+                    "provider": f"sidecar-{get_hostname()}",
+                    "metrics": metrics,
+                    "sidecar_id": get_hostname(),
+                }
 
                 # Try to flush queue first
                 queue_flush(api_url, api_key)

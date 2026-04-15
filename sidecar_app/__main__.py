@@ -4,7 +4,7 @@ import traceback
 
 print("[DIAG] __main__ imports starting", flush=True)
 
-from sidecar_app.config import get_config_path, load_config, write_template_config
+from sidecar_app.config import get_config_path, load_config, setup_logging, write_template_config
 from sidecar_app.daemon import TrayDaemon
 from sidecar_app.tray import SidecarTray
 from sidecar_app.updater import UpdateChecker
@@ -20,6 +20,9 @@ _FALLBACK_CONFIG: dict = {
 
 def main() -> None:
     print("[DIAG] main() entered", flush=True)
+    # 0. Enable logging to file
+    setup_logging(log_level="INFO", file_enabled=True)
+
     # 1. Find config path
     config_path = get_config_path()
     print(f"[DIAG] config_path={config_path}", flush=True)

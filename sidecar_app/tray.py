@@ -9,7 +9,7 @@ import webbrowser
 from collections.abc import Callable
 
 import pystray
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from sidecar_app.autostart import install_login_item, is_login_item_installed, remove_login_item
 from sidecar_app.daemon import TrayDaemon
@@ -21,13 +21,11 @@ if getattr(sys, "frozen", False):
 else:
     _ASSETS_DIR = pathlib.Path(__file__).parent / "assets"
 
-_STATUS_ICON: dict[str, str] = {
-    "ok": "icon_ok",
-    "warn": "icon_warn",
-    "err": "icon_err",
-    "paused": "icon_paused",
-    "starting": "icon_warn",
-}
+# Logo used as the base tray icon (bundled from assets/logo_reference.png)
+if getattr(sys, "frozen", False):
+    _LOGO_PATH = pathlib.Path(sys._MEIPASS) / "assets" / "logo_reference.png"  # type: ignore[attr-defined]
+else:
+    _LOGO_PATH = pathlib.Path(__file__).parent.parent / "assets" / "logo_reference.png"
 
 _STATUS_TITLE: dict[str, str] = {
     "ok": "Runway Sidecar — Healthy",
@@ -37,11 +35,29 @@ _STATUS_TITLE: dict[str, str] = {
     "starting": "Runway Sidecar — Starting",
 }
 
+# Status dot colours — bottom-right corner overlay on the logo
+_STATUS_DOT_COLOR: dict[str, tuple[int, int, int]] = {
+    "ok": (0x22, 0xC5, 0x5E),  # green
+    "warn": (0xF5, 0x9E, 0x0B),  # amber
+    "err": (0xEF, 0x44, 0x44),  # red
+    "paused": (0x9C, 0xA3, 0xAF),  # grey
+    "starting": (0xF5, 0x9E, 0x0B),  # amber
+}
 
-def _load_image(icon_name: str) -> Image.Image:
-    """Load a PNG from the assets directory and return a PIL Image."""
-    path = _ASSETS_DIR / f"{icon_name}.png"
-    return Image.open(path)
+
+def _build_status_icon(status: str) -> Image.Image:
+    """Return a 64×64 RGBA image: the app logo with a status-colour dot."""
+    img = Image.open(_LOGO_PATH).convert("RGBA").resize((64, 64), Image.LANCZOS)
+    r, g, b = _STATUS_DOT_COLOR.get(status, (0xF5, 0x9E, 0x0B))
+    dot_size = 18
+    margin = 2
+    x0 = 64 - dot_size - margin
+    y0 = 64 - dot_size - margin
+    draw = ImageDraw.Draw(img)
+    # White border around dot for contrast
+    draw.ellipse((x0 - 2, y0 - 2, x0 + dot_size + 1, y0 + dot_size + 1), fill=(255, 255, 255, 255))
+    draw.ellipse((x0, y0, x0 + dot_size, y0 + dot_size), fill=(r, g, b, 255))
+    return img
 
 
 def _open_in_editor(path: pathlib.Path) -> None:
@@ -88,12 +104,11 @@ class SidecarTray:
     def run(self, after_start: Callable[[], None] | None = None) -> None:
         """Build the pystray icon and start the event loop (blocks)."""
         status = self._daemon.status
-        icon_name = _STATUS_ICON.get(status, "icon_warn")
         title = self._build_title(status)
 
-        print(f"[DIAG] tray.run: status={status} icon={icon_name}", flush=True)
-        img = _load_image(icon_name)
-        print(f"[DIAG] icon image loaded: size={img.size} mode={img.mode}", flush=True)
+        print(f"[DIAG] tray.run: status={status}", flush=True)
+        img = _build_status_icon(status)
+        print(f"[DIAG] icon built: size={img.size} mode={img.mode}", flush=True)
 
         self._after_start = after_start
         self._icon = pystray.Icon(
@@ -128,8 +143,7 @@ class SidecarTray:
                 continue
             if self._icon is None:
                 break
-            icon_name = _STATUS_ICON.get(status, "icon_warn")
-            self._icon.icon = _load_image(icon_name)
+            self._icon.icon = _build_status_icon(status)
             self._icon.title = self._build_title(status)
             self._icon.update_menu()
 
@@ -192,6 +206,14 @@ class SidecarTray:
                 install_login_item()
             icon.update_menu()
 
+        def on_about(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            from sidecar_app import __version__
+
+            try:
+                icon.notify(f"Version {__version__}", "Runway Sidecar")
+            except Exception:
+                pass  # notifications not supported on all platforms
+
         def on_quit(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             icon.stop()
             self._daemon.stop()
@@ -212,6 +234,6 @@ class SidecarTray:
             pystray.MenuItem("View Logs…", on_view_logs),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check for Updates…", on_check_updates),
-            pystray.MenuItem("About", None),
+            pystray.MenuItem("About", on_about),
             pystray.MenuItem("Quit", on_quit),
         )

@@ -16,6 +16,7 @@ import sidecar as _sidecar  # noqa: E402
 load_config = _sidecar.load_config
 get_sidecar_dir = _sidecar.get_sidecar_dir
 get_log_path = _sidecar.get_log_path
+setup_logging = _sidecar.setup_logging
 
 
 def get_config_path() -> pathlib.Path:
