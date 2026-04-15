@@ -162,7 +162,9 @@ async def ingest_metrics(
     # Store tokens in cache for each identified account
     tokens_received_count = 0
     for p_id, p_tokens, a_id, a_name in tokens_to_store:
-        actual_acc_id = await token_cache.store(p_id, p_tokens, a_id, a_name)
+        actual_acc_id = await token_cache.store(
+            p_id, p_tokens, a_id, a_name, source=request.sidecar_id
+        )
         tokens_received_count += len(p_tokens)
         logger.info(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {request.provider}"

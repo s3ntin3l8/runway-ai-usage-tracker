@@ -50,6 +50,7 @@ class TokenCache:
         tokens: dict[str, str],
         account_id: str | None = None,
         account_label: str | None = None,
+        source: str | None = None,
     ) -> str:
         """
         Store tokens for a provider and account.
@@ -59,6 +60,7 @@ class TokenCache:
             tokens: Dict of token type -> value
             account_id: Explicit account ID (optional)
             account_label: Human-readable account label (e.g. email) (optional)
+            source: Origin of the token — sidecar_id string or None for local
 
         Returns:
             str: The account_id used for storage
@@ -70,7 +72,7 @@ class TokenCache:
             if provider not in self._cache:
                 self._cache[provider] = {}
 
-            metadata = {"account_label": account_label}
+            metadata = {"account_label": account_label, "source": source}
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
             logger.info(
@@ -174,6 +176,7 @@ class TokenCache:
                     acc_id: {
                         "tokens": list(tokens.keys()),
                         "account_label": metadata.get("account_label"),
+                        "source": metadata.get("source"),
                         "age_seconds": int(now - ts),
                         "ttl_remaining": int(self._ttl - (now - ts)),
                     }

@@ -946,12 +946,17 @@ export function buildTokenHealthPanel(tokens) {
                 REFRESH
             </button>` : '';
 
+        const sourceBadge = t.source
+            ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-violet-400" title="Delivered by sidecar">⬡ ${escapeHTML(t.source)}</span>`
+            : `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40 text-zinc-500" title="Collected locally">local</span>`;
+
         return `
         <div class="flex items-center justify-between gap-2 py-3 border-b border-zinc-800/40 last:border-0">
             <div class="flex flex-col min-w-0">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs font-bold text-zinc-200 mono">${escapeHTML(t.provider)}</span>
                     <span class="text-[10px] text-zinc-500">${escapeHTML(label)}</span>
+                    ${sourceBadge}
                 </div>
                 <div class="flex flex-wrap gap-1 mt-1">${types}</div>
                 ${expiryStr ? `<span class="text-[10px] text-zinc-600 mono mt-0.5">${escapeHTML(expiryStr)}</span>` : ''}

@@ -59,6 +59,7 @@ class TokenHealthService:
                         "provider": provider,
                         "account_id": acc_id,
                         "account_label": info.get("account_label"),
+                        "source": info.get("source"),
                         "token_types": list(tokens.keys()),
                         "status": _classify_status(exp),
                         "expires_at": (
