@@ -52,6 +52,58 @@ def _build_status_icon(status: str) -> Image.Image:
     any pixel with all channels > 220, tight-crop the result, add a small pad,
     then scale to 128×128 so the logo fills the full icon area.
     """
+    if sys.platform == "darwin":
+        return _build_status_icon_macos(status)
+    return _build_status_icon_generic(status)
+
+
+def _build_status_icon_macos(status: str) -> Image.Image:
+    """macOS template icon: clean white pill shape with status dot (template rendering).
+
+    macOS will render all non-transparent pixels as white/black regardless of color,
+    so we build a minimalist shape: a centered vertical pill with a status dot.
+    Size of the dot varies by status to convey rough state.
+    """
+    SIZE = 128
+    # Pill dimensions: narrow, centered vertical bar
+    PILL_W = 30
+    PILL_H = 80
+    PILL_X = (SIZE - PILL_W) // 2
+    PILL_Y = (SIZE - PILL_H) // 2
+
+    # Status dot size varies per status to convey urgency/state
+    # ok/starting: smaller (18); warn: medium (22); err: large (22); paused: small (14)
+    DOT_SIZES = {
+        "ok": 18,
+        "warn": 22,
+        "err": 22,
+        "paused": 14,
+        "starting": 18,
+    }
+    DOT = DOT_SIZES.get(status, 18)
+    DOT_MARGIN = 4
+
+    # Start with fully transparent canvas
+    img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Draw the main pill: rounded vertical rectangle, opaque white
+    draw.rounded_rectangle(
+        (PILL_X, PILL_Y, PILL_X + PILL_W, PILL_Y + PILL_H),
+        radius=PILL_W // 2,
+        fill=(255, 255, 255, 255),
+    )
+
+    # Draw status dot in bottom-right corner, opaque white
+    x0 = SIZE - DOT - DOT_MARGIN
+    y0 = SIZE - DOT - DOT_MARGIN
+    draw.ellipse((x0, y0, x0 + DOT, y0 + DOT), fill=(255, 255, 255, 255))
+
+    return img
+
+
+def _build_status_icon_generic(status: str) -> Image.Image:
+    """Windows/Linux version (original implementation)."""
     SIZE = 128
     DOT = 24
     MARGIN = 2
