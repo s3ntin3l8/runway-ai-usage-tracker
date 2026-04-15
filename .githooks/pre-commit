@@ -25,4 +25,7 @@ echo "pre-commit: ruff format..."
 # Re-stage any files ruff format changed
 git add $STAGED
 
+echo "pre-commit: pytest (unit tests)..."
+"$VENV/bin/pytest" tests/unit/ --ignore=tests/unit/test_browser_cookies.py -q
+
 echo "pre-commit: done."
