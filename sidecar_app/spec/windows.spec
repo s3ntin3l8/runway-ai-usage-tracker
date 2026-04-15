@@ -32,6 +32,7 @@ a = Analysis(
         "hmac",
         "json",
         "logging",
+        "logging.handlers",
         "platform",
         "signal",
         "socket",
@@ -65,6 +66,6 @@ exe = EXE(
     strip=False,
     upx=True,
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
 )

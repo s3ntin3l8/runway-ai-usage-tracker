@@ -403,12 +403,16 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
 
 def setup_logging(log_level: str, file_enabled: bool) -> None:
     """Configure logging with console and optional file output."""
+    from logging.handlers import RotatingFileHandler
+
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
 
     if file_enabled:
         ensure_dirs()
         log_path = get_log_path()
-        file_handler = logging.FileHandler(log_path, mode="a")
+        file_handler = RotatingFileHandler(
+            log_path, mode="a", maxBytes=5 * 1024 * 1024, backupCount=3
+        )
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
@@ -550,7 +554,11 @@ def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) ->
             break
 
 
-def queue_flush(api_url: str, api_key: str) -> int:
+def queue_flush(
+    api_url: str,
+    api_key: str,
+    stop_event: threading.Event | None = None,
+) -> int:
     """Flush all queued payloads to server. Returns count of successful sends."""
     queue_dir = get_queue_dir()
     if not queue_dir.exists():
@@ -564,12 +572,18 @@ def queue_flush(api_url: str, api_key: str) -> int:
     target_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
 
     for queue_file in queue_files:
+        if stop_event and stop_event.is_set():
+            logging.info("queue_flush: stop requested, aborting flush")
+            break
         try:
             with open(queue_file) as f:
                 lines = f.readlines()
 
             failed_lines = []
             for line in lines:
+                if stop_event and stop_event.is_set():
+                    logging.info("queue_flush: stop requested, aborting flush")
+                    return count
                 line = line.strip()
                 if not line:
                     continue
@@ -578,7 +592,9 @@ def queue_flush(api_url: str, api_key: str) -> int:
                     entry = json.loads(line)
                     payload = entry.get("payload", {})
 
-                    success, _, _ = http_post_signed_with_retry(target_url, payload, api_key)
+                    success, _, _ = http_post_signed_with_retry(
+                        target_url, payload, api_key, stop_event=stop_event
+                    )
 
                     if success:
                         count += 1
@@ -1063,30 +1079,28 @@ class BrowserCookieExtractor:
                         if domain in c["domain"] and c["name"] == name:
                             return c["value"]
                 else:
-                    conn = sqlite3.connect(f"file:{str(target['path'])}?mode=ro&uri=1", uri=True)
-                    cursor = conn.cursor()
-                    if target["type"] == "chromium":
-                        cursor.execute(
-                            "SELECT encrypted_value FROM cookies WHERE host_key LIKE ? AND name = ?",
-                            (f"%{domain}%", name),
-                        )
-                        row = cursor.fetchone()
-                        if row:
-                            val = decrypt_chromium_cookie(row[0], target["browser"])
-                            if val:
-                                conn.close()
-                                return val
-                    else:  # Firefox
-                        cursor.execute(
-                            "SELECT value FROM moz_cookies WHERE host LIKE ? AND name = ?",
-                            (f"%{domain}%", name),
-                        )
-                        row = cursor.fetchone()
-                        if row:
-                            val = row[0]
-                            conn.close()
-                            return val
-                    conn.close()
+                    with sqlite3.connect(
+                        f"file:{str(target['path'])}?mode=ro&uri=1", uri=True
+                    ) as conn:
+                        cursor = conn.cursor()
+                        if target["type"] == "chromium":
+                            cursor.execute(
+                                "SELECT encrypted_value FROM cookies WHERE host_key LIKE ? AND name = ?",
+                                (f"%{domain}%", name),
+                            )
+                            row = cursor.fetchone()
+                            if row:
+                                val = decrypt_chromium_cookie(row[0], target["browser"])
+                                if val:
+                                    return val
+                        else:  # Firefox
+                            cursor.execute(
+                                "SELECT value FROM moz_cookies WHERE host LIKE ? AND name = ?",
+                                (f"%{domain}%", name),
+                            )
+                            row = cursor.fetchone()
+                            if row:
+                                return row[0]
             except Exception:
                 continue
         return None
@@ -1402,7 +1416,7 @@ class GenericCollector:
                             # Context / Tokens
                             ctx = data.get("context_window", {})
                             if ctx:
-                                tokens = ctx.get("total_input_tokens", 0) + ctx.get(
+                                total_tokens = ctx.get("total_input_tokens", 0) + ctx.get(
                                     "total_output_tokens", 0
                                 )
                                 max_t = ctx.get("max_tokens", 200000)
@@ -1410,14 +1424,14 @@ class GenericCollector:
                                     {
                                         "service_name": "Claude (Session Tokens)",
                                         "icon": "🪙",
-                                        "remaining": f"{tokens:,}",
+                                        "remaining": f"{total_tokens:,}",
                                         "unit": f"/ {max_t:,}",
                                         "reset": data.get("model", {}).get(
                                             "display_name", "Sonnet"
                                         ),
                                         "health": "good",
                                         "pace": "Active",
-                                        "detail": f"{tokens:,} tokens [Sidecar]",
+                                        "detail": f"{total_tokens:,} tokens [Sidecar]",
                                         "data_source": "local",
                                     }
                                 )
@@ -1702,6 +1716,7 @@ class DaemonRunner:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._paused = False
+        self._cycle_running = False  # guard against concurrent run_once() calls
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------
@@ -1736,6 +1751,19 @@ class DaemonRunner:
 
     def run_once(self) -> bool:
         """Run one collection+ingest cycle synchronously. Returns True on success."""
+        with self._lock:
+            if self._cycle_running:
+                logging.debug("run_once: cycle already in progress, skipping")
+                return False
+            self._cycle_running = True
+        try:
+            return self._run_once_impl()
+        finally:
+            with self._lock:
+                self._cycle_running = False
+
+    def _run_once_impl(self) -> bool:
+        """Inner implementation of run_once (called only when no cycle is running)."""
         api_url = self._config["api_url"]
         api_key = self._config["api_key"]
 
@@ -1751,7 +1779,7 @@ class DaemonRunner:
                 }
 
                 # Try to flush queue first
-                queue_flush(api_url, api_key)
+                queue_flush(api_url, api_key, stop_event=self._stop_event)
 
                 # Send fresh metrics
                 success, result, code = http_post_signed_with_retry(
