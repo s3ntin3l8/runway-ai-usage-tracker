@@ -222,10 +222,10 @@ launchctl start com.runway.sidecar
 
 | Provider | Data Source | Required Environment |
 |----------|-------------|---------------------|
-| **Claude** | OAuth token | `CLAUDE_CODE_OAUTH_TOKEN` or `~/.claude/.credentials.json` or macOS keychain |
+| **Claude** | OAuth / cookie / file | `CLAUDE_CODE_OAUTH_TOKEN`, `~/.claude/.credentials.json`, macOS keychain, `sessionKey` cookie, or `~/.claude/statusline.json` |
 | **GitHub Copilot** | API token, OAuth | `GITHUB_TOKEN` (from .env or OAuth flow), `gh` CLI (from `~/.config/gh/hosts.yml`), or Windows Credential Manager |
-| **Gemini** | OAuth + logs | `~/.gemini/oauth_creds.json` |
-| **ChatGPT** | OAuth + logs | `~/.codex/auth.json` |
+| **Gemini** | OAuth | `~/.gemini/oauth_creds.json` |
+| **ChatGPT** | OAuth / cookie | `CHATGPT_OAUTH_TOKEN`, `~/.codex/auth.json`, or Chrome cookie |
 | **OpenCode** | SQLite DB | `~/.local/share/opencode/opencode.db` or Chrome cookie |
 | **zAI API/Plan** | API key | `ZAI_API_KEY` |
 | **Kimi API** | API key | `KIMI_API_KEY` |
