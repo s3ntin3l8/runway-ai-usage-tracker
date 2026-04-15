@@ -38,9 +38,12 @@ def test_ingest_key_default_detection():
     """INGEST_API_KEY_IS_INSECURE_DEFAULT is True for the default key."""
     from app.core.config import DEFAULT_INGEST_API_KEY, Settings
 
-    s = Settings()
-    assert s.INGEST_API_KEY == DEFAULT_INGEST_API_KEY
-    assert s.INGEST_API_KEY_IS_INSECURE_DEFAULT is True
+    with pytest.MonkeyPatch().context() as mp:
+        # Override env + .env file by forcing the default value explicitly
+        mp.setenv("INGEST_API_KEY", DEFAULT_INGEST_API_KEY)
+        s = Settings()
+        assert s.INGEST_API_KEY == DEFAULT_INGEST_API_KEY
+        assert s.INGEST_API_KEY_IS_INSECURE_DEFAULT is True
 
 
 def test_ingest_key_custom_not_insecure():
