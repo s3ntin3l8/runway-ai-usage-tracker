@@ -1534,6 +1534,8 @@ class TestAntigravityCollector:
         assert quota_cards[0]["limit_value"] == 100.0
         assert quota_cards[0]["unit_type"] == "percent"
         assert quota_cards[0]["window_type"] == "session"
+        assert quota_cards[0]["reset_at"] is not None
+        assert quota_cards[0]["reset"] == "Expired"  # resetTime: 1744876800 is in the past
 
     def test_format_reset_with_future_timestamp(self):
         """_format_reset returns display string and ISO string for future timestamps."""
@@ -1555,6 +1557,28 @@ class TestAntigravityCollector:
         display, reset_at = _format_reset(None)
         assert display == "Dynamic"
         assert reset_at is None
+
+    def test_format_reset_with_near_future_timestamp(self):
+        """_format_reset returns '< 1m' for timestamps less than 60 seconds away."""
+        import time
+
+        from app.services.collectors.antigravity import _format_reset
+
+        near_future_ts = int(time.time()) + 30
+        display, reset_at = _format_reset(near_future_ts)
+        assert display == "< 1m"
+        assert reset_at is not None
+
+    def test_format_reset_with_past_timestamp(self):
+        """_format_reset returns 'Expired' for timestamps in the past."""
+        import time
+
+        from app.services.collectors.antigravity import _format_reset
+
+        past_ts = int(time.time()) - 3600
+        display, reset_at = _format_reset(past_ts)
+        assert display == "Expired"
+        assert reset_at is not None
 
     @pytest.mark.asyncio
     async def test_local_file_includes_reset_at(self, mock_http_client):

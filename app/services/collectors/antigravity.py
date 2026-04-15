@@ -22,7 +22,7 @@ def _format_reset(unix_ts: int | float | None) -> tuple[str, str | None]:
 
     Returns ("Dynamic", None) when timestamp is absent or invalid.
     """
-    if not unix_ts:
+    if unix_ts is None:
         return "Dynamic", None
     try:
         dt = datetime.fromtimestamp(float(unix_ts), UTC)
@@ -30,6 +30,8 @@ def _format_reset(unix_ts: int | float | None) -> tuple[str, str | None]:
         seconds = int((dt - datetime.now(UTC)).total_seconds())
         if seconds < 0:
             return "Expired", reset_at
+        if seconds < 60:
+            return "< 1m", reset_at
         if seconds < 3600:
             return f"in {seconds // 60}m", reset_at
         return f"in {seconds // 3600}h {(seconds % 3600) // 60}m", reset_at
@@ -263,6 +265,8 @@ class AntigravityCollector(BaseCollector):
                     "updated_at": datetime.now(UTC).isoformat(),
                     "provider_id": "antigravity",
                     "account_label": email or None,
+                    "model_id": None,
+                    "reset_at": None,
                     "used_value": None,
                     "limit_value": None,
                     "unit_type": "credits",
