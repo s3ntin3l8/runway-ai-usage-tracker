@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import platform
+import re
 import signal
 import socket
 import sqlite3
@@ -1153,6 +1154,14 @@ class GenericCollector:
         icon = config.get("icon", "❓")
         rules = config.get("rules", [])
 
+        # Priority LSP probe for antigravity — runs before file-fallback rules
+        if provider_id == "antigravity":
+            lsp_cards = collect_antigravity_lsp(icon)
+            if lsp_cards:
+                logging.info(f"  [antigravity] LSP returned {len(lsp_cards)} card(s)")
+                return lsp_cards  # skip file rules to avoid duplicates
+            logging.info("  [antigravity] LSP probe found nothing, falling back to file")
+
         for rule in rules:
             rule_type = rule.get("type")
             mapping = rule.get("mapping", {})
@@ -1189,6 +1198,8 @@ class GenericCollector:
                                 val = GenericCollector.get_nested(data, key_path)
                                 if val:
                                     tokens[target] = val
+                            if tokens:
+                                logging.info(f"  [{provider_id}] token file matched: {path}")
                         except Exception as e:
                             logging.debug(f"Error reading file {path}: {e}")
 
@@ -1236,6 +1247,9 @@ class GenericCollector:
                         target = mapping.get("value")
                         if target:
                             tokens[target] = val
+                            logging.info(
+                                f"  [{provider_id}] cookie '{name_to_find}' found on {domain}"
+                            )
                             break
 
             # 6. Execute Command (e.g. git config)
@@ -1412,6 +1426,7 @@ class GenericCollector:
 
         # If tokens were extracted, add a hidden token card
         if tokens:
+            logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
             results.append(
                 {
                     "service_name": name,
@@ -1430,6 +1445,214 @@ class GenericCollector:
         return results
 
 
+# --- Antigravity LSP Probing ---
+
+
+def _ag_detect_process_windows() -> dict[int, list[str]]:
+    """Find Antigravity/Windsurf language server PID + CSRF tokens on Windows."""
+    try:
+        result = subprocess.run(
+            ["wmic", "process", "get", "processid,commandline", "/format:csv"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        procs: dict[int, list[str]] = {}
+        for line in result.stdout.splitlines():
+            if "language_server" not in line.lower():
+                continue
+            pid_match = re.search(r",(\d+)\s*$", line)
+            if not pid_match:
+                continue
+            pid = int(pid_match.group(1))
+            tokens = []
+            for pattern in [
+                r"--csrf_token\s+([a-f0-9-]+)",
+                r"--extension_server_csrf_token\s+([a-f0-9-]+)",
+            ]:
+                m = re.search(pattern, line)
+                if m:
+                    tokens.append(m.group(1))
+            if tokens:
+                procs[pid] = tokens
+        return procs
+    except Exception:
+        return {}
+
+
+def _ag_detect_process_unix() -> dict[int, list[str]]:
+    """Find Antigravity/Windsurf language server PID + CSRF tokens on macOS/Linux."""
+    try:
+        result = subprocess.run(
+            ["ps", "-ax", "-o", "pid,command"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        procs: dict[int, list[str]] = {}
+        for line in result.stdout.splitlines():
+            if "language_server" not in line:
+                continue
+            pid_match = re.search(r"^\s*(\d+)", line)
+            if not pid_match:
+                continue
+            pid = int(pid_match.group(1))
+            tokens = []
+            for pattern in [
+                r"--csrf_token\s+([a-f0-9-]+)",
+                r"--extension_server_csrf_token\s+([a-f0-9-]+)",
+            ]:
+                m = re.search(pattern, line)
+                if m:
+                    tokens.append(m.group(1))
+            if tokens:
+                procs[pid] = tokens
+        return procs
+    except Exception:
+        return {}
+
+
+def _ag_find_ports_windows(pid: int) -> list[int]:
+    """Find listening TCP ports for PID on Windows via netstat."""
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        ports = []
+        for line in result.stdout.splitlines():
+            if "LISTENING" not in line:
+                continue
+            parts = line.split()
+            if not parts or parts[-1] != str(pid):
+                continue
+            # Local address is typically parts[1]: "0.0.0.0:PORT"
+            m = re.search(r":(\d+)$", parts[1]) if len(parts) > 1 else None
+            if m:
+                ports.append(int(m.group(1)))
+        return sorted(set(ports))
+    except Exception:
+        return []
+
+
+def _ag_find_ports_unix(pid: int) -> list[int]:
+    """Find listening TCP ports for PID on macOS/Linux via lsof."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        ports = []
+        for line in result.stdout.splitlines():
+            m = re.search(r":(\d+)\s+\(LISTEN\)", line)
+            if m:
+                ports.append(int(m.group(1)))
+        return sorted(set(ports))
+    except Exception:
+        return []
+
+
+def _ag_probe_lsp(port: int, csrf: str, icon: str) -> list[dict[str, Any]]:
+    """HTTP probe one port/token combo and return metric cards."""
+    url = f"http://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
+    body = json.dumps(
+        {"metadata": {"ideName": "antigravity", "extensionName": "antigravity"}}
+    ).encode()
+    req = request.Request(url, data=body, method="POST")
+    req.add_header("X-Codeium-Csrf-Token", csrf)
+    req.add_header("Connect-Protocol-Version", "1")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with request.urlopen(req, timeout=1) as resp:
+            data = json.loads(resp.read())
+        return _ag_parse_lsp_response(data, icon)
+    except Exception:
+        return []
+
+
+def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, Any]]:
+    """Parse LSP GetUserStatus response into metric cards (mirrors AntigravityCollector)."""
+    results = []
+    user_status = data.get("userStatus", {})
+    email = user_status.get("email", "")
+    plan_info = user_status.get("planStatus", {}).get("planInfo", {})
+    plan = plan_info.get("planName", "Standard")
+
+    for cfg in user_status.get("cascadeModelConfigData", {}).get("clientModelConfigs", []):
+        quota = cfg.get("quotaInfo", {})
+        rem_frac = quota.get("remainingFraction")
+        if rem_frac is None:
+            continue
+        label = cfg.get("label", "Model")
+        rem_pct = float(rem_frac) * 100
+        results.append(
+            {
+                "service_name": f"AG: {label}",
+                "icon": icon,
+                "remaining": f"{rem_pct:.1f}%",
+                "unit": "capacity",
+                "reset": "Dynamic",
+                "pace": "Continuous",
+                "health": "good" if rem_pct > 30 else "warning",
+                "detail": f"{plan} | {email} [LSP]",
+                "data_source": "lsp",
+            }
+        )
+
+    name_map = {"GOOGLE_ONE_AI": "Google AI Credits", "ANTHROPIC_CREDIT": "Anthropic Credits"}
+    for cred in user_status.get("userTier", {}).get("availableCredits", []):
+        c_type = cred.get("creditType", "AI Credits")
+        amount = str(cred.get("creditAmount", "0"))
+        display = name_map.get(c_type, c_type.replace("_", " ").title())
+        try:
+            health = "good" if int(amount) > 100 else "warning"
+        except ValueError:
+            health = "good"
+        results.append(
+            {
+                "service_name": f"AG: {display}",
+                "icon": "💰",
+                "remaining": amount,
+                "unit": "credits",
+                "reset": "Prepaid",
+                "pace": "N/A",
+                "health": health,
+                "detail": f"{display} | {email} [LSP]",
+                "data_source": "lsp",
+            }
+        )
+    return results
+
+
+def collect_antigravity_lsp(icon: str) -> list[dict[str, Any]]:
+    """Probe local Antigravity/Windsurf language server. Returns cards or []."""
+    is_win = platform.system() == "Windows"
+    procs = _ag_detect_process_windows() if is_win else _ag_detect_process_unix()
+    if not procs:
+        logging.debug("  [antigravity] no language server process found")
+        return []
+
+    logging.info(f"  [antigravity] found {len(procs)} language server process(es), probing...")
+    seen: set[str] = set()
+    results = []
+
+    for pid, tokens in procs.items():
+        ports = _ag_find_ports_windows(pid) if is_win else _ag_find_ports_unix(pid)
+        logging.debug(f"  [antigravity] pid={pid} ports={ports}")
+        for port in ports:
+            for csrf in tokens:
+                for card in _ag_probe_lsp(port, csrf, icon):
+                    key = f"{card['service_name']}_{card['remaining']}"
+                    if key not in seen:
+                        results.append(card)
+                        seen.add(key)
+    return results
+
+
 # --- Main Loop ---
 
 
@@ -1443,10 +1666,15 @@ def run_collection(config: dict[str, Any]) -> list[dict[str, Any]]:
     for provider_id, provider_config in registry_providers.items():
         if "all" in enabled_providers or provider_id in enabled_providers:
             try:
+                logging.info(f"  [{provider_id}] collecting...")
                 metrics = GenericCollector.collect_provider(provider_id, provider_config)
+                if metrics:
+                    logging.info(f"  [{provider_id}] {len(metrics)} card(s)")
+                else:
+                    logging.info(f"  [{provider_id}] no data")
                 all_metrics.extend(metrics)
             except Exception as e:
-                logging.error(f"Collector error for {provider_id}: {e}")
+                logging.error(f"  [{provider_id}] error: {e}")
 
     return all_metrics
 
