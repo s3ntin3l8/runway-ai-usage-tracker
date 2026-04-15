@@ -2,11 +2,15 @@
 # PyInstaller spec file for Runway Sidecar on macOS
 # Build with: pyinstaller sidecar_app/spec/macos.spec
 
+import json as _json
 import os
 
 # PyInstaller 6+ resolves relative paths against the spec's directory.
 # Anchor everything to the repo root regardless of the invoking CWD.
 _ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
+
+# Read version from package.json so CFBundleVersion stays in sync with releases.
+_VERSION = _json.loads(open(os.path.join(_ROOT, "package.json")).read()).get("version", "0.0.0")
 
 a = Analysis(
     [os.path.join(_ROOT, "sidecar_app", "__main__.py")],
@@ -32,6 +36,7 @@ a = Analysis(
         "hmac",
         "json",
         "logging",
+        "logging.handlers",
         "platform",
         "signal",
         "socket",
@@ -62,7 +67,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
 )
 
@@ -84,7 +89,8 @@ app = BUNDLE(
     info_plist={
         "LSUIElement": True,
         "CFBundleDisplayName": "Runway Sidecar",
-        "CFBundleVersion": "0.1.0",
+        "CFBundleVersion": _VERSION,
+        "CFBundleShortVersionString": _VERSION,
         "NSHighResolutionCapable": True,
     },
 )

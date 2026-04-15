@@ -138,10 +138,7 @@ class SidecarTray:
         """Build the pystray icon and start the event loop (blocks)."""
         status = self._daemon.status
         title = self._build_title(status)
-
-        print(f"[DIAG] tray.run: status={status}", flush=True)
         img = _build_status_icon(status)
-        print(f"[DIAG] icon built: size={img.size} mode={img.mode}", flush=True)
 
         self._after_start = after_start
         self._icon = pystray.Icon(
@@ -150,16 +147,12 @@ class SidecarTray:
             title=title,
             menu=self._build_menu(),
         )
-        print("[DIAG] pystray.Icon created, calling run()...", flush=True)
         self._icon.run(setup=self._on_tray_ready)
         self._icon = None  # signal _drain_updates to exit
-        print("[DIAG] pystray.Icon.run() returned (tray exited)", flush=True)
 
     def _on_tray_ready(self, icon: pystray.Icon) -> None:
         """Called by pystray once the icon is running; fires the after_start hook."""
-        print(f"[DIAG] _on_tray_ready: icon.visible before={icon.visible}", flush=True)
         icon.visible = True
-        print(f"[DIAG] _on_tray_ready: icon.visible after={icon.visible}", flush=True)
         if self._after_start:
             self._after_start()
         # Drain any status updates that arrived before the icon was ready, then
