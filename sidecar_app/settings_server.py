@@ -19,6 +19,36 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 17653
 
+# Provider list — mirrors __REGISTRY__ keys in scripts/sidecar.py
+_PROVIDER_LIST: list[tuple[str, str]] = [
+    ("anthropic", "Claude Pro"),
+    ("github", "GitHub Copilot"),
+    ("gemini", "Gemini API"),
+    ("chatgpt", "ChatGPT / Codex"),
+    ("opencode", "OpenCode"),
+    ("antigravity", "Antigravity"),
+    ("ollama", "Ollama Cloud"),
+    ("openrouter", "OpenRouter"),
+    ("minimax", "MiniMax"),
+    ("kimi", "Kimi API"),
+    ("zai", "zAI API"),
+]
+
+
+def _make_providers_html(enabled: list) -> str:
+    """Return checkbox HTML for the providers section."""
+    all_enabled = not enabled or "all" in enabled
+    parts = []
+    for pid, name in _PROVIDER_LIST:
+        checked = "checked" if (all_enabled or pid in enabled) else ""
+        parts.append(
+            f'<label class="provider-check">'
+            f'<input type="checkbox" name="providers" value="{pid}" {checked}>'
+            f"<span>{_esc(name)}</span></label>"
+        )
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # HTML — self-contained, no external CDN, matches Runway dark aesthetic
 # ---------------------------------------------------------------------------
@@ -180,6 +210,23 @@ select {
 .toast-err { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); color: #fca5a5; }
 
 .footer { text-align: center; font-size: 0.68rem; color: #3f3f46; padding-top: 0.5rem; }
+
+.provider-check {
+  display: flex; align-items: center; gap: 0.5rem;
+  cursor: pointer; font-size: 0.78rem; color: #a1a1aa;
+  padding: 0.2rem 0; user-select: none;
+}
+.provider-check input[type="checkbox"] { width: auto; accent-color: #7c3aed; cursor: pointer; }
+.provider-check:hover { color: #e4e4e7; }
+
+.log-pre {
+  font-size: 0.63rem; line-height: 1.55; color: #52525b;
+  background: rgba(9,9,11,0.6); border: 1px solid rgba(63,63,70,0.4);
+  border-radius: 0.5rem; padding: 0.75rem;
+  max-height: 260px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+}
 </style>
 </head>
 <body>
@@ -251,6 +298,13 @@ select {
     </div>
     <input type="hidden" id="interval_hidden" name="interval_seconds" value="$interval_seconds">
 
+    <div class="section-label" style="margin-top:1.25rem">Providers</div>
+    <div class="field-hint" style="margin-bottom:0.75rem">Uncheck providers you do not use to skip collection.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.25rem 1.5rem">
+      $providers_html
+    </div>
+    <input type="hidden" name="providers_submitted" value="1">
+
     <div style="margin-top:1.5rem" class="actions">
       <button type="submit" class="btn btn-primary" id="save-btn">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
@@ -269,9 +323,22 @@ select {
     <div class="section-label">Quick Links</div>
     <div class="links">
       <a class="link" onclick="openDashboard()">↗ Open Dashboard</a>
-      <a class="link" onclick="openLogs()">📄 View Logs</a>
-      <a class="link" onclick="openConfigFile()">✏ Edit Config File</a>
     </div>
+  </div>
+
+  <!-- Log viewer -->
+  <div class="card" id="log-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+      <div class="section-label" style="margin:0">Recent Logs</div>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.7rem;color:#52525b;cursor:pointer">
+          <input type="checkbox" id="log-auto-refresh" checked style="width:auto;accent-color:#7c3aed">
+          Auto
+        </label>
+        <button type="button" class="btn btn-ghost" style="padding:0.25rem 0.6rem;font-size:0.7rem" onclick="refreshLogs()">↻ Refresh</button>
+      </div>
+    </div>
+    <pre class="log-pre" id="log-output">Loading…</pre>
   </div>
 
   <div class="footer" id="footer-version">Runway Sidecar v$version &nbsp;·&nbsp; $sidecar_id</div>
@@ -358,9 +425,13 @@ async function saveSettings(e) {
   hideToasts();
 
   const data = new URLSearchParams({
-    api_url: document.getElementById('api_url').value,
-    api_key: document.getElementById('api_key').value,
+    api_url:          document.getElementById('api_url').value,
+    api_key:          document.getElementById('api_key').value,
     interval_seconds: document.getElementById('interval_hidden').value,
+    providers_submitted: '1',
+  });
+  document.querySelectorAll('input[name="providers"]').forEach(cb => {
+    if (cb.checked) data.append('providers', cb.value);
   });
 
   try {
@@ -398,11 +469,27 @@ function hideToasts() {
   document.getElementById('toast-err').classList.remove('show');
 }
 
-// ---- Quick links (call back to server for OS actions) --------------------
+// ---- Quick links -------------------------------------------------------
 
 function openDashboard() { fetch('/action/dashboard', {method:'POST'}).catch(()=>{}); }
-function openLogs()      { fetch('/action/logs',      {method:'POST'}).catch(()=>{}); }
-function openConfigFile(){ fetch('/action/config',    {method:'POST'}).catch(()=>{}); }
+
+// ---- Log viewer --------------------------------------------------------
+
+async function refreshLogs() {
+  try {
+    const r = await fetch('/logs');
+    if (!r.ok) return;
+    const j = await r.json();
+    const pre = document.getElementById('log-output');
+    pre.textContent = (j.lines && j.lines.length) ? j.lines.join('\n') : '(no log entries yet)';
+    pre.scrollTop = pre.scrollHeight;
+  } catch {}
+}
+
+refreshLogs();
+setInterval(() => {
+  if (document.getElementById('log-auto-refresh').checked) refreshLogs();
+}, 5000);
 </script>
 </body>
 </html>
@@ -426,6 +513,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._serve_settings_page()
         elif path == "/status":
             self._serve_status()
+        elif path == "/logs":
+            self._serve_logs()
         else:
             self.send_error(404)
 
@@ -460,6 +549,7 @@ class _Handler(BaseHTTPRequestHandler):
             return "selected" if interval == v and not is_custom else ""
 
         status = self.server.get_status()
+        enabled_providers = config.get("providers", ["all"])
         html = _HTML.substitute(
             api_url=_esc(config.get("api_url", "")),
             api_key=_esc(config.get("api_key", "")),
@@ -473,11 +563,23 @@ class _Handler(BaseHTTPRequestHandler):
             custom_display="" if is_custom else "none",
             version=_esc(status.get("version", "?")),
             sidecar_id=_esc(status.get("sidecar_id", "")),
+            providers_html=_make_providers_html(enabled_providers),
         )
         self._send_html(html)
 
     def _serve_status(self) -> None:
         self._send_json(self.server.get_status())
+
+    def _serve_logs(self) -> None:
+        from sidecar_app.config import get_log_path
+
+        try:
+            log_path = get_log_path()
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()[-200:]
+            self._send_json({"lines": [line.rstrip() for line in lines]})
+        except Exception as exc:
+            self._send_json({"lines": [], "error": str(exc)})
 
     def _handle_save(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
@@ -503,6 +605,12 @@ class _Handler(BaseHTTPRequestHandler):
         new_config["api_url"] = api_url
         new_config["api_key"] = api_key
         new_config["interval_seconds"] = interval
+
+        # Persist provider list when the form includes the providers_submitted sentinel
+        if first("providers_submitted") == "1":
+            checked = params.get("providers", [])
+            all_ids = {pid for pid, _ in _PROVIDER_LIST}
+            new_config["providers"] = ["all"] if set(checked) >= all_ids else list(checked)
 
         try:
             self.server.save_config(new_config)

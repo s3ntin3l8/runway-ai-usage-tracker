@@ -162,6 +162,7 @@ async def ingest_metrics(
                 sidecar_version=request.sidecar_version,
                 os_platform=request.os_platform,
                 collection_errors=request.collection_errors,
+                last_log_lines=request.last_log_lines or [],
             )
         except Exception as _e:
             logger.warning(f"Fleet registry upsert failed for '{request.sidecar_id}': {_e}")

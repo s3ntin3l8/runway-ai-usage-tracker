@@ -62,6 +62,7 @@ class SidecarRegistry(SQLModel, table=True):
     ingest_count: int = Field(default=0)
     sidecar_version: str | None = None  # App version reported by the sidecar
     os_platform: str | None = None  # OS/platform string (e.g. "Windows/10", "Darwin/24")
+    recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
 
     @property
     def tags(self) -> list[str]:

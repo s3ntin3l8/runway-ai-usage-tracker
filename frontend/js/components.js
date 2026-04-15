@@ -1046,10 +1046,18 @@ export function buildFleetView(sidecars) {
                 <div><span class="text-zinc-600">VERSION</span><br/>${escapeHTML(s.sidecar_version || '—')}</div>
                 <div><span class="text-zinc-600">OS</span><br/>${escapeHTML(s.os_platform || '—')}</div>
             </div>
+            ${(s.recent_logs && s.recent_logs.length > 0) ? `
+            <details class="mt-0.5">
+                <summary class="text-[9px] text-zinc-600 cursor-pointer hover:text-zinc-400 transition-colors select-none list-none flex items-center gap-1">
+                    <svg class="details-arrow" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                    Recent logs (${s.recent_logs.length} lines)
+                </summary>
+                <pre class="mt-1.5 text-[9px] text-zinc-500 bg-zinc-900/60 rounded-lg p-2 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-all max-h-32 leading-relaxed mono">${s.recent_logs.map(l => escapeHTML(l)).join('\n')}</pre>
+            </details>` : ''}
         </div>`;
     }).join('');
 
-    return `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${rows}</div>`;
+    return `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">${rows}</div>`;
 }
 
 /**
