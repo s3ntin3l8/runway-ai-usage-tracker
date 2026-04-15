@@ -63,13 +63,19 @@ def main() -> None:
     # 7. Run tray — blocks main thread
     print("[DIAG] calling tray.run()", flush=True)
     if needs_setup_notification:
+        print("[DIAG] needs_setup_notification=True, will call notify()", flush=True)
 
         def notify_setup() -> None:
+            print("[DIAG] notify_setup() called", flush=True)
             if tray._icon is not None:
-                tray._icon.notify(
-                    "Edit config.json to connect to your Runway server, then restart.",
-                    "Runway Sidecar — Setup Required",
-                )
+                try:
+                    tray._icon.notify(
+                        "Edit config.json to connect to your Runway server, then restart.",
+                        "Runway Sidecar — Setup Required",
+                    )
+                    print("[DIAG] notify() succeeded", flush=True)
+                except Exception as exc:
+                    print(f"[DIAG] notify() FAILED (non-fatal): {exc}", flush=True)
 
         tray.run(after_start=notify_setup)
     else:
