@@ -1476,28 +1476,43 @@ class GenericCollector:
 
 
 def _ag_detect_process_windows() -> dict[int, list[str]]:
-    """Find Antigravity/Windsurf language server PID + CSRF tokens on Windows."""
+    """Find Antigravity/Windsurf language server PID + CSRF tokens on Windows.
+
+    Uses PowerShell instead of wmic because wmic /format:csv produces UTF-16LE
+    output that Python misreads through subprocess text=True on most locales.
+    """
     try:
         result = subprocess.run(
-            ["wmic", "process", "get", "processid,commandline", "/format:csv"],
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                "Get-WmiObject Win32_Process | "
+                "Where-Object {$_.CommandLine -like '*language_server*'} | "
+                'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
+            ],
             capture_output=True,
             text=True,
-            timeout=10,
+            encoding="utf-8",
+            timeout=15,
         )
         procs: dict[int, list[str]] = {}
         for line in result.stdout.splitlines():
-            if "language_server" not in line.lower():
+            line = line.strip()
+            if not line or "|" not in line or "language_server" not in line.lower():
                 continue
-            pid_match = re.search(r",(\d+)\s*$", line)
-            if not pid_match:
+            pid_str, _, cmdline = line.partition("|")
+            try:
+                pid = int(pid_str.strip())
+            except ValueError:
                 continue
-            pid = int(pid_match.group(1))
             tokens = []
             for pattern in [
                 r"--csrf_token\s+([a-f0-9-]+)",
                 r"--extension_server_csrf_token\s+([a-f0-9-]+)",
             ]:
-                m = re.search(pattern, line)
+                m = re.search(pattern, cmdline)
                 if m:
                     tokens.append(m.group(1))
             if tokens:
@@ -1540,25 +1555,25 @@ def _ag_detect_process_unix() -> dict[int, list[str]]:
 
 
 def _ag_find_ports_windows(pid: int) -> list[int]:
-    """Find listening TCP ports for PID on Windows via netstat."""
+    """Find listening TCP ports for PID on Windows via PowerShell Get-NetTCPConnection."""
     try:
         result = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                f"Get-NetTCPConnection -State Listen -OwningProcess {pid} "
+                "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
         )
         ports = []
         for line in result.stdout.splitlines():
-            if "LISTENING" not in line:
-                continue
-            parts = line.split()
-            if not parts or parts[-1] != str(pid):
-                continue
-            # Local address is typically parts[1]: "0.0.0.0:PORT"
-            m = re.search(r":(\d+)$", parts[1]) if len(parts) > 1 else None
-            if m:
-                ports.append(int(m.group(1)))
+            line = line.strip()
+            if line.isdigit():
+                ports.append(int(line))
         return sorted(set(ports))
     except Exception:
         return []
