@@ -470,6 +470,11 @@ def get_platform_data_dir(app_name: str) -> Path:
 
 def get_platform_config_dir(app_name: str) -> Path:
     """Get the platform-specific directory for user configuration."""
+    if app_name == "runway-tracker":
+        override = os.getenv("RUNWAY_CONFIG_DIR")
+        if override:
+            return Path(override)
+
     system = platform.system()
     home = Path.home()
 

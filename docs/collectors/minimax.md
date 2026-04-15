@@ -10,6 +10,14 @@ MiniMax coding plan quota collector.
 - **Cards**: Multiple cards (one per model snapshot)
 - **Authentication**: `MINIMAX_API_KEY` environment variable
 
+## Setup Methods Quick Overview
+
+The MiniMax collector uses a single API key for authentication:
+
+1.  **API Key (MINIMAX_API_KEY)**:
+    *   **Method**: Obtain your API key from the MiniMax platform and set it as an environment variable.
+    *   **Details**: Refer to the [Configuration section](#configuration) for `MINIMAX_API_KEY` and [Troubleshooting: "Missing MINIMAX_API_KEY" error](#missing-minimax_api_key-error).
+
 ## Data Source
 
 ### Primary: MiniMax Coding Plan Remains API

@@ -8,7 +8,19 @@ OpenCode quota collector with web API (Chrome cookies) and local database fallba
 
 - **Collection Strategy**: Web API → Sidecar aggregation → Local SQLite DB
 - **Cards**: 3 cards (5h rolling, 7d rolling, 30d rolling windows)
-- **Authentication:** Chrome session cookie for `opencode.ai`
+- **Authentication:** Chrome session cookie or local SQLite database
+
+## Setup Methods Quick Overview
+
+The OpenCode collector supports the following authentication methods:
+
+1.  **Chrome Session Cookie**: Automatically extracted from your Chrome browser.
+    *   **Method**: Ensure you are logged into [opencode.ai](https://opencode.ai) in Chrome.
+    *   **Details**: See [Troubleshooting: Web API returns empty](#web-api-returns-empty) for verification.
+
+2.  **Local SQLite Database**: Directly reads usage data from the OpenCode IDE's local database.
+    *   **Method**: Use the OpenCode IDE on your machine.
+    *   **Details**: See [Troubleshooting: Database not found](#database-not-found) for ensuring the database exists.
 
 ## Data Sources
 

@@ -8,7 +8,21 @@ Anthropic Claude quota collector with 4-tier fallback: OAuth API → Web API →
 
 - **Collection Strategy**: OAuth API → Web API (cookies) → Enhanced Local Logs → Error Cards
 - **Cards**: 2-5 cards (Session, Weekly, Sonnet, Opus, Extra Usage windows)
-- **Authentication**: OAuth token (env var, credentials file, or macOS keychain) OR Chrome cookies
+- **Authentication**: OAuth token (env var, credentials file, macOS keychain) or Chrome cookies
+
+## Setup Methods Quick Overview
+
+The Claude collector supports multiple authentication methods:
+
+1.  **OAuth Token (Preferred)**:
+    *   **Method 1**: Set the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
+    *   **Method 2 (Auto-discovered)**: Log in via the `claude` CLI, which creates `~/.config/claude/oauth_creds.json`.
+    *   **Method 3 (Auto-discovered, macOS only)**: OAuth token stored in macOS Keychain.
+    *   **Details**: See [Primary: OAuth API](#primary-oauth-api) and [Configuration section](#configuration).
+
+2.  **Chrome Cookies**: Used for Web API fallback if OAuth token is unavailable.
+    *   **Method**: Log in to [claude.ai](https://claude.ai) in Chrome. Runway will attempt to extract the session cookie.
+    *   **Details**: See [Secondary: Web API (Chrome Cookies)](#secondary-web-api-chrome-cookies).
 
 ## Data Sources
 

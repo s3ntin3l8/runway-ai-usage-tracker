@@ -10,6 +10,14 @@ OpenRouter credit balance and per-key spending limit collector.
 - **Cards**: 1 card (Credits balance) + 1 card (Key Limit, when configured)
 - **Authentication**: `OPENROUTER_API_KEY` environment variable or UI settings
 
+## Setup Methods Quick Overview
+
+The OpenRouter collector uses a single API key for authentication:
+
+1.  **API Key (OPENROUTER_API_KEY)**:
+    *   **Method**: Obtain your API key from the OpenRouter dashboard and set it as an environment variable or via the Runway UI settings.
+    *   **Details**: Refer to the [Configuration section](#configuration) for `OPENROUTER_API_KEY` and [Troubleshooting: "Missing OPENROUTER_API_KEY" error](#missing-openrouter_api_key-error).
+
 ## Data Sources
 
 ### Primary: OpenRouter Credits API

@@ -8,7 +8,23 @@ ChatGPT Codex quota collector with OAuth-backed API and local session cache fall
 
 - **Collection Strategy**: OAuth API → Local session cache
 - **Cards**: 1 card (primary window usage)
-- **Authentication:** `CHATGPT_OAUTH_TOKEN` env var → `~/.codex/auth.json` → Chrome browser cookies
+- **Authentication**: `CHATGPT_OAUTH_TOKEN` env var → `~/.codex/auth.json` → Chrome browser cookies
+
+## Setup Methods Quick Overview
+
+The ChatGPT collector supports multiple authentication methods:
+
+1.  **OAuth Token (CHATGPT_OAUTH_TOKEN)**:
+    *   **Method**: Set the `CHATGPT_OAUTH_TOKEN` environment variable with a valid OAuth token.
+    *   **Details**: See [Configuration](#configuration) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
+
+2.  **Codex CLI Cache (`~/.codex/auth.json`)**:
+    *   **Method**: Log in using the `codex` CLI (`codex auth login`). Runway will automatically discover the token from `~/.codex/auth.json`.
+    *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
+
+3.  **Chrome Browser Cookie**:
+    *   **Method**: Log in to [chatgpt.com](https://chatgpt.com) in Chrome. Runway will attempt to extract the `__Secure-next-auth.session-token` cookie and exchange it for a Bearer token.
+    *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 ## Data Sources
 

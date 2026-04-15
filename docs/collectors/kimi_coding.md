@@ -8,7 +8,19 @@ Kimi For Coding IDE quota collector with weekly and rate limit tracking.
 
 - **Collection Strategy**: Web API → Chrome cookie fallback
 - **Cards**: 2 cards (Weekly quota, 5h rate limit)
-- **Authentication:** `KIMI_AUTH_TOKEN` env var OR Chrome `kimi-auth` cookie
+- **Authentication**: `KIMI_AUTH_TOKEN` env var OR Chrome `kimi-auth` cookie
+
+## Setup Methods Quick Overview
+
+The Kimi Coding collector supports the following authentication methods:
+
+1.  **JWT Token (KIMI_AUTH_TOKEN)**:
+    *   **Method**: Obtain your JWT token (from browser DevTools) and set it as the `KIMI_AUTH_TOKEN` environment variable.
+    *   **Details**: See [Configuration](#configuration) and [Troubleshooting: "No Auth" error](#no-auth-error).
+
+2.  **Chrome `kimi-auth` Cookie**:
+    *   **Method**: Log in to [kimi.com/code](https://www.kimi.com/code) in Chrome. Runway will automatically extract the `kimi-auth` cookie.
+    *   **Details**: See [Troubleshooting: "No Auth" error](#no-auth-error).
 
 ## Data Source
 

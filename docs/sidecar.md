@@ -102,6 +102,9 @@ Config file location:
 - **Linux/macOS:** `~/.config/runway/sidecar/config.json`
 - **Windows:** `%APPDATA%/runway/sidecar/config.json`
 
+**Custom Config Directory**:
+The default location for Runway's (and Sidecar's) configuration files is platform-specific. You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. For example, if `RUNWAY_CONFIG_DIR` is set to `/opt/runway`, then the sidecar config will be expected at `/opt/runway/sidecar/config.json`.
+
 **Required fields:**
 ```json
 {
@@ -220,7 +223,7 @@ launchctl start com.runway.sidecar
 | Provider | Data Source | Required Environment |
 |----------|-------------|---------------------|
 | **Claude** | OAuth token | `CLAUDE_CODE_OAUTH_TOKEN` or `~/.claude/.credentials.json` or macOS keychain |
-| **GitHub Copilot** | API token | `GITHUB_TOKEN` or Windows Credential Manager |
+| **GitHub Copilot** | API token, OAuth | `GITHUB_TOKEN` (from .env or OAuth flow), `gh` CLI (from `~/.config/gh/hosts.yml`), or Windows Credential Manager |
 | **Gemini** | OAuth + logs | `~/.gemini/oauth_creds.json` |
 | **ChatGPT** | OAuth + logs | `~/.codex/auth.json` |
 | **OpenCode** | SQLite DB | `~/.local/share/opencode/opencode.db` or Chrome cookie |
