@@ -15,25 +15,52 @@ class GeminiOAuthMixin(OAuthBaseCollector):
     """Mixin for Gemini OAuth token management."""
 
     async def _get_current_token(self) -> str | None:
-        """Get the current access token."""
-        # Check sidecar cache first
-        token = await token_cache.get_token("gemini", "oauth_token", account_id=self.account_id)
-        if not token and not self.account_id:
-            creds = await self._get_credentials()
-            if creds:
-                token = creds.get("access_token")
-                if token:
-                    # Mirror into token cache so the Tokens health tab can see it
-                    token_data: dict[str, str] = {"oauth_token": token}
-                    if creds.get("refresh_token"):
-                        token_data["refresh_token"] = creds["refresh_token"]
-                    await token_cache.store(
-                        "gemini", token_data, account_id=None, account_label=None
-                    )
-        return token
+        """Get the current access token.
+
+        Priority rules:
+        - Local-mode collectors (account_id is None): try the local credentials
+          file first so the correct Google account is always used. Mirror into
+          the cache afterward so the token health tab can display it. Only fall
+          back to the cache if the local file provides no token.
+        - Sidecar-mode collectors (account_id is set): keep the existing cache-first
+          behaviour; there is no local file to consult.
+        """
+        if self.account_id:
+            # Sidecar mode: the cache is the only source of truth.
+            return await token_cache.get_token("gemini", "oauth_token", account_id=self.account_id)
+
+        # Local mode: prefer the local credentials file to avoid picking up a
+        # sidecar token that belongs to a different Google account.
+        creds = await self._get_credentials()
+        if creds:
+            token = creds.get("access_token")
+            if token:
+                # Mirror into token cache so the Tokens health tab can see it.
+                token_data: dict[str, str] = {"oauth_token": token}
+                if creds.get("refresh_token"):
+                    token_data["refresh_token"] = creds["refresh_token"]
+                await token_cache.store("gemini", token_data, account_id=None, account_label=None)
+                return token
+
+        # Credentials file absent or scraping disabled — fall back to cache.
+        # Note: if the only cached entry belongs to a sidecar this can still
+        # return the wrong token, but that is pre-existing behaviour and only
+        # occurs when local credential scraping is entirely unavailable.
+        return await token_cache.get_token("gemini", "oauth_token", account_id=None)
 
     async def _is_token_expired(self) -> bool:
-        """Check if Gemini token is expired."""
+        """Check if Gemini token is expired.
+
+        For sidecar-mode collectors (account_id set), there is no local
+        credentials file to derive expiry from. The token cache already enforces
+        a 30-minute TTL, so we treat sidecar tokens as always valid here and
+        avoid triggering a spurious refresh that cannot succeed without a local
+        refresh_token.
+        """
+        if self.account_id:
+            # Sidecar mode: defer freshness enforcement to the cache TTL.
+            return False
+
         try:
             creds = await self._get_credentials()
             if creds:
