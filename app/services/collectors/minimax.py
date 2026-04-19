@@ -40,6 +40,12 @@ class MiniMaxCollector(BaseCollector):
             credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
         )
 
+    async def is_configured(self) -> bool:
+        """Check if MiniMax API key or session cookie is present."""
+        return self._is_valid_credential(self._get_api_key()) or self._is_valid_credential(
+            self._get_session_cookie()
+        )
+
     def _get_session_cookie(self) -> str | None:
         """DB (UI-set) → env var."""
         return (

@@ -56,6 +56,17 @@ class AnthropicCollector(
         self._last_statusline_data = {}  # Cache for hybrid fallback
         self._terminal_failure = False  # Guard for invalid_grant
 
+    async def is_configured(self) -> bool:
+        """Check if Anthropic credentials (OAuth, token, or local logs) are present."""
+        if await self._get_current_token():
+            return True
+        if self._is_valid_credential(settings.CLAUDE_CODE_OAUTH_TOKEN):
+            return True
+        # Check for statusline/local logs
+        if await self._strategy_statusline():
+            return True
+        return False
+
     async def _get_current_token(self) -> str | None:
         """Fetch current access token from sidecar cache or credentials file."""
         # 1. Check sidecar cache first (fastest, supports multi-account)

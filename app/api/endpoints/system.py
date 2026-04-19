@@ -447,8 +447,14 @@ async def upsert_provider_config(
         row.api_key = body.api_key if body.api_key else None
     if body.session_cookie is not None:
         row.session_cookie = body.session_cookie if body.session_cookie else None
-
     session.commit()
+    # Trigger immediate sync and collection to reflect changes in dashboard instantly
+    try:
+        await manager._sync_collectors()
+        await manager.collect_one(provider_id)
+    except Exception as e:
+        logger.warning(f"Failed to trigger sync after config update for {provider_id}: {e}")
+
     return {"status": "saved"}
 
 

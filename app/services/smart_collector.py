@@ -160,20 +160,15 @@ class SmartCollector:
         Intelligently fetch data with differential fetching strategy.
 
         Strategy:
+        0. If collector is NOT configured, return [] (hides from UI)
         1. If cache is fresh, return it
         2. If cache is stale or errors exceeded, attempt fresh fetch
-        3. On success: Update cache and reset error count
-        4. On failure:
-           - If cache exists: Return stale data with [Cached] tag
-           - If no cache: Return error card
-        5. If in error retry delay: Return cached/error without fetching
-
-        Args:
-            client: httpx.AsyncClient for making requests
-
-        Returns:
-            List[Dict[str, Any]]: Fresh data, cached data, or error card
+        ...
         """
+        # Fast path: Skip if not configured
+        if not await self.collector.is_configured():
+            return []
+
         # Fast path: Return cached data if fresh
         if self._should_use_cache() and self.last_result is not None:
             return self._tag_as_cached(self.last_result)

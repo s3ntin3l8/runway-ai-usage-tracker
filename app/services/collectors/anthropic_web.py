@@ -19,7 +19,7 @@ import httpx
 
 from app.core.browser_cookies import get_claude_session_cookie
 from app.core.config import is_local_collector_enabled, settings
-from app.core.utils import PaceCalculator, http_request_with_retry, human_delta
+from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +140,7 @@ class AnthropicWebMixin:
                     "remaining": f"{(100 - pct_used):.1f}%",
                     "unit": "capacity",
                     "reset": human_delta(reset_at),
-                    "health": "good"
-                    if pct_used < 70
-                    else "warning"
-                    if pct_used < 90
-                    else "critical",
+                    "health": HealthCalculator.from_percentage(pct_used),
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
                     "detail": f"{pct_used:.1f}% used [Statusline]{identity_suffix}",
                     "used_value": pct_used,
@@ -333,9 +329,6 @@ class AnthropicWebMixin:
                 or account_data.get("subscription")
                 or ""
             )
-            logger.warning(
-                f"Anthropic account_data keys: {list(account_data.keys())}, plan={plan!r}"
-            )
         if not plan and org_data:
             # Org response sometimes has plan/capabilities info
             plan = (
@@ -345,8 +338,6 @@ class AnthropicWebMixin:
                 or org_data.get("membership", {}).get("billing_type")
                 or ""
             )
-            if plan:
-                logger.warning(f"Anthropic tier from org_data: plan={plan!r}")
         tier = plan.capitalize() if plan else None
 
         # All four core windows — show even if API returns null (mirrors OAuth path behaviour)
@@ -399,11 +390,7 @@ class AnthropicWebMixin:
                     "remaining": f"{remaining_pct:.1f}%",
                     "unit": "capacity",
                     "reset": human_delta(reset_at),
-                    "health": "good"
-                    if pct_used < 70
-                    else "warning"
-                    if pct_used < 90
-                    else "critical",
+                    "health": HealthCalculator.from_percentage(pct_used),
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
                     "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
                     "used_value": pct_used,
@@ -434,7 +421,7 @@ class AnthropicWebMixin:
                             "remaining": f"${bal:.2f}",
                             "unit": "USD",
                             "reset": "Prepaid",
-                            "health": "good" if bal > 5.0 else "warning" if bal > 0 else "critical",
+                            "health": HealthCalculator.from_balance(bal),
                             "pace": "Manual Top-up",
                             "detail": f"Credits: ${bal:.2f} [Web API]{identity_suffix}",
                             "used_value": 0.0,
@@ -470,7 +457,7 @@ class AnthropicWebMixin:
                         "remaining": f"${remaining:.2f}",
                         "unit": "USD",
                         "reset": "Monthly",
-                        "health": "good" if remaining > 5.0 else "warning",
+                        "health": HealthCalculator.from_spend(spend, limit),
                         "pace": "Sustainable",
                         "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
                         "used_value": spend,

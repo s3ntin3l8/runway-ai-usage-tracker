@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import PaceCalculator, http_request_with_retry, human_delta
+from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class ChatGPTApiMixin:
                         "remaining": f"{(100 - pct):.1f}%",
                         "unit": "remaining",
                         "reset": human_delta(reset_at),
-                        "health": "critical" if pct >= 90 else ("warning" if pct >= 80 else "good"),
+                        "health": HealthCalculator.from_percentage(pct),
                         "pace": PaceCalculator.estimate_longevity(pct, reset_at),
                         "detail": f"{tier.upper()} Account · {email} · {pct:.1f}% used",
                         "used_value": float(pct),

@@ -49,6 +49,10 @@ class KimiApiCollector(BaseCollector):
         """DB (UI-set) → env var."""
         return credential_provider.get_provider_api_key("kimi_api") or settings.KIMI_API_KEY or None
 
+    async def is_configured(self) -> bool:
+        """Check if Kimi API key is present."""
+        return self._is_valid_credential(self._get_api_key())
+
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi prepaid balance and history via API."""
         key = self._get_api_key()

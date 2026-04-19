@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.core.utils import http_request_with_retry
+from app.core.utils import HealthCalculator, http_request_with_retry
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -40,6 +40,10 @@ class OpenRouterCollector(BaseCollector):
                 return token
 
         return settings.OPENROUTER_API_KEY or None
+
+    async def is_configured(self) -> bool:
+        """Check if OpenRouter API key is present."""
+        return self._is_valid_credential(await self._get_api_key())
 
     def _build_headers(self) -> dict[str, str]:
         """Build request headers including optional OpenRouter attribution."""
@@ -98,11 +102,7 @@ class OpenRouterCollector(BaseCollector):
                         "remaining": f"${remaining:.2f}",
                         "unit": "USD",
                         "reset": "Prepaid",
-                        "health": "good"
-                        if remaining > 5.0
-                        else "warning"
-                        if remaining > 1.0
-                        else "critical",
+                        "health": HealthCalculator.from_balance(remaining),
                         "pace": "Stable",
                         "detail": f"Used: ${usage:.2f} of ${total_credits:.2f} [API]",
                         "used_value": usage,
@@ -134,11 +134,7 @@ class OpenRouterCollector(BaseCollector):
                             "remaining": f"${key_remaining:.2f}",
                             "unit": "USD",
                             "reset": "Per-key",
-                            "health": "good"
-                            if key_remaining > key_limit * 0.5
-                            else "warning"
-                            if key_remaining > key_limit * 0.1
-                            else "critical",
+                            "health": HealthCalculator.from_spend(key_usage, key_limit),
                             "pace": "Stable",
                             "detail": f"Key used: ${key_usage:.2f} of ${key_limit:.2f} [API]",
                             "used_value": key_usage,

@@ -4,7 +4,13 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import IdentityExtractor, PaceCalculator, error_card, http_request_with_retry
+from app.core.utils import (
+    HealthCalculator,
+    IdentityExtractor,
+    PaceCalculator,
+    error_card,
+    http_request_with_retry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,9 +165,7 @@ class GeminiApiMixin:
                     except (ValueError, TypeError):
                         pass
 
-                health = (
-                    "good" if percent_used < 50 else "warning" if percent_used < 80 else "critical"
-                )
+                health = HealthCalculator.from_percentage(percent_used)
                 pace = PaceCalculator.estimate_longevity(percent_used, reset_dt)
 
                 if quota_limit is not None and quota_remaining is not None:

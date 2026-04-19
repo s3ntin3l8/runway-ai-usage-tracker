@@ -43,6 +43,25 @@ class OpenCodeCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
 
+    async def is_configured(self) -> bool:
+        """Check if OpenCode session cookie or local DB is present."""
+        # Check for session cookie
+        session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
+        if session_cookie:
+            return True
+
+        # Check for local DB if enabled
+        if is_local_collector_enabled():
+            potential_paths = [
+                settings.OPENCODE_DB_PATH,
+                os.path.expanduser("~/.local/share/opencode/opencode.db"),
+                os.path.expanduser("~/.opencode/opencode.db"),
+            ]
+            if any(os.path.exists(p) for p in potential_paths):
+                return True
+
+        return False
+
     def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for OpenCode (Sidecar, Local DB)."""
         return [

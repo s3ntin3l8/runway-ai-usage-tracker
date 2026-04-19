@@ -47,6 +47,32 @@ class IdentityExtractor:
         payload = cls.extract_jwt_payload(token)
         return payload.get("azp") or payload.get("aud")
 
+    @staticmethod
+    def extract_best_email(emails: list[dict[str, Any]]) -> str | None:
+        """
+        Standardized logic to extract the 'best' email from a list of provider emails.
+        Prioritizes:
+        1. Verified, non-noreply email addresses.
+        2. Primary email (even if it's a noreply address).
+        3. First available email.
+        """
+        if not emails:
+            return None
+
+        # 1. Search for a verified, real (non-noreply) email
+        for e in emails:
+            email = e.get("email")
+            if email and e.get("verified") and "noreply.github.com" not in email:
+                return email
+
+        # 2. Fallback: Search for the primary email
+        for e in emails:
+            if e.get("primary"):
+                return e.get("email")
+
+        # 3. Last fallback: just return the first one available
+        return emails[0].get("email")
+
 
 class PaceCalculator:
     @staticmethod
@@ -107,6 +133,60 @@ def extract_token_regex(detail: str, prefix: str) -> str | None:
     pattern = rf"{re.escape(prefix)}\s*([^\s·\[\]]+)"
     match = re.search(pattern, detail)
     return match.group(1) if match else None
+
+
+class HealthCalculator:
+    """Standardized logic for determining card health status."""
+
+    @staticmethod
+    def from_percentage(pct_used: float) -> str:
+        """
+        Map percentage used to a health status string.
+        Standard thresholds: >=90 (Critical), >=70 (Warning), else Good.
+        """
+        if pct_used >= 90:
+            return "critical"
+        if pct_used >= 70:
+            return "warning"
+        return "good"
+
+    @staticmethod
+    def from_remaining(remaining: float, limit: float) -> str:
+        """
+        Calculate health status from remaining and limit values.
+        Returns 'unknown' if limit is 0 or invalid.
+        """
+        if limit <= 0:
+            return "unknown"
+        pct_used = ((limit - remaining) / limit) * 100
+        return HealthCalculator.from_percentage(pct_used)
+
+    @staticmethod
+    def from_spend(spend: float, limit: float) -> str:
+        """
+        Calculate health based on spend vs limit (for monthly budgets).
+        Critical if limit reached, Warning if < $5 remaining.
+        """
+        if limit <= 0:
+            return "good"
+        remaining = limit - spend
+        if remaining <= 0:
+            return "critical"
+        if remaining <= 5.0:
+            return "warning"
+        return "good"
+
+    @staticmethod
+    def from_balance(balance: float) -> str:
+        """
+        Calculate health based on prepaid balance.
+        Critical if $0, Warning if <= $5.
+        """
+        if balance <= 0:
+            return "critical"
+        if balance <= 5.0:
+            return "warning"
+        return "good"
 
 
 async def http_request_with_retry(

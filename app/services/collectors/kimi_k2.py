@@ -50,6 +50,10 @@ class KimiK2Collector(BaseCollector):
             credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
         )
 
+    async def is_configured(self) -> bool:
+        """Check if Kimi K2 API key is present."""
+        return self._is_valid_credential(self._get_api_key())
+
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi K2 credits via API."""
         key = self._get_api_key()

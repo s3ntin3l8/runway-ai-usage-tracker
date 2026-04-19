@@ -48,6 +48,15 @@ class GeminiCollector(
             account_label=account_label,
         )
 
+    async def is_configured(self) -> bool:
+        """Check if Gemini credentials or logs are present."""
+        if await self._get_current_token():
+            return True
+        # Check logs/CLI
+        if await self._collect_via_logs(None):
+            return True
+        return False
+
     def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for Gemini (Logs)."""
         return [

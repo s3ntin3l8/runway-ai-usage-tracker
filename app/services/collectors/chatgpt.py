@@ -42,6 +42,11 @@ class ChatGPTCollector(
         self._refreshed_token_expiry = None
         self._device_id = str(uuid.uuid4())
 
+    async def is_configured(self) -> bool:
+        """Check if ChatGPT auth data (logs or tokens) is present."""
+        auth = await self._get_auth_data(None)
+        return bool(auth.get("token") or auth.get("source") == "local")
+
     def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for ChatGPT."""
         return [

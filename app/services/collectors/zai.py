@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.core.utils import human_delta
+from app.core.utils import HealthCalculator, human_delta
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 
@@ -36,8 +36,6 @@ class ZaiCollector(BaseCollector):
     PROVIDER_ID = "zai"
     DEFAULT_WINDOW_TYPE = "monthly"
 
-    HEALTH_WARNING_THRESHOLD = 50
-    HEALTH_CRITICAL_THRESHOLD = 80
     MILLISECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000
 
     QUOTA_PATH = "api/monitor/usage/quota/limit"
@@ -50,6 +48,10 @@ class ZaiCollector(BaseCollector):
     def _get_api_key(self) -> str | None:
         """DB (UI-set via provider_id='zai') → env var."""
         return credential_provider.get_provider_api_key("zai") or settings.ZAI_API_KEY or None
+
+    async def is_configured(self) -> bool:
+        """Check if zAI API key is present."""
+        return self._is_valid_credential(self._get_api_key())
 
     def _get_quota_endpoints(self) -> list[str]:
         """Resolve quota endpoints with env overrides."""
@@ -211,20 +213,8 @@ class ZaiCollector(BaseCollector):
             except (ValueError, OSError, OverflowError):
                 reset_str = "Unknown"
 
-        health = (
-            "good"
-            if pct_used < self.HEALTH_WARNING_THRESHOLD
-            else "warning"
-            if pct_used < self.HEALTH_CRITICAL_THRESHOLD
-            else "critical"
-        )
-        pace = (
-            "Stable"
-            if pct_used < self.HEALTH_WARNING_THRESHOLD
-            else "High"
-            if pct_used < self.HEALTH_CRITICAL_THRESHOLD
-            else "Critical"
-        )
+        health = HealthCalculator.from_percentage(pct_used)
+        pace = "Stable" if health == "good" else "High" if health == "warning" else "Critical"
 
         return {
             "service_name": service,

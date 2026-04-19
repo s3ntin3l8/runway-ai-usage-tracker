@@ -17,7 +17,13 @@ import httpx
 
 from app.core.browser_cookies import get_session_cookies
 from app.core.config import settings
-from app.core.utils import PaceCalculator, error_card, http_request_with_retry, human_delta
+from app.core.utils import (
+    HealthCalculator,
+    PaceCalculator,
+    error_card,
+    http_request_with_retry,
+    human_delta,
+)
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 
@@ -96,6 +102,10 @@ class OllamaCollector(BaseCollector):
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
         self._last_error_reason: str = "unknown"
+
+    async def is_configured(self) -> bool:
+        """Check if Ollama session cookie is present."""
+        return self._is_valid_credential(self._get_cookie_header())
 
     async def reset(self):
         """Reset collector state between collection runs."""
@@ -361,7 +371,7 @@ class OllamaCollector(BaseCollector):
             "remaining": f"{(100 - pct):.1f}%",
             "unit": "remaining",
             "reset": human_delta(resets_at),
-            "health": "good" if pct < 80 else "warning" if pct < 95 else "danger",
+            "health": HealthCalculator.from_percentage(pct),
             "pace": PaceCalculator.estimate_longevity(pct, resets_at),
             "detail": detail,
             "used_value": pct,
