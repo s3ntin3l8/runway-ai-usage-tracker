@@ -8,7 +8,13 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.core.utils import PaceCalculator, error_card, http_request_with_retry, human_delta
+from app.core.utils import (
+    HealthCalculator,
+    PaceCalculator,
+    error_card,
+    http_request_with_retry,
+    human_delta,
+)
 from app.services.collectors.oauth_base import OAuthBaseCollector
 from app.services.token_cache import token_cache
 
@@ -375,7 +381,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                             "remaining": f"${bal:.2f}",
                             "unit": "USD",
                             "reset": "Prepaid",
-                            "health": "good" if bal > 5.0 else "warning" if bal > 0 else "critical",
+                            "health": HealthCalculator.from_balance(bal),
                             "pace": "Manual Top-up",
                             "detail": f"Current Balance: ${bal:.2f} [OAuth]{identity_suffix}",
                             "used_value": 0.0,
@@ -410,7 +416,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                         "remaining": f"${remaining:.2f}",
                         "unit": "limit",
                         "reset": "Monthly",
-                        "health": "good" if remaining > 5.0 else "warning",
+                        "health": HealthCalculator.from_spend(spend, limit),
                         "pace": "Flexible",
                         "detail": f"Spent: ${spend:.2f} / ${limit:.2f} [OAuth]{identity_suffix}",
                         "used_value": spend,
@@ -451,11 +457,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "remaining": f"{remaining_pct:.1f}%",
                     "unit": "capacity",
                     "reset": human_delta(reset_at),
-                    "health": "good"
-                    if pct_used < 70
-                    else "warning"
-                    if pct_used < 90
-                    else "critical",
+                    "health": HealthCalculator.from_percentage(pct_used),
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
                     "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
                     "used_value": pct_used,

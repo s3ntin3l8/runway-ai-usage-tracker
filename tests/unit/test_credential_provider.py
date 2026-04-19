@@ -85,6 +85,7 @@ def test_disabled_scraping():
             return_value=False,
         ),
         patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
+        patch("os.path.exists", return_value=False),
     ):
         assert CredentialProvider.get_github_token() == ""
         assert CredentialProvider.get_gemini_credentials_path() is None

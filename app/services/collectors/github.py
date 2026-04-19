@@ -35,7 +35,13 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import PaceCalculator, error_card, http_request_with_retry
+from app.core.utils import (
+    HealthCalculator,
+    IdentityExtractor,
+    PaceCalculator,
+    error_card,
+    http_request_with_retry,
+)
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -53,6 +59,10 @@ class GitHubCollector(BaseCollector):
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
+
+    async def is_configured(self) -> bool:
+        """Check if GitHub token is present."""
+        return bool(await self._get_token())
 
     def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for GitHub (None)."""
@@ -225,11 +235,7 @@ class GitHubCollector(BaseCollector):
                             )
                             if emails_resp.status_code == 200:
                                 emails = emails_resp.json()
-                                primary = next(
-                                    (e["email"] for e in emails if e.get("primary")), None
-                                )
-                                if primary:
-                                    identity = primary
+                                identity = IdentityExtractor.extract_best_email(emails)
 
                         # Fallback to local git config user.email if still missing
                         if not identity:
@@ -277,7 +283,10 @@ class GitHubCollector(BaseCollector):
 
             if identity:
                 self._identity = identity
-                self.account_label = identity
+                # Only update label if it's currently NOT set, empty string, or the placeholder 'Default'
+                # This allow clearing the field in settings to revert to auto-discovery.
+                if not self.account_label or self.account_label.lower() == "default":
+                    self.account_label = identity
                 if self.account_id:
                     import asyncio
 
@@ -298,6 +307,12 @@ class GitHubCollector(BaseCollector):
 
         return []
 
+    async def reset(self):
+        """Reset internal collector state and cache."""
+        self._cached_results = None
+        self._last_fetch = None
+        logger.info("GitHubCollector internal cache cleared.")
+
     async def _get_token(self) -> str | None:
         """Internal helper to get token from multiple sources."""
         # Check standard credentials
@@ -309,7 +324,8 @@ class GitHubCollector(BaseCollector):
             identity = creds.get("email") or creds.get("name")
             if identity:
                 self._identity = identity
-                self.account_label = identity
+                if not self.account_label or self.account_label.lower() == "default":
+                    self.account_label = identity
             return token
 
         # Check account-specific token cache
@@ -377,7 +393,9 @@ class GitHubCollector(BaseCollector):
                             f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"
                         ),
                         "reset": reset_at.isoformat() if reset_at else None,
-                        "health": "good" if val > 10 else "warning",
+                        "health": HealthCalculator.from_remaining(val, monthly_val)
+                        if isinstance(monthly_val, (int, float))
+                        else "warning",
                         "pace": pace,
                         "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
                         "used_value": float(used_val),
@@ -423,7 +441,7 @@ class GitHubCollector(BaseCollector):
                         "remaining": f"{rem:,}",
                         "unit": f"/ {ent:,}",
                         "reset": "Rolling",
-                        "health": "good" if (ent > 0 and (rem / ent) > 0.3) else "warning",
+                        "health": HealthCalculator.from_remaining(rem, ent),
                         "pace": pace,
                         "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
                         "used_value": float(used_val),

@@ -807,7 +807,7 @@ export function buildModalContent(item) {
                 <div class="flex items-center justify-between gap-4">
                     <div class="flex flex-col">
                         <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                        <span class="text-sm font-semibold text-zinc-300 mono">${escapeHTML(STATE.githubAuth.account)}</span>
+                        <span class="text-sm font-semibold text-zinc-300 mono">${escapeHTML(STATE.githubAuth.account || STATE.githubAuth.name || 'Account')}${STATE.githubAuth.email ? ` <span class="text-zinc-500 font-normal">(${escapeHTML(STATE.githubAuth.email)})</span>` : ''}</span>
                     </div>
                     <button 
                         onclick="event.stopPropagation(); window.handleGitHubLogout()"

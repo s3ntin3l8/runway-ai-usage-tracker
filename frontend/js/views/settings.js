@@ -51,16 +51,28 @@ function renderSettingsSection(name) {
     else if (name === 'system') renderSystemSection(pane);
 }
 
-async function renderProvidersSection(pane) {
+export async function renderProvidersSection(pane) {
     try {
         const { providers } = await fetchProviderConfigs();
-        if (!_settingsSelectedProvider && providers.length > 0) {
-            _settingsSelectedProvider = providers[0].provider_id;
+        
+        // Load from localStorage if not set in memory
+        if (!_settingsSelectedProvider) {
+            _settingsSelectedProvider = localStorage.getItem('settings_selected_provider');
         }
+
+        // If still not set, or no longer valid, default to first provider
+        if (providers.length > 0) {
+            const exists = providers.some(p => p.provider_id === _settingsSelectedProvider);
+            if (!exists) {
+                _settingsSelectedProvider = providers[0].provider_id;
+            }
+        }
+
         pane.innerHTML = buildProvidersSectionHTML(providers);
         pane.querySelectorAll('.provider-list-item').forEach(item => {
             item.addEventListener('click', () => {
                 _settingsSelectedProvider = item.dataset.providerId;
+                localStorage.setItem('settings_selected_provider', _settingsSelectedProvider);
                 renderProvidersSection(pane);
             });
         });
@@ -138,8 +150,11 @@ function buildProviderForm(p) {
             ${!p.session_cookie_set ? '<p class="text-[10px] text-zinc-600 mt-1">No cookie stored — browser extraction used as fallback.</p>' : ''}
         </div>` : ''}
         ${p.provider_id === 'github' ? `<div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-            <div><span class="text-sm text-zinc-400">GitHub OAuth</span><p class="text-[10px] text-zinc-600 mt-0.5">${STATE.githubAuth?.authenticated ? `Connected as <span class="text-zinc-400">${escapeHTML(STATE.githubAuth.account?.login || '')}</span>` : 'Not connected'}</p></div>
-            ${STATE.githubAuth?.authenticated ? `<button type="button" onclick="handleGitHubLogout()" class="toggle-btn text-xs text-red-400" style="border-color:#f87171">Disconnect</button>` : `<button type="button" onclick="startGitHubLogin()" class="toggle-btn text-xs">Connect</button>`}
+                <div>
+                    <span class="text-sm text-zinc-400">GitHub OAuth</span>
+                    <p class="text-[10px] text-zinc-600 mt-0.5">${STATE.githubAuth?.authenticated ? `Connected as <span class="text-zinc-400">${escapeHTML(STATE.githubAuth.account || STATE.githubAuth.name || 'Account')}${STATE.githubAuth.email ? ` (${escapeHTML(STATE.githubAuth.email)})` : ''}</span>` : 'Not connected'}</p>
+                </div>
+  ${STATE.githubAuth?.authenticated ? `<button type="button" onclick="handleGitHubLogout()" class="toggle-btn text-xs text-red-400" style="border-color:#f87171">Disconnect</button>` : `<button type="button" onclick="startGitHubLogin()" class="toggle-btn text-xs">Connect</button>`}
         </div>` : ''}
         <label class="flex items-center justify-between py-3 border-b border-zinc-800/50"><span class="text-sm text-zinc-400">Account Label</span><input type="text" id="field-account-label" value="${escapeHTMLAttr(p.account_label || '')}" placeholder="Auto-detected" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 w-48 focus:outline-none focus:border-violet-500"></label>
         <div class="flex items-center justify-between py-3 border-b border-zinc-800/50"><span class="text-sm text-zinc-400">Poll Interval Override</span><select id="field-poll-interval" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500"><option value="" ${!p.poll_interval_seconds ? 'selected' : ''}>Default (${defaultTtlLabel})</option>${pollSelectOpts}</select></div>
@@ -172,7 +187,7 @@ async function saveProviderConfig(pane, form, providerId) {
 
     const enabledToggle = pane.querySelector('#field-enabled-toggle');
     const enabled = enabledToggle ? enabledToggle.dataset.enabled === 'true' : true;
-    const accountLabel = form.querySelector('#field-account-label')?.value || null;
+    const accountLabel = form.querySelector('#field-account-label')?.value ?? null;
 
     const apiKeyInputRow = pane.querySelector('#api-key-input-row');
     const apiKeyVisible = apiKeyInputRow && !apiKeyInputRow.classList.contains('hidden');

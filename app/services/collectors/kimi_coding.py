@@ -63,6 +63,10 @@ class KimiCodingCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
 
+    async def is_configured(self) -> bool:
+        """Check if Kimi Coding auth token or cookie is present."""
+        return self._is_valid_credential(await self._get_auth_token())
+
     """Collector for Kimi Coding IDE quotas (weekly + rate limits)."""
 
     PROVIDER_ID = "kimi_coding"

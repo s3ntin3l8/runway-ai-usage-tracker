@@ -12,6 +12,9 @@ from typing import Any
 import httpx
 
 from app.core.config import is_local_collector_enabled, settings
+from app.core.utils import (
+    HealthCalculator,
+)
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,10 @@ class AntigravityCollector(BaseCollector):
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+
+    async def is_configured(self) -> bool:
+        """Check if local collector is enabled for Antigravity."""
+        return is_local_collector_enabled()
 
     def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for Antigravity."""
@@ -217,7 +224,7 @@ class AntigravityCollector(BaseCollector):
                     "unit": "capacity",
                     "reset": reset_display,
                     "pace": "Continuous",
-                    "health": "good" if rem_pct > 30 else "warning",
+                    "health": HealthCalculator.from_percentage(round(100.0 - rem_pct, 2)),
                     "detail": f"{plan} | {email} [LSP]",
                     "tier": plan,
                     "data_source": "lsp",
@@ -247,7 +254,8 @@ class AntigravityCollector(BaseCollector):
             display_name = name_map.get(c_type, c_type.replace("_", " ").title())
 
             try:
-                health = "good" if int(amount) > 100 else "warning"
+                val = int(amount)
+                health = "good" if val > 100 else "warning" if val > 0 else "critical"
             except ValueError:
                 health = "warning"
 
@@ -293,7 +301,7 @@ class AntigravityCollector(BaseCollector):
                         "unit": "remaining",
                         "reset": reset_display,
                         "pace": "N/A",
-                        "health": "good" if rem > 30 else "warning",
+                        "health": HealthCalculator.from_percentage(round(100.0 - rem, 2)),
                         "detail": f"{name} [IDE/File]",
                         "data_source": "local_file",
                         "updated_at": datetime.now(UTC).isoformat(),

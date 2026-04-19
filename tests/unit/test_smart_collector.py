@@ -100,6 +100,18 @@ class TestSmartCollectorCaching:
         assert result == data
         assert mock_collector.collect.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_unconfigured_collector_returns_empty_list(self, mock_collector, mock_client):
+        """Test that unconfigured collector returns empty list without fetching."""
+        mock_collector.is_configured.return_value = False
+        mock_collector.collect.return_value = [{"service_name": "ShouldNotAppear"}]
+
+        smart = SmartCollector(mock_collector, "Test", ttl=600.0)
+
+        result = await smart.collect(mock_client)
+        assert result == []
+        assert mock_collector.collect.call_count == 0
+
 
 class TestSmartCollectorErrorHandling:
     """Test error handling and graceful degradation."""

@@ -10,8 +10,8 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.core.utils import safe_write_json
-from app.services.credential_provider import credential_provider
+from app.core.utils import IdentityExtractor, safe_write_json
+from app.services.collector_manager import manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,6 +32,8 @@ class DeviceFlowPollRequest(BaseModel):
 class DeviceFlowStatusResponse(BaseModel):
     authenticated: bool
     account: str | None = None
+    name: str | None = None
+    email: str | None = None
 
 
 @router.get("/init", response_model=DeviceFlowInitResponse)
@@ -118,35 +120,29 @@ async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> dic
                 # Get user info for name/email right away
                 user_info = {}
                 try:
+                    # 1. Fetch basic user info (login, name)
                     user_resp = await client.get(
                         "https://api.github.com/user",
-                        headers={"Authorization": f"token {data['access_token']}"},
+                        headers={"Authorization": f"Bearer {data['access_token']}"},
                         timeout=10.0,
                     )
                     if user_resp.status_code == 200:
                         user_data = user_resp.json()
-                        user_info = {
-                            "login": user_data.get("login"),
-                            "name": user_data.get("name"),
-                            "email": user_data.get("email"),
-                        }
+                        user_info["login"] = user_data.get("login")
+                        user_info["name"] = user_data.get("name")
+                        user_info["email"] = user_data.get("email")
 
-                        # Also try private emails if email still null
-                        if not user_info["email"]:
-                            email_resp = await client.get(
-                                "https://api.github.com/user/emails",
-                                headers={"Authorization": f"token {data['access_token']}"},
-                                timeout=10.0,
-                            )
-                            if email_resp.status_code == 200:
-                                emails = email_resp.json()
-                                primary = next(
-                                    (e["email"] for e in emails if e.get("primary")), None
-                                )
-                                if primary:
-                                    user_info["email"] = primary
+                    # 2. Fetch all emails to find the "real" one (not the noreply one)
+                    email_resp = await client.get(
+                        "https://api.github.com/user/emails",
+                        headers={"Authorization": f"Bearer {data['access_token']}"},
+                        timeout=10.0,
+                    )
+                    if email_resp.status_code == 200:
+                        emails = email_resp.json()
+                        user_info["email"] = IdentityExtractor.extract_best_email(emails)
                 except Exception as e:
-                    logger.debug(f"Failed to fetch user info during OAuth poll: {e}")
+                    logger.warning(f"Failed to fetch user info during OAuth poll: {e}")
 
                 # Save the token + user info
                 await save_token({**data, **user_info})
@@ -165,23 +161,64 @@ async def get_status() -> DeviceFlowStatusResponse:
     """Check if GitHub is authenticated."""
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:
+            with open(settings.GITHUB_OAUTH_PATH) as f:
+                creds = json.load(f)
+
             async with httpx.AsyncClient() as client:
-                # We can't easily check validity without an API call, but we can verify presence
-                token = credential_provider.get_github_token()
+                token = creds.get("access_token")
                 if not token:
                     return DeviceFlowStatusResponse(authenticated=False)
 
-                # Optional: Check if token is actually valid by calling /user
+                # Fetch fresh info to verify token and get current details
                 resp = await client.get(
                     "https://api.github.com/user",
-                    headers={"Authorization": f"token {token}"},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=5.0,
                 )
+
                 if resp.status_code == 200:
                     user_data = resp.json()
+
+                    # Try to get the real email if possible
+                    fresh_email = user_data.get("email")
+                    try:
+                        email_resp = await client.get(
+                            "https://api.github.com/user/emails",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=5.0,
+                        )
+                        if email_resp.status_code == 200:
+                            emails = email_resp.json()
+                            fresh_email = IdentityExtractor.extract_best_email(emails)
+                    except Exception:
+                        pass
+
+                    new_info = {
+                        "login": user_data.get("login"),
+                        "name": user_data.get("name"),
+                        "email": fresh_email,
+                    }
+                    if any(creds.get(k) != v for k, v in new_info.items() if v is not None):
+                        await save_token({**creds, **new_info})
+
                     return DeviceFlowStatusResponse(
-                        authenticated=True, account=user_data.get("login")
+                        authenticated=True,
+                        account=user_data.get("login"),
+                        name=user_data.get("name"),
+                        email=fresh_email,
                     )
-        except Exception:
+                logger.warning(f"GitHub identity check returned {resp.status_code}: {resp.text}")
+                # API failed, but we have a token. Fallback to cached info.
+                return DeviceFlowStatusResponse(
+                    authenticated=True,
+                    account=creds.get("login"),
+                    name=creds.get("name"),
+                    email=creds.get("email"),
+                )
+        except Exception as e:
+            logger.error(f"Error checking GitHub status: {e}")
+            # If we failed to read file or something else, but file exists,
+            # we might still be authenticated if the token is valid elsewhere
             pass
     return DeviceFlowStatusResponse(authenticated=False)
 
@@ -192,6 +229,8 @@ async def logout() -> dict[str, str]:
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:
             await asyncio.to_thread(os.remove, settings.GITHUB_OAUTH_PATH)
+            # Trigger immediate registry update to purge cards from dashboard
+            await manager.collect_one("github")
             return {"status": "success"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to logout: {e}")

@@ -39,6 +39,41 @@ class BaseCollector(ABC):
         self.account_id = account_id
         self.account_label = account_label
 
+    async def is_configured(self) -> bool:
+        """
+        Check if the collector has the necessary credentials/configuration to run.
+        Subclasses should override this to check for API keys, session tokens, etc.
+        If return False, SmartCollector will skip collection and return empty results
+        instead of showing an error card.
+        """
+        return True
+
+    def _is_valid_credential(self, value: str | None) -> bool:
+        """
+        Check if a credential value is actually a valid key/token rather than a placeholder.
+        Rejects:
+        - None or empty strings
+        - Values starting with '#' (unparsed .env comments)
+        - Values containing common placeholder symbols like '→' or '[UI]'
+        """
+        if not value:
+            return False
+
+        stripped = value.strip()
+        if not stripped:
+            return False
+
+        # Reject values starting with # (parsed from .env comments)
+        if stripped.startswith("#"):
+            return False
+
+        # Reject obvious placeholders from .env templates
+        placeholders = ["→", "[UI]", "Dashboard", "Settings", "placeholder"]
+        if any(p in stripped for p in placeholders):
+            return False
+
+        return True
+
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
         """Return True if results are empty or contain an error card."""
         return not results or any(r.get("remaining") == "ERR" for r in results)

@@ -169,7 +169,7 @@ class CollectorManager:
                     if effective_ttl != sc.ttl:
                         sc.ttl = effective_ttl
                     # Propagate updated account_label from ProviderConfig
-                    if db_label and sc.collector.account_label != db_label:
+                    if sc.collector.account_label != db_label:
                         sc.collector.account_label = db_label
 
             # 2. Discover active dynamic collectors from TokenCache
