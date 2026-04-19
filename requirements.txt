@@ -18,3 +18,4 @@ pytest-timeout>=2.2.0
 slowapi==0.1.9
 cryptography==46.0.7
 sqlmodel==0.0.38
+pip-audit>=2.7.3

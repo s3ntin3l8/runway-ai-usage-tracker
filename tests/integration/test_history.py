@@ -129,7 +129,9 @@ def test_get_history_multi_day_not_truncated_by_limit(client: TestClient, sessio
     bucketing per (provider, account, model, window, unit) must preserve coverage
     across the full time window.
     """
-    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    # Use noon UTC to ensure subtracting ~10 mins (600s) doesn't leak into the
+    # previous calendar day if run shortly after midnight.
+    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
     # 3 days × 600 rows/day, all same group key within each hour — real pollers
     # produce many rows per hour for the same card (different values, same key).
     # Use seconds (not minutes) so 600 rows span ~10 minutes, never crossing into
