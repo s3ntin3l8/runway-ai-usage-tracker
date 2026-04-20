@@ -21,7 +21,12 @@ class IdentityExtractor:
     def extract_jwt_payload(token: str) -> dict[str, Any]:
         """Robustly decode JWT payload without external libraries."""
         try:
-            parts = token.split(".")
+            # Strip Bearer prefix if present
+            clean_token = token
+            if token.lower().startswith("bearer "):
+                clean_token = token[7:].strip()
+
+            parts = clean_token.split(".")
             if len(parts) < 2:
                 return {}
 
@@ -46,6 +51,14 @@ class IdentityExtractor:
         """Extract azp or aud claim from JWT payload."""
         payload = cls.extract_jwt_payload(token)
         return payload.get("azp") or payload.get("aud")
+
+    @classmethod
+    def get_openai_account_id_from_jwt(cls, token: str) -> str | None:
+        """Extract chatgpt_account_id from OpenAI JWT payload."""
+        payload = cls.extract_jwt_payload(token)
+        # OpenAI tokens have a custom claim for auth data
+        auth_claim = payload.get("https://api.openai.com/auth") or {}
+        return auth_claim.get("chatgpt_account_id")
 
     @staticmethod
     def extract_best_email(emails: list[dict[str, Any]]) -> str | None:

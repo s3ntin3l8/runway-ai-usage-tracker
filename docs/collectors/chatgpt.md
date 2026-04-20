@@ -14,8 +14,8 @@ ChatGPT Codex quota collector with OAuth-backed API and local session cache fall
 
 The ChatGPT collector supports multiple authentication and data collection methods:
 
-1.  **OAuth Token (CHATGPT_OAUTH_TOKEN) / Browser Cookie**:
-    *   **Method**: Set the `CHATGPT_OAUTH_TOKEN` environment variable with a valid OAuth token, or log in to [chatgpt.com](https://chatgpt.com) in Chrome to allow automatic cookie extraction.
+1.  **OAuth Token / Session Cookie**:
+    *   **Method**: Log in to [chatgpt.com](https://chatgpt.com) in Chrome for automatic extraction, OR manually paste the `__Secure-next-auth.session-token` into the **Runway Settings** UI.
     *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 2.  **Codex CLI Cache (`~/.codex/auth.json`)**:
@@ -40,6 +40,7 @@ The ChatGPT collector supports multiple authentication and data collection metho
 1. `CHATGPT_OAUTH_TOKEN` environment variable
 2. `~/.codex/auth.json` (Codex CLI cache)
 3. Chrome browser cookie (`__Secure-next-auth.session-token`) — auto-exchanged for Bearer token
+4. **Manual Entry**: Paste the session cookie in the Runway UI (Settings -> ChatGPT).
 
 ### Secondary: Codex CLI RPC
 **Mechanism:** Runway executes the `codex -s read-only` command to interface with the running Codex CLI and extract usage data directly.
@@ -109,4 +110,18 @@ Sidecar extracts token from `~/.codex/auth.json`. See [sidecar documentation](..
 
 - **Codex CLI:** https://github.com/openai/codex
 
-*Last updated: 2026-04-10*
+## Manual Authentication (DevTools)
+
+If automatic browser extraction is not working (e.g., in Docker or headless environments), you can manually provide authentication:
+
+### 1. OAuth Bearer Token (Recommended)
+- **Field in Runway**: **API Key (Bearer Token)**
+- **Token Source**: Browser DevTools -> Network -> Filter by `/wham/usage` -> Headers -> `Authorization` header (`Bearer xxx`).
+- **Note**: This is the most direct method. Runway will automatically extract your Account ID from this token.
+
+### 2. Session Token
+- **Field in Runway**: **Session Cookie (Session Token)**
+- **Token Source**: Browser DevTools -> Application -> Cookies -> `https://chatgpt.com` -> `__Secure-next-auth.session-token`.
+- **Note**: This is a fallback method. Runway will attempt to exchange this for a Bearer token.
+
+*Last updated: 2026-04-19*

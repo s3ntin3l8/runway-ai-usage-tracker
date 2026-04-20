@@ -130,8 +130,9 @@ class KimiCodingCollector(BaseCollector):
         Get authentication token from env var or Chrome cookie.
 
         Priority:
-        1. KIMI_AUTH_TOKEN environment variable
-        2. Chrome cookie 'kimi-auth'
+        1. DB-stored session cookie (manual override)
+        2. Environment variable
+        3. Chrome cookie 'kimi-auth'
 
         Returns:
             Token string or None
@@ -139,15 +140,20 @@ class KimiCodingCollector(BaseCollector):
         # Priority 1: DB-stored session cookie (manual override set via settings UI)
         db_token = credential_provider.get_provider_session_cookie("kimi_coding")
         if db_token:
+            self._current_input_source = "manual"
             return db_token
 
         # Priority 2: Environment variable
         token = settings.KIMI_AUTH_TOKEN
         if token:
+            self._current_input_source = "server"
             return token
 
         # Priority 3: Chrome cookie
-        return await asyncio.to_thread(get_kimi_auth_cookie)
+        token = await asyncio.to_thread(get_kimi_auth_cookie)
+        if token:
+            self._current_input_source = "server"
+        return token
 
     def _parse_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """
@@ -172,6 +178,7 @@ class KimiCodingCollector(BaseCollector):
                     "pace": "N/A",
                     "detail": "No active plan",
                     "data_source": "api",
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",
                     "updated_at": datetime.now(UTC).isoformat(),
@@ -254,6 +261,7 @@ class KimiCodingCollector(BaseCollector):
                 "unit_type": "requests",
                 "reset_at": reset_dt.isoformat() if reset_dt else None,
                 "data_source": "api",
+                "input_source": getattr(self, "_current_input_source", "unknown"),
                 "updated_at": datetime.now(UTC).isoformat(),
             }
         except (ValueError, TypeError):
@@ -303,6 +311,7 @@ class KimiCodingCollector(BaseCollector):
                 "unit_type": "requests",
                 "reset_at": reset_dt.isoformat() if reset_dt else None,
                 "data_source": "api",
+                "input_source": getattr(self, "_current_input_source", "unknown"),
                 "updated_at": datetime.now(UTC).isoformat(),
             }
         except (ValueError, TypeError):

@@ -186,6 +186,7 @@ class AnthropicLocalMixin:
                     "account_label": account_label,
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": "cli",
+                    "input_source": "server",
                     "updated_at": now.isoformat(),
                 }
             )
@@ -388,7 +389,8 @@ class AnthropicLocalMixin:
                 "unit_type": "tokens",
                 "window_type": "session",
                 "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": "local",
+                "data_source": "logs",
+                "input_source": "server",
                 "usage_url": "https://claude.ai/settings/usage",
                 "updated_at": datetime.now(UTC).isoformat(),
             }

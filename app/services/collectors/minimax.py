@@ -34,17 +34,29 @@ class MiniMaxCollector(BaseCollector):
         self.api_key: str | None = None
         self.host: str = ""
 
-    def _get_api_key(self) -> str | None:
-        """DB (UI-set) → env var."""
-        return (
-            credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
-        )
+    async def _get_current_creds(self) -> tuple[str | None, str | None]:
+        """Async credential retrieval with metadata support."""
+        key = credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
+        cookie = credential_provider.get_provider_session_cookie("minimax") or settings.MINIMAX_COOKIE or None
+        
+        if key or cookie:
+            self._current_input_source = "manual" if (credential_provider.get_provider_api_key("minimax") or credential_provider.get_provider_session_cookie("minimax")) else "server"
+            return key, cookie
+            
+        if self.account_id:
+            from app.services.token_cache import token_cache
+            cache_data = await token_cache.get_with_metadata("minimax", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("api_key"), tokens.get("session_cookie")
+        return None, None
 
     async def is_configured(self) -> bool:
         """Check if MiniMax API key or session cookie is present."""
-        return self._is_valid_credential(self._get_api_key()) or self._is_valid_credential(
-            self._get_session_cookie()
-        )
+        key, cookie = await self._get_current_creds()
+        return self._is_valid_credential(key) or self._is_valid_credential(cookie)
 
     def _get_session_cookie(self) -> str | None:
         """DB (UI-set) → env var."""
@@ -62,7 +74,8 @@ class MiniMaxCollector(BaseCollector):
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect usage data from MiniMax via API."""
-        self.api_key = self._get_api_key()
+        key, _ = await self._get_current_creds()
+        self.api_key = key
         self.host = self._get_host()
 
         if not self.api_key:
@@ -115,6 +128,7 @@ class MiniMaxCollector(BaseCollector):
                     "pace": "N/A",
                     "detail": "No active plan",
                     "data_source": "api",
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",
                     "updated_at": now_str,
@@ -144,6 +158,7 @@ class MiniMaxCollector(BaseCollector):
                     "limit_value": float(remains),
                     "unit_type": "count",
                     "data_source": "api",
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
                     "updated_at": now_str,
                 }
             )
@@ -156,8 +171,9 @@ class MiniMaxCollector(BaseCollector):
 
     async def _fetch_via_html(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fallback: Parse HTML from coding plan page."""
-        session_cookie = self._get_session_cookie()
-        api_key = self.api_key or self._get_api_key()
+        key, cookie = await self._get_current_creds()
+        session_cookie = cookie
+        api_key = key
 
         if not session_cookie and not api_key:
             return []
@@ -214,7 +230,8 @@ class MiniMaxCollector(BaseCollector):
                     "health": "good",
                     "pace": "N/A",
                     "detail": "No active plan",
-                    "data_source": "html",
+                    "data_source": "scrape",
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",
                     "updated_at": now_str,
@@ -238,7 +255,8 @@ class MiniMaxCollector(BaseCollector):
                 "used_value": 0.0,
                 "limit_value": float(remains),
                 "unit_type": "count",
-                "data_source": "html",
+                "data_source": "scrape",
+                "input_source": getattr(self, "_current_input_source", "unknown"),
                 "updated_at": now_str,
             }
         ]

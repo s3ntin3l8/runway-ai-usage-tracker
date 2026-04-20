@@ -24,9 +24,9 @@ The Claude collector supports multiple authentication and data collection method
     *   **Method**: This is a fast local data source, often present when the `claude` CLI is running. Runway reads `~/.claude/statusline.json` (or platform equivalent).
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api).
 
-3.  **Chrome Cookies**: Used for Web API fallback if OAuth token is unavailable.
-    *   **Method**: Log in to [claude.ai](https://claude.ai) in Chrome. Runway will attempt to extract the `sessionKey` cookie.
-    *   **Details**: See [Secondary: Web API (Chrome Cookies)](#secondary-web-api-chrome-cookies).
+3.  **Manual Cookie Entry**: Used for Web API fallback if OAuth token is unavailable.
+    *   **Method**: Log in to [claude.ai](https://claude.ai) in any browser, extract the `sessionKey` cookie, and paste it into the **Runway Settings** UI. 
+    *   **Details**: See [Manual Cookie Extraction (DevTools)](#manual-cookie-extraction-devtools).
 
 4.  **CLI PTY**:
     *   **Method**: If the `claude` CLI is installed, Runway can execute `claude -s read-only` to get quota data.
@@ -59,7 +59,7 @@ This strategy first attempts to read local `statusline.json` for a quick update,
 **Endpoints:** 
 - `claude.ai/api/organizations` (get org UUID)
 - `claude.ai/api/organizations/{orgId}/usage` (get quotas)
-**Auth:** Chrome `sessionKey` cookie
+**Auth:** Chrome `sessionKey` cookie OR manually provided cookie in Runway UI.
 **Behavior:** This data source is used if the primary hybrid strategy fails or yields no results.
 
 ### Tertiary: CLI PTY
@@ -142,4 +142,22 @@ Sidecar can extract tokens from `~/.claude/.credentials.json` or macOS keychain.
 - **Claude:** https://claude.ai
 - **API Docs:** https://api.anthropic.com
 
-*Last updated: 2026-04-10*
+## Manual Authentication (Advanced)
+
+If automatic cookie extraction fails (e.g. in Docker or Headless mode), you can manually provide a browser cookie bundle in the **Settings** UI.
+
+### 1. Extracting the Cookie Bundle
+1.  Open [Claude.ai](https://claude.ai) in your browser and log in.
+2.  Press **F12** to open Developer Tools.
+3.  Go to the **Network** tab.
+4.  Navigate to [https://claude.ai/settings/usage](https://claude.ai/settings/usage).
+5.  Find the `usage` request in the Network list.
+6.  Right-click the request and select **Copy -> Copy as CURL** (to see the whole header) OR find the **Cookie** field under **Request Headers**.
+7.  **IMPORTANT:** Copy the **ENTIRE string** starting with things like `anthropic-device-id=...`.
+
+### 2. Implementation in Runway
+- **Field in Runway Settings**: **Manual Authentication (Cookie Bundle)**
+- **Note**: Runway will automatically handle both standalone `sessionKey` values and full browser bundles. The full bundle is strongly recommended to bypass Cloudflare security (WAF).
+- **Hardening**: Runway mimics your specific browser's fingerprint (User-Agent and Client Hints) to ensure the session remains valid.
+
+*Last updated: 2026-04-19*

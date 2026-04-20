@@ -45,13 +45,32 @@ class ZaiCollector(BaseCollector):
         "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
     ]
 
-    def _get_api_key(self) -> str | None:
+    async def _get_api_key(self) -> str | None:
         """DB (UI-set via provider_id='zai') → env var."""
-        return credential_provider.get_provider_api_key("zai") or settings.ZAI_API_KEY or None
+        key = credential_provider.get_provider_api_key("zai") or settings.ZAI_API_KEY or None
+        if key:
+            self._current_input_source = "server"
+            return key
+
+        if self.account_id:
+            # Check account-specific token cache
+            from app.services.token_cache import token_cache
+            
+            cache_data = await token_cache.get_with_metadata("zai", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("api_key")
+        return None
+
+    async def _get_current_key(self) -> str | None:
+        """Async version of _get_api_key that handles cache metadata."""
+        return await self._get_api_key()
 
     async def is_configured(self) -> bool:
         """Check if zAI API key is present."""
-        return self._is_valid_credential(self._get_api_key())
+        return self._is_valid_credential(await self._get_current_key())
 
     def _get_quota_endpoints(self) -> list[str]:
         """Resolve quota endpoints with env overrides."""
@@ -73,7 +92,7 @@ class ZaiCollector(BaseCollector):
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect quota limits."""
-        key = self._get_api_key()
+        key = await self._get_current_key()
         if not key or key.lower() == "zai":
             return []
 
@@ -83,7 +102,7 @@ class ZaiCollector(BaseCollector):
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return error card when all collection fails."""
-        key = self._get_api_key()
+        key = await self._get_current_key()
         if not key or key.lower() == "zai":
             return [self._info_card("No API key configured", "Missing/Invalid Key")]
         return [self._info_card("API unavailable", "Check network or quota")]
@@ -100,6 +119,7 @@ class ZaiCollector(BaseCollector):
             "pace": "N/A",
             "detail": detail,
             "data_source": "api",
+            "input_source": getattr(self, "_current_input_source", "unknown"),
             "is_unlimited": False,
             "unit_type": "unknown",
         }
@@ -232,6 +252,7 @@ class ZaiCollector(BaseCollector):
             "reset_at": reset_at,
             "window": window_str,
             "data_source": "api",
+            "input_source": getattr(self, "_current_input_source", "unknown"),
             "updated_at": datetime.now(UTC).isoformat(),
         }
 

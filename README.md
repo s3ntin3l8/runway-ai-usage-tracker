@@ -71,6 +71,14 @@ docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/s3ntin3l8/ai-usage-trac
 
 Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metrics.
 
+### 🔑 Manual Authentication
+If you are running in Docker or a headless environment where browser scraping is impossible, you can manually provide authentication tokens in the **Settings** tab.
+
+- **API Key (Bearer Token)**: Paste the full token (usually starts with `eyJ...`). This takes higher priority than cookies.
+- **Session Cookie**: Provide as a fallback if explicit tokens are not available.
+
+*Note: For ChatGPT and Claude, we recommend using the Bearer token in the "API Key" field for the most reliable connection.*
+
 ### Sidecar desktop app (macOS / Windows)
 
 Pre-built installers are attached to every [GitHub release](https://github.com/s3ntin3l8/ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`.

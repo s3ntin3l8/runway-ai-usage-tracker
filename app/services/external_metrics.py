@@ -9,11 +9,11 @@ from typing import Any
 from app.core.config import settings
 from app.models.schemas import LimitCard
 
+from app.core.utils import safe_write_json
+
 logger = logging.getLogger(__name__)
 
-
 _DEBOUNCE_INTERVAL = 30.0  # seconds between disk flushes
-
 
 class ExternalMetricService:
     def __init__(self):
@@ -62,8 +62,7 @@ class ExternalMetricService:
             return
 
         def sync_save():
-            with open(self.path, "w") as f:
-                json.dump(self.metrics, f, indent=2)
+            safe_write_json(self.path, self.metrics)
 
         await asyncio.to_thread(sync_save)
         self._last_save_time = now

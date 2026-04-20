@@ -140,6 +140,31 @@ class TokenCache:
             newest_acc = sorted(provider_accounts.items(), key=lambda x: x[1][2], reverse=True)[0]
             return newest_acc[1][0]
 
+    async def get_with_metadata(
+        self, provider: str, account_id: str | None = None
+    ) -> tuple[dict[str, str], dict[str, Any]] | None:
+        """
+        Get tokens and metadata for a specific account.
+        """
+        async with self._lock:
+            self._clear_expired_unlocked()
+
+            if provider not in self._cache or not self._cache[provider]:
+                return None
+
+            provider_accounts = self._cache[provider]
+
+            if account_id:
+                if account_id not in provider_accounts:
+                    return None
+                tokens, metadata, _ = provider_accounts[account_id]
+                return tokens, metadata
+
+            # Return the most recently updated account if none specified
+            newest_acc = sorted(provider_accounts.items(), key=lambda x: x[1][2], reverse=True)[0]
+            tokens, metadata, _ = newest_acc[1]
+            return tokens, metadata
+
     async def get_token(
         self, provider: str, token_type: str, account_id: str | None = None
     ) -> str | None:

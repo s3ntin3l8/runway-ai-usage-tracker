@@ -60,6 +60,13 @@ class OllamaCollector(BaseCollector):
         re.IGNORECASE | re.DOTALL,
     )
 
+    # Detect Ollama API Key patterns (not suitable for web scraping)
+    # 1. sk- prefix (standard API key format)
+    # 2. 32hex.20+alpha format (observed in cloud tokens)
+    RE_API_KEY_PATTERN = re.compile(
+        r"^(?:sk-[a-zA-Z0-9]{20,}|(?:[a-fA-F0-9]{32}\.[a-zA-Z0-9]{20,}))$"
+    )
+
     # Magic numbers
     WINDOW_PLAN = 400
     WINDOW_USAGE = 800
@@ -69,10 +76,12 @@ class OllamaCollector(BaseCollector):
     ERROR_TYPE_MAP = {
         "not_logged_in": "auth_required",
         "missing_data": "parse_error",
+        "invalid_credential_type": "invalid_config",
     }
     ERROR_MESSAGES = {
         "not_logged_in": "Not logged in. Please log in at ollama.com",
         "missing_data": "Could not parse usage data",
+        "invalid_credential_type": "API Key detected. Quota tracking requires a Session Cookie (ollama_session).",
     }
 
     # Pre-compiled regex for cookie validation
@@ -102,6 +111,7 @@ class OllamaCollector(BaseCollector):
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
         self._last_error_reason: str = "unknown"
+        self._current_input_source: str = "server"
 
     async def is_configured(self) -> bool:
         """Check if Ollama session cookie is present."""
@@ -116,13 +126,18 @@ class OllamaCollector(BaseCollector):
         # 1. DB-stored session cookie (manual override set via settings UI)
         db_token = credential_provider.get_provider_session_cookie("ollama")
         if db_token:
+            self._current_input_source = "manual"
             token = db_token.strip()
-            # Accept either raw token value or "session=<value>" form
-            return token if token.startswith("session=") else f"session={token}"
+            # If the user pasted a string that already contains a recognized cookie name, return as is.
+            # Otherwise, default to prepending "session=" for backward compatibility.
+            if self.RE_COOKIE_PATTERN.search(token):
+                return token
+            return f"session={token}"
 
         # 2. Check environment variable
         env_token = settings.OLLAMA_SESSION_TOKEN
         if env_token:
+            self._current_input_source = "server"
             return f"session={env_token}"
 
         # 3. Check browser cookies for various possible names (ordered by priority)
@@ -130,6 +145,7 @@ class OllamaCollector(BaseCollector):
             # get_session_cookies returns a list (handles chunked .0, .1, etc.)
             cookies = get_session_cookies("ollama.com", name)
             if cookies:
+                self._current_input_source = "server"
                 # Join chunked cookies: "name=val0; name.0=val0; name.1=val1..."
                 # Actually NextAuth typically uses the base name for the first chunk if small,
                 # or name.0, name.1 if large.
@@ -161,6 +177,18 @@ class OllamaCollector(BaseCollector):
         """Validate that cookie header contains a recognized session cookie name."""
         if not header:
             return False
+
+        # Extract only the value if it's "session=value"
+        clean_value = header
+        if header.startswith("session="):
+            clean_value = header[len("session=") :]
+
+        # Check if the value looks like an API key instead of a session cookie
+        if self.RE_API_KEY_PATTERN.search(clean_value):
+            logger.debug("Ollama: API key format detected instead of session cookie")
+            self._last_error_reason = "invalid_credential_type"
+            return False
+
         return self.RE_COOKIE_PATTERN.search(header) is not None
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -378,7 +406,8 @@ class OllamaCollector(BaseCollector):
             "limit_value": 100.0,
             "unit_type": "percent",
             "reset_at": resets_at.isoformat() if resets_at else None,
-            "data_source": "web_scrape",
+            "data_source": "scrape",
+            "input_source": getattr(self, "_current_input_source", "unknown"),
             "tier": plan.lower() if plan else "free",
             "usage_url": self.target_url,
             "updated_at": now.isoformat(),

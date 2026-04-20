@@ -58,13 +58,13 @@ export async function fetchLimits() {
  */
 
 export async function initGitHubOAuth() {
-    const resp = await fetch('/api/v1/auth/github/init');
+    const resp = await fetchWithAuth('/api/v1/auth/github/init');
     if (!resp.ok) throw new Error('Failed to initiate GitHub login');
     return await resp.json();
 }
 
 export async function pollGitHubOAuth(deviceCode) {
-    const resp = await fetch('/api/v1/auth/github/poll', {
+    const resp = await fetchWithAuth('/api/v1/auth/github/poll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_code: deviceCode })
@@ -74,13 +74,13 @@ export async function pollGitHubOAuth(deviceCode) {
 }
 
 export async function getGitHubOAuthStatus() {
-    const resp = await fetch('/api/v1/auth/github/status');
+    const resp = await fetchWithAuth('/api/v1/auth/github/status');
     if (!resp.ok) return { authenticated: false };
     return await resp.json();
 }
 
 export async function logoutGitHub() {
-    const resp = await fetch('/api/v1/auth/github/logout', { method: 'POST' });
+    const resp = await fetchWithAuth('/api/v1/auth/github/logout', { method: 'POST' });
     if (!resp.ok) throw new Error('Logout failed');
     return await resp.json();
 }
@@ -91,26 +91,26 @@ export async function logoutGitHub() {
 
 export async function collectProvider(providerId, accountId) {
     const params = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
-    const resp = await fetch(`/api/v1/usage/collect/${encodeURIComponent(providerId)}${params}`, { method: 'POST' });
+    const resp = await fetchWithAuth(`/api/v1/usage/collect/${encodeURIComponent(providerId)}${params}`, { method: 'POST' });
     if (!resp.ok) throw new Error(`Collect failed: HTTP ${resp.status}`);
     return await resp.json();
 }
 
 export async function fetchHistory(params = {}) {
     const query = new URLSearchParams(params).toString();
-    const resp = await fetch(`/api/v1/usage/history?${query}`);
+    const resp = await fetchWithAuth(`/api/v1/usage/history?${query}`);
     if (!resp.ok) throw new Error('Failed to fetch history');
     return await resp.json();
 }
 
 export async function fetchSettings() {
-    const resp = await fetch('/api/v1/system/settings');
+    const resp = await fetchWithAuth('/api/v1/system/settings');
     if (!resp.ok) throw new Error('Failed to fetch settings');
     return await resp.json();
 }
 
 export async function fetchStatus() {
-    const resp = await fetch('/api/v1/system/status');
+    const resp = await fetchWithAuth('/api/v1/system/status');
     if (!resp.ok) throw new Error('Failed to fetch collector status');
     return await resp.json();
 }
@@ -120,13 +120,13 @@ export async function fetchStatus() {
  */
 
 export async function fetchFleet() {
-    const resp = await fetch('/api/v1/fleet/sidecars');
+    const resp = await fetchWithAuth('/api/v1/fleet/sidecars');
     if (!resp.ok) throw new Error('Failed to fetch fleet');
     return await resp.json();
 }
 
 export async function patchSidecar(sidecarId, body) {
-    const resp = await fetch(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
+    const resp = await fetchWithAuth(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -136,7 +136,7 @@ export async function patchSidecar(sidecarId, body) {
 }
 
 export async function deleteSidecarAPI(sidecarId) {
-    const resp = await fetch(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
+    const resp = await fetchWithAuth(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
         method: 'DELETE',
     });
     if (!resp.ok) throw new Error(`Failed to delete sidecar: HTTP ${resp.status}`);
@@ -144,7 +144,7 @@ export async function deleteSidecarAPI(sidecarId) {
 }
 
 export async function triggerSidecarCollectAPI(sidecarId) {
-    const resp = await fetch(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/trigger`, {
+    const resp = await fetchWithAuth(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/trigger`, {
         method: 'POST',
     });
     if (!resp.ok) throw new Error(`Failed to trigger sidecar: HTTP ${resp.status}`);
@@ -156,19 +156,19 @@ export async function triggerSidecarCollectAPI(sidecarId) {
  */
 
 export async function forceCollect() {
-    const resp = await fetch('/api/v1/system/force-collect', { method: 'POST' });
+    const resp = await fetchWithAuth('/api/v1/system/force-collect', { method: 'POST' });
     if (!resp.ok) throw new Error(`Force collect failed: HTTP ${resp.status}`);
     return await resp.json();
 }
 
 export async function fetchTokenHealth() {
-    const resp = await fetch('/api/v1/system/token-health');
+    const resp = await fetchWithAuth('/api/v1/system/token-health');
     if (!resp.ok) throw new Error('Failed to fetch token health');
     return await resp.json();
 }
 
 export async function postTokenRefresh(provider, accountId) {
-    const resp = await fetch(
+    const resp = await fetchWithAuth(
         `/api/v1/system/token-health/refresh/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
         { method: 'POST' }
     );
@@ -184,19 +184,19 @@ export async function postTokenRefresh(provider, accountId) {
  */
 
 export async function fetchProviderConfigs() {
-    const resp = await fetch('/api/v1/system/provider-configs');
+    const resp = await fetchWithAuth('/api/v1/system/provider-configs');
     if (!resp.ok) throw new Error(`Failed to fetch provider configs: HTTP ${resp.status}`);
     return await resp.json();
 }
 
 export async function fetchAppConfig() {
-    const resp = await fetch('/api/v1/system/app-config');
+    const resp = await fetchWithAuth('/api/v1/system/app-config');
     if (!resp.ok) throw new Error(`Failed to fetch app config: HTTP ${resp.status}`);
     return await resp.json();
 }
 
 export async function putAppConfig(body) {
-    const resp = await fetch('/api/v1/system/app-config', {
+    const resp = await fetchWithAuth('/api/v1/system/app-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -209,7 +209,7 @@ export async function putAppConfig(body) {
 }
 
 export async function putProviderConfig(providerId, body) {
-    const resp = await fetch(`/api/v1/system/provider-config/${encodeURIComponent(providerId)}`, {
+    const resp = await fetchWithAuth(`/api/v1/system/provider-config/${encodeURIComponent(providerId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -226,13 +226,13 @@ export async function putProviderConfig(providerId, body) {
  */
 
 export async function getDashboardLayout() {
-    const resp = await fetch('/api/v1/system/dashboard-layout');
+    const resp = await fetchWithAuth('/api/v1/system/dashboard-layout');
     if (!resp.ok) throw new Error(`Failed to fetch dashboard layout: HTTP ${resp.status}`);
     return await resp.json();
 }
 
 export async function putDashboardLayout(layout) {
-    const resp = await fetch('/api/v1/system/dashboard-layout', {
+    const resp = await fetchWithAuth('/api/v1/system/dashboard-layout', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(layout),

@@ -44,19 +44,30 @@ class KimiK2Collector(BaseCollector):
         """Return the fallback strategies for Kimi K2."""
         return []
 
-    def _get_api_key(self) -> str | None:
-        """DB (UI-set) → env var."""
-        return (
-            credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
-        )
+    async def _get_current_key(self) -> str | None:
+        """Async key retrieval with cache metadata support."""
+        key = credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
+        if key:
+            self._current_input_source = "server"
+            return key
+            
+        if self.account_id:
+            from app.services.token_cache import token_cache
+            cache_data = await token_cache.get_with_metadata("kimi_k2", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("api_key")
+        return None
 
     async def is_configured(self) -> bool:
         """Check if Kimi K2 API key is present."""
-        return self._is_valid_credential(self._get_api_key())
+        return self._is_valid_credential(await self._get_current_key())
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi K2 credits via API."""
-        key = self._get_api_key()
+        key = await self._get_current_key()
         if not key or len(key) < 10:
             return []
 
@@ -64,7 +75,7 @@ class KimiK2Collector(BaseCollector):
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when API fails."""
-        key = self._get_api_key()
+        key = await self._get_current_key()
         if not key or len(key) < 10:
             return [error_card("Kimi K2", "🌙", "Missing/Invalid Key", error_type="missing_config")]
         return [error_card("Kimi K2", "🌙", "Unauthorized", error_type="api_error")]
@@ -99,7 +110,8 @@ class KimiK2Collector(BaseCollector):
                     else "critical",
                     "pace": "Stable",
                     "detail": f"Credits (consumed: {credits_consumed:.2f})",
-                    "data_source": "api_credits",
+                    "data_source": "api",
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "credits",
                     "updated_at": datetime.now(UTC).isoformat(),

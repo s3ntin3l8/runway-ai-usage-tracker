@@ -27,7 +27,13 @@ class GeminiOAuthMixin(OAuthBaseCollector):
         """
         if self.account_id:
             # Sidecar mode: the cache is the only source of truth.
-            return await token_cache.get_token("gemini", "oauth_token", account_id=self.account_id)
+            cache_data = await token_cache.get_with_metadata("gemini", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("oauth_token")
+            return None
 
         # Local mode: prefer the local credentials file to avoid picking up a
         # sidecar token that belongs to a different Google account.
@@ -35,18 +41,22 @@ class GeminiOAuthMixin(OAuthBaseCollector):
         if creds:
             token = creds.get("access_token")
             if token:
+                self._current_input_source = "server"
                 # Mirror into token cache so the Tokens health tab can see it.
                 token_data: dict[str, str] = {"oauth_token": token}
                 if creds.get("refresh_token"):
                     token_data["refresh_token"] = creds["refresh_token"]
-                await token_cache.store("gemini", token_data, account_id=None, account_label=None)
+                await token_cache.store("gemini", token_data, account_id=None, account_label=None, source="server")
                 return token
 
         # Credentials file absent or scraping disabled — fall back to cache.
-        # Note: if the only cached entry belongs to a sidecar this can still
-        # return the wrong token, but that is pre-existing behaviour and only
-        # occurs when local credential scraping is entirely unavailable.
-        return await token_cache.get_token("gemini", "oauth_token", account_id=None)
+        cache_data = await token_cache.get_with_metadata("gemini", account_id=None)
+        if cache_data:
+            tokens, metadata = cache_data
+            source = metadata.get("source") or "sidecar"
+            self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+            return tokens.get("oauth_token")
+        return None
 
     async def _is_token_expired(self) -> bool:
         """Check if Gemini token is expired.

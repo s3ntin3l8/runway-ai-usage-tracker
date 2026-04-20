@@ -15,6 +15,8 @@ from typing import Any
 
 import httpx
 
+from app.core.date_utils import normalize_iso_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +40,7 @@ class BaseCollector(ABC):
         """
         self.account_id = account_id
         self.account_label = account_label
+        self._current_input_source: str = "config"  # Default for static ENV configs
 
     async def is_configured(self) -> bool:
         """
@@ -126,7 +129,8 @@ class BaseCollector(ABC):
         if not results:
             return []
 
-        # 1. Try to discover account_label if missing or currently "default"
+        # Phase 0C: Auto-discover account label from detail if not already set by user
+        # Avoid running discovery if a custom label is already present.
         if not self.account_label or self.account_label.lower() == "default":
             import re
 
@@ -135,8 +139,8 @@ class BaseCollector(ABC):
                 detail = card.get("detail", "")
                 if not detail:
                     continue
-                # Simple email/identity regex for discovery
-                # Looks for email-like strings or "org: ..." patterns
+
+                # Look for email patterns in detail text
                 match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", detail)
                 if match:
                     discovered_label = match.group(1)
@@ -181,6 +185,15 @@ class BaseCollector(ABC):
                 if self.DEFAULT_WINDOW_TYPE != "unknown":
                     card["window_type"] = self.DEFAULT_WINDOW_TYPE
 
+            # Tag input source (origin of credentials)
+            if "input_source" not in card or card.get("input_source") == "unknown":
+                card["input_source"] = getattr(self, "_current_input_source", "unknown")
+
+            # Phase 1: Ensure timestamps are timezone-aware ISO strings
+            from datetime import UTC, datetime
+
+            now_iso = datetime.now(UTC).isoformat()
+
             # Phase 1: Ensure timestamps are timezone-aware ISO strings
             from datetime import UTC, datetime
 
@@ -188,20 +201,11 @@ class BaseCollector(ABC):
 
             if "updated_at" not in card or not card.get("updated_at"):
                 card["updated_at"] = now_iso
-            elif isinstance(card.get("updated_at"), str):
-                # Ensure existing string has timezone offset
-                ua = card["updated_at"]
-                if "T" in ua and "+" not in ua and not ua.endswith("Z"):
-                    card["updated_at"] = f"{ua}Z"
+            else:
+                card["updated_at"] = normalize_iso_date(card["updated_at"])
 
-            if (
-                "reset_at" in card
-                and card.get("reset_at")
-                and isinstance(card.get("reset_at"), str)
-            ):
-                ra = card["reset_at"]
-                if "T" in ra and "+" not in ra and not ra.endswith("Z"):
-                    card["reset_at"] = f"{ra}Z"
+            if "reset_at" in card:
+                card["reset_at"] = normalize_iso_date(card["reset_at"])
 
         return results
 

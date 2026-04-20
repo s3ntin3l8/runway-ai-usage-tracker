@@ -60,6 +60,9 @@ The Ollama collector supports the following authentication methods:
 |----------|----------|-------------|
 | `OLLAMA_SESSION_TOKEN` | Optional* | Ollama session cookie value (auto-discovered if not set) |
 
+> [!CAUTION]
+> **API Keys are not supported**: Ollama Cloud API keys (found at `ollama.com/settings/keys`) cannot be used for quota tracking as there is currently no public API for account usage. You **must** provide a browser session cookie (`ollama_session`).
+
 *Either auto-discovery or environment variable required.
 
 ## Sidecar Support
@@ -68,11 +71,19 @@ Sidecar can extract cookies. See [sidecar documentation](../sidecar.md).
 
 ## Troubleshooting
 
-### No Ollama cards in dashboard
+### "API Key detected" error
 **Fix:**
+You likely pasted an API key (e.g., starting with `sk-`) into the session cookie field. 
+
+**How to get the correct session cookie:**
+If the cookie doesn't appear in the "Application" tab, use the **Network** tab:
 1. Log in to `https://ollama.com/settings` in your browser.
-2. Verify browser cookie extraction is enabled and working (check `LOCAL_CREDENTIAL_SCRAPING_ENABLED` in `.env`).
-3. If running headless, ensure `OLLAMA_SESSION_TOKEN` is set correctly.
+2. Open Developer Tools (`F12`) and go to the **Network** tab.
+3. Refresh the page.
+4. Click on the request named **`settings`**.
+5. Look at the **Request Headers** section for the **`Cookie`** header.
+6. Copy the entire value of the `Cookie` header (it should contain `ollama_session=...`).
+7. Paste this into the Runway settings for Ollama.
 
 ## Related Files
 

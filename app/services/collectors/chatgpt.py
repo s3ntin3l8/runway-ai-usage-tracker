@@ -44,8 +44,14 @@ class ChatGPTCollector(
 
     async def is_configured(self) -> bool:
         """Check if ChatGPT auth data (logs or tokens) is present."""
+        # Use None for client to avoid triggering background refreshes during config check
         auth = await self._get_auth_data(None)
-        return bool(auth.get("token") or auth.get("source") == "local")
+        
+        # Check if we have an OAuth token, a session cookie, or local logs
+        has_auth = bool(auth.get("token"))
+        has_local = auth.get("source") == "local"
+        
+        return has_auth or has_local
 
     def _fallback_strategies(self) -> list[Any]:
         """Return the fallback strategies for ChatGPT."""
@@ -65,7 +71,7 @@ class ChatGPTCollector(
 
         try:
             return await self._fetch_api_data(
-                client, token, account_id, auth.get("source", "oauth")
+                client, token, account_id, auth.get("source", "oauth"), auth.get("input_source", "unknown")
             )
         except Exception as e:
             logger.debug(f"ChatGPT Web API failed: {e}")

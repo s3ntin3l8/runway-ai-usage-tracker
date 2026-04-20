@@ -45,17 +45,30 @@ class KimiApiCollector(BaseCollector):
         """Return the fallback strategies for Kimi API."""
         return []
 
-    def _get_api_key(self) -> str | None:
-        """DB (UI-set) → env var."""
-        return credential_provider.get_provider_api_key("kimi_api") or settings.KIMI_API_KEY or None
+    async def _get_current_key(self) -> str | None:
+        """Async key retrieval with cache metadata support."""
+        key = credential_provider.get_provider_api_key("kimi_api") or settings.KIMI_API_KEY or None
+        if key:
+            self._current_input_source = "server"
+            return key
+            
+        if self.account_id:
+            from app.services.token_cache import token_cache
+            cache_data = await token_cache.get_with_metadata("kimi_api", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("api_key")
+        return None
 
     async def is_configured(self) -> bool:
         """Check if Kimi API key is present."""
-        return self._is_valid_credential(self._get_api_key())
+        return self._is_valid_credential(await self._get_current_key())
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect Kimi prepaid balance and history via API."""
-        key = self._get_api_key()
+        key = await self._get_current_key()
         if not key or len(key) < 10:
             return []
 
@@ -70,7 +83,7 @@ class KimiApiCollector(BaseCollector):
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when API fails."""
-        key = self._get_api_key()
+        key = await self._get_current_key()
         if not key or len(key) < 10:
             return [
                 error_card("Kimi API", "🌙", "Missing/Invalid Key", error_type="missing_config")
@@ -102,7 +115,8 @@ class KimiApiCollector(BaseCollector):
                     "health": "good" if bal > 5 else "warning" if bal > 0 else "critical",
                     "pace": "Stable",
                     "detail": "Prepaid balance (API)",
-                    "data_source": "api_balance",
+                    "data_source": "api",
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
                     "updated_at": datetime.now(UTC).isoformat(),
                 }
             ]

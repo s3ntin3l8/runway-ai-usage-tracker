@@ -22,8 +22,18 @@ class ChatGPTAuthMixin:
 
     async def _get_auth_data(self, client: httpx.AsyncClient) -> dict[str, Any]:
         """
-        Retrieve ChatGPT auth with priority: OAUTH -> Browser Cookies -> Sidecar Cache.
+        Retrieve ChatGPT auth with priority: Instance Cache -> OAUTH -> Global Cache -> Browser Cookies.
         """
+        # Priority 0: Instance-level Refreshed Token (short-lived in-memory cache)
+        # This is populated after a successful cookie-based refresh.
+        now = datetime.now(UTC)
+        if (
+            getattr(self, "_refreshed_token", None)
+            and getattr(self, "_refreshed_token_expiry", None)
+            and now < self._refreshed_token_expiry
+        ):
+            return {"token": self._refreshed_token, "source": "cookies", "input_source": getattr(self, "_refreshed_input_source", "unknown")}
+
         # Priority 1 & 2: Env var or auth.json (Centralized in CredentialProvider)
         auth_data = credential_provider.get_chatgpt_data()
         token = auth_data.get("access_token")
@@ -33,7 +43,7 @@ class ChatGPTAuthMixin:
         if token:
             # Check if we need to refresh the OAuth token (if it's from auth.json and stale)
             last_refresh = auth_data.get("last_refresh")
-            if last_refresh and refresh_token:
+            if client and last_refresh and refresh_token:
                 try:
                     lr_dt = datetime.fromisoformat(last_refresh.replace("Z", "+00:00"))
                     if (datetime.now(UTC) - lr_dt).days >= 8:
@@ -48,45 +58,68 @@ class ChatGPTAuthMixin:
                 "token": token,
                 "account_id": account_id,
                 "refresh_token": refresh_token,
-                "source": "credential_provider",
+                "source": "oauth",
+                "input_source": "server",
             }
 
-        # Priority 3: Browser Cookies
-        session_token = await asyncio.to_thread(get_chatgpt_session_token)
-        if not session_token:
-            # Check sidecar cache for cookie
-            session_token = await token_cache.get_token(
-                "chatgpt",
-                "cookie___Secure-next-auth.session-token",
-                account_id=self.account_id,
+        # Priority 3: Direct OAuth token (Manual Config / Sidecar from global cache)
+        cache_data = await token_cache.get_with_metadata("chatgpt", account_id=self.account_id)
+        if cache_data:
+            tokens, metadata = cache_data
+            if tokens.get("oauth_token"):
+                source = metadata.get("source") or "sidecar"
+                input_source = "manual" if source == "manual_config" else "sidecar"
+
+                logger.debug(f"Using OAuth token from cache (input_source: {input_source})")
+                return {
+                    "token": tokens["oauth_token"],
+                    "account_id": tokens.get("account_id"),
+                    "source": "oauth",
+                    "input_source": input_source,
+                }
+
+        # Priority 4: Browser Cookies (local or forwarded)
+        for c_key in (
+            "session_cookie",
+            "cookie_session",
+            "cookie_sessionKey",
+            "cookie___Secure-next-auth.session-token",
+        ):
+            token_metadata = await token_cache.get_with_metadata(
+                "chatgpt", account_id=self.account_id
             )
+            session_token = None
+            input_source = "unknown"
+            
+            if token_metadata:
+                tokens, metadata = token_metadata
+                session_token = tokens.get(c_key)
+                if session_token:
+                    source_meta = metadata.get("source") or "sidecar"
+                    input_source = "manual" if source_meta == "manual_config" else "sidecar"
+            
+            # Fallback to direct local cookies if enabled and cache is empty
+            if not session_token and is_local_credential_scraping_enabled():
+                session_token = await asyncio.to_thread(get_chatgpt_session_token)
+                if session_token:
+                    input_source = "server"
 
-        if session_token:
-            # Try to get refreshed token from in-memory cache
-            now = datetime.now(UTC)
-            if (
-                getattr(self, "_refreshed_token", None)
-                and getattr(self, "_refreshed_token_expiry", None)
-                and now < self._refreshed_token_expiry
-            ):
-                return {"token": self._refreshed_token, "source": "cookies_cached"}
-
-            # Refresh Bearer token using session cookie
-            refreshed = await self._refresh_access_token(client, session_token)
-            if refreshed:
-                self._refreshed_token = refreshed
-                self._refreshed_token_expiry = now + timedelta(hours=1)
-                # Store in token cache for token health visibility
-                await token_cache.store(
-                    "chatgpt", {"oauth_token": refreshed}, account_id=self.account_id
-                )
-                return {"token": refreshed, "source": "cookies"}
-
-        # Priority 4: Sidecar cache (direct OAuth token)
-        token = await token_cache.get_token("chatgpt", "oauth_token", account_id=self.account_id)
-        if token:
-            logger.debug("Using OAuth token from sidecar cache")
-            return {"token": token, "source": "sidecar_cache"}
+            if session_token:
+                if client:
+                    # Refresh Bearer token using session cookie
+                    refreshed = await self._refresh_access_token(client, session_token)
+                    if refreshed:
+                        self._refreshed_token = refreshed
+                        self._refreshed_token_expiry = now + timedelta(hours=1)
+                        self._refreshed_input_source = input_source
+                        # Store in token cache for token health visibility
+                        await token_cache.store(
+                            "chatgpt", {"oauth_token": refreshed}, account_id=self.account_id, source=source_meta if 'source_meta' in locals() else "server"
+                        )
+                        return {"token": refreshed, "source": "cookies", "input_source": input_source}
+                else:
+                    # When client is None (e.g. is_configured), just report that we have a session token
+                    return {"token": "present_via_session_cookie", "source": "cookies", "input_source": input_source}
 
         return {}
 

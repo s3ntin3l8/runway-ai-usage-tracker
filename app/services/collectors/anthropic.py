@@ -70,9 +70,19 @@ class AnthropicCollector(
     async def _get_current_token(self) -> str | None:
         """Fetch current access token from sidecar cache or credentials file."""
         # 1. Check sidecar cache first (fastest, supports multi-account)
-        token = await token_cache.get_token("anthropic", "oauth_token", account_id=self.account_id)
-        if token:
-            return token
+        cache_data = await token_cache.get_with_metadata(
+            "anthropic", account_id=self.account_id
+        )
+        if cache_data:
+            tokens, metadata = cache_data
+            token = tokens.get("oauth_token")
+            if token:
+                # Store source for card labeling
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = (
+                    "manual" if source == "manual_config" else "sidecar"
+                )
+                return token
 
         # 2. Fallback to reading the local credentials file
         if not self.account_id:
@@ -81,13 +91,14 @@ class AnthropicCollector(
                 oauth = creds.get("claudeAiOauth", {})
                 token = oauth.get("accessToken")
                 if token:
+                    self._current_input_source = "server"
                     # Mirror into token cache so the Tokens health tab can see it
                     token_data: dict[str, str] = {"oauth_token": token}
                     if oauth.get("refreshToken"):
                         token_data["refresh_token"] = oauth["refreshToken"]
                     label = creds.get("oauthAccount", {}).get("emailAddress")
                     await token_cache.store(
-                        "anthropic", token_data, account_id=None, account_label=label
+                        "anthropic", token_data, account_id=None, account_label=label, source="server"
                     )
                 return token
         return None
@@ -106,7 +117,7 @@ class AnthropicCollector(
                 expires_at = creds.get("claudeAiOauth", {}).get("expiresAt")
                 if expires_at:
                     # Some formats use ms, some iso strings
-                    if isinstance(expires_at, (int, float)):
+                    if isinstance(expires_at, int | float):
                         if expires_at > 1e12:  # ms
                             expires_at /= 1000
                         return datetime.now(UTC).timestamp() > expires_at
@@ -133,7 +144,7 @@ class AnthropicCollector(
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Hybrid primary strategy: Statusline merged with OAuth."""
+        """Hybrid primary strategy: Statusline merged with Web/OAuth."""
         results = []
 
         # 1. Fetch from Statusline (Fast Local)
@@ -141,12 +152,21 @@ class AnthropicCollector(
         if statusline_results:
             results.extend(statusline_results)
 
-        # 2. Fetch from OAuth (Full API)
+        # 2. Check if we have a Session Key (yields to Web API strategy)
+        token = await self._get_current_token()
+        if token and (token.startswith("sk-ant-sid") or "sessionKey=" in token):
+            web_results = await self._get_claude_via_web_api(client)
+            if web_results:
+                seen_services = {r["service_name"] for r in web_results}
+                results = [r for r in results if r["service_name"] not in seen_services]
+                results.extend(web_results)
+                return results
+
+        # 3. Fallback to OAuth (Full API) if no session key or web strategy failed
         token = await self._get_valid_token(client)
         if token:
             oauth_results = await self._get_claude_oauth(client, token)
             if oauth_results:
-                # Simple deduplication: Prefer OAuth over Statusline for same window
                 seen_services = {r["service_name"] for r in oauth_results}
                 results = [r for r in results if r["service_name"] not in seen_services]
                 results.extend(oauth_results)

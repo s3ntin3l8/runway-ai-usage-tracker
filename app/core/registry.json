@@ -3,6 +3,8 @@
     "anthropic": {
       "name": "Claude Pro",
       "icon": "🟠",
+      "session_cookie_label": "Manual Authentication (Cookie Bundle)",
+      "session_cookie_help": "Paste the FULL cookie header from Claude.ai (F12 -> Network -> Cookie)",
       "rules": [
         {
           "type": "env",
@@ -44,6 +46,11 @@
             "~/.claude/statusline.json",
             "{{CONFIG_DIR:claude}}/statusline.json"
           ]
+        },
+        {
+          "type": "env",
+          "variable": "CLAUDE_SESSION_TOKEN",
+          "mapping": { "value": "session_cookie" }
         }
       ]
     },
@@ -110,6 +117,8 @@
     "gemini": {
       "name": "Gemini API",
       "icon": "🔵",
+      "api_key_label": "API Key (OAuth Token)",
+      "api_key_help": "Paste the access_token string from ~/.gemini/oauth_creds.json",
       "rules": [
         {
           "type": "file",
@@ -129,6 +138,10 @@
     "chatgpt": {
       "name": "ChatGPT Codex",
       "icon": "💬",
+      "api_key_label": "API Key (Bearer Token)",
+      "api_key_help": "Paste the Bearer eyJ... string from ChatGPT DevTools",
+      "session_cookie_label": "Session Cookie (Session Token)",
+      "session_cookie_help": "The __Secure-next-auth.session-token value from ChatGPT DevTools",
       "rules": [
         {
           "type": "env",
@@ -149,6 +162,11 @@
           "domains": ["chatgpt.com"],
           "name": "__Secure-next-auth.session-token",
           "mapping": { "value": "cookie___Secure-next-auth.session-token" }
+        },
+        {
+          "type": "env",
+          "variable": "CHATGPT_SESSION_TOKEN",
+          "mapping": { "value": "session_cookie" }
         }
       ]
     },
@@ -269,6 +287,7 @@
     "ollama": {
       "name": "Ollama Cloud",
       "icon": "🦙",
+      "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (ollama_session) from ollama.com, not an API key.",
       "rules": [
         {
           "type": "env",

@@ -15,15 +15,26 @@ class ChatGPTApiMixin:
     """Mixin for ChatGPT Web API collection."""
 
     async def _fetch_api_data(
-        self, client: httpx.AsyncClient, token: str, account_id: str | None, source: str
+        self, client: httpx.AsyncClient, token: str, account_id: str | None, source: str, input_source: str = "unknown"
     ) -> list[dict[str, Any]]:
         """Fetch from ChatGPT backend."""
+        # Ensure we don't have a double Bearer prefix
+        auth_token = token
+        if token.lower().startswith("bearer "):
+            auth_token = token[7:].strip()
+
         headers = {
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0",
+            "Authorization": f"Bearer {auth_token}",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://chatgpt.com/",
             "Origin": "https://chatgpt.com",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
             "oai-device-id": await self._get_device_id(),
+            "oai-language": "en-US",
         }
         if account_id:
             headers["ChatGPT-Account-Id"] = account_id
@@ -66,6 +77,7 @@ class ChatGPTApiMixin:
                         "unit_type": "percent",
                         "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": source,
+                        "input_source": input_source,
                         "tier": tier,
                         "updated_at": now.isoformat(),
                     }

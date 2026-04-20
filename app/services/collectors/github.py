@@ -284,15 +284,19 @@ class GitHubCollector(BaseCollector):
             if identity:
                 self._identity = identity
                 # Only update label if it's currently NOT set, empty string, or the placeholder 'Default'
-                # This allow clearing the field in settings to revert to auto-discovery.
+                # This allows clearing the field in settings to revert to auto-discovery.
                 if not self.account_label or self.account_label.lower() == "default":
                     self.account_label = identity
+
                 if self.account_id:
                     import asyncio
 
+                    # Update metadata in cache so it can be used for label fallbacks.
+                    # Note: We only push to cache if we don't have a specific override already 
+                    # active, to prevent "real" names from clobbering preferred ones in the cache.
                     asyncio.create_task(
                         token_cache.update_account_metadata(
-                            "github", self.account_id, name=identity
+                            "github", self.account_id, name=self.account_label
                         )
                     )
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
@@ -321,6 +325,7 @@ class GitHubCollector(BaseCollector):
 
         # If we have email/name in creds, cache them as identity
         if token:
+            self._current_input_source = "server"
             identity = creds.get("email") or creds.get("name")
             if identity:
                 self._identity = identity
@@ -330,8 +335,13 @@ class GitHubCollector(BaseCollector):
 
         # Check account-specific token cache
         if self.account_id:
-            token = await token_cache.get_token("github", "api_key", account_id=self.account_id)
-        return token
+            cache_data = await token_cache.get_with_metadata("github", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("api_key")
+        return None
 
     def _parse_api_responses(self, user_resp, token_resp, user_data) -> list[dict[str, Any]]:
         """Consolidate the parsing logic from collect()."""
@@ -379,11 +389,17 @@ class GitHubCollector(BaseCollector):
                 used_val = monthly_val - val if isinstance(monthly_val, int) else 0
                 pct_used = (
                     (used_val / monthly_val * 100)
-                    if isinstance(monthly_val, (int, float)) and monthly_val > 0
+                    if isinstance(monthly_val, int | float) and monthly_val > 0
                     else 0
                 )
                 pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
-                identity_suffix = f" · {self._identity}" if getattr(self, "_identity", None) else ""
+                # Suppress identity suffix if the current label is already a custom one
+            # and contains the identity info (e.g. email) or is a preferred name.
+            # This prevents the annoying "Personal · email@addr.com" clutter.
+            identity_suffix = ""
+            if self._identity:
+                if not self.account_label or self.account_label.lower() == "default" or self.account_label == self._identity:
+                     identity_suffix = f" · {self._identity}"
                 results.append(
                     {
                         "service_name": f"Copilot ({key.title()})",
@@ -394,19 +410,20 @@ class GitHubCollector(BaseCollector):
                         ),
                         "reset": reset_at.isoformat() if reset_at else None,
                         "health": HealthCalculator.from_remaining(val, monthly_val)
-                        if isinstance(monthly_val, (int, float))
+                        if isinstance(monthly_val, int | float)
                         else "warning",
                         "pace": pace,
                         "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
                         "used_value": float(used_val),
                         "limit_value": float(monthly_val)
-                        if isinstance(monthly_val, (int, float))
+                        if isinstance(monthly_val, int | float)
                         else 100.0,
                         "is_unlimited": False,
                         "tier": "free",
                         "unit_type": "requests",
                         "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": "api",
+                        "input_source": getattr(self, "_current_input_source", "unknown"),
                         "usage_url": "https://github.com/settings/copilot/features",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
@@ -451,6 +468,7 @@ class GitHubCollector(BaseCollector):
                         "unit_type": "requests",
                         "reset_at": None,
                         "data_source": "api",
+                        "input_source": getattr(self, "_current_input_source", "unknown"),
                         "usage_url": "https://github.com/settings/copilot/features",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }

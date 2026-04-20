@@ -30,6 +30,8 @@ from tests.fixtures.mock_data import (
     OPENCODE_GO_RESPONSE,
 )
 
+from app.services.token_cache import token_cache
+
 
 @pytest.fixture(autouse=True)
 def setup_test_settings(monkeypatch):
@@ -37,6 +39,13 @@ def setup_test_settings(monkeypatch):
     monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_SCRAPING_ENABLED", True)
     monkeypatch.setattr(settings, "LOCAL_COLLECTOR_ENABLED", True)
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+
+
+@pytest.fixture(autouse=True)
+async def clear_token_cache():
+    """Clear the global token cache before each test to ensure isolation."""
+    async with token_cache._lock:
+        token_cache._cache.clear()
 
 
 @pytest.fixture

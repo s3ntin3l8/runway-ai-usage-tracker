@@ -32,14 +32,21 @@ class OpenRouterCollector(BaseCollector):
         """Discover API key: DB (UI-set) → token cache → env var."""
         db_key = credential_provider.get_provider_api_key("openrouter")
         if db_key:
+            self._current_input_source = "manual"
             return db_key
 
         if self.account_id:
-            token = await token_cache.get_token("openrouter", "api_key", account_id=self.account_id)
-            if token:
-                return token
+            cache_data = await token_cache.get_with_metadata("openrouter", account_id=self.account_id)
+            if cache_data:
+                tokens, metadata = cache_data
+                source = metadata.get("source") or "sidecar"
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                return tokens.get("api_key")
 
-        return settings.OPENROUTER_API_KEY or None
+        key = settings.OPENROUTER_API_KEY or None
+        if key:
+            self._current_input_source = "server"
+        return key
 
     async def is_configured(self) -> bool:
         """Check if OpenRouter API key is present."""
@@ -109,6 +116,7 @@ class OpenRouterCollector(BaseCollector):
                         "limit_value": total_credits,
                         "unit_type": "currency",
                         "data_source": "api",
+                        "input_source": getattr(self, "_current_input_source", "unknown"),
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
                 )
@@ -141,9 +149,9 @@ class OpenRouterCollector(BaseCollector):
                             "limit_value": key_limit,
                             "unit_type": "currency",
                             "data_source": "api",
+                            "input_source": getattr(self, "_current_input_source", "unknown"),
                             "updated_at": datetime.now(UTC).isoformat(),
-                        }
-                    )
+                            }                    )
             elif key_resp:
                 logger.debug(
                     f"OpenRouter key API non-200 (HTTP {key_resp.status_code}), skipping key card"

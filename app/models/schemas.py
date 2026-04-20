@@ -21,9 +21,13 @@ class LimitCard(BaseModel):
     currency: str | None = None  # "USD", "EUR", "CNY", etc.
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
-    # Data source indicator for display in UI
+    # Data collection mechanism (how)
     data_source: str = (
-        "unknown"  # "oauth", "web_api", "local", "cache", "fallback", "api", "sidecar"
+        "unknown"  # "oauth", "web_api", "scrape", "logs", "statusline", "api"
+    )
+    # Credential/Token origin (where)
+    input_source: str = (
+        "unknown"  # "sidecar", "config", "server", "manual"
     )
     # Error categorization
     error_type: str | None = None

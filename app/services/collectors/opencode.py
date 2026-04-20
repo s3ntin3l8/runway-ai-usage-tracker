@@ -301,6 +301,7 @@ class OpenCodeCollector(BaseCollector):
                     "account_label": email,
                     "reset_at": reset_at.isoformat(),
                     "data_source": "web_api",
+                    "input_source": "server",
                     "usage_url": usage_url,
                     "updated_at": now_iso,
                 }
@@ -424,7 +425,8 @@ class OpenCodeCollector(BaseCollector):
                             "currency": "USD",
                             "account_label": self.account_label,
                             "reset_at": None,  # Rolling window has no fixed reset time
-                            "data_source": "local",
+                            "data_source": "logs",
+                            "input_source": "server",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
                     )

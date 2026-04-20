@@ -1,5 +1,6 @@
 # app/services/poller.py
 import asyncio
+import hashlib
 import logging
 from collections import deque
 from datetime import UTC, datetime
@@ -25,7 +26,7 @@ class BackgroundPoller:
         self._task: asyncio.Task | None = None
         self._running = False
         self._poll_count = 0
-        self._snapshot_hashes: dict[str, deque] = {}  # key → deque(maxlen=3) of hashes
+        self._snapshot_hashes: dict[str, deque] = {}  # key → deque(maxlen=3) of SHA hex digests
 
     def start(self):
         """Start the background polling task."""
@@ -58,9 +59,9 @@ class BackgroundPoller:
                 logger.error(f"Error during background poll: {e}")
 
     def _update_sleep_state(self, cards: list) -> None:
-        """Track quota hashes per account; adjust poll interval on dormancy or wake."""
-        # Build one composite hash per key for this poll cycle
-        poll_hashes: dict[str, list] = {}
+        """Track quota state per account; adjust poll interval on dormancy or wake."""
+        # Build one composite representation per key for this poll cycle
+        poll_states: dict[str, list] = {}
         for card_dict in cards:
             try:
                 card = LimitCard(**card_dict)
@@ -69,16 +70,20 @@ class BackgroundPoller:
                 if card.data_source == "cache":
                     continue  # cached cards don't represent fresh activity
                 key = f"{card.provider_id}:{card.account_id}"
-                poll_hashes.setdefault(key, []).append(hash((card.used_value, card.limit_value)))
+                # Use a stable string representation
+                poll_states.setdefault(key, []).append(f"{card.used_value}:{card.limit_value}")
             except Exception:
                 logger.debug("Skipping malformed card in sleep state tracking")
 
         # Append one composite hash per key (order-independent via sorted)
-        for key, hashes in poll_hashes.items():
-            composite = hash(tuple(sorted(hashes)))
+        for key, states in poll_states.items():
+            # Create a stable SHA-256 digest of the sorted state list
+            composite_str = "|".join(sorted(states))
+            digest = hashlib.sha256(composite_str.encode()).hexdigest()
+            
             if key not in self._snapshot_hashes:
                 self._snapshot_hashes[key] = deque(maxlen=_DORMANT_THRESHOLD)
-            self._snapshot_hashes[key].append(composite)
+            self._snapshot_hashes[key].append(digest)
 
         if not self._snapshot_hashes:
             return

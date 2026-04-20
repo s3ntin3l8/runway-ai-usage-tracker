@@ -1160,10 +1160,19 @@ export function buildProviderSummaryCard(providerId, items) {
     const tier = worst.tier;
     const tierBadgeHTML = tier ? getTierBadge(tier) : '';
 
-    // Account labels
+    // Account and source labels
     const accounts = [...new Set(items.map(i => i.account_label).filter(Boolean))];
+    const sources = [...new Set(items.map(i => i.input_source).filter(s => s && s !== 'unknown'))];
+    
+    let sourceBadge = '';
+    if (sources.length > 0) {
+        const s = sources[0];
+        const sColor = s === 'sidecar' ? 'text-blue-400 border-blue-400/30' : s === 'manual' ? 'text-amber-400 border-amber-400/30' : 'text-zinc-500 border-zinc-500/30';
+        sourceBadge = `<span class="text-[8px] px-1 py-px rounded border ${sColor} uppercase tracking-tighter ml-1.5">${escapeHTML(s)}</span>`;
+    }
+
     const accountHTML = accounts.length === 1
-        ? `<div class="text-[10px] text-zinc-500 mt-0.5">${escapeHTML(accounts[0])}</div>`
+        ? `<div class="flex items-center text-[10px] text-zinc-500 mt-0.5 min-w-0"><span class="truncate">${escapeHTML(accounts[0])}</span>${sourceBadge}</div>`
         : accounts.length > 1
         ? `<div class="flex flex-wrap gap-1 mt-1">${accounts.map(a =>
             `<span class="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded">${escapeHTML(a)}</span>`
@@ -1324,7 +1333,23 @@ export function buildProviderModal(providerId, items, history) {
     const sorted = items;
 
     const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6', unknown: '#3f3f46' };
-    const MODAL_SOURCE_LABELS = { oauth: 'OAuth', web_api: 'Web API', local: 'Local', cache: 'Cache', fallback: 'Fallback', api: 'API', sidecar: 'Sidecar' };
+    const MODAL_SOURCE_LABELS = { 
+        oauth: 'OAuth', 
+        web_api: 'Web API', 
+        scrape: 'Scrape', 
+        logs: 'Logs', 
+        statusline: 'Statusline', 
+        api: 'API', 
+        sidecar: 'Sidecar',
+        cache: 'Cache',
+        fallback: 'Fallback'
+    };
+    const MODAL_INPUT_LABELS = {
+        sidecar: 'Sidecar',
+        config: 'Config',
+        server: 'Server',
+        manual: 'Manual'
+    };
 
     const serviceRows = sorted.map(item => {
         const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
@@ -1357,6 +1382,12 @@ export function buildProviderModal(providerId, items, history) {
 
         const resetText = item.reset_at ? escapeHTML(formatResetDisplay(item.reset_at)) : escapeHTML(String(item.reset ?? '—'));
         const sourceLabel = MODAL_SOURCE_LABELS[item.data_source] || escapeHTML(item.data_source || '');
+        const inputLabel = MODAL_INPUT_LABELS[item.input_source] || escapeHTML(item.input_source || '');
+        
+        const combinedSourceLabel = item.input_source && item.input_source !== 'unknown' 
+            ? `${sourceLabel} · ${inputLabel}` 
+            : sourceLabel;
+
         const paceIcon = getPaceIcon(item.pace);
         const tierBadge = item.tier ? getTierBadge(item.tier) : '';
 
@@ -1374,7 +1405,7 @@ export function buildProviderModal(providerId, items, history) {
                     <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
                         <span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
-                        ${sourceLabel ? `<span class="text-sm text-zinc-500">${sourceLabel}</span>` : ''}
+                        ${combinedSourceLabel ? `<span class="text-sm text-zinc-500">${combinedSourceLabel}</span>` : ''}
                         ${paceIcon ? `<span class="text-2xl">${paceIcon}</span>` : ''}
                         ${item.pace ? `<span class="text-sm text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
                     </div>

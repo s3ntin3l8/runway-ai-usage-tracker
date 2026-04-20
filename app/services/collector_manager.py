@@ -121,8 +121,9 @@ class CollectorManager:
             # are waiting on the lock simultaneously.
             if time.time() - self._last_sync_time < 60.0:
                 return
-            # Load DB provider configs (enabled flag + poll interval overrides)
-            db_configs: dict[str, Any] = {}
+            # Load DB provider configs: provider_id -> account_id -> ProviderConfig
+            # We use a nested map to handle multi-account overrides correctly.
+            db_configs: dict[str, dict[str, Any]] = {}
             global_poll_interval: int | None = None
             try:
                 from sqlmodel import Session
@@ -132,9 +133,15 @@ class CollectorManager:
                 from app.models.db import ProviderConfig, SystemConfig
 
                 with Session(engine) as _s:
-                    db_configs = {
-                        r.provider_id: r for r in _s.exec(sqlselect(ProviderConfig)).all()
-                    }
+                    for r in _s.exec(sqlselect(ProviderConfig)).all():
+                        if r.provider_id not in db_configs:
+                            db_configs[r.provider_id] = {}
+                        db_configs[r.provider_id][r.account_id] = r
+
+                        # Sync manual tokens to cache to survive reloads/restarts
+                        if r.enabled and (r.api_key or r.session_cookie):
+                            await self._sync_manual_config_to_cache(r)
+
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
                         global_poll_interval = sys_cfg.default_poll_interval_seconds
@@ -143,7 +150,10 @@ class CollectorManager:
 
             # 1. Ensure Default/Static collectors are present
             for p_id, (cls, name, ttl) in self.collector_registry.items():
-                db_cfg = db_configs.get(p_id)
+                # For default collector, we look for account_id="default"
+                provider_acc_configs = db_configs.get(p_id, {})
+                db_cfg = provider_acc_configs.get("default")
+                
                 if db_cfg is not None and not db_cfg.enabled:
                     # Remove existing collector if it was previously running
                     self.smart_collectors.pop(f"{p_id}:default", None)
@@ -184,7 +194,11 @@ class CollectorManager:
                         )
                         continue
                     cls, name, ttl = self.collector_registry[p_id]
-                    db_cfg = db_configs.get(p_id)
+                    
+                    # For dynamic account, check for specific override OR fallback to default provider override
+                    provider_acc_configs = db_configs.get(p_id, {})
+                    db_cfg = provider_acc_configs.get(acc_id) or provider_acc_configs.get("default")
+                    
                     if db_cfg is not None and not db_cfg.enabled:
                         # Remove existing dynamic collector and purge its stale cards
                         self.smart_collectors.pop(f"{p_id}:{acc_id}", None)
@@ -199,16 +213,27 @@ class CollectorManager:
                         if db_cfg and db_cfg.poll_interval_seconds
                         else global_poll_interval or ttl
                     )
+                    
+                    # Prioritize DB override label, then acc_name from cache
+                    db_label = db_cfg.account_label if db_cfg else None
+                    final_label = db_label or acc_name
+                    
                     key = f"{p_id}:{acc_id}"
                     active_keys.add(key)
                     if key not in self.smart_collectors:
-                        full_name = f"{name} ({acc_name or acc_id[:6]})"
+                        full_name = f"{name} ({final_label or acc_id[:6]})"
                         logger.info(f"Spawning dynamic collector for {p_id} account {acc_id}")
                         self.smart_collectors[key] = SmartCollector(
-                            collector=cls(account_id=acc_id, account_label=acc_name),
+                            collector=cls(account_id=acc_id, account_label=final_label),
                             collector_name=full_name,
                             ttl=effective_ttl,
                         )
+                    else:
+                        sc = self.smart_collectors[key]
+                        if effective_ttl != sc.ttl:
+                            sc.ttl = effective_ttl
+                        if sc.collector.account_label != final_label:
+                            sc.collector.account_label = final_label
 
             # 3. Prune collectors whose accounts disappeared from the token cache
             stale_keys = [
@@ -228,9 +253,49 @@ class CollectorManager:
         return self._client
 
     async def close(self):
-        """Close the persistent httpx client."""
-        if self._client and not self._client.is_closed:
+        """Close the internal HTTP client."""
+        if self._client:
             await self._client.aclose()
+            self._client = None
+
+    async def _sync_manual_config_to_cache(self, r):
+        """Helper to push a single ProviderConfig into the token cache."""
+        from app.core.utils import IdentityExtractor
+
+        all_tokens = {}
+
+        # Handle API Key (OAuth Token)
+        if r.api_key:
+            # Strip Bearer prefix if present
+            token_val = r.api_key
+            if token_val.lower().startswith("bearer "):
+                token_val = token_val[7:].strip()
+
+            all_tokens["oauth_token"] = token_val
+            if r.provider_id == "chatgpt":
+                acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)
+                if acc_id:
+                    all_tokens["account_id"] = acc_id
+
+        # Handle Session Cookie
+        if r.session_cookie:
+            # Map generic session_cookie to all common provider-specific keys
+            all_tokens.update(
+                {
+                    "session_cookie": r.session_cookie,
+                    "cookie_session": r.session_cookie,
+                    "cookie_sessionKey": r.session_cookie,
+                    "cookie___Secure-next-auth.session-token": r.session_cookie,
+                }
+            )
+
+        if all_tokens:
+            await token_cache.store(
+                r.provider_id,
+                all_tokens,
+                account_id=r.account_id or "default",
+                source="manual_config",
+            )
 
     async def collect_all(self) -> list[dict[str, Any]]:
         """
