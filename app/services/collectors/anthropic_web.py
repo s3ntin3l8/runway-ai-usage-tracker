@@ -543,36 +543,82 @@ class AnthropicWebMixin:
                 except (ValueError, TypeError):
                     pass
 
-        # 3. Extra usage / overage (Fixed formatting)
+        # 3. Extra usage / overage (Support for credits and spend formats)
         extra_data = data.get("extra_usage") or data.get("overage")
         if extra_data and isinstance(extra_data, dict):
-            raw_spend = extra_data.get("spend")
-            raw_limit = extra_data.get("limit")
-            spend = float(raw_spend) if raw_spend is not None else 0.0
-            limit = float(raw_limit) if raw_limit is not None else 0.0
+            # Check for new format: is_enabled, monthly_limit (in credits), used_credits
+            is_enabled = extra_data.get("is_enabled", True)
+            if is_enabled:
+                raw_monthly_limit = extra_data.get("monthly_limit")
+                raw_used_credits = extra_data.get("used_credits")
+                currency_code = extra_data.get("currency", "USD")
 
-            if limit > 0:
-                remaining = max(0.0, limit - spend)
-                results.append(
-                    {
-                        "service_name": "Claude (Extra Usage)",
-                        "icon": "💰",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": "USD",
-                        "reset": "Monthly",
-                        "health": HealthCalculator.from_spend(spend, limit),
-                        "pace": "Sustainable",
-                        "detail": f"${spend:.2f} / ${limit:.2f}{tier_label} [Web API]{identity_suffix}",
-                        "used_value": spend,
-                        "limit_value": limit,
-                        "unit_type": "currency",
-                        "window_type": "monthly",
-                        "data_source": getattr(self, "_current_source", "web_api"),
-                        "tier": tier,
-                        "account_label": identity_str,
-                        "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    }
+                # Format currency symbol/prefix
+                c_symbol = (
+                    "€"
+                    if currency_code == "EUR"
+                    else "$"
+                    if currency_code == "USD"
+                    else f"{currency_code} "
                 )
+
+                if raw_monthly_limit is not None and raw_used_credits is not None:
+                    # 1 credit = 0.01 currency
+                    spend = float(raw_used_credits) * 0.01
+                    limit = float(raw_monthly_limit) * 0.01
+                    remaining = max(0.0, limit - spend)
+
+                    results.append(
+                        {
+                            "service_name": "Claude (Extra Usage)",
+                            "icon": "💰",
+                            "remaining": f"{c_symbol}{remaining:.2f}",
+                            "unit": currency_code,
+                            "reset": "Monthly",
+                            "health": HealthCalculator.from_spend(spend, limit),
+                            "pace": "Sustainable",
+                            "detail": f"{c_symbol}{spend:.2f} / {c_symbol}{limit:.2f}{tier_label} [Web API]{identity_suffix}",
+                            "used_value": spend,
+                            "limit_value": limit,
+                            "unit_type": "currency",
+                            "currency": currency_code,
+                            "window_type": "monthly",
+                            "data_source": getattr(self, "_current_source", "web_api"),
+                            "tier": tier,
+                            "account_label": identity_str,
+                            "usage_url": "https://claude.ai/settings/usage",
+                            "updated_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                else:
+                    # Fallback to older spend/limit format
+                    raw_spend = extra_data.get("spend")
+                    raw_limit = extra_data.get("limit")
+                    if raw_limit is not None and float(raw_limit) > 0:
+                        spend = float(raw_spend) if raw_spend is not None else 0.0
+                        limit = float(raw_limit)
+                        remaining = max(0.0, limit - spend)
+                        results.append(
+                            {
+                                "service_name": "Claude (Extra Usage)",
+                                "icon": "💰",
+                                "remaining": f"{c_symbol}{remaining:.2f}",
+                                "unit": currency_code,
+                                "reset": "Monthly",
+                                "health": HealthCalculator.from_spend(spend, limit),
+                                "pace": "Sustainable",
+                                "detail": f"{c_symbol}{spend:.2f} / {c_symbol}{limit:.2f}{tier_label} [Web API]{identity_suffix}",
+                                "used_value": spend,
+                                "limit_value": limit,
+                                "unit_type": "currency",
+                                "currency": currency_code,
+                                "window_type": "monthly",
+                                "data_source": getattr(self, "_current_source", "web_api"),
+                                "tier": tier,
+                                "account_label": identity_str,
+                                "usage_url": "https://claude.ai/settings/usage",
+                                "updated_at": datetime.now(UTC).isoformat(),
+                            }
+                        )
 
         return results
