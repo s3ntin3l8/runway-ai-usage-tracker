@@ -6,9 +6,10 @@ The Ollama provider scrapes the **Plan & Settings** page at `https://ollama.com/
 
 ## Overview
 
-- **Collection Strategy**: Web scraping (plan badge, session & weekly usage, reset timestamps)
+
+- **Collection Strategy**: web (Scraping)
 - **Cards**: 2 cards (Session and Weekly usage windows)
-- **Authentication**: Browser cookie (auto-extracted) or `OLLAMA_SESSION_TOKEN` environment variable
+- **Authentication**: Browser cookie (web) or `OLLAMA_SESSION_TOKEN` (web).
 
 ## Setup Methods Quick Overview
 

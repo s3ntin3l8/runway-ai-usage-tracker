@@ -36,7 +36,9 @@ class OpenRouterCollector(BaseCollector):
             return db_key
 
         if self.account_id:
-            cache_data = await token_cache.get_with_metadata("openrouter", account_id=self.account_id)
+            cache_data = await token_cache.get_with_metadata(
+                "openrouter", account_id=self.account_id
+            )
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
@@ -148,10 +150,11 @@ class OpenRouterCollector(BaseCollector):
                             "used_value": key_usage,
                             "limit_value": key_limit,
                             "unit_type": "currency",
-                            "data_source": "api",
+                            "data_source": self.DATA_SOURCE_API,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "updated_at": datetime.now(UTC).isoformat(),
-                            }                    )
+                        }
+                    )
             elif key_resp:
                 logger.debug(
                     f"OpenRouter key API non-200 (HTTP {key_resp.status_code}), skipping key card"

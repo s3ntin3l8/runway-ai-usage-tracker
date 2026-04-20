@@ -6,9 +6,9 @@ MiniMax coding plan quota collector.
 
 ## Overview
 
-- **Collection Strategy**: REST API only
+- **Collection Strategy**: api (REST) → web (Scraping Fallback)
 - **Cards**: Multiple cards (one per model snapshot)
-- **Authentication**: `MINIMAX_API_KEY` environment variable
+- **Authentication**: `MINIMAX_API_KEY` (api) OR `MINIMAX_COOKIE` (web)
 
 ## Setup Methods Quick Overview
 
@@ -20,9 +20,9 @@ The MiniMax collector uses a single API key for authentication:
 
 ## Data Source
 
-### Primary: MiniMax Coding Plan Remains API
+### Tier 1: api (Coding Plan API)
 **Endpoint:** `https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains`
-**Auth:** Bearer token
+**Auth:** Bearer token (api)
 
 **Response:**
 ```json
@@ -35,6 +35,10 @@ The MiniMax collector uses a single API key for authentication:
   ]
 }
 ```
+### Tier 2: web (HTML Scraping)
+**URL:** `platform.minimax.io/user-center/payment/coding-plan`
+**Auth:** Session cookie (web)
+**Behavior:** Fallback used when the API token is missing or unauthorized.
 
 ## Output Format
 
@@ -52,6 +56,7 @@ The MiniMax collector uses a single API key for authentication:
     "limit_value": 500.0,
     "unit_type": "count",
     "data_source": "api",
+    "input_source": "manual",
     "updated_at": "2026-04-11T16:30:00+00:00"
 }
 ```

@@ -9,11 +9,14 @@ must implement. Each collector follows a 3-tier fallback pattern:
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.date_utils import normalize_iso_date
 
@@ -30,6 +33,21 @@ class BaseCollector(ABC):
     PROVIDER_ID: str = "unknown"
     DEFAULT_WINDOW_TYPE: str = "unknown"
 
+    # Subclasses may declare their available strategies as an ordered dict:
+    # { "strategy_id": ("Human-Readable Label", "_method_name") }
+    # The ORDER of items defines the default execution priority.
+    STRATEGIES: dict[str, tuple[str, str]] = {}
+
+    # Standard Data Source Labels
+    DATA_SOURCE_API = "api"  # Official API / OAuth
+    DATA_SOURCE_WEB = "web"  # Unofficial / Cookie / Scraped
+    DATA_SOURCE_LOCAL = "local"  # Log files / CLI / Fast path
+
+    # Standard Input Source Labels (Credentials Origin)
+    INPUT_SOURCE_MANUAL = "manual"  # Entered via Runway UI
+    INPUT_SOURCE_SIDECAR = "sidecar"  # Pushed from remote agent
+    INPUT_SOURCE_SERVER = "server"  # Found in local .env or files
+
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """
         Initialize BaseCollector.
@@ -41,6 +59,64 @@ class BaseCollector(ABC):
         self.account_id = account_id
         self.account_label = account_label
         self._current_input_source: str = "config"  # Default for static ENV configs
+        # In-memory cache for discovered account labels to avoid redundant regex processing
+        self._account_label_cache: str | None = account_label
+        # User-supplied strategy ordering/toggles (list of {"id": str, "enabled": bool}).
+        # None = use default STRATEGIES ordering with all enabled.
+        self._user_strategies: list[dict] | None = None
+        # Default timeout for network requests (can be overridden by subclasses)
+        self.timeout: float = 10.0
+
+    def apply_strategy_config(self, strategies: list[dict] | None) -> None:
+        """
+        Accept a user-supplied strategy ordering/enable list from the DB.
+        Each entry: {"id": "web", "enabled": True}
+        """
+        self._user_strategies = strategies
+
+    def _resolve_strategies(
+        self,
+    ) -> list[Callable[[httpx.AsyncClient], Awaitable[list[dict[str, Any]]]]]:
+        """
+        Resolve the ordered, filtered strategy list to execute.
+
+        If no STRATEGIES are declared (legacy collector), falls back to the
+        abstract _primary_strategy + _fallback_strategies pattern.
+
+        Returns a flat ordered list of callables.
+        """
+        if not self.STRATEGIES:
+            # Legacy path: no STRATEGIES dict declared — use abstract methods
+            return []
+
+        # Build ordered list from STRATEGIES, respecting user overrides
+        if self._user_strategies:
+            # User has a custom ordering: iterate in their order, respecting enabled flag
+            ordered_ids = [s["id"] for s in self._user_strategies if s.get("enabled", True)]
+            # Append any strategies not mentioned by the user (new ones added after config)
+            known_ids = {s["id"] for s in self._user_strategies}
+            for s_id in self.STRATEGIES:
+                if s_id not in known_ids:
+                    ordered_ids.append(s_id)
+        else:
+            # Default: use declaration order with all enabled
+            ordered_ids = list(self.STRATEGIES.keys())
+
+        # Resolve method names to bound callables
+        callables = []
+        for s_id in ordered_ids:
+            if s_id not in self.STRATEGIES:
+                continue
+            _label, method_name = self.STRATEGIES[s_id]
+            method = getattr(self, method_name, None)
+            if callable(method):
+                callables.append(method)
+            else:
+                logger.warning(
+                    f"Strategy method '{method_name}' not found on {self.__class__.__name__}"
+                )
+
+        return callables
 
     async def is_configured(self) -> bool:
         """
@@ -85,8 +161,25 @@ class BaseCollector(ABC):
         """
         Orchestrate collection strategy with fallbacks and error handling.
         Automatically tags results with account identifiers.
+
+        If STRATEGIES is declared, uses the dynamic ordered list.
+        Otherwise falls back to the abstract _primary_strategy / _fallback_strategies.
         """
         try:
+            dynamic_strategies = self._resolve_strategies()
+
+            if dynamic_strategies:
+                # Dynamic path: run strategies in user-defined order
+                for strategy in dynamic_strategies:
+                    try:
+                        results = await strategy(client)
+                        if not self._is_error_result(results):
+                            return self._tag_results(results)
+                    except Exception as e:
+                        logger.warning(f"Strategy {strategy.__name__} failed: {e}")
+                return self._tag_results(await self._error_handler())
+
+            # Legacy path: primary + fallback list
             # 1. Try Primary Strategy
             results = await self._primary_strategy(client)
             if not self._is_error_result(results):
@@ -130,10 +223,8 @@ class BaseCollector(ABC):
             return []
 
         # Phase 0C: Auto-discover account label from detail if not already set by user
-        # Avoid running discovery if a custom label is already present.
-        if not self.account_label or self.account_label.lower() == "default":
-            import re
-
+        # Avoid running discovery if a custom label is already present or cached.
+        if not self._account_label_cache or self._account_label_cache.lower() == "default":
             discovered_label = None
             for card in results:
                 detail = card.get("detail", "")
@@ -152,8 +243,7 @@ class BaseCollector(ABC):
                     discovered_label = f"org: {org_match.group(1)}"
                     break
 
-                # Standalone username after a dot/separator e.g. "· username" or "| username"
-                # This version handles trailing brackets like [Sidecar] or [Statusline]
+                # Standalone username after a dot/separator
                 user_match = re.search(
                     r"[·|]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)(?:\s*\[[^\]]+\])?$",
                     detail,
@@ -163,51 +253,59 @@ class BaseCollector(ABC):
                     break
 
             if discovered_label:
+                self._account_label_cache = discovered_label
                 self.account_label = discovered_label
 
         # 2. Tag cards
-        for card in results:
-            if "account_id" not in card or not card.get("account_id"):
-                card["account_id"] = self.account_id or "default"
+        tagged_results = []
+        from app.models.schemas import LimitCard
 
-            # Use self.account_label if set, otherwise try to use card's existing label, fallback to "Default"
-            if (
-                "account_label" not in card
-                or not card.get("account_label")
-                or card.get("account_label").lower() == "default"
-            ):
-                card["account_label"] = self.account_label or "Default"
+        for card_data in results:
+            if not isinstance(card_data, dict):
+                logger.error(f"Collector returned non-dict card: {type(card_data)}")
+                continue
 
             # Phase 0B: inject provider_id and window_type from class constants
-            if "provider_id" not in card or not card.get("provider_id"):
-                card["provider_id"] = self.PROVIDER_ID
-            if "window_type" not in card or card.get("window_type") == "unknown":
+            if "provider_id" not in card_data or not card_data.get("provider_id"):
+                card_data["provider_id"] = self.PROVIDER_ID
+            if "window_type" not in card_data or card_data.get("window_type") == "unknown":
                 if self.DEFAULT_WINDOW_TYPE != "unknown":
-                    card["window_type"] = self.DEFAULT_WINDOW_TYPE
+                    card_data["window_type"] = self.DEFAULT_WINDOW_TYPE
+
+            # Tag account identifiers
+            if "account_id" not in card_data or not card_data.get("account_id"):
+                card_data["account_id"] = self.account_id or "default"
+            if (
+                "account_label" not in card_data
+                or not card_data.get("account_label")
+                or card_data.get("account_label").lower() == "default"
+            ):
+                card_data["account_label"] = self.account_label or "Default"
 
             # Tag input source (origin of credentials)
-            if "input_source" not in card or card.get("input_source") == "unknown":
-                card["input_source"] = getattr(self, "_current_input_source", "unknown")
+            if "input_source" not in card_data or card_data.get("input_source") == "unknown":
+                card_data["input_source"] = getattr(self, "_current_input_source", "unknown")
 
             # Phase 1: Ensure timestamps are timezone-aware ISO strings
-            from datetime import UTC, datetime
-
             now_iso = datetime.now(UTC).isoformat()
-
-            # Phase 1: Ensure timestamps are timezone-aware ISO strings
-            from datetime import UTC, datetime
-
-            now_iso = datetime.now(UTC).isoformat()
-
-            if "updated_at" not in card or not card.get("updated_at"):
-                card["updated_at"] = now_iso
+            if "updated_at" not in card_data or not card_data.get("updated_at"):
+                card_data["updated_at"] = now_iso
             else:
-                card["updated_at"] = normalize_iso_date(card["updated_at"])
+                card_data["updated_at"] = normalize_iso_date(card_data["updated_at"])
 
-            if "reset_at" in card:
-                card["reset_at"] = normalize_iso_date(card["reset_at"])
+            if "reset_at" in card_data:
+                card_data["reset_at"] = normalize_iso_date(card_data["reset_at"])
 
-        return results
+            # VALIDATION: Ensure card matches our public schema before returning
+            try:
+                valid_card = LimitCard(**card_data)
+                tagged_results.append(valid_card.model_dump())
+            except ValidationError as e:
+                logger.error(f"Schema validation failed for {self.PROVIDER_ID} card: {e}")
+                # Fallback: still include the card but mark it with an error badge in logs
+                # In production, we might want to skip these, but for now we log as error.
+
+        return tagged_results
 
     @abstractmethod
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:

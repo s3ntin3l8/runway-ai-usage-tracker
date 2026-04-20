@@ -1,6 +1,7 @@
 import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, fetchSettings, fetchAppConfig, putAppConfig } from '../api.js';
 import { STATE } from '../state.js';
 import { buildTokenHealthPanel } from '../components.js';
+import { ensureSortable } from '../sortable.js';
 
 let _settingsSelectedProvider = null;
 let _settingsProviderOriginal = null;
@@ -100,6 +101,30 @@ export async function renderProvidersSection(pane) {
             });
             pane.querySelector('#api-key-edit-btn')?.addEventListener('click', () => toggleApiKeyEdit(pane));
             pane.querySelector('#session-cookie-edit-btn')?.addEventListener('click', () => toggleSessionCookieEdit(pane));
+
+            // Wire strategy toggle buttons
+            pane.querySelectorAll('.strategy-toggle').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const next = this.dataset.enabled !== 'true';
+                    this.dataset.enabled = String(next);
+                    this.classList.toggle('bg-violet-600', next);
+                    this.classList.toggle('bg-zinc-700', !next);
+                    this.querySelector('span').classList.toggle('translate-x-4', next);
+                    this.querySelector('span').classList.toggle('translate-x-0', !next);
+                });
+            });
+
+            // Wire drag-to-reorder on strategy list via SortableJS
+            const strategyList = pane.querySelector('#strategy-list');
+            if (strategyList) {
+                ensureSortable().then(Sortable => {
+                    Sortable.create(strategyList, {
+                        handle: '.strategy-drag-handle',
+                        animation: 150,
+                        ghostClass: 'opacity-30',
+                    });
+                }).catch(err => console.warn('Could not load Sortable.js:', err));
+            }
         }
     } catch (err) {
         pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load providers: ${escapeHTML(err.message)}</p>`;
@@ -135,7 +160,37 @@ function buildProviderForm(p) {
     const defaultTtlLabel = POLL_OPTIONS.find(o => o.value === p.default_ttl_seconds)?.label || `${p.default_ttl_seconds}s`;
     const pollSelectOpts = POLL_OPTIONS.map(o => `<option value="${o.value}" ${p.poll_interval_seconds === o.value ? 'selected' : ''}>${o.label}</option>`).join('');
 
-    return `<form id="provider-config-form" class="space-y-4" onsubmit="return false">
+    // Build strategy rows (only for providers that declare strategies)
+    const strategies = p.supported_strategies || [];
+    let strategyHTML = '';
+    if (strategies.length > 1) {
+        // Merge saved user config with supported list to determine order + enabled state
+        const savedConfig = p.collection_strategies || null;
+        const resolvedList = buildResolvedStrategyList(strategies, savedConfig);
+
+        const rows = resolvedList.map((s, i) => {
+            const isEnabled = s.enabled;
+            return `<div class="strategy-row flex items-center gap-2 py-2 px-1 border-b border-zinc-800/40" data-strategy-id="${escapeHTMLAttr(s.id)}">
+                <span class="strategy-drag-handle text-zinc-500 text-sm select-none cursor-grab active:cursor-grabbing px-1.5" title="Drag to reorder">⠿</span>
+                <div class="flex-1 min-w-0 truncate">
+                    <span class="text-xs text-zinc-300 font-medium">${escapeHTML(s.label)}</span>
+                </div>
+                <button type="button" class="strategy-toggle relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-violet-600' : 'bg-zinc-700'}" data-enabled="${isEnabled}">
+                    <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
+                </button>
+            </div>`;
+        }).join('');
+
+        strategyHTML = `<div class="py-3 border-b border-zinc-800/50">
+            <div class="mb-2 px-1">
+                <span class="text-sm text-zinc-400">Data Sources</span>
+                <p class="text-[10px] text-zinc-600 mt-0.5">Drag to reorder · toggle to enable/disable</p>
+            </div>
+            <div id="strategy-list" class="space-y-0.5">${rows}</div>
+        </div>`;
+    }
+
+    return `<form id="provider-config-form" class="space-y-4 min-w-0 overflow-x-hidden px-1" onsubmit="return false">
         <h3 class="text-base font-semibold text-zinc-100 flex items-center gap-2"><span>${p.icon}</span> ${escapeHTML(p.name)}</h3>
         <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
             <div><span class="text-sm text-zinc-400">Enabled</span><p class="text-[10px] text-zinc-600 mt-0.5">Polling active for this provider</p></div>
@@ -143,6 +198,7 @@ function buildProviderForm(p) {
                 <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${p.enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
             </button>
         </div>
+        ${strategyHTML}
         ${p.supports_api_key ? `<div class="py-3 border-b border-zinc-800/50">
             <div class="flex items-center justify-between mb-2"><span class="text-sm text-zinc-400">API Key</span><button type="button" id="api-key-edit-btn" class="toggle-btn text-xs">Edit</button></div>
             <div id="api-key-display" class="${p.api_key_set ? '' : 'hidden'}"><span class="mono text-xs text-zinc-500">••••••••••••••••</span></div>
@@ -169,6 +225,39 @@ function buildProviderForm(p) {
             <div class="flex gap-2"><button type="button" id="provider-discard-btn" class="toggle-btn text-xs">Discard</button><button type="button" id="provider-save-btn" class="toggle-btn text-xs" style="border-color:#7c3aed;color:#c4b5fd;">Save</button></div>
         </div>
     </form>`;
+}
+
+/** Build the merged and ordered strategy list for display. */
+function buildResolvedStrategyList(supported, savedConfig) {
+    if (!savedConfig || savedConfig.length === 0) {
+        // No saved config — show all in default order, all enabled
+        return supported.map(s => ({ ...s, enabled: true }));
+    }
+
+    // Start from saved order
+    const result = [];
+    const supportedMap = Object.fromEntries(supported.map(s => [s.id, s]));
+    const seenIds = new Set();
+
+    for (const saved of savedConfig) {
+        if (supportedMap[saved.id]) {
+            result.push({
+                id: saved.id,
+                label: supportedMap[saved.id].label,
+                enabled: saved.enabled !== false,
+            });
+            seenIds.add(saved.id);
+        }
+    }
+
+    // Append any new strategies not in saved config (enabled by default)
+    for (const s of supported) {
+        if (!seenIds.has(s.id)) {
+            result.push({ id: s.id, label: s.label, enabled: true });
+        }
+    }
+
+    return result;
 }
 
 function toggleApiKeyEdit(pane) {
@@ -206,6 +295,19 @@ async function saveProviderConfig(pane, form, providerId) {
     const pollRaw = form.querySelector('#field-poll-interval')?.value;
     const pollIntervalSeconds = pollRaw ? parseInt(pollRaw, 10) : 0;
 
+    // Read strategy ordering + enabled state from the DOM
+    let collectionStrategies = null;
+    const strategyList = pane.querySelector('#strategy-list');
+    if (strategyList) {
+        const rows = strategyList.querySelectorAll('.strategy-row');
+        if (rows.length > 0) {
+            collectionStrategies = Array.from(rows).map(row => ({
+                id: row.dataset.strategyId,
+                enabled: row.querySelector('.strategy-toggle')?.dataset.enabled === 'true',
+            }));
+        }
+    }
+
     try {
         await putProviderConfig(providerId, {
             enabled,
@@ -213,6 +315,7 @@ async function saveProviderConfig(pane, form, providerId) {
             ...(sessionCookie !== undefined ? { session_cookie: sessionCookie } : {}),
             account_label: accountLabel,
             poll_interval_seconds: pollIntervalSeconds,
+            ...(collectionStrategies !== null ? { collection_strategies: collectionStrategies } : {}),
         });
         renderProvidersSection(pane);
     } catch (err) {

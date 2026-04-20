@@ -40,6 +40,12 @@ class OpenCodeCollector(BaseCollector):
     PROVIDER_ID = "opencode"
     DEFAULT_WINDOW_TYPE = "weekly"
 
+    STRATEGIES: dict[str, tuple[str, str]] = {
+        "web": ("Web API (Browser Cookie)", "_get_opencode_web"),
+        "sidecar": ("Sidecar Aggregation (Multi-Host)", "_strategy_sidecar_aggregation"),
+        "local": ("Local Database", "_strategy_local_db_fallback"),
+    }
+
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
 
@@ -300,7 +306,7 @@ class OpenCodeCollector(BaseCollector):
                     "currency": "USD",
                     "account_label": email,
                     "reset_at": reset_at.isoformat(),
-                    "data_source": "web_api",
+                    "data_source": self.DATA_SOURCE_WEB,
                     "input_source": "server",
                     "usage_url": usage_url,
                     "updated_at": now_iso,
@@ -425,7 +431,7 @@ class OpenCodeCollector(BaseCollector):
                             "currency": "USD",
                             "account_label": self.account_label,
                             "reset_at": None,  # Rolling window has no fixed reset time
-                            "data_source": "logs",
+                            "data_source": self.DATA_SOURCE_LOCAL,
                             "input_source": "server",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }

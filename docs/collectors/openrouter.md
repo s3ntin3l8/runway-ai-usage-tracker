@@ -6,9 +6,9 @@ OpenRouter credit balance and per-key spending limit collector.
 
 ## Overview
 
-- **Collection Strategy**: REST API (two endpoints, best-effort for key)
+- **Collection Strategy**: api (REST)
 - **Cards**: 1 card (Credits balance) + 1 card (Key Limit, when configured)
-- **Authentication**: `OPENROUTER_API_KEY` environment variable or UI settings
+- **Authentication**: `OPENROUTER_API_KEY` (api)
 
 ## Setup Methods Quick Overview
 
@@ -20,9 +20,9 @@ The OpenRouter collector uses a single API key for authentication:
 
 ## Data Sources
 
-### Primary: OpenRouter Credits API
+### Tier 1: api (Credits API)
 **Endpoint:** `https://openrouter.ai/api/v1/credits`
-**Auth:** Bearer token
+**Auth:** Bearer token (api)
 **Timeout:** 10 seconds
 
 **Response:**
@@ -37,9 +37,9 @@ The OpenRouter collector uses a single API key for authentication:
 
 Returns account-level credit balance: `remaining = total_credits - usage`.
 
-### Secondary: OpenRouter Key API (best-effort)
+### Tier 2: api (Key API - best-effort)
 **Endpoint:** `https://openrouter.ai/api/v1/key`
-**Auth:** Bearer token
+**Auth:** Bearer token (api)
 **Timeout:** 1 second (best-effort, non-blocking)
 
 **Response:**

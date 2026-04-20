@@ -18,6 +18,7 @@ import pytest
 
 from app.core.config import settings
 from app.main import app
+from app.services.token_cache import token_cache
 from tests.fixtures.mock_data import (
     ANTHROPIC_OAUTH_RESPONSE,
     BIGMODEL_ZAI_RESPONSE,
@@ -29,8 +30,6 @@ from tests.fixtures.mock_data import (
     KIMI_RESPONSE,
     OPENCODE_GO_RESPONSE,
 )
-
-from app.services.token_cache import token_cache
 
 
 @pytest.fixture(autouse=True)

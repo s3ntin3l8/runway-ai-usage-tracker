@@ -3,10 +3,10 @@
     "anthropic": {
       "name": "Claude Pro",
       "icon": "🟠",
-      "api_key_label": "API Key (OAuth)",
-      "api_key_help": "OAuth access token for Claude",
-      "session_cookie_label": "Manual Authentication (Cookie Bundle)",
-      "session_cookie_help": "Paste the FULL cookie header from Claude.ai (F12 -> Network -> Cookie)",
+      "api_key_label": "API Token (api)",
+      "api_key_help": "Official OAuth access token for Claude (sk-ant-...). Found in ~/.config/claude/oauth_creds.json",
+      "session_cookie_label": "Web Session (web)",
+      "session_cookie_help": "Manual browser session bundle (sessionKey). Use this if OAuth is unavailable.",
       "rules": [
         {
           "type": "env",
@@ -59,7 +59,7 @@
     "openrouter": {
       "name": "OpenRouter",
       "icon": "🚀",
-      "api_key_label": "API Key",
+      "api_key_label": "API Key (api)",
       "api_key_help": "Your OpenRouter API key (sk-or-...)",
       "rules": [
         {
@@ -72,10 +72,10 @@
     "minimax": {
       "name": "MiniMax",
       "icon": "🤖",
-      "api_key_label": "API Key",
-      "api_key_help": "MiniMax API key",
-      "session_cookie_label": "Session Cookie",
-      "session_cookie_help": "Manual cookie for HTML scraping fallback",
+      "api_key_label": "API Key (api)",
+      "api_key_help": "MiniMax official API key",
+      "session_cookie_label": "Web Session (web)",
+      "session_cookie_help": "Manual browser cookie for HTML scraping/web fallback",
       "rules": [
         {
           "type": "env",
@@ -92,7 +92,7 @@
     "github": {
       "name": "GitHub API",
       "icon": "🐙",
-      "api_key_label": "Personal Access Token",
+      "api_key_label": "Personal Access Token (api)",
       "api_key_help": "A GitHub PAT with 'read:user' or Copilot permissions",
       "rules": [
         {
@@ -127,8 +127,8 @@
     "gemini": {
       "name": "Gemini API",
       "icon": "🔵",
-      "api_key_label": "API Key (OAuth Token)",
-      "api_key_help": "Paste the access_token string from ~/.gemini/oauth_creds.json",
+      "api_key_label": "OAuth Token (api)",
+      "api_key_help": "The access_token string from ~/.gemini/oauth_creds.json",
       "rules": [
         {
           "type": "file",
@@ -148,9 +148,9 @@
     "chatgpt": {
       "name": "ChatGPT Codex",
       "icon": "💬",
-      "api_key_label": "API Key (Bearer Token)",
-      "api_key_help": "Paste the Bearer eyJ... string from ChatGPT DevTools",
-      "session_cookie_label": "Session Cookie (Session Token)",
+      "api_key_label": "Bearer Token (api)",
+      "api_key_help": "The Bearer eyJ... string from ChatGPT DevTools Network tab",
+      "session_cookie_label": "Web Session (web)",
       "session_cookie_help": "The __Secure-next-auth.session-token value from ChatGPT DevTools",
       "rules": [
         {
@@ -183,8 +183,8 @@
     "kimi_coding": {
       "name": "Kimi Coding",
       "icon": "🌙",
-      "session_cookie_label": "Auth Token",
-      "session_cookie_help": "Bearer token or session cookie for Kimi Coding",
+      "session_cookie_label": "Auth Token (web)",
+      "session_cookie_help": "Bearer token or session cookie for Kimi Coding web dashboard",
       "rules": [
         {
           "type": "env",
@@ -196,8 +196,8 @@
     "kimi": {
       "name": "Kimi API",
       "icon": "🌙",
-      "api_key_label": "API Key",
-      "api_key_help": "Moonshot API key (sk-...)",
+      "api_key_label": "API Key (api)",
+      "api_key_help": "Moonshot official API key (sk-...)",
       "rules": [
         {
           "type": "env",
@@ -220,8 +220,8 @@
     "zai": {
       "name": "zAI API",
       "icon": "🌐",
-      "api_key_label": "API Key",
-      "api_key_help": "zAI API key",
+      "api_key_label": "API Key (api)",
+      "api_key_help": "zAI official API key",
       "rules": [
         {
           "type": "env",
@@ -233,7 +233,7 @@
     "kimi_api": {
       "name": "Kimi API",
       "icon": "🌙",
-      "api_key_label": "API Key",
+      "api_key_label": "API Key (api)",
       "api_key_help": "Moonshot API key (sk-...)",
       "rules": [
         {
@@ -246,8 +246,8 @@
     "kimi_k2": {
       "name": "Kimi K2",
       "icon": "🌙",
-      "api_key_label": "API Key",
-      "api_key_help": "Kimi K2 API key",
+      "api_key_label": "API Key (api)",
+      "api_key_help": "Kimi K2 official API key",
       "rules": [
         {
           "type": "env",
@@ -259,7 +259,7 @@
     "opencode": {
       "name": "OpenCode",
       "icon": "⚡",
-      "session_cookie_label": "Auth Cookie",
+      "session_cookie_label": "Auth Cookie (web)",
       "session_cookie_help": "Paste the 'auth' cookie value from opencode.ai",
       "rules": [
         {
@@ -310,7 +310,7 @@
       "name": "Ollama Cloud",
       "icon": "🦙",
       "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (ollama_session) from ollama.com, not an API key.",
-      "session_cookie_label": "Session Cookie",
+      "session_cookie_label": "Web Session (web)",
       "session_cookie_help": "Paste the 'session' or 'ollama_session' cookie value from ollama.com",
       "rules": [
         {

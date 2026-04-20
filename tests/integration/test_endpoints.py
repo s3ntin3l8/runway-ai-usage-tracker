@@ -405,10 +405,8 @@ class TestResponseValidation:
         """Test that cards with missing required fields are rejected."""
         from pydantic import ValidationError
 
-        invalid_card = {
-            "service_name": "Claude Pro",
-            # Missing required fields like 'icon', 'remaining', 'reset', etc.
-        }
+        # Now that many fields have defaults, we omit the mandatory 'service_name'
+        invalid_card = {"icon": "❓"}
 
         with pytest.raises(ValidationError):
             LimitCard(**invalid_card)

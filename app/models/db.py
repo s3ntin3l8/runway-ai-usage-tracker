@@ -103,6 +103,22 @@ class ProviderConfig(SQLModel, table=True):
     )  # encrypted session/auth cookie override
     account_label: str | None = None
     poll_interval_seconds: int | None = None  # None = use collector default TTL
+    collection_strategies_json: str | None = Field(default=None)  # JSON list of {id, enabled}
+
+    @property
+    def strategies(self) -> list[dict] | None:
+        """Deserialize collected strategies config, or None if not set."""
+        if not self.collection_strategies_json:
+            return None
+        return json.loads(self.collection_strategies_json)
+
+    @strategies.setter
+    def strategies(self, value: list[dict] | None) -> None:
+        """Serialize strategy config to JSON string."""
+        if value is not None:
+            self.collection_strategies_json = json.dumps(value)
+        else:
+            self.collection_strategies_json = None
 
     @property
     def api_key(self) -> str | None:

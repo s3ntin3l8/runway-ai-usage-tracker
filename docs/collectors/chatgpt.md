@@ -2,13 +2,13 @@
 
 **File:** `app/services/collectors/chatgpt.py`
 
-ChatGPT Codex quota collector with OAuth-backed API and local session cache fallback.
+ChatGPT Codex quota collector with api → local fallback.
 
 ## Overview
 
-- **Collection Strategy**: OAuth API → Codex CLI RPC → Local session cache
+- **Collection Strategy**: api (Web API / Cookie) → local (CLI RPC / Logs)
 - **Cards**: 1 card (primary window usage)
-- **Authentication**: `CHATGPT_OAUTH_TOKEN` env var → `~/.codex/auth.json` → Chrome browser cookies
+- **Authentication**: `CHATGPT_OAUTH_TOKEN` (api), `~/.codex/auth.json` (api), or Chrome cookies (web).
 
 ## Setup Methods Quick Overview
 
@@ -32,24 +32,16 @@ The ChatGPT collector supports multiple authentication and data collection metho
 
 ## Data Sources
 
-### Primary: ChatGPT wham/usage API
+### Tier 1: api (Web API / Cookie)
 **Endpoint:** `chatgpt.com/backend-api/wham/usage`
-**Auth:** Bearer token
+**Auth:** Bearer token (OAuth) or Session Cookie (Web).
+**Behavior:** Primary method for both official tokens and browser-based sessions.
 
-**Token Sources (priority order):**
-1. `CHATGPT_OAUTH_TOKEN` environment variable
-2. `~/.codex/auth.json` (Codex CLI cache)
-3. Chrome browser cookie (`__Secure-next-auth.session-token`) — auto-exchanged for Bearer token
-4. **Manual Entry**: Paste the session cookie in the Runway UI (Settings -> ChatGPT).
-
-### Secondary: Codex CLI RPC
-**Mechanism:** Runway executes the `codex -s read-only` command to interface with the running Codex CLI and extract usage data directly.
-**Auth:** Requires the Codex CLI to be installed and authenticated (`codex auth login`).
-**Behavior:** This data source is attempted if the primary API call fails or no token is available for the API.
-
-### Tertiary: Local Session Cache
-**Location:** `~/.codex/sessions/*.jsonl`
-**Tracks:** `used_percent`, `resets_at` from latest session file
+### Tier 2: local (CLI RPC / Logs)
+**Mechanism:** 
+- **CLI RPC**: Interface with `codex -s read-only` directly.
+- **Local Logs**: Parse `~/.codex/sessions/*.jsonl` for historical usage.
+**Behavior:** Fallback when the network API is unreachable.
 
 ## Output Format
 
@@ -68,9 +60,10 @@ The ChatGPT collector supports multiple authentication and data collection metho
     "is_unlimited": False,
     "unit_type": "percent",
     "reset_at": "2026-04-07T15:00:00+00:00",
-    "data_source": "oauth",
-    "tier": None,
-    "usage_url": None,
+    "data_source": "api",
+    "input_source": "manual",
+    "tier": "plus",
+    "usage_url": "https://chatgpt.com/codex/settings/usage/",
     "updated_at": "2026-04-07T10:30:00+00:00"
 }
 ```

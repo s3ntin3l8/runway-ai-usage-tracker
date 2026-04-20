@@ -6,9 +6,9 @@ GitHub Copilot quota collector with tier-aware multi-endpoint strategy.
 
 ## Overview
 
-- **Collection Strategy**: Copilot Internal APIs → Standard GitHub API (fallback)
-- **Cards**: 2 cards (Completions, Chat for free tier) or 3 cards (Premium, Chat, Autocomplete for Pro)
-- **Authentication**: `GITHUB_TOKEN` environment variable or [Credential Discovery](#credential-discovery)
+- **Collection Strategy**: api (Copilot Internal) → api (GitHub Rate Limit fallback)
+- **Cards**: 2 cards (Completions, Chat) or 3 cards (Premium, Chat, Autocomplete)
+- **Authentication**: `GITHUB_TOKEN` (api) or `gh` CLI credentials (api)
 
 ## Setup Methods Quick Overview
 
@@ -60,6 +60,7 @@ The GitHub Copilot collector supports multiple authentication methods:
     "unit_type": "requests",
     "reset_at": "2026-04-08T00:00:00+00:00",
     "data_source": "api",
+    "input_source": "manual",
     "tier": "free",
     "usage_url": "https://github.com/settings/copilot/features",
     "updated_at": "2026-04-07T10:30:00+00:00"

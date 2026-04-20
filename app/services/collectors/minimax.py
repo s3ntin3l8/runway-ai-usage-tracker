@@ -36,15 +36,29 @@ class MiniMaxCollector(BaseCollector):
 
     async def _get_current_creds(self) -> tuple[str | None, str | None]:
         """Async credential retrieval with metadata support."""
-        key = credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
-        cookie = credential_provider.get_provider_session_cookie("minimax") or settings.MINIMAX_COOKIE or None
-        
+        key = (
+            credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
+        )
+        cookie = (
+            credential_provider.get_provider_session_cookie("minimax")
+            or settings.MINIMAX_COOKIE
+            or None
+        )
+
         if key or cookie:
-            self._current_input_source = "manual" if (credential_provider.get_provider_api_key("minimax") or credential_provider.get_provider_session_cookie("minimax")) else "server"
+            self._current_input_source = (
+                "manual"
+                if (
+                    credential_provider.get_provider_api_key("minimax")
+                    or credential_provider.get_provider_session_cookie("minimax")
+                )
+                else "server"
+            )
             return key, cookie
-            
+
         if self.account_id:
             from app.services.token_cache import token_cache
+
             cache_data = await token_cache.get_with_metadata("minimax", account_id=self.account_id)
             if cache_data:
                 tokens, metadata = cache_data
@@ -127,7 +141,7 @@ class MiniMaxCollector(BaseCollector):
                     "health": "good",
                     "pace": "N/A",
                     "detail": "No active plan",
-                    "data_source": "api",
+                    "data_source": self.DATA_SOURCE_API,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",
@@ -157,7 +171,7 @@ class MiniMaxCollector(BaseCollector):
                     "used_value": 0.0,
                     "limit_value": float(remains),
                     "unit_type": "count",
-                    "data_source": "api",
+                    "data_source": self.DATA_SOURCE_API,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "updated_at": now_str,
                 }
@@ -230,7 +244,7 @@ class MiniMaxCollector(BaseCollector):
                     "health": "good",
                     "pace": "N/A",
                     "detail": "No active plan",
-                    "data_source": "scrape",
+                    "data_source": self.DATA_SOURCE_WEB,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",
@@ -255,7 +269,7 @@ class MiniMaxCollector(BaseCollector):
                 "used_value": 0.0,
                 "limit_value": float(remains),
                 "unit_type": "count",
-                "data_source": "scrape",
+                "data_source": self.DATA_SOURCE_WEB,
                 "input_source": getattr(self, "_current_input_source", "unknown"),
                 "updated_at": now_str,
             }

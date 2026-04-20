@@ -10,18 +10,18 @@ import httpx
 
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
-from app.services.collectors.chatgpt_api import ChatGPTApiMixin
+from app.services.collectors.chatgpt_local import ChatGPTLocalMixin
 
 # Mixins
-from app.services.collectors.chatgpt_auth import ChatGPTAuthMixin
-from app.services.collectors.chatgpt_local import ChatGPTLocalMixin
+from app.services.collectors.chatgpt_oauth import ChatGPTWebOAuthMixin
+from app.services.collectors.chatgpt_web import ChatGPTWebMixin
 
 logger = logging.getLogger(__name__)
 
 
 class ChatGPTCollector(
-    ChatGPTAuthMixin,
-    ChatGPTApiMixin,
+    ChatGPTWebOAuthMixin,
+    ChatGPTWebMixin,
     ChatGPTLocalMixin,
     BaseCollector,
 ):
@@ -32,6 +32,12 @@ class ChatGPTCollector(
 
     PROVIDER_ID = "chatgpt"
     DEFAULT_WINDOW_TYPE = "weekly"
+
+    STRATEGIES: dict[str, tuple[str, str]] = {
+        "web": ("Web Gateway (web)", "_strategy_web_wrap"),
+        "cli": ("CLI RPC (local)", "_collect_via_cli_rpc"),
+        "local": ("Local Logs (local)", "_strategy_local_logs"),
+    }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
@@ -46,11 +52,11 @@ class ChatGPTCollector(
         """Check if ChatGPT auth data (logs or tokens) is present."""
         # Use None for client to avoid triggering background refreshes during config check
         auth = await self._get_auth_data(None)
-        
+
         # Check if we have an OAuth token, a session cookie, or local logs
         has_auth = bool(auth.get("token"))
         has_local = auth.get("source") == "local"
-        
+
         return has_auth or has_local
 
     def _fallback_strategies(self) -> list[Any]:
@@ -71,11 +77,15 @@ class ChatGPTCollector(
 
         try:
             return await self._fetch_api_data(
-                client, token, account_id, auth.get("source", "oauth"), auth.get("input_source", "unknown")
+                client, token, account_id, auth.get("source", "oauth")
             )
         except Exception as e:
             logger.debug(f"ChatGPT Web API failed: {e}")
         return []
+
+    async def _strategy_web_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Dispatch wrapper: Web API / OAuth strategy."""
+        return await self._primary_strategy(client)
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""

@@ -61,7 +61,7 @@ class GeminiLocalMixin:
                     "health": "good",
                     "pace": "Stable",
                     "detail": "Fallback: Local logs",
-                    "data_source": "local",
+                    "data_source": self.DATA_SOURCE_LOCAL,
                     "usage_url": "https://one.google.com/settings",
                     "updated_at": datetime.now(UTC).isoformat(),
                 }

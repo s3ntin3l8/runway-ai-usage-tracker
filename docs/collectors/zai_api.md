@@ -6,9 +6,9 @@ Zhipu AI (GLM) prepaid balance collector in Chinese Yuan (¥).
 
 ## Overview
 
-- **Collection Strategy**: REST API only
+- **Collection Strategy**: api (REST API)
 - **Cards**: 1 card (account balance)
-- **Authentication**: `ZAI_API_KEY` environment variable
+- **Authentication**: `ZAI_API_KEY` (api)
 
 ## Setup Methods Quick Overview
 
@@ -52,6 +52,7 @@ The zAI API collector uses a single API key for authentication:
     "currency": "CNY",
     "reset_at": None,
     "data_source": "api",
+    "input_source": "manual",
     "tier": None,
     "usage_url": "https://open.bigmodel.cn",
     "updated_at": "2026-04-07T10:30:00+00:00"

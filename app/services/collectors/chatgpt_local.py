@@ -97,7 +97,7 @@ class ChatGPTLocalMixin:
                         "health": "good",
                         "pace": "Active",
                         "detail": f"Account: {email} [CLI RPC]",
-                        "data_source": "cli",
+                        "data_source": self.DATA_SOURCE_LOCAL,
                         "tier": tier,
                         "updated_at": now.isoformat(),
                     }
@@ -123,7 +123,7 @@ class ChatGPTLocalMixin:
                         "limit_value": 100.0,
                         "unit_type": "percent",
                         "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": "cli",
+                        "data_source": self.DATA_SOURCE_LOCAL,
                         "tier": tier,
                         "usage_url": "https://chatgpt.com/codex/settings/usage/",
                     }
@@ -142,7 +142,7 @@ class ChatGPTLocalMixin:
                         "health": "good",
                         "pace": "N/A",
                         "detail": f"Balance: ${balance:.2f} [CLI RPC]",
-                        "data_source": "cli",
+                        "data_source": self.DATA_SOURCE_LOCAL,
                         "tier": tier,
                         "updated_at": now.isoformat(),
                     }
@@ -191,7 +191,7 @@ class ChatGPTLocalMixin:
                     "unit": "remaining",
                     "reset": human_delta(reset_at),
                     "detail": f"{pct:.1f}% used",
-                    "data_source": "cache",
+                    "data_source": self.DATA_SOURCE_LOCAL,
                     "updated_at": datetime.now(UTC).isoformat(),
                 }
             ]

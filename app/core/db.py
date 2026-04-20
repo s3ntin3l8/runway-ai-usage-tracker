@@ -60,6 +60,8 @@ def _run_migrations():
         "ALTER TABLE sidecar_registry ADD COLUMN sidecar_version TEXT",
         "ALTER TABLE sidecar_registry ADD COLUMN os_platform TEXT",
         "ALTER TABLE sidecar_registry ADD COLUMN recent_logs TEXT",
+        # provider_configs: user-configurable data collection strategy ordering/toggles
+        "ALTER TABLE provider_configs ADD COLUMN collection_strategies_json TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:

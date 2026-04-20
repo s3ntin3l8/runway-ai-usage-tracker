@@ -6,9 +6,9 @@ Zhipu AI (GLM) quota collector with token and time limit tracking.
 
 ## Overview
 
-- **Collection Strategy**: REST API (primary + fallback endpoints)
+- **Collection Strategy**: api (Primary + Fallback)
 - **Cards**: 1-2 cards (TOKENS_LIMIT, TIME_LIMIT)
-- **Authentication**: `ZAI_API_KEY` environment variable
+- **Authentication**: `ZAI_API_KEY` (api)
 
 ## Setup Methods Quick Overview
 
@@ -47,6 +47,7 @@ The zAI Plan collector uses a single API key for authentication:
     "unit_type": "tokens",
     "reset_at": "2026-04-07T15:00:00+00:00",
     "data_source": "api",
+    "input_source": "manual",
     "tier": "Basic Plan",
     "usage_url": "https://open.bigmodel.cn",
     "updated_at": "2026-04-07T10:30:00+00:00"

@@ -17,7 +17,7 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
-class ChatGPTAuthMixin:
+class ChatGPTWebOAuthMixin:
     """Mixin for ChatGPT authentication and token management."""
 
     async def _get_auth_data(self, client: httpx.AsyncClient) -> dict[str, Any]:
@@ -32,7 +32,11 @@ class ChatGPTAuthMixin:
             and getattr(self, "_refreshed_token_expiry", None)
             and now < self._refreshed_token_expiry
         ):
-            return {"token": self._refreshed_token, "source": "cookies", "input_source": getattr(self, "_refreshed_input_source", "unknown")}
+            return {
+                "token": self._refreshed_token,
+                "source": self.DATA_SOURCE_WEB,
+                "input_source": getattr(self, "_refreshed_input_source", "unknown"),
+            }
 
         # Priority 1 & 2: Env var or auth.json (Centralized in CredentialProvider)
         auth_data = credential_provider.get_chatgpt_data()
@@ -58,7 +62,7 @@ class ChatGPTAuthMixin:
                 "token": token,
                 "account_id": account_id,
                 "refresh_token": refresh_token,
-                "source": "oauth",
+                "source": self.DATA_SOURCE_API,
                 "input_source": "server",
             }
 
@@ -74,7 +78,7 @@ class ChatGPTAuthMixin:
                 return {
                     "token": tokens["oauth_token"],
                     "account_id": tokens.get("account_id"),
-                    "source": "oauth",
+                    "source": self.DATA_SOURCE_API,
                     "input_source": input_source,
                 }
 
@@ -90,14 +94,14 @@ class ChatGPTAuthMixin:
             )
             session_token = None
             input_source = "unknown"
-            
+
             if token_metadata:
                 tokens, metadata = token_metadata
                 session_token = tokens.get(c_key)
                 if session_token:
                     source_meta = metadata.get("source") or "sidecar"
                     input_source = "manual" if source_meta == "manual_config" else "sidecar"
-            
+
             # Fallback to direct local cookies if enabled and cache is empty
             if not session_token and is_local_credential_scraping_enabled():
                 session_token = await asyncio.to_thread(get_chatgpt_session_token)
@@ -114,12 +118,23 @@ class ChatGPTAuthMixin:
                         self._refreshed_input_source = input_source
                         # Store in token cache for token health visibility
                         await token_cache.store(
-                            "chatgpt", {"oauth_token": refreshed}, account_id=self.account_id, source=source_meta if 'source_meta' in locals() else "server"
+                            "chatgpt",
+                            {"oauth_token": refreshed},
+                            account_id=self.account_id,
+                            source=source_meta if "source_meta" in locals() else "server",
                         )
-                        return {"token": refreshed, "source": "cookies", "input_source": input_source}
+                        return {
+                            "token": refreshed,
+                            "source": self.DATA_SOURCE_WEB,
+                            "input_source": input_source,
+                        }
                 else:
                     # When client is None (e.g. is_configured), just report that we have a session token
-                    return {"token": "present_via_session_cookie", "source": "cookies", "input_source": input_source}
+                    return {
+                        "token": "present_via_session_cookie",
+                        "source": self.DATA_SOURCE_WEB,
+                        "input_source": input_source,
+                    }
 
         return {}
 

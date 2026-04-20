@@ -72,6 +72,8 @@ class CollectorManager:
         self._last_sync_time: float = 0.0
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
+        # Concurrency limit: max 10 collectors running at once
+        self._semaphore = asyncio.Semaphore(10)
         # In-memory registry: latest snapshot of all cards (populated by poller + startup)
         self._registry: list[dict[str, Any]] = []
 
@@ -153,7 +155,7 @@ class CollectorManager:
                 # For default collector, we look for account_id="default"
                 provider_acc_configs = db_configs.get(p_id, {})
                 db_cfg = provider_acc_configs.get("default")
-                
+
                 if db_cfg is not None and not db_cfg.enabled:
                     # Remove existing collector if it was previously running
                     self.smart_collectors.pop(f"{p_id}:default", None)
@@ -169,8 +171,12 @@ class CollectorManager:
                 db_label = db_cfg.account_label if db_cfg else None
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
+                    collector_instance = cls(account_label=db_label)
+                    # Apply user strategy ordering/toggles if configured
+                    if db_cfg and db_cfg.strategies:
+                        collector_instance.apply_strategy_config(db_cfg.strategies)
                     self.smart_collectors[key] = SmartCollector(
-                        collector=cls(account_label=db_label),
+                        collector=collector_instance,
                         collector_name=name,
                         ttl=effective_ttl,
                     )
@@ -181,6 +187,10 @@ class CollectorManager:
                     # Propagate updated account_label from ProviderConfig
                     if sc.collector.account_label != db_label:
                         sc.collector.account_label = db_label
+                    # Propagate updated strategy config
+                    new_strategies = db_cfg.strategies if db_cfg else None
+                    if sc.collector._user_strategies != new_strategies:
+                        sc.collector.apply_strategy_config(new_strategies)
 
             # 2. Discover active dynamic collectors from TokenCache
             active_accounts = await token_cache.get_all_active_accounts()
@@ -194,11 +204,11 @@ class CollectorManager:
                         )
                         continue
                     cls, name, ttl = self.collector_registry[p_id]
-                    
+
                     # For dynamic account, check for specific override OR fallback to default provider override
                     provider_acc_configs = db_configs.get(p_id, {})
                     db_cfg = provider_acc_configs.get(acc_id) or provider_acc_configs.get("default")
-                    
+
                     if db_cfg is not None and not db_cfg.enabled:
                         # Remove existing dynamic collector and purge its stale cards
                         self.smart_collectors.pop(f"{p_id}:{acc_id}", None)
@@ -213,18 +223,22 @@ class CollectorManager:
                         if db_cfg and db_cfg.poll_interval_seconds
                         else global_poll_interval or ttl
                     )
-                    
+
                     # Prioritize DB override label, then acc_name from cache
                     db_label = db_cfg.account_label if db_cfg else None
                     final_label = db_label or acc_name
-                    
+
                     key = f"{p_id}:{acc_id}"
                     active_keys.add(key)
                     if key not in self.smart_collectors:
                         full_name = f"{name} ({final_label or acc_id[:6]})"
                         logger.info(f"Spawning dynamic collector for {p_id} account {acc_id}")
+                        collector_instance = cls(account_id=acc_id, account_label=final_label)
+                        # Apply user strategy ordering/toggles if configured
+                        if db_cfg and db_cfg.strategies:
+                            collector_instance.apply_strategy_config(db_cfg.strategies)
                         self.smart_collectors[key] = SmartCollector(
-                            collector=cls(account_id=acc_id, account_label=final_label),
+                            collector=collector_instance,
                             collector_name=full_name,
                             ttl=effective_ttl,
                         )
@@ -234,6 +248,10 @@ class CollectorManager:
                             sc.ttl = effective_ttl
                         if sc.collector.account_label != final_label:
                             sc.collector.account_label = final_label
+                        # Propagate updated strategy config
+                        new_strategies = db_cfg.strategies if db_cfg else None
+                        if sc.collector._user_strategies != new_strategies:
+                            sc.collector.apply_strategy_config(new_strategies)
 
             # 3. Prune collectors whose accounts disappeared from the token cache
             stale_keys = [
@@ -343,10 +361,7 @@ class CollectorManager:
         client = await self._get_client()
 
         active_keys = list(self.smart_collectors.keys())
-        tasks = [
-            asyncio.wait_for(self.smart_collectors[key].collect(client), timeout=25.0)
-            for key in active_keys
-        ]
+        tasks = [self._collect_with_semaphore(key, client) for key in active_keys]
 
         try:
             results = await asyncio.wait_for(
@@ -375,6 +390,13 @@ class CollectorManager:
         # poller, fallback) share one authoritative write path.
         self._registry = flattened
         return flattened
+
+    async def _collect_with_semaphore(
+        self, key: str, client: httpx.AsyncClient
+    ) -> list[dict[str, Any]]:
+        """Run a single collector with semaphore/timeout protection."""
+        async with self._semaphore:
+            return await asyncio.wait_for(self.smart_collectors[key].collect(client), timeout=25.0)
 
     def get_registry_snapshot(self) -> list[dict[str, Any]]:
         """Return current in-memory card registry. Never blocks."""
@@ -435,6 +457,19 @@ class CollectorManager:
             if key.startswith(target_prefix):
                 if account_id is None or key == f"{provider_id}:{account_id}":
                     await sc.reset()
+
+    def get_supported_strategies(self, provider_id: str) -> list[dict]:
+        """
+        Return the list of supported strategies for a given provider.
+        Each entry: {"id": str, "label": str}
+        Returns [] if the provider has no declared STRATEGIES.
+        """
+        entry = self.collector_registry.get(provider_id)
+        if entry is None:
+            return []
+        cls, _name, _ttl = entry
+        strategies = getattr(cls, "STRATEGIES", {})
+        return [{"id": s_id, "label": label} for s_id, (label, _method) in strategies.items()]
 
 
 # Global instance

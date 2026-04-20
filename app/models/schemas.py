@@ -6,13 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class LimitCard(BaseModel):
     service_name: str
-    icon: str
-    remaining: str
-    unit: str
-    reset: str
-    health: str
-    pace: str
-    detail: str
+    icon: str = "❓"
+    remaining: str = "—"
+    unit: str = "units"
+    reset: str = "—"
+    health: str = "unknown"
+    pace: str = "unknown"
+    detail: str = ""
     # Raw values for consistent percentage calculations
     used_value: float | None = None
     limit_value: float | None = None
@@ -22,13 +22,9 @@ class LimitCard(BaseModel):
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
     # Data collection mechanism (how)
-    data_source: str = (
-        "unknown"  # "oauth", "web_api", "scrape", "logs", "statusline", "api"
-    )
+    data_source: str = "unknown"  # "oauth", "web_api", "scrape", "logs", "statusline", "api"
     # Credential/Token origin (where)
-    input_source: str = (
-        "unknown"  # "sidecar", "config", "server", "manual"
-    )
+    input_source: str = "unknown"  # "sidecar", "config", "server", "manual"
     # Error categorization
     error_type: str | None = None
     # Tier classification (None = no badge shown)

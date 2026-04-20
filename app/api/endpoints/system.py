@@ -364,6 +364,7 @@ class _ProviderConfigUpdate(BaseModel):
     session_cookie: str | None = None  # empty string = clear, None = no change
     account_label: str | None = None
     poll_interval_seconds: int | None = None
+    collection_strategies: list[dict] | None = None  # [{"id": "web", "enabled": true}, ...]
 
 
 @router.get("/provider-configs")
@@ -418,6 +419,9 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "api_key_help": provider_def.get("api_key_help"),
                 "session_cookie_label": provider_def.get("session_cookie_label"),
                 "session_cookie_help": provider_def.get("session_cookie_help"),
+                # Strategy configuration
+                "supported_strategies": manager.get_supported_strategies(p_id),
+                "collection_strategies": db.strategies if db else None,
             }
         )
 
@@ -456,6 +460,9 @@ async def upsert_provider_config(
         row.poll_interval_seconds = (
             body.poll_interval_seconds if body.poll_interval_seconds > 0 else None
         )
+    if body.collection_strategies is not None:
+        # None list = reset to defaults; empty list = no strategies (disabled all)
+        row.strategies = body.collection_strategies if body.collection_strategies else None
     if body.api_key is not None:
         # Empty string = clear the stored key; non-empty = encrypt and store
         val = body.api_key

@@ -46,13 +46,16 @@ class KimiK2Collector(BaseCollector):
 
     async def _get_current_key(self) -> str | None:
         """Async key retrieval with cache metadata support."""
-        key = credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
+        key = (
+            credential_provider.get_provider_api_key("kimi_k2") or settings.KIMI_K2_API_KEY or None
+        )
         if key:
             self._current_input_source = "server"
             return key
-            
+
         if self.account_id:
             from app.services.token_cache import token_cache
+
             cache_data = await token_cache.get_with_metadata("kimi_k2", account_id=self.account_id)
             if cache_data:
                 tokens, metadata = cache_data
@@ -110,7 +113,7 @@ class KimiK2Collector(BaseCollector):
                     else "critical",
                     "pace": "Stable",
                     "detail": f"Credits (consumed: {credits_consumed:.2f})",
-                    "data_source": "api",
+                    "data_source": self.DATA_SOURCE_API,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "credits",

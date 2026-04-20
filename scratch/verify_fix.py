@@ -1,5 +1,7 @@
 import asyncio
+
 from app.services.token_cache import token_cache
+
 
 async def test():
     await token_cache.store("test_provider", {"t": "v"}, source="test_source")
@@ -7,6 +9,7 @@ async def test():
     print(f"Result: {res}")
     assert res[1]["source"] == "test_source"
     print("Verification SUCCESS")
+
 
 if __name__ == "__main__":
     asyncio.run(test())

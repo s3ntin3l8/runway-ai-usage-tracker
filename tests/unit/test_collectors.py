@@ -179,7 +179,7 @@ class TestAnthropicCollector:
                 patch.object(
                     collector,
                     "_get_claude_via_web_api",
-                    return_value=[{"service_name": "Fallback", "data_source": "web_api"}],
+                    return_value=[{"service_name": "Fallback", "data_source": "web"}],
                 ),
             ):
                 # First call - OAuth gets 429 with 60s Retry-After.
@@ -288,7 +288,7 @@ class TestAnthropicCollector:
                             "detail": "Expired/Invalid Token (OAuth)",
                         }
                     ],
-                    [{"service_name": "Claude", "remaining": "50%", "data_source": "oauth"}],
+                    [{"service_name": "Claude", "remaining": "50%", "data_source": "api"}],
                 ]
 
             # http_request_with_retry uses request()
@@ -325,7 +325,7 @@ class TestAnthropicCollector:
         assert isinstance(result, list)
         assert len(result) >= 1
         assert all(card.get("remaining") != "ERR" for card in result)
-        assert any(card.get("data_source") == "oauth" for card in result)
+        assert any(card.get("data_source") == "api" for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_web_api_fallback(
@@ -394,7 +394,7 @@ class TestAnthropicCollector:
         services = [r["service_name"] for r in result]
         assert "Claude (Session Window)" in services
         assert "Claude (Weekly Window)" in services
-        assert any(card.get("data_source") == "web_api" for card in result)
+        assert any(card.get("data_source") == "web" for card in result)
 
     @pytest.mark.asyncio
     async def test_collect_enhanced_local_fallback(self, mock_http_client):
@@ -820,7 +820,7 @@ class TestAnthropicCollector:
 
         assert isinstance(result, list)
         assert len(result) == 3  # only 3 core windows in mock usage data
-        assert any(card.get("data_source") == "web_api" for card in result)
+        assert any(card.get("data_source") == "web" for card in result)
 
         # Identity should be included in detail
         for card in result:
@@ -949,7 +949,7 @@ class TestAnthropicCollector:
         assert "Session Window" in result[0]["service_name"]
         assert result[0]["used_value"] == 12.5
         assert result[0]["remaining"] == "87.5%"
-        assert result[0]["data_source"] == "cli"
+        assert result[0]["data_source"] == "local"
         assert "[CLI PTY]" in result[0]["detail"]
 
         # Check Weekly card
@@ -1365,7 +1365,7 @@ class TestChatGPTCollector:
         mock_response.status_code = 500
         mock_http_client.get.return_value = mock_response
 
-        with patch("app.services.collectors.chatgpt_auth.settings") as mock_settings:
+        with patch("app.services.collectors.chatgpt_oauth.settings") as mock_settings:
             mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
             mock_settings.LOCAL_COLLECTOR_ENABLED = True
 

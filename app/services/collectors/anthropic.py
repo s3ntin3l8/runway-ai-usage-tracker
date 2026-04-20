@@ -33,6 +33,14 @@ class AnthropicCollector(
     PROVIDER_ID = "anthropic"
     DEFAULT_WINDOW_TYPE = "weekly"  # Free tier; Pro/paid windows are tagged per-card
 
+    STRATEGIES: dict[str, tuple[str, str]] = {
+        "statusline": ("Local Statusline (local)", "_strategy_statusline_wrap"),
+        "oauth": ("OAuth API (api)", "_strategy_oauth_wrap"),
+        "web": ("Web API (web)", "_strategy_web_wrap"),
+        "cli": ("CLI PTY (local)", "_strategy_cli_pty"),
+        "local": ("Local Logs (local)", "_strategy_local_enhanced"),
+    }
+
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
         # Find credentials via centralized provider
@@ -70,18 +78,14 @@ class AnthropicCollector(
     async def _get_current_token(self) -> str | None:
         """Fetch current access token from sidecar cache or credentials file."""
         # 1. Check sidecar cache first (fastest, supports multi-account)
-        cache_data = await token_cache.get_with_metadata(
-            "anthropic", account_id=self.account_id
-        )
+        cache_data = await token_cache.get_with_metadata("anthropic", account_id=self.account_id)
         if cache_data:
             tokens, metadata = cache_data
             token = tokens.get("oauth_token")
             if token:
                 # Store source for card labeling
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "manual" if source == "manual_config" else "sidecar"
-                )
+                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
                 return token
 
         # 2. Fallback to reading the local credentials file
@@ -98,7 +102,11 @@ class AnthropicCollector(
                         token_data["refresh_token"] = oauth["refreshToken"]
                     label = creds.get("oauthAccount", {}).get("emailAddress")
                     await token_cache.store(
-                        "anthropic", token_data, account_id=None, account_label=label, source="server"
+                        "anthropic",
+                        token_data,
+                        account_id=None,
+                        account_label=label,
+                        source="server",
                     )
                 return token
         return None
@@ -172,6 +180,26 @@ class AnthropicCollector(
                 results.extend(oauth_results)
 
         return results
+
+    # ── Individual strategy wrappers (used by dynamic STRATEGIES dispatch) ────
+
+    async def _strategy_statusline_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Dispatch wrapper: Local Statusline (fast path)."""
+        return await self._strategy_statusline()
+
+    async def _strategy_web_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Dispatch wrapper: Web API via session cookie."""
+        return await self._get_claude_via_web_api(client)
+
+    async def _strategy_oauth_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Dispatch wrapper: OAuth API (official, token-based)."""
+        token = await self._get_valid_token(client)
+        if not token:
+            return []
+        # Skip OAuth path for session keys — they only work via Web API
+        if token.startswith("sk-ant-sid") or "sessionKey=" in token:
+            return []
+        return await self._get_claude_oauth(client, token)
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""

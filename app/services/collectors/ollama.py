@@ -406,7 +406,7 @@ class OllamaCollector(BaseCollector):
             "limit_value": 100.0,
             "unit_type": "percent",
             "reset_at": resets_at.isoformat() if resets_at else None,
-            "data_source": "cookies",
+            "data_source": self.DATA_SOURCE_WEB,
             "input_source": getattr(self, "_current_input_source", "unknown"),
             "tier": plan.lower() if plan else "free",
             "usage_url": self.target_url,

@@ -11,11 +11,16 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
-class ChatGPTApiMixin:
+class ChatGPTWebMixin:
     """Mixin for ChatGPT Web API collection."""
 
     async def _fetch_api_data(
-        self, client: httpx.AsyncClient, token: str, account_id: str | None, source: str, input_source: str = "unknown"
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        account_id: str | None,
+        source: str,
+        input_source: str = "unknown",
     ) -> list[dict[str, Any]]:
         """Fetch from ChatGPT backend."""
         # Ensure we don't have a double Bearer prefix

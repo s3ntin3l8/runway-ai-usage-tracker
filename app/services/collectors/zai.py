@@ -55,7 +55,7 @@ class ZaiCollector(BaseCollector):
         if self.account_id:
             # Check account-specific token cache
             from app.services.token_cache import token_cache
-            
+
             cache_data = await token_cache.get_with_metadata("zai", account_id=self.account_id)
             if cache_data:
                 tokens, metadata = cache_data
@@ -118,7 +118,7 @@ class ZaiCollector(BaseCollector):
             "health": "good",
             "pace": "N/A",
             "detail": detail,
-            "data_source": "api",
+            "data_source": self.DATA_SOURCE_API,
             "input_source": getattr(self, "_current_input_source", "unknown"),
             "is_unlimited": False,
             "unit_type": "unknown",
@@ -251,7 +251,7 @@ class ZaiCollector(BaseCollector):
             "unit_type": unit_type_str,
             "reset_at": reset_at,
             "window": window_str,
-            "data_source": "api",
+            "data_source": self.DATA_SOURCE_API,
             "input_source": getattr(self, "_current_input_source", "unknown"),
             "updated_at": datetime.now(UTC).isoformat(),
         }

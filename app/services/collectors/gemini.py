@@ -34,6 +34,11 @@ class GeminiCollector(
     PROVIDER_ID = "gemini"
     DEFAULT_WINDOW_TYPE = "daily"
 
+    STRATEGIES: dict[str, tuple[str, str]] = {
+        "api": ("API (api)", "_strategy_api_wrap"),
+        "local": ("Local Logs / CLI (local)", "_collect_via_logs"),
+    }
+
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
         # Find credentials via centralized provider
@@ -65,6 +70,10 @@ class GeminiCollector(
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """API strategy."""
+        return await self._collect_via_api(client)
+
+    async def _strategy_api_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Dispatch wrapper: API (OAuth) strategy."""
         return await self._collect_via_api(client)
 
     async def _error_handler(self) -> list[dict[str, Any]]:

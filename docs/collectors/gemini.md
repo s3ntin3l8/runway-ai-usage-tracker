@@ -2,13 +2,13 @@
 
 **File:** `app/services/collectors/gemini.py`
 
-Google Gemini CLI quota collector with OAuth-backed API and local log fallback.
+Google Gemini CLI quota collector with api → local fallback.
 
 ## Overview
 
-- **Collection Strategy**: OAuth API (with auto-refresh) → Local session logs
+- **Collection Strategy**: api (Google Cloud Code) → local (Session Logs)
 - **Cards**: 1-7 cards (one per model family: Flash, Pro, Flash Lite, etc.)
-- **Authentication**: OAuth credentials (auto-discovered from `~/.gemini/oauth_creds.json`) or custom OAuth client ID/secret for refresh.
+- **Authentication**: OAuth credentials (api) or local session logs (local).
 
 ## Setup Methods Quick Overview
 
@@ -24,18 +24,17 @@ The Gemini collector supports the following authentication methods:
 
 ## Data Sources
 
-### Primary: Google Cloud Code API
+### Tier 1: api (Google Cloud Code)
 **Endpoints:**
-- `cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` (get tier + project)
-- `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` (get quotas)
+- `cloudcode-pa.googleapis.com/...:loadCodeAssist` (project discovery)
+- `cloudcode-pa.googleapis.com/...:retrieveUserQuota` (quotas)
+**Auth:** OAuth token (auto-refreshed via Google).
+**Behavior:** Primary source for model-specific quotas (Flash, Pro, etc.).
 
-**Auth:** OAuth token (auto-refreshed via `oauth2.googleapis.com/token`)
-
-**Key Discovery:** Project parameter required to get gemini-3 model quotas
-
-### Secondary: Local Session Logs
+### Tier 2: local (Session Logs)
 **Location:** `~/.gemini/tmp/sessions/*.jsonl`
-**Tracks:** prompt_tokens + completion_tokens (24h rolling window)
+**Tracks:** prompt + completion tokens (24h rolling window).
+**Behavior:** Fallback when the Cloud Code API is unreachable.
 
 ## Output Format
 
@@ -54,8 +53,9 @@ The Gemini collector supports the following authentication methods:
     "is_unlimited": False,
     "unit_type": "percent",
     "reset_at": "2026-04-08T13:44:00+00:00",
-    "data_source": "oauth",
-    "tier": "free",              # "free" | "pro" | "ultra"
+    "data_source": "api",
+    "input_source": "manual",
+    "tier": "pro",
     "usage_url": "https://one.google.com/settings",
     "updated_at": "2026-04-08T10:30:00+00:00"
 }

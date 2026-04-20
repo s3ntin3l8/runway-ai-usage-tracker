@@ -177,7 +177,7 @@ class KimiCodingCollector(BaseCollector):
                     "health": "good",
                     "pace": "N/A",
                     "detail": "No active plan",
-                    "data_source": "api",
+                    "data_source": self.DATA_SOURCE_WEB,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",

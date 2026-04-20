@@ -6,9 +6,9 @@ OpenCode quota collector with web API (Chrome cookies) and local database fallba
 
 ## Overview
 
-- **Collection Strategy**: Web API → Sidecar aggregation → Local SQLite DB
+- **Collection Strategy**: web (Web API) → local (SQLite DB)
 - **Cards**: 3 cards (5h rolling, 7d rolling, 30d rolling windows)
-- **Authentication:** Chrome session cookie or local SQLite database
+- **Authentication:** Chrome session cookie (web) or local SQLite database (local)
 
 ## Setup Methods Quick Overview
 
@@ -24,21 +24,21 @@ The OpenCode collector supports the following authentication methods:
 
 ## Data Sources
 
-### Primary: OpenCode Web API
+### Tier 1: web (Web API)
 **Endpoints:**
 - `opencode.ai/_server` (workspaces - get workspace ID)
 - `opencode.ai/_server` (subscription - get usage data)
 
-**Auth:** Chrome `session` cookie
+**Auth:** Chrome `session` cookie (web)
 **Response:** JavaScript with regex-parsable usage data
 
 ### Secondary: Sidecar Aggregation
 Aggregates data from multiple hosts via `opencode-<hostname>` providers.
 
-### Tertiary: Local Database
+### Tier 2: local (SQLite DB)
 **Location:** `~/.local/share/opencode/opencode.db`
-**Schema:** SQLite with `message` table (time_created, data JSON)
-**Windows:** 5h ($12), 7d ($30), 30d ($60) limits
+**Mechanism:** Directly reads the message database for cost snapshots.
+**Windows:** 5h ($12), 7d ($30), 30d ($60) limits.
 
 ## Output Format
 
@@ -58,7 +58,8 @@ Aggregates data from multiple hosts via `opencode-<hostname>` providers.
     "unit_type": "currency",
     "currency": "USD",
     "reset_at": None,  # Rolling window - no fixed reset
-    "data_source": "web_api",
+    "data_source": "web",
+    "input_source": "server",
     "tier": None,
     "usage_url": "https://opencode.ai/workspace/{workspace_id}/go",
     "updated_at": "2026-04-07T10:30:00+00:00"

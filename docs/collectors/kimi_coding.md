@@ -6,9 +6,9 @@ Kimi For Coding IDE quota collector with weekly and rate limit tracking.
 
 ## Overview
 
-- **Collection Strategy**: Web API → Chrome cookie fallback
+- **Collection Strategy**: web (Web API)
 - **Cards**: 2 cards (Weekly quota, 5h rate limit)
-- **Authentication**: `KIMI_AUTH_TOKEN` env var OR Chrome `kimi-auth` cookie
+- **Authentication**: `KIMI_AUTH_TOKEN` (web) OR Chrome `kimi-auth` cookie (web)
 
 ## Setup Methods Quick Overview
 
@@ -52,7 +52,8 @@ All tiers: 200 req per 5-hour rate limit window
     "is_unlimited": False,
     "unit_type": "requests",
     "reset_at": "2026-01-09T15:23:13+00:00",
-    "data_source": "api",
+    "data_source": "web",
+    "input_source": "manual",
     "tier": "Moderato",
     "usage_url": "https://www.kimi.com/code/console",
     "updated_at": "2026-04-07T10:30:00+00:00"

@@ -51,9 +51,10 @@ class KimiApiCollector(BaseCollector):
         if key:
             self._current_input_source = "server"
             return key
-            
+
         if self.account_id:
             from app.services.token_cache import token_cache
+
             cache_data = await token_cache.get_with_metadata("kimi_api", account_id=self.account_id)
             if cache_data:
                 tokens, metadata = cache_data
@@ -115,7 +116,7 @@ class KimiApiCollector(BaseCollector):
                     "health": "good" if bal > 5 else "warning" if bal > 0 else "critical",
                     "pace": "Stable",
                     "detail": "Prepaid balance (API)",
-                    "data_source": "api",
+                    "data_source": self.DATA_SOURCE_API,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "updated_at": datetime.now(UTC).isoformat(),
                 }

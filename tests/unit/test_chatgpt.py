@@ -47,7 +47,7 @@ class TestChatGPTCollectorDetailed:
         with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "env_token"}):
             auth = await collector._get_auth_data(mock_http_client)
             assert auth["token"] == "env_token"
-            assert auth["source"] == "oauth"
+            assert auth["source"] == "api"
             assert auth["input_source"] == "server"
 
     @pytest.mark.asyncio
@@ -61,7 +61,7 @@ class TestChatGPTCollectorDetailed:
                 with patch("builtins.open", mock_open(read_data=mock_auth)):
                     auth = await collector._get_auth_data(mock_http_client)
                     assert auth["token"] == "file_token"
-                    assert auth["source"] == "oauth"
+                    assert auth["source"] == "api"
 
     @pytest.mark.asyncio
     async def test_auth_priority_cookies_and_refresh(self, mock_http_client):
@@ -74,7 +74,7 @@ class TestChatGPTCollectorDetailed:
         with patch.dict("os.environ", {}, clear=True):
             with patch("os.path.exists", return_value=False):
                 with patch(
-                    "app.services.collectors.chatgpt_auth.get_chatgpt_session_token",
+                    "app.services.collectors.chatgpt_oauth.get_chatgpt_session_token",
                     return_value=session_token,
                 ):
                     # Mock the refresh API call
@@ -88,7 +88,7 @@ class TestChatGPTCollectorDetailed:
                     auth = await collector._get_auth_data(mock_http_client)
 
                     assert auth["token"] == refreshed_token
-                    assert auth["source"] == "cookies"
+                    assert auth["source"] == "web"
 
                     # Verify refresh URL was called with cookie
                     call_args = mock_http_client.request.call_args
@@ -114,7 +114,7 @@ class TestChatGPTCollectorDetailed:
         with patch.dict("os.environ", {}, clear=True):
             with patch("os.path.exists", return_value=False):
                 with patch(
-                    "app.services.collectors.chatgpt_auth.get_chatgpt_session_token",
+                    "app.services.collectors.chatgpt_oauth.get_chatgpt_session_token",
                     return_value=session_token,
                 ):
                     # First refresh
@@ -125,7 +125,7 @@ class TestChatGPTCollectorDetailed:
                     # Second call immediately - should use in-memory cache
                     auth2 = await collector._get_auth_data(mock_http_client)
                     assert auth2["token"] == "t1"
-                    assert auth2["source"] == "cookies"
+                    assert auth2["source"] == "web"
                     assert mock_http_client.request.call_count == 1  # No new API call
 
     @pytest.mark.asyncio
@@ -226,7 +226,7 @@ class TestChatGPTCollectorDetailed:
                 assert len(results) == 1
                 assert results[0]["service_name"] == "ChatGPT Codex"
                 assert "12.0%" in results[0]["remaining"]
-                assert results[0]["data_source"] == "cache"
+                assert results[0]["data_source"] == "local"
 
     @pytest.mark.asyncio
     async def test_user_agent_on_auth_refresh(self, mock_http_client):
@@ -303,7 +303,7 @@ class TestChatGPTCollectorDetailed:
             # Check Codex card
             assert results[1]["service_name"] == "ChatGPT Codex"
             assert results[1]["remaining"] == "60.0%"
-            assert results[1]["data_source"] == "cli"
+            assert results[1]["data_source"] == "local"
             # Check Credits card
             assert results[2]["service_name"] == "ChatGPT Credits"
             assert results[2]["remaining"] == "$15.50"

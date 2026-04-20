@@ -292,7 +292,7 @@ class GitHubCollector(BaseCollector):
                     import asyncio
 
                     # Update metadata in cache so it can be used for label fallbacks.
-                    # Note: We only push to cache if we don't have a specific override already 
+                    # Note: We only push to cache if we don't have a specific override already
                     # active, to prevent "real" names from clobbering preferred ones in the cache.
                     asyncio.create_task(
                         token_cache.update_account_metadata(
@@ -398,8 +398,12 @@ class GitHubCollector(BaseCollector):
             # This prevents the annoying "Personal · email@addr.com" clutter.
             identity_suffix = ""
             if self._identity:
-                if not self.account_label or self.account_label.lower() == "default" or self.account_label == self._identity:
-                     identity_suffix = f" · {self._identity}"
+                if (
+                    not self.account_label
+                    or self.account_label.lower() == "default"
+                    or self.account_label == self._identity
+                ):
+                    identity_suffix = f" · {self._identity}"
                 results.append(
                     {
                         "service_name": f"Copilot ({key.title()})",
@@ -422,7 +426,7 @@ class GitHubCollector(BaseCollector):
                         "tier": "free",
                         "unit_type": "requests",
                         "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": "api",
+                        "data_source": self.DATA_SOURCE_API,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "usage_url": "https://github.com/settings/copilot/features",
                         "updated_at": datetime.now(UTC).isoformat(),
@@ -467,7 +471,7 @@ class GitHubCollector(BaseCollector):
                         "tier": tier_name,
                         "unit_type": "requests",
                         "reset_at": None,
-                        "data_source": "api",
+                        "data_source": self.DATA_SOURCE_API,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "usage_url": "https://github.com/settings/copilot/features",
                         "updated_at": datetime.now(UTC).isoformat(),

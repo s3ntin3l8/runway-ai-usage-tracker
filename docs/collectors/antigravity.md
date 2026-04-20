@@ -6,9 +6,9 @@ File-based quota collector for the Antigravity IDE.
 
 ## Overview
 
-- **Collection Strategy**: LSP Probing → Local JSON file (fallback)
+- **Collection Strategy**: local (LSP Probing / JSON File)
 - **Cards**: 1-3 cards per model/credit type
-- **Authentication**: None (auto-probes LSP process or reads local file)
+- **Authentication**: local (auto-discovery)
 
 ## Setup Methods Quick Overview
 
@@ -25,28 +25,14 @@ The Antigravity collector obtains quota information using two main strategies:
 
 ## Data Source
 
-### Primary: LSP Probing
-**Mechanism:** Runway detects running Antigravity IDE processes, identifies their Language Server Protocol (LSP) ports and CSRF tokens, and directly queries the LSP endpoint for user status, quota information, and available credits.
-**Auth:** Uses internal tokens from the running LSP process.
-**Behavior:** If LSP probing is successful, this is the preferred data source.
+### Tier 1: local (LSP Probing)
+**Mechanism:** Runway detects running Antigravity processes, identifies their LSP ports and CSRF tokens, and directly queries the user status.
+**Auth:** Uses internal tokens from the running process.
+**Behavior:** Preferred data source when the IDE is active.
 
-### Secondary: Local JSON Quota File
-**Location:** Platform-specific (configurable via `ANTIGRAVITY_QUOTA_PATH`):
-- **Linux:** `~/.local/share/antigravity/state/quota.json`
-- **macOS:** `~/Library/Application Support/antigravity/state/quota.json`
-- **Windows:** TBD — path unconfirmed; LSP probing is the primary collection method on Windows
-**Format:**
-```json
-{
-  "models": {
-    "claude-sonnet-4": {
-      "remaining_percent": 75.5,
-      "resets_at": 1775570736
-    }
-  }
-}
-```
-**Behavior:** This data source is used as a fallback if LSP probing fails or no active LSP process is detected. It provides a snapshot of the last known quota from the IDE.
+### Tier 2: local (JSON Quota File)
+**Location:** Platform-specific `quota.json` file.
+**Behavior:** Fallback used when no active IDE process is detected.
 
 ## Output Format
 
@@ -63,7 +49,8 @@ The Antigravity collector obtains quota information using two main strategies:
     "pace": "Continuous",
     "detail": "Pro | user@example.com [LSP]",
     "tier": "Pro",
-    "data_source": "lsp",
+    "data_source": "local",
+    "input_source": "server",
     "provider_id": "antigravity",
     "account_label": "user@example.com",           # email from userStatus
     "model_id": "claude-sonnet-4-5-20251001",      # modelOrAlias from LSP

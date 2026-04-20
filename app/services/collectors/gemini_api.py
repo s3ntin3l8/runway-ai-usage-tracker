@@ -194,7 +194,7 @@ class GeminiApiMixin:
                         "is_unlimited": False,
                         "unit_type": token_type if quota_limit is not None else "percent",
                         "reset_at": reset_at,
-                        "data_source": "oauth",
+                        "data_source": self.DATA_SOURCE_API,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "tier": tier,
                         "usage_url": "https://one.google.com/settings",

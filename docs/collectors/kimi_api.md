@@ -6,9 +6,9 @@ Moonshot AI (Kimi) prepaid balance collector in USD ($).
 
 ## Overview
 
-- **Collection Strategy**: REST API only
+- **Collection Strategy**: api (Moonshot API)
 - **Cards**: 1 card (account balance)
-- **Authentication**: `KIMI_API_KEY` environment variable
+- **Authentication**: `KIMI_API_KEY` (api)
 
 ## Setup Methods Quick Overview
 
@@ -44,6 +44,7 @@ The Kimi API collector uses a single API key for authentication:
     "currency": "USD",
     "reset_at": None,
     "data_source": "api",
+    "input_source": "manual",
     "tier": None,
     "usage_url": "https://platform.moonshot.cn",
     "updated_at": "2026-04-07T10:30:00+00:00"
