@@ -30,7 +30,7 @@ def get_config_path() -> pathlib.Path:
 _TEMPLATE_CONFIG: dict = {
     "api_url": "http://localhost:8765",
     "api_key": "REPLACE_ME",
-    "interval_seconds": 1800,
+    "interval_seconds": 900,
 }
 
 

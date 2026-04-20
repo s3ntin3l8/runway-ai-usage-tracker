@@ -593,9 +593,9 @@ class _Handler(BaseHTTPRequestHandler):
         api_url = first("api_url")
         api_key = first("api_key")
         try:
-            interval = max(60, int(first("interval_seconds", "1800")))
+            interval = max(60, int(first("interval_seconds", "900")))
         except ValueError:
-            interval = 1800
+            interval = 900
 
         if not api_url:
             self._send_json({"ok": False, "error": "API URL is required"}, 400)

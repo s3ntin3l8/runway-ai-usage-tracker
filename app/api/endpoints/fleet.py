@@ -104,11 +104,7 @@ async def ingest_metrics(
 
     for card in request.metrics:
         # Check if this is a token-only card (should NOT be displayed)
-        is_token_only = (
-            card.remaining == "Token"
-            and card.unit in ("oauth", "api_key")
-            and card.data_source == "token_extracted"
-        )
+        is_token_only = card.remaining == "Token" and card.unit in ("oauth", "api_key", "cookie")
 
         if is_token_only:
             # Extract provider/account identifiers: prefer top-level fields, fall back to metadata
@@ -273,3 +269,47 @@ async def trigger_sidecar_collect(
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     fleet_registry.set_pending_trigger(sidecar_id)
     return {"status": "trigger_queued", "sidecar_id": sidecar_id}
+
+
+@router.get("/config")
+@limiter.limit("60/minute")
+async def get_fleet_config(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Retrieve active collection configuration for sidecars.
+
+    This endpoint does not require the admin key (as sidecars do not have it)
+    but relies on rate limiting. It returns only the logical state (enabled/disabled
+    providers and strategies), no sensitive keys or tokens.
+    """
+    from app.models.db import ProviderConfig
+
+    rows = session.exec(select(ProviderConfig)).all()
+
+    config = {"providers": {}}
+
+    for row in rows:
+        # We only care about global defaults for sidecars, or merge all account settings
+        # To keep it simple, if *any* account has a provider enabled, the sidecar collects it.
+        if row.provider_id not in config["providers"]:
+            config["providers"][row.provider_id] = {
+                "enabled": row.enabled,
+                "strategies": row.strategies,
+            }
+        # If we already have it, but this row is enabled, we mark it enabled overall
+        elif row.enabled:
+            config["providers"][row.provider_id]["enabled"] = True
+
+        # Merge strategies if present
+        if row.strategies and row.enabled:
+            config["providers"][row.provider_id]["strategies"] = row.strategies
+
+    from app.services.collector_manager import collector_manager
+
+    # Ensure all registered providers have a default entry if not in DB
+    for p_id in collector_manager.collector_registry:
+        if p_id not in config["providers"]:
+            config["providers"][p_id] = {"enabled": True, "strategies": None}
+
+    return {"status": "ok", "config": config}

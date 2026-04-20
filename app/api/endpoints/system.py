@@ -45,11 +45,20 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     remote_user = request.headers.get("Remote-User")
     user_context = x_forwarded_user or remote_user
 
-    is_local_trust = request.client and request.client.host in ("127.0.0.1", "::1")
+    # Admin key bypass for local development matches core/security.py
+    # Only trust if client IS localhost AND server is also only listening on localhost
+    is_local_trust = (
+        request.client
+        and request.client.host in ("127.0.0.1", "::1")
+        and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
+    )
 
     auth_methods = []
     if settings.ADMIN_API_KEY:
         auth_methods.append("admin_key")
+
+    x_admin_key = request.headers.get("X-Admin-Key")
+    is_valid_admin_key = bool(settings.ADMIN_API_KEY and x_admin_key == settings.ADMIN_API_KEY)
 
     return {
         "project_name": settings.PROJECT_NAME,
@@ -63,7 +72,9 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "admin_auth_required": settings.ADMIN_API_KEY is not None,
         "auth_methods": auth_methods,
         "user_context": user_context,
-        "is_authenticated": bool(user_context or is_local_trust or not settings.ADMIN_API_KEY),
+        "is_authenticated": bool(
+            user_context or is_local_trust or is_valid_admin_key or not settings.ADMIN_API_KEY
+        ),
     }
 
 
@@ -377,6 +388,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     db_rows = session.exec(select(ProviderConfig)).all()
     db_map: dict[str, ProviderConfig] = {r.provider_id: r for r in db_rows}
 
+    # Fetch global default interval
+    sys_cfg = session.exec(select(SystemConfig)).first()
+    global_poll_interval = sys_cfg.default_poll_interval_seconds if sys_cfg else None
+
     results = []
     for p_id, (_, name, default_ttl) in manager.collector_registry.items():
         provider_def = registry.get_provider(p_id) or {}
@@ -402,6 +417,16 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             for rule in rules
             if rule.get("type") in ("env", "file", "keychain", "cookie")
         )
+
+        poll_source = "default"
+        effective_interval = default_ttl
+        if db and db.poll_interval_seconds:
+            poll_source = "provider_override"
+            effective_interval = db.poll_interval_seconds
+        elif global_poll_interval:
+            poll_source = "global_override"
+            effective_interval = global_poll_interval
+
         results.append(
             {
                 "provider_id": p_id,
@@ -413,6 +438,8 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "account_label": db.account_label if db else None,
                 "poll_interval_seconds": db.poll_interval_seconds if db else None,
                 "default_ttl_seconds": default_ttl,
+                "effective_poll_interval": effective_interval,
+                "poll_interval_source": poll_source,
                 "supports_api_key": supports_api_key,
                 "supports_session_cookie": supports_session_cookie,
                 "api_key_label": provider_def.get("api_key_label"),

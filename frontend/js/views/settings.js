@@ -219,7 +219,13 @@ function buildProviderForm(p) {
   ${STATE.githubAuth?.authenticated ? `<button type="button" onclick="handleGitHubLogout()" class="toggle-btn text-xs text-red-400" style="border-color:#f87171">Disconnect</button>` : `<button type="button" onclick="startGitHubLogin()" class="toggle-btn text-xs">Connect</button>`}
         </div>` : ''}
         <label class="flex items-center justify-between py-3 border-b border-zinc-800/50"><span class="text-sm text-zinc-400">Account Label</span><input type="text" id="field-account-label" value="${escapeHTMLAttr(p.account_label || '')}" placeholder="Auto-detected" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 w-48 focus:outline-none focus:border-violet-500"></label>
-        <div class="flex items-center justify-between py-3 border-b border-zinc-800/50"><span class="text-sm text-zinc-400">Poll Interval Override</span><select id="field-poll-interval" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500"><option value="" ${!p.poll_interval_seconds ? 'selected' : ''}>Default (${defaultTtlLabel})</option>${pollSelectOpts}</select></div>
+        <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
+            <div>
+                <span class="text-sm text-zinc-400">Poll Interval Override</span>
+                <p class="text-[10px] text-zinc-600 mt-0.5">Effective: ${p.effective_poll_interval}s (${p.poll_interval_source})</p>
+            </div>
+            <select id="field-poll-interval" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500"><option value="" ${!p.poll_interval_seconds ? 'selected' : ''}>Default (${defaultTtlLabel})</option>${pollSelectOpts}</select>
+        </div>
         <div class="flex justify-between items-center pt-2">
             <button type="button" id="provider-raw-data-btn" class="toggle-btn text-xs" style="border-color:#3f3f46;color:#a1a1aa;">View Raw Data</button>
             <div class="flex gap-2"><button type="button" id="provider-discard-btn" class="toggle-btn text-xs">Discard</button><button type="button" id="provider-save-btn" class="toggle-btn text-xs" style="border-color:#7c3aed;color:#c4b5fd;">Save</button></div>

@@ -137,7 +137,7 @@ __REGISTRY__ = {
         },
         "gemini": {
             "name": "Gemini API",
-            "icon": "\ud83d\udd35",
+            "icon": "🔵",
             "rules": [
                 {
                     "type": "file",
@@ -151,17 +151,22 @@ __REGISTRY__ = {
                         "client_id": "client_id",
                         "clientId": "client_id",
                     },
-                }
+                },
+                {
+                    "type": "jsonl_log_sum",
+                    "paths": ["~/.gemini/sessions", "{{CONFIG_DIR:gemini}}/sessions"],
+                },
             ],
         },
         "chatgpt": {
             "name": "ChatGPT Codex",
-            "icon": "\ud83d\udcac",
+            "icon": "💬",
             "rules": [
                 {
-                    "type": "env",
-                    "variable": "CHATGPT_OAUTH_TOKEN",
-                    "mapping": {"value": "oauth_token"},
+                    "type": "cookie",
+                    "domains": ["chatgpt.com"],
+                    "name": "__Secure-next-auth.session-token",
+                    "mapping": {"value": "cookie___Secure-next-auth.session-token"},
                 },
                 {
                     "type": "file",
@@ -170,10 +175,13 @@ __REGISTRY__ = {
                     "mapping": {"tokens.access_token": "oauth_token"},
                 },
                 {
-                    "type": "cookie",
-                    "domains": ["chatgpt.com"],
-                    "name": "__Secure-next-auth.session-token",
-                    "mapping": {"value": "cookie___Secure-next-auth.session-token"},
+                    "type": "jsonl_log_sum",
+                    "paths": ["~/.codex/sessions", "{{CONFIG_DIR:codex}}/sessions"],
+                },
+                {
+                    "type": "env",
+                    "variable": "CHATGPT_OAUTH_TOKEN",
+                    "mapping": {"value": "oauth_token"},
                 },
             ],
         },
@@ -192,6 +200,19 @@ __REGISTRY__ = {
                     "domains": ["kimi.moonshot.cn", "kimi.com"],
                     "name": "kimi-auth",
                     "mapping": {"value": "cookie_kimi-auth"},
+                },
+            ],
+        },
+        "kimi_k2": {
+            "name": "Kimi K2",
+            "icon": "🌙",
+            "rules": [
+                {"type": "env", "variable": "KIMI_K2_API_KEY", "mapping": {"value": "api_key"}},
+                {
+                    "type": "file",
+                    "paths": ["~/.kimi/config.json", "~/.k2/tokens.json"],
+                    "format": "json",
+                    "mapping": {"api_key": "api_key", "token": "api_key"},
                 },
             ],
         },
@@ -1361,6 +1382,55 @@ class GenericCollector:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
 
             # 7. Specialized: JSON Data (Antigravity)
+            # 8. Specialized: JSONL Cumulative (ChatGPT, Gemini)
+            elif rule_type == "jsonl_log_sum":
+                prompt_tokens = 0
+                completion_tokens = 0
+                for path_str in rule.get("paths", []):
+                    path = resolve_path(path_str)
+                    files = []
+                    if path.is_file():
+                        files = [path]
+                    elif path.is_dir():
+                        files = list(path.glob("**/*.jsonl"))
+
+                    for f in files:
+                        try:
+                            with open(f) as lines:
+                                for line in lines:
+                                    try:
+                                        import json as js
+
+                                        data = js.loads(line)
+                                        usage = data.get("usage", {})
+                                        prompt_tokens += usage.get("prompt_tokens", 0)
+                                        completion_tokens += usage.get("completion_tokens", 0)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
+                if prompt_tokens > 0 or completion_tokens > 0:
+                    hostname = get_hostname()
+                    total = prompt_tokens + completion_tokens
+                    results.append(
+                        {
+                            "service_name": f"{provider_id.capitalize()} Logs",
+                            "icon": icon,
+                            "remaining": f"{total:,}",
+                            "unit": "tokens",
+                            "reset": "Local Session",
+                            "health": "good",
+                            "pace": "Stable",
+                            "detail": f"{prompt_tokens:,} prompt · {completion_tokens:,} completion · {hostname}",
+                            "data_source": "local",
+                            "metadata": {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "hostname": hostname,
+                            },
+                        }
+                    )
             elif rule_type == "file_json_data":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)
@@ -1473,17 +1543,28 @@ class GenericCollector:
         # If tokens were extracted, add a hidden token card
         if tokens:
             logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
+
+            if any(k.startswith("cookie_") for k in tokens):
+                unit = "cookie"
+                data_source = "web"
+            elif "api_key" in tokens:
+                unit = "api_key"
+                data_source = "api"
+            else:
+                unit = "oauth"
+                data_source = "api"
+
             results.append(
                 {
                     "service_name": name,
                     "icon": icon,
                     "remaining": "Token",
-                    "unit": "oauth" if "oauth_token" in tokens else "api_key",
+                    "unit": unit,
                     "reset": "—",
                     "health": "good",
                     "pace": "Token",
                     "detail": "[Token Extracted] [Sidecar]",
-                    "data_source": "token_extracted",
+                    "data_source": data_source,
                     "metadata": {**tokens, "provider_id": provider_id},
                 }
             )

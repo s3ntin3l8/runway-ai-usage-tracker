@@ -76,8 +76,8 @@ def main() -> None:
         new_key = new_config.get("api_key", "")
         old_url = config.get("api_url", "")
         new_url = new_config.get("api_url", "")
-        old_interval = config.get("interval_seconds", 1800)
-        new_interval = new_config.get("interval_seconds", 1800)
+        old_interval = config.get("interval_seconds", 900)
+        new_interval = new_config.get("interval_seconds", 900)
 
         config.update(new_config)
         daemon._runner._config = new_config

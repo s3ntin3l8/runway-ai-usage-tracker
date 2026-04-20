@@ -71,9 +71,11 @@ gha-creds-*.json
 tasks.md
 task.md
 diagnose.py
+docs/internal/
 
 # --- SUPERPOWERS ---
 .superpowers/
+docs/superpowers/
 
 # --- PYINSTALLER ---
 build/

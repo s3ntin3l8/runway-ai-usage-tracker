@@ -24,8 +24,8 @@ async def require_admin_key(
     # Only trust if client IS localhost AND server is also only listening on localhost
     if (
         request.client
-        and request.client.host == "127.0.0.1"
-        and settings.APP_HOST in ("127.0.0.1", "localhost")
+        and request.client.host in ("127.0.0.1", "::1")
+        and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
     ):
         return
 
