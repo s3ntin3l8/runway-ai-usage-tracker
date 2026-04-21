@@ -196,11 +196,34 @@ class TokenHealthService:
             from app.core.config import settings
 
             if os.path.exists(settings.GITHUB_OAUTH_PATH):
+                # Try to find a custom label for GitHub in the DB configs first
+                label = None
+                for cfg in configs:
+                    if cfg.provider_id == "github" and cfg.account_label:
+                        label = cfg.account_label
+                        break
+
                 with open(settings.GITHUB_OAUTH_PATH) as f:
                     data = json.load(f)
                     token = data.get("access_token")
-                    user = data.get("user") or {}
-                    label = user.get("email") or user.get("login") or "GitHub"
+
+                    if not label:
+                        user = data.get("user") or {}
+                        label = user.get("email") or user.get("login")
+
+                    # Last fallback: database history
+                    if not label:
+                        with Session(engine) as session:
+                            stmt = (
+                                sqlselect(UsageSnapshot.account_label)
+                                .where(
+                                    UsageSnapshot.provider_id == "github",
+                                    UsageSnapshot.account_label != None,  # noqa: E711
+                                )
+                                .order_by(desc(UsageSnapshot.timestamp))
+                                .limit(1)
+                            )
+                            label = session.exec(stmt).first() or "GitHub"
 
                     if token and f"github:{token}" not in seen_token_values:
                         result.append(
