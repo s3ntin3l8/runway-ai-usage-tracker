@@ -107,7 +107,9 @@ function updateCsvHref() {
 }
 
 function formatValue(value, unit) {
-    if (value === null || value === undefined || value === 0) return '—';
+    if (value === null || value === undefined) return '—';
+    // Treat 0 and very small values as empty
+    if (value === 0 || value < 0.01) return '—';
     const unitStr = unit || '';
     if (unitStr === 'percent') return `${value.toFixed(1)}%`;
     if (unitStr === 'currency') return `$${value.toFixed(2)}`;
