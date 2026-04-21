@@ -88,8 +88,8 @@ async def get_usage_history(
     averages, peaks = _dedupe_with_peaks(raw, bucket_seconds)
 
     # Group by timestamp+provider+account for table display
-    avg_grouped = _group_snapshots(averages[:limit])
-    peak_grouped = _group_snapshots(peaks[:limit])
+    avg_grouped = _group_snapshots(averages[:limit], bucket_seconds)
+    peak_grouped = _group_snapshots(peaks[:limit], bucket_seconds)
 
     return {"averages": avg_grouped, "peaks": peak_grouped}
 
@@ -108,8 +108,12 @@ def _classify_window(window_type: str | None) -> str:
 
 def _group_snapshots(
     snapshots: Sequence[UsageSnapshot],
+    bucket_seconds: int = 60,
 ) -> list[dict]:
-    """Group snapshots by timestamp+provider+account_label for table display.
+    """Group snapshots by bucket+provider+account_label for table display.
+
+    Uses bucketed timestamps so snapshots collected slightly apart in time
+    (e.g., 9:13:01 vs 9:13:02) are grouped together.
 
     Returns list of grouped records:
     {
@@ -131,9 +135,18 @@ def _group_snapshots(
         }
     )
 
+    # Track original timestamps per key to return the "representative" timestamp
+    timestamp_map: dict[tuple, datetime] = {}
+
     for s in snapshots:
         ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=UTC)
-        key = (ts.isoformat(), s.provider_id, s.account_label or s.account_id)
+        # Use bucketed timestamp for grouping (rounds down to bucket boundary)
+        bucket_ts = ts.replace(second=(ts.second // bucket_seconds) * bucket_seconds, microsecond=0)
+        key = (bucket_ts.isoformat(), s.provider_id, s.account_label or s.account_id)
+
+        # Store first timestamp seen for this key as representative
+        if key not in timestamp_map:
+            timestamp_map[key] = ts
 
         category = _classify_window(s.window_type)
         entry = {
@@ -155,16 +168,19 @@ def _group_snapshots(
             )
 
     result = []
-    for (timestamp, provider_id, account_label), data in grouped.items():
+    for (bucket_ts_iso, provider_id, account_label), data in grouped.items():
         additional_str = (
             " | ".join(f"{a['window']}: {a['value']}{a['unit']}" for a in data["additional"])
             if data["additional"]
             else None
         )
 
+        # Use the stored representative timestamp for display
+        rep_ts = timestamp_map[(bucket_ts_iso, provider_id, account_label)]
+
         result.append(
             {
-                "timestamp": timestamp,
+                "timestamp": rep_ts.isoformat(),
                 "provider_id": provider_id,
                 "account_label": account_label,
                 "session": data["session"],
