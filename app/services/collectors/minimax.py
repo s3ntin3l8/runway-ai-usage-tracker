@@ -47,7 +47,7 @@ class MiniMaxCollector(BaseCollector):
 
         if key or cookie:
             self._current_input_source = (
-                "manual"
+                "config"
                 if (
                     credential_provider.get_provider_api_key("minimax")
                     or credential_provider.get_provider_session_cookie("minimax")
@@ -63,7 +63,9 @@ class MiniMaxCollector(BaseCollector):
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
                 return tokens.get("api_key"), tokens.get("session_cookie")
         return None, None
 

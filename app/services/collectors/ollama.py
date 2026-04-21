@@ -8,6 +8,7 @@ Collection Strategy:
    - Extracts plan name, account email, usage percentages, and reset timestamps.
 """
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from app.core.utils import (
 )
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +128,7 @@ class OllamaCollector(BaseCollector):
         # 1. DB-stored session cookie (manual override set via settings UI)
         db_token = credential_provider.get_provider_session_cookie("ollama")
         if db_token:
-            self._current_input_source = "manual"
+            self._current_input_source = "config"
             token = db_token.strip()
             # If the user pasted a string that already contains a recognized cookie name, return as is.
             # Otherwise, default to prepending "session=" for backward compatibility.
@@ -271,6 +273,13 @@ class OllamaCollector(BaseCollector):
         if email_match:
             email = email_match.group(1).strip()
 
+        # Identity Promotion: sync discovered email/name back to the token cache metadata
+        if email and self.account_id:
+            asyncio.create_task(
+                token_cache.update_account_metadata("ollama", self.account_id, name=email)
+            )
+            self.account_label = email
+
         # 3. Build cards using already-parsed blocks
         cards = []
         if session_block:
@@ -370,8 +379,10 @@ class OllamaCollector(BaseCollector):
             block = {"used_percent": pct, "resets_at": resets_at}
 
             if label in session_labels and session_block is None:
+                block["window_type"] = "session"
                 session_block = block
             elif label == "Weekly usage" and weekly_block is None:
+                block["window_type"] = "weekly"
                 weekly_block = block
 
         return session_block, weekly_block
@@ -406,6 +417,7 @@ class OllamaCollector(BaseCollector):
             "limit_value": 100.0,
             "unit_type": "percent",
             "reset_at": resets_at.isoformat() if resets_at else None,
+            "window_type": block.get("window_type", "unknown"),
             "data_source": self.DATA_SOURCE_WEB,
             "input_source": getattr(self, "_current_input_source", "unknown"),
             "tier": plan.lower() if plan else "free",

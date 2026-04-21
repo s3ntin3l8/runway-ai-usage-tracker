@@ -60,7 +60,9 @@ class KimiK2Collector(BaseCollector):
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
                 return tokens.get("api_key")
         return None
 

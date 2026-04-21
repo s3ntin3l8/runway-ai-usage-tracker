@@ -27,6 +27,7 @@ class BackgroundPoller:
         self._running = False
         self._poll_count = 0
         self._snapshot_hashes: dict[str, deque] = {}  # key → deque(maxlen=3) of SHA hex digests
+        self._wake_event = asyncio.Event()
 
     def start(self):
         """Start the background polling task."""
@@ -40,6 +41,7 @@ class BackgroundPoller:
         """Stop the background polling task."""
         self._running = False
         if self._task:
+            self._wake_event.set()  # break the wait
             self._task.cancel()
             try:
                 await self._task
@@ -50,7 +52,21 @@ class BackgroundPoller:
 
     async def _run_loop(self):
         while self._running:
-            await asyncio.sleep(self._interval)
+            # Re-read interval in case it changed during sleep
+            interval = self._interval
+
+            # Wait for either the interval to pass or a manual 'wake' event
+            try:
+                # We wait on the event. If it's set, wait() returns immediately.
+                # If timeout hits, we proceed to poll.
+                await asyncio.wait_for(self._wake_event.wait(), timeout=interval)
+            except TimeoutError:
+                # Normal sleep timeout reached
+                pass
+
+            # Reset event for next cycle
+            self._wake_event.clear()
+
             if not self._running:
                 break
             try:
@@ -80,7 +96,7 @@ class BackgroundPoller:
             # Create a stable SHA-256 digest of the sorted state list
             composite_str = "|".join(sorted(states))
             digest = hashlib.sha256(composite_str.encode()).hexdigest()
-            
+
             if key not in self._snapshot_hashes:
                 self._snapshot_hashes[key] = deque(maxlen=_DORMANT_THRESHOLD)
             self._snapshot_hashes[key].append(digest)
@@ -109,11 +125,12 @@ class BackgroundPoller:
             self._interval = _SLEEP_INTERVAL
 
     def wake(self):
-        """Reset dormancy state and restore normal polling interval."""
+        """Reset dormancy state and restore normal polling interval immediately."""
         if self._interval != self._base_interval:
             logger.info("Manual wake: restoring normal poll interval")
             self._interval = self._base_interval
         self._snapshot_hashes.clear()
+        self._wake_event.set()  # interrupt the _run_loop wait
 
     async def poll_now(self):
         """Execute a single collection and snapshot cycle."""

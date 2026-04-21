@@ -725,3 +725,36 @@ body.bright-mode .settings-nav-item.settings-nav-active {
 #admin-key-input::placeholder {
     letter-spacing: normal;
 }
+
+/* Nav Bar Locked State */
+#main-nav.nav-locked {
+    pointer-events: none;
+    opacity: 0.6;
+    filter: saturate(0.5);
+}
+
+#main-nav.nav-locked .nav-link {
+    cursor: default;
+}
+
+#main-nav.nav-locked .nav-link::after {
+    display: none;
+}
+
+/* Error View */
+.error-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 40vh;
+    text-align: center;
+    padding: 2rem;
+}
+
+.error-view-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 0 15px rgba(239, 68, 68, 0.3));
+}
+

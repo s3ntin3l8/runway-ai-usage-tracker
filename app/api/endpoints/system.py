@@ -47,11 +47,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
 
     # Admin key bypass for local development matches core/security.py
     # Only trust if client IS localhost AND server is also only listening on localhost
-    is_local_trust = (
-        request.client
-        and request.client.host in ("127.0.0.1", "::1")
-        and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
-    )
+    is_local_trust = bool(request.client and request.client.host in ("127.0.0.1", "::1"))
 
     auth_methods = []
     if settings.ADMIN_API_KEY:
@@ -103,6 +99,16 @@ async def force_collect(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Force collect failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/wake")
+@limiter.limit("10/minute")
+async def wake_poller(request: Request) -> dict[str, Any]:
+    """Reset dormancy state and restore normal polling interval."""
+    from app.services.poller import poller
+
+    poller.wake()
+    return {"status": "awake"}
 
 
 @router.get("/token-health")
@@ -208,6 +214,18 @@ async def refresh_token(
     except Exception as e:
         logger.error(f"Token refresh failed for {provider}/{account_id}: {e}")
         raise HTTPException(status_code=502, detail="Upstream token refresh failed")
+
+
+@router.delete("/token-health/{provider}/{account_id}")
+@limiter.limit("20/minute")
+async def delete_token_health_entry(
+    request: Request, provider: str, account_id: str, _=Depends(require_admin_key)
+) -> dict[str, Any]:
+    """Manually remove a token from the cache."""
+    ok = await token_health_service.delete_credential(provider, account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Token not found in cache or database")
+    return {"ok": True}
 
 
 # --- Webhook alert configuration ---
@@ -532,9 +550,7 @@ async def upsert_provider_config(
                 tokens["session_cookie"] = row.api_key
                 tokens["cookie_sessionKey"] = row.api_key
 
-            await token_cache.store(
-                provider_id, tokens, account_id="default", source="manual_config"
-            )
+            await token_cache.store(provider_id, tokens, account_id="default", source="config")
     if body.session_cookie is not None:
         val = body.session_cookie
         if val and ";" in val or "=" in val:
@@ -576,7 +592,7 @@ async def upsert_provider_config(
                 "cookie___Secure-next-auth.session-token": row.session_cookie,
             }
 
-            await token_cache.store(provider_id, tokens, account_id="default")
+            await token_cache.store(provider_id, tokens, account_id="default", source="config")
 
     session.commit()
     # Trigger immediate sync and collection to reflect changes in dashboard instantly

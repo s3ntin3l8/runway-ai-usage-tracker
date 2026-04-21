@@ -924,16 +924,48 @@ export function buildTokenHealthPanel(tokens) {
     }
 
     const STATUS_STYLES = {
-        valid:    { badge: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'VALID' },
+        valid:    { badge: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'READY' },
         expiring: { badge: 'text-amber-400 bg-amber-500/10 border-amber-500/20', label: 'EXPIRING' },
         expired:  { badge: 'text-red-400 bg-red-500/10 border-red-500/20', label: 'EXPIRED' },
         unknown:  { badge: 'text-zinc-500 bg-zinc-800/50 border-zinc-700/50', label: 'UNKNOWN' },
     };
 
+    const FRIENDLY_TYPES = {
+        'api_key': 'API Key',
+        'session_cookie': 'Cookie',
+        'oauth_token': 'OAuth',
+        'access_token': 'Token',
+        'id_token': 'ID Token',
+        'refresh_token': 'Refresh'
+    };
+
     const rows = tokens.map(t => {
         const s = STATUS_STYLES[t.status] || STATUS_STYLES.unknown;
-        const label = t.account_label || t.account_id;
-        const types = (t.token_types || []).map(k => `<span class="tag-pill">${escapeHTML(k)}</span>`).join('');
+        
+        // Suppress redundant "config" and "default" labels if we have a settings badge or no custom label
+        let label = t.account_label || t.account_id || '';
+        if (label === 'default' || (t.source === 'config' && (label === 'config' || label === 'config-cookie'))) {
+            label = '';
+        }
+
+        const rawTypes = t.token_types || [];
+        const seenTypes = new Set();
+        const types = [];
+
+        for (const k of rawTypes) {
+            let clean = FRIENDLY_TYPES[k] || k;
+            
+            // Consolidate browser-scraped multi-cookie bundles into a single "Cookie" badge
+            if (k.startsWith('COOKIE_') || k.startsWith('__Secure-') || k.toLowerCase().includes('session')) {
+                clean = 'Cookie';
+            }
+
+            if (!seenTypes.has(clean)) {
+                types.push(`<span class="tag-pill">${escapeHTML(clean)}</span>`);
+                seenTypes.add(clean);
+            }
+        }
+        const typesHTML = types.join('');
         const expiryStr = t.expires_at
             ? new Date(t.expires_at).toLocaleString()
             : t.ttl_remaining_seconds > 0
@@ -945,9 +977,16 @@ export function buildTokenHealthPanel(tokens) {
                     class="text-[9px] font-bold px-2 py-0.5 rounded border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-all uppercase tracking-wider">
                 REFRESH
             </button>` : '';
+        
+        const purgeBtn = `
+            <button onclick="window.deleteToken('${escapeHTMLAttr(t.provider)}', '${escapeHTMLAttr(t.account_id)}')"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all ml-1"
+                    title="Purge from cache">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
+            </button>`;
 
         const sourceBadge = t.source === 'config'
-            ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/20 text-sky-400" title="Configured in Settings → Providers">⚙ settings</span>`
+            ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400" title="Configured in Settings → Providers">⚙ settings</span>`
             : t.source
             ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-violet-400" title="Delivered by sidecar">⬡ ${escapeHTML(t.source)}</span>`
             : `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40 text-zinc-500" title="Collected locally">local</span>`;
@@ -960,11 +999,12 @@ export function buildTokenHealthPanel(tokens) {
                     <span class="text-[10px] text-zinc-500">${escapeHTML(label)}</span>
                     ${sourceBadge}
                 </div>
-                <div class="flex flex-wrap gap-1 mt-1">${types}</div>
+                <div class="flex flex-wrap gap-1 mt-1">${typesHTML}</div>
                 ${expiryStr ? `<span class="text-[10px] text-zinc-600 mono mt-0.5">${escapeHTML(expiryStr)}</span>` : ''}
             </div>
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex items-center gap-1 shrink-0">
                 ${refreshBtn}
+                ${purgeBtn}
                 <span class="text-[9px] font-bold px-2 py-0.5 rounded border ${s.badge} uppercase tracking-wider">${s.label}</span>
             </div>
         </div>`;
@@ -1167,8 +1207,9 @@ export function buildProviderSummaryCard(providerId, items) {
     let sourceBadge = '';
     if (sources.length > 0) {
         const s = sources[0];
-        const sColor = s === 'sidecar' ? 'text-blue-400 border-blue-400/30' : s === 'manual' ? 'text-amber-400 border-amber-400/30' : 'text-zinc-500 border-zinc-500/30';
-        sourceBadge = `<span class="text-[8px] px-1 py-px rounded border ${sColor} uppercase tracking-tighter ml-1.5">${escapeHTML(s)}</span>`;
+        const label = s === 'sidecar' ? 'Sidecar' : s === 'config' ? 'Config' : s === 'server' ? 'Server' : s;
+        const sColor = s === 'sidecar' ? 'text-blue-400 border-blue-400/30' : s === 'config' ? 'text-amber-400 border-amber-400/30' : 'text-zinc-500 border-zinc-500/30';
+        sourceBadge = `<span class="text-[8px] px-1 py-px rounded border ${sColor} uppercase tracking-tighter ml-1.5">${escapeHTML(label)}</span>`;
     }
 
     const accountHTML = accounts.length === 1
@@ -1347,8 +1388,7 @@ export function buildProviderModal(providerId, items, history) {
     const MODAL_INPUT_LABELS = {
         sidecar: 'Sidecar',
         config: 'Config',
-        server: 'Server',
-        manual: 'Manual'
+        server: 'Server'
     };
 
     const serviceRows = sorted.map(item => {

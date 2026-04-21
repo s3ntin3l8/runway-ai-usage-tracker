@@ -85,7 +85,9 @@ class AnthropicCollector(
             if token:
                 # Store source for card labeling
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
                 return token
 
         # 2. Fallback to reading the local credentials file

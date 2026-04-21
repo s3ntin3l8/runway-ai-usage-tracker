@@ -77,7 +77,11 @@ class ChatGPTCollector(
 
         try:
             return await self._fetch_api_data(
-                client, token, account_id, auth.get("source", "oauth")
+                client,
+                token,
+                account_id,
+                auth.get("source", "oauth"),
+                input_source=auth.get("input_source", "server"),
             )
         except Exception as e:
             logger.debug(f"ChatGPT Web API failed: {e}")

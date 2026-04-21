@@ -161,6 +161,16 @@ export async function forceCollect() {
     return await resp.json();
 }
 
+export async function postWake() {
+    // Silently wake the poller (resumes normal interval if sleeping)
+    try {
+        await fetchWithAuth('/api/v1/system/wake', { method: 'POST' });
+    } catch (e) {
+        // Silently fail as this is a background optimization
+        console.debug('Background wake failed:', e);
+    }
+}
+
 export async function fetchTokenHealth() {
     const resp = await fetchWithAuth('/api/v1/system/token-health');
     if (!resp.ok) throw new Error('Failed to fetch token health');

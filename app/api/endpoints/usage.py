@@ -57,7 +57,7 @@ async def get_usage_history(
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
-    days: float = Query(default=7.0, ge=0.01, le=90.0),
+    days: float = Query(default=1.0, ge=0.01, le=90.0),
     limit: int = Query(default=50, ge=1, le=2000),
     export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
@@ -114,6 +114,7 @@ def _dedupe_by_bucket(rows: Sequence[UsageSnapshot], bucket_seconds: int) -> lis
         key = (
             r.provider_id,
             r.account_id,
+            r.service_name,
             r.model_id,
             r.window_type,
             r.unit_type,

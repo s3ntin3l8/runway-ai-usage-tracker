@@ -32,10 +32,11 @@ class ChatGPTWebOAuthMixin:
             and getattr(self, "_refreshed_token_expiry", None)
             and now < self._refreshed_token_expiry
         ):
+            self._current_input_source = getattr(self, "_refreshed_input_source", "unknown")
             return {
                 "token": self._refreshed_token,
                 "source": self.DATA_SOURCE_WEB,
-                "input_source": getattr(self, "_refreshed_input_source", "unknown"),
+                "input_source": self._current_input_source,
             }
 
         # Priority 1 & 2: Env var or auth.json (Centralized in CredentialProvider)
@@ -58,12 +59,14 @@ class ChatGPTWebOAuthMixin:
                 except Exception as e:
                     logger.debug(f"Failed to check/refresh stale ChatGPT token: {e}")
 
+            input_source = getattr(auth_data, "sources", {}).get("access_token", "server")
+            self._current_input_source = input_source
             return {
                 "token": token,
                 "account_id": account_id,
                 "refresh_token": refresh_token,
                 "source": self.DATA_SOURCE_API,
-                "input_source": "server",
+                "input_source": input_source,
             }
 
         # Priority 3: Direct OAuth token (Manual Config / Sidecar from global cache)
@@ -72,7 +75,7 @@ class ChatGPTWebOAuthMixin:
             tokens, metadata = cache_data
             if tokens.get("oauth_token"):
                 source = metadata.get("source") or "sidecar"
-                input_source = "manual" if source == "manual_config" else "sidecar"
+                input_source = "config" if source in ("config", "manual_config") else "sidecar"
 
                 logger.debug(f"Using OAuth token from cache (input_source: {input_source})")
                 return {
@@ -100,7 +103,9 @@ class ChatGPTWebOAuthMixin:
                 session_token = tokens.get(c_key)
                 if session_token:
                     source_meta = metadata.get("source") or "sidecar"
-                    input_source = "manual" if source_meta == "manual_config" else "sidecar"
+                    input_source = (
+                        "config" if source_meta in ("config", "manual_config") else "sidecar"
+                    )
 
             # Fallback to direct local cookies if enabled and cache is empty
             if not session_token and is_local_credential_scraping_enabled():
@@ -109,6 +114,7 @@ class ChatGPTWebOAuthMixin:
                     input_source = "server"
 
             if session_token:
+                self._current_input_source = input_source
                 if client:
                     # Refresh Bearer token using session cookie
                     refreshed = await self._refresh_access_token(client, session_token)
@@ -121,7 +127,7 @@ class ChatGPTWebOAuthMixin:
                             "chatgpt",
                             {"oauth_token": refreshed},
                             account_id=self.account_id,
-                            source=source_meta if "source_meta" in locals() else "server",
+                            source=input_source if input_source == "config" else "server",
                         )
                         return {
                             "token": refreshed,

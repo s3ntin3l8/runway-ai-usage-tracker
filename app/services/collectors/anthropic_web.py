@@ -386,6 +386,13 @@ class AnthropicWebMixin:
         )
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
+        # Identity Promotion: sync discovered email/name back to the token cache metadata
+        if identity_str and hasattr(self, "account_id") and self.account_id:
+            asyncio.create_task(
+                token_cache.update_account_metadata("anthropic", self.account_id, name=identity_str)
+            )
+            self.account_label = identity_str
+
         # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)
         # Check both account_data and org_data for rate_limit_tier
         tier = None
