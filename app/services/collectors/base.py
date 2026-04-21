@@ -44,7 +44,7 @@ class BaseCollector(ABC):
     DATA_SOURCE_LOCAL = "local"  # Log files / CLI / Fast path
 
     # Standard Input Source Labels (Credentials Origin)
-    INPUT_SOURCE_MANUAL = "manual"  # Entered via Runway UI
+    INPUT_SOURCE_CONFIG = "config"  # Entered via Runway UI
     INPUT_SOURCE_SIDECAR = "sidecar"  # Pushed from remote agent
     INPUT_SOURCE_SERVER = "server"  # Found in local .env or files
 
@@ -58,7 +58,7 @@ class BaseCollector(ABC):
         """
         self.account_id = account_id
         self.account_label = account_label
-        self._current_input_source: str = "config"  # Default for static ENV configs
+        self._current_input_source: str = self.INPUT_SOURCE_SERVER  # Default for static ENV configs
         # In-memory cache for discovered account labels to avoid redundant regex processing
         self._account_label_cache: str | None = account_label
         # User-supplied strategy ordering/toggles (list of {"id": str, "enabled": bool}).

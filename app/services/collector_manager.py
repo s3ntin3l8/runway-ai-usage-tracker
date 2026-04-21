@@ -312,7 +312,7 @@ class CollectorManager:
                 r.provider_id,
                 all_tokens,
                 account_id=r.account_id or "default",
-                source="manual_config",
+                source="config",
             )
 
     async def collect_all(self) -> list[dict[str, Any]]:

@@ -5,7 +5,7 @@ import { ensureSortable } from './sortable.js';
 import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
-import { loadSettingsView, renderProvidersSection } from './views/settings.js';
+import { loadSettingsView, renderProvidersSection, refreshToken, deleteToken } from './views/settings.js';
 import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar, triggerSidecarCollect } from './views/fleet.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
 
@@ -18,13 +18,7 @@ function escapeHTML(str) {
     return str.replace(/[&<>"']/g, m => map[m]);
 }
 
-// History tab state
-const historyState = {
-    days: 7,
-    activeProviders: null, // null = all; Set<string> when filtering
-    metric: 'percent',     // 'percent' | 'tokens' | 'cost'
-};
-let _historyCache = [];
+// History data is now fully managed via views/history.js
 
 // Auto-refresh timer reference
 let refreshTimer = null;
@@ -34,7 +28,7 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
 /**
  * View Management
  */
-const KNOWN_VIEWS = ['dashboard', 'history', 'fleet', 'settings'];
+const KNOWN_VIEWS = ['dashboard', 'history', 'fleet', 'settings', 'auth', 'error'];
 
 window.switchView = async function(viewId) {
     if (!KNOWN_VIEWS.includes(viewId)) viewId = 'dashboard';
@@ -61,108 +55,33 @@ window.switchView = async function(viewId) {
     if (viewId === 'fleet') loadFleetView();
 };
 
-window.toggleHistoryProvider = function(pid) {
-    if (!historyState.activeProviders) {
-        // All active → select only this one
-        historyState.activeProviders = new Set([pid]);
-    } else if (historyState.activeProviders.has(pid)) {
-        historyState.activeProviders.delete(pid);
-        if (historyState.activeProviders.size === 0) historyState.activeProviders = null;
-    } else {
-        historyState.activeProviders.add(pid);
-    }
-    updateCsvHref();
-    renderHistoryFromCache();
-};
-
-window.setHistoryDays = function(days) {
-    historyState.days = days;
-    document.querySelectorAll('#history-range-btns .toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', parseFloat(btn.dataset.days) === days);
-    });
-    updateCsvHref();
-    loadHistory();
-};
-
-window.setHistoryMetric = function(metric) {
-    historyState.metric = metric;
-    document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.metric === metric);
-    });
-    renderHistoryFromCache();
-};
-
-function updateCsvHref() {
-    const btn = document.getElementById('csv-download-btn');
-    if (!btn) return;
-    const params = new URLSearchParams({ format: 'csv', days: historyState.days });
-    if (historyState.activeProviders && historyState.activeProviders.size === 1) {
-        params.set('provider_id', [...historyState.activeProviders][0]);
-    }
-    btn.href = `/api/v1/usage/history?${params.toString()}`;
-}
-
-function renderHistoryFromCache() {
-    const history = _historyCache;
-    // Sparkline strip (all providers, shows active state)
-    const stripEl = document.getElementById('history-sparkline-strip');
-    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(history, historyState.activeProviders);
-
-    // Filter history for chart + table
-    let filtered = history;
-    if (historyState.activeProviders) {
-        filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
-    }
-    // Update chart (async - lazy loads Chart.js on first call)
-    updateCharts(filtered, historyState.metric);
-
-    // Table
-    const container = document.getElementById('history-content');
-    if (!filtered || filtered.length === 0) {
-        container.innerHTML = '<p class="text-zinc-500 italic">No history data found.</p>';
-        return;
-    }
-    let html = `<table class="w-full text-left mono text-[11px]">
-        <thead class="text-zinc-600 border-b border-zinc-800/50">
-            <tr>
-                <th class="py-2 px-2">Time</th>
-                <th class="py-2 px-2">Provider</th>
-                <th class="py-2 px-2">Service</th>
-                <th class="py-2 px-2 text-right">Usage</th>
-            </tr>
-        </thead>
-        <tbody class="text-zinc-400">`;
-    filtered.slice(0, 50).forEach(s => {
-        const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const usage = s.used_value !== null ? `${s.used_value.toLocaleString()}${s.unit_type === 'percent' ? '%' : ''}` : '—';
-        html += `<tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
-            <td class="py-2 px-2 text-zinc-600">${date}</td>
-            <td class="py-2 px-2 text-zinc-500">${escapeHTML(s.provider_id || '—')}</td>
-            <td class="py-2 px-2 font-medium text-zinc-300">${escapeHTML(s.service_name || '—')}</td>
-            <td class="py-2 px-2 text-right font-bold text-zinc-400">${usage}</td>
-        </tr>`;
-    });
-    html += '</tbody></table>';
-    container.innerHTML = html;
-}
+// Re-exports for onclick handlers in index.html are now handled in views/history.js initHistoryView()
 
 /**
  * Authentication Management
  */
 async function checkAuth() {
+    const nav = document.getElementById('main-nav');
     try {
         const settings = await fetchSettings();
         
         if (settings.is_authenticated) {
             // Authorized (local, proxy, or valid key already in localStorage)
-            document.getElementById('main-nav').style.display = 'flex';
+            if (nav) {
+                nav.style.display = 'flex';
+                nav.classList.remove('nav-locked');
+            }
             return true;
         }
 
         // Locked - show Auth Portal
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         document.getElementById('view-auth').classList.remove('hidden');
-        document.getElementById('main-nav').style.display = 'none';
+        
+        if (nav) {
+            nav.style.display = 'flex';
+            nav.classList.add('nav-locked');
+        }
         
         // Initializing Auth Form
         const authForm = document.getElementById('auth-form');
@@ -198,24 +117,22 @@ async function checkAuth() {
         return false;
     } catch (err) {
         console.error('Auth verification failed:', err);
+        // Network or server error - show Error View
+        document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+        document.getElementById('view-error').classList.remove('hidden');
+        const msg = document.getElementById('error-message');
+        if (msg) msg.textContent = `Runway could not reach the backend server: ${err.message}`;
+        
+        if (nav) {
+            nav.style.display = 'flex';
+            nav.classList.add('nav-locked');
+        }
+        
         return false;
     }
 }
 
-async function loadHistory() {
-    updateCsvHref();
-    const container = document.getElementById('history-content');
-    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
-
-    try {
-        const history = await fetchHistory({ days: historyState.days, limit: 500 });
-        _historyCache = history || [];
-        renderHistoryFromCache();
-    } catch (err) {
-        destroyCharts();
-        container.innerHTML = `<p class="text-red-400">Failed to load history: ${escapeHTML(err.message)}</p>`;
-    }
-}
+// History loading is now handled in views/history.js
 
 // ── App Initialization ────────────────────────────────────────────────────────
 
@@ -578,6 +495,20 @@ async function initUI() {
 
     // Initialize dashboard view event listeners
     initDashboardView();
+    initHistoryView();
+    
+    // Wake Trigger: When user brings the dashboard back into focus, nudge the poller.
+    // Includes a 30s debounce to prevent spamming the wake endpoint.
+    let lastWakeTime = 0;
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            const now = Date.now();
+            if (now - lastWakeTime > 30000) { 
+                lastWakeTime = now;
+                import('./api.js').then(m => m.postWake());
+            }
+        }
+    });
 }
 
 /**
@@ -870,6 +801,12 @@ window.copyToClipboard = async function(text, btn) {
     }
 };
 
+// Temporary in-memory store for raw debug data to avoid putting massive strings in DOM attributes
+let RAW_DATA_CACHE = {
+    full: null,
+    bodies: []
+};
+
 window.viewRawProviderData = async function(providerId) {
     const modal = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
@@ -892,45 +829,77 @@ window.viewRawProviderData = async function(providerId) {
         }
         const data = await resp.json();
         
+        // Populate cache for buttons
+        RAW_DATA_CACHE.full = data;
+        RAW_DATA_CACHE.bodies = (data.responses || []).map(res => {
+            return typeof res.body === 'string' ? res.body : JSON.stringify(res.body, null, 2);
+        });
+        
         const responses = data.responses || [];
         
+        // 1. Build the skeleton via innerHTML
         content.innerHTML = `
-            <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
-                <div>
-                    <div class="text-xl font-black text-zinc-100 uppercase tracking-tight">Raw Data: ${escapeHTML(providerId)}</div>
-                    <div class="text-[10px] text-zinc-500 mono mt-1">Provider-specific HTTP interception bundle</div>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="copyToClipboard(JSON.stringify(JSON.parse(this.dataset.json), null, 2), this)" data-json='${escapeHTMLAttr(JSON.stringify(data))}' class="toggle-btn text-[10px] py-1 px-3">Copy All</button>
-                    <button onclick="document.getElementById('modal-container').classList.remove('active')" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
-                </div>
-            </div>
-            <div class="max-h-[70vh] overflow-y-auto space-y-6 pr-2 custom-scrollbar">
-                ${responses.length === 0 ? `
-                    <div class="bg-zinc-900/50 rounded-xl p-8 text-center border border-dashed border-zinc-800">
-                        <p class="text-zinc-500 text-sm italic">No HTTP requests were captured during the collection cycle.</p>
-                        <p class="text-[10px] text-zinc-600 mt-2">This usually means the data was served from the local cache or an internal strategy.</p>
+            <div class="flex flex-col h-full overflow-hidden">
+                <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50 shrink-0">
+                    <div>
+                        <div class="text-xl font-black text-zinc-100 uppercase tracking-tight">Raw Data: ${escapeHTML(providerId)}</div>
+                        <div class="text-[10px] text-zinc-500 mono mt-1">Provider-specific HTTP interception bundle (DOM-Isolated)</div>
                     </div>
-                ` : responses.map((res, idx) => `
-                    <div class="space-y-2">
-                        <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <div class="flex items-center gap-2">
-                                <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 mono text-[10px] font-bold border border-zinc-700/50">${res.status}</span>
-                                <span class="px-2 py-0.5 rounded bg-zinc-900 text-violet-400 mono text-[10px] font-bold border border-violet-900/30">${res.method}</span>
-                                <span class="text-[10px] text-zinc-500 mono truncate max-w-md" title="${escapeHTML(res.url)}">${escapeHTML(res.url)}</span>
+                    <div class="flex gap-2">
+                        <button id="copy-all-raw" class="toggle-btn text-[10px] py-1 px-3">Copy All</button>
+                        <button onclick="document.getElementById('modal-container').classList.remove('active')" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+                    </div>
+                </div>
+                <div id="raw-responses-list" class="flex-1 overflow-y-auto space-y-8 pr-2 custom-scrollbar contain-strict">
+                    ${responses.length === 0 ? `
+                        <div class="bg-zinc-900/50 rounded-xl p-8 text-center border border-dashed border-zinc-800">
+                            <p class="text-zinc-500 text-sm italic">No HTTP requests were captured during the collection cycle.</p>
+                            <p class="text-[10px] text-zinc-600 mt-2">This usually means the data was served from the local cache or an internal strategy.</p>
+                        </div>
+                    ` : responses.map((res, idx) => `
+                        <div class="space-y-2 pb-2 border-b border-zinc-800/20 last:border-0">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 mono text-[10px] font-bold border border-zinc-700/50">${res.status}</span>
+                                    <span class="px-2 py-0.5 rounded bg-zinc-900 text-violet-400 mono text-[10px] font-bold border border-violet-900/30">${res.method}</span>
+                                    <span class="text-[10px] text-zinc-500 mono truncate max-w-md" title="${escapeHTML(res.url)}">${escapeHTML(res.url)}</span>
+                                </div>
+                                <button data-copy-index="${idx}" class="copy-body-btn text-[9px] uppercase tracking-widest text-zinc-600 hover:text-zinc-400 font-bold transition-colors">Copy Body</button>
                             </div>
-                            <button onclick="copyToClipboard(JSON.stringify(JSON.parse(this.dataset.json), null, 2), this)" data-json='${escapeHTMLAttr(JSON.stringify(res.body))}' class="text-[9px] uppercase tracking-widest text-zinc-600 hover:text-zinc-400 font-bold transition-colors">Copy Body</button>
+                            <div class="bg-black/40 rounded-xl p-4 border border-zinc-800/60 overflow-hidden">
+                                <pre id="raw-body-${idx}" class="text-[11px] text-zinc-300 mono whitespace-pre-wrap overflow-x-auto leading-relaxed max-h-[400px] select-text"></pre>
+                            </div>
                         </div>
-                        <div class="bg-black/40 rounded-xl p-4 border border-zinc-800/60">
-                            <pre class="text-[11px] text-zinc-300 mono whitespace-pre-wrap overflow-x-auto leading-relaxed max-h-[400px]">${escapeHTML(JSON.stringify(res.body, null, 2))}</pre>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-            <div class="mt-6 flex justify-end">
-                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CLOSE</button>
+                    `).join('')}
+                </div>
+                <div class="mt-6 flex justify-end shrink-0">
+                    <button onclick="document.getElementById('modal-container').classList.remove('active')" class="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CLOSE</button>
+                </div>
             </div>
         `;
+
+        // 2. Inject raw data via textContent to prevent ANY HTML interpretation or interference
+        responses.forEach((res, idx) => {
+            const pre = document.getElementById(`raw-body-${idx}`);
+            if (pre) {
+                pre.textContent = RAW_DATA_CACHE.bodies[idx];
+            }
+        });
+
+        // 3. Attach safe handlers
+        document.getElementById('copy-all-raw')?.addEventListener('click', function() {
+            copyToClipboard(JSON.stringify(RAW_DATA_CACHE.full, null, 2), this);
+        });
+
+        document.querySelectorAll('.copy-body-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const idx = parseInt(this.dataset.copyIndex);
+                if (!isNaN(idx) && RAW_DATA_CACHE.bodies[idx]) {
+                    copyToClipboard(RAW_DATA_CACHE.bodies[idx], this);
+                }
+            });
+        });
+
     } catch (err) {
         content.innerHTML = `
             <div class="p-8 text-center">
@@ -956,4 +925,6 @@ window.setFilter = setFilter;
 window.setHistoryDays = setHistoryDays;
 window.setHistoryMetric = setHistoryMetric;
 window.toggleHistoryProvider = toggleHistoryProvider;
+window.refreshToken = refreshToken;
+window.deleteToken = deleteToken;
 

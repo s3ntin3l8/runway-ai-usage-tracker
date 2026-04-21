@@ -325,7 +325,7 @@ class GitHubCollector(BaseCollector):
 
         # If we have email/name in creds, cache them as identity
         if token:
-            self._current_input_source = "server"
+            self._current_input_source = getattr(creds, "sources", {}).get("api_key", "server")
             identity = creds.get("email") or creds.get("name")
             if identity:
                 self._identity = identity
@@ -339,7 +339,9 @@ class GitHubCollector(BaseCollector):
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
                 return tokens.get("api_key")
         return None
 

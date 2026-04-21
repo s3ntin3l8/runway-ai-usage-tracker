@@ -41,3 +41,15 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 - **Error Handling**: Graceful degradation — return "Error Card" states instead of crashing.
 - **Surgical Precision**: Preserve existing comments and structure during edits.
 - **Sidecar Focus**: Sidecars only extract/forward raw data; main server does the heavy lifting.
+
+## Standard Definitions
+
+### `data_source` (Origin of Payload)
+- **`api`**: Official API / OAuth endpoints.
+- **`web`**: Unofficial / Cookie-based / Scraped web endpoints.
+- **`local`**: Local log files / CLI statuslines / Fast path caches.
+
+### `input_source` (Origin of Credentials)
+- **`config`**: Entered via the Runway Dashboard UI (stored in DB).
+- **`server`**: Discovered by the local machine (ENV, local files, browser scraping).
+- **`sidecar`**: Discovered by a remote agent and pushed to the server.

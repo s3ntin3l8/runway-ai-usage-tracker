@@ -47,6 +47,23 @@ async def clear_token_cache():
         token_cache._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def mock_db_session():
+    """Mock the DB session to prevent tests from hitting the local database."""
+    # We patch sqlmodel.Session directly as it is used via context manager in CredentialProvider
+    with patch("sqlmodel.Session") as mock_session:
+        mock_db = MagicMock()
+        # Mock .exec() (SQLModel style)
+        mock_db.exec.return_value.all.return_value = []
+        mock_db.exec.return_value.first.return_value = None
+        # Mock .query() (Legacy SQLAlchemy style)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        # Make the context manager return our mock DB
+        mock_session.return_value.__enter__.return_value = mock_db
+        yield mock_db
+
+
 @pytest.fixture
 def env_vars(monkeypatch):
     """Provide a helper to set environment variables during tests using monkeypatch."""

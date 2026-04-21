@@ -353,6 +353,25 @@ export async function refreshToken(provider, accountId) {
     }
 }
 
+export async function deleteToken(provider, accountId) {
+    if (!confirm(`Are you sure you want to purge the ${provider} session for ${accountId} from the live cache?`)) return;
+    
+    try {
+        const res = await fetch(`/api/v1/system/token-health/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`, {
+            method: 'DELETE'
+        });
+        const d = await res.json();
+        if (res.ok) {
+            const pane = document.getElementById('settings-pane');
+            if (pane) renderTokensSection(pane);
+        } else {
+            alert('Purge failed: ' + (d.detail || JSON.stringify(d)));
+        }
+    } catch (err) {
+        alert('Delete failed: ' + err.message);
+    }
+}
+
 async function renderWebhooksSection(pane) {
     let webhooks = [];
     try {

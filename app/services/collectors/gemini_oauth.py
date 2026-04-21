@@ -31,7 +31,9 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
                 return tokens.get("oauth_token")
             return None
 
@@ -46,7 +48,9 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 token_data: dict[str, str] = {"oauth_token": token}
                 if creds.get("refresh_token"):
                     token_data["refresh_token"] = creds["refresh_token"]
-                await token_cache.store("gemini", token_data, account_id=None, account_label=None, source="server")
+                await token_cache.store(
+                    "gemini", token_data, account_id=None, account_label=None, source="server"
+                )
                 return token
 
         # Credentials file absent or scraping disabled — fall back to cache.
@@ -54,7 +58,9 @@ class GeminiOAuthMixin(OAuthBaseCollector):
         if cache_data:
             tokens, metadata = cache_data
             source = metadata.get("source") or "sidecar"
-            self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+            self._current_input_source = (
+                "config" if source in ("config", "manual_config") else "sidecar"
+            )
             return tokens.get("oauth_token")
         return None
 

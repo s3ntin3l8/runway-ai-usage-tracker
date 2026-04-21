@@ -32,7 +32,7 @@ class OpenRouterCollector(BaseCollector):
         """Discover API key: DB (UI-set) → token cache → env var."""
         db_key = credential_provider.get_provider_api_key("openrouter")
         if db_key:
-            self._current_input_source = "manual"
+            self._current_input_source = "config"
             return db_key
 
         if self.account_id:
@@ -42,7 +42,9 @@ class OpenRouterCollector(BaseCollector):
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = "manual" if source == "manual_config" else "sidecar"
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
                 return tokens.get("api_key")
 
         key = settings.OPENROUTER_API_KEY or None

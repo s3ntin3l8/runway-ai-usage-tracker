@@ -176,8 +176,11 @@ async def ingest_metrics(
 
     # Store local data metrics
     if local_cards:
+        from app.services.poller import poller
+
         await external_metric_service.metrics_update_from_ingest(request.provider, local_cards)
         logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
+        poller.wake()
 
     # Check if a remote trigger is pending for this sidecar
     trigger = (

@@ -190,6 +190,23 @@ class TokenCache:
             if not self._cache[provider]:
                 del self._cache[provider]
 
+    async def remove(self, provider: str, account_id: str) -> bool:
+        """
+        Manually remove an account from the cache.
+        Returns:
+            bool: True if removed, False if not found.
+        """
+        async with self._lock:
+            if provider in self._cache and account_id in self._cache[provider]:
+                del self._cache[provider][account_id]
+                logger.info(f"Manually removed {provider} account {account_id} from cache")
+
+                # Cleanup empty provider entry
+                if not self._cache[provider]:
+                    del self._cache[provider]
+                return True
+            return False
+
     async def get_all_stats(self) -> dict[str, Any]:
         """Get flattened stats for all cached providers and accounts."""
         async with self._lock:

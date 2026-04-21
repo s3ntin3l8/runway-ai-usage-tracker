@@ -24,7 +24,7 @@ class LimitCard(BaseModel):
     # Data collection mechanism (how)
     data_source: str = "unknown"  # "oauth", "web_api", "scrape", "logs", "statusline", "api"
     # Credential/Token origin (where)
-    input_source: str = "unknown"  # "sidecar", "config", "server", "manual"
+    input_source: str = "unknown"  # "sidecar", "config", "server"
     # Error categorization
     error_type: str | None = None
     # Tier classification (None = no badge shown)

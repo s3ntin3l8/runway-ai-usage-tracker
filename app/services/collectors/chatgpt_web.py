@@ -82,7 +82,7 @@ class ChatGPTWebMixin:
                         "unit_type": "percent",
                         "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": source,
-                        "input_source": input_source,
+                        "input_source": getattr(self, "_current_input_source", input_source),
                         "tier": tier,
                         "updated_at": now.isoformat(),
                     }

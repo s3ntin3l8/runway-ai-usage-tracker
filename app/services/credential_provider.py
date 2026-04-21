@@ -19,6 +19,14 @@ except ImportError:
     yaml = None  # type: ignore
 
 
+class CredentialMap(dict):
+    """A dictionary that tracks the source (config or server) for each key."""
+
+    def __init__(self, *args, **kwargs):
+        self.sources: dict[str, str] = kwargs.pop("sources", {})
+        super().__init__(*args, **kwargs)
+
+
 class CredentialProvider:
     """
     Centralized service for discovering credentials from various sources.
@@ -40,9 +48,10 @@ class CredentialProvider:
         return current
 
     @staticmethod
-    def get_credentials(provider_id: str) -> dict[str, str]:
+    def get_credentials(provider_id: str) -> "CredentialMap":
         """Generic extraction based on registry rules for a provider."""
         results: dict[str, str] = {}
+        sources: dict[str, str] = {}
         is_scraping_enabled = is_local_credential_scraping_enabled()
         runway_config_dir = get_platform_config_dir("runway-tracker")
 
@@ -63,6 +72,7 @@ class CredentialProvider:
                 ).first()
                 if _cfg and _cfg.api_key:
                     results["api_key"] = _cfg.api_key
+                    sources["api_key"] = "config"
         except Exception:
             pass
 
@@ -80,6 +90,8 @@ class CredentialProvider:
                     val = os.getenv(rule.get("variable"))
                     if val:
                         results[target_key] = val
+                        if target_key not in sources:
+                            sources[target_key] = "server"
 
             # 2. Local Files (JSON/YAML)
             elif rule_type == "file":
@@ -109,6 +121,13 @@ class CredentialProvider:
                                     )
                                     if val:
                                         results[target] = val
+                                        if target not in sources:
+                                            # If the file is in our own internal config dir, it's UI-managed -> config.
+                                            # Otherwise it's discovered in the wild -> server.
+                                            is_internal = runway_config_dir and str(
+                                                path
+                                            ).startswith(str(runway_config_dir))
+                                            sources[target] = "config" if is_internal else "server"
                         except Exception as e:
                             logger.debug(f"Error reading file {path}: {e}")
 
@@ -135,14 +154,18 @@ class CredentialProvider:
                                     )
                                     if val:
                                         results[target] = val
+                                        if target not in sources:
+                                            sources[target] = "server"
                         else:
                             target = mapping.get("value", "token")
                             if target not in results:
                                 results[target] = raw
+                                if target not in sources:
+                                    sources[target] = "server"
                 except Exception:
                     pass
 
-        return results
+        return CredentialMap(results, sources=sources)
 
     @staticmethod
     def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:
@@ -168,10 +191,9 @@ class CredentialProvider:
         return CredentialProvider._get_nested(data, parts)
 
     @staticmethod
-    def get_github_data() -> dict[str, str]:
+    def get_github_data() -> "CredentialMap":
         """Get full GitHub OAuth data using registry rules."""
-        creds = CredentialProvider.get_credentials("github")
-        return creds
+        return CredentialProvider.get_credentials("github")
 
     @staticmethod
     def get_github_token() -> str:
@@ -224,12 +246,21 @@ class CredentialProvider:
         return None
 
     @staticmethod
-    def get_chatgpt_data() -> dict[str, str]:
+    def get_chatgpt_data() -> "CredentialMap":
         """Get full ChatGPT OAuth data using registry rules."""
         creds = CredentialProvider.get_credentials("chatgpt")
+
+        # Map UI-entered API Key (api_key) to oauth_token if present
+        if "api_key" in creds:
+            creds["oauth_token"] = creds["api_key"]
+            if "api_key" in creds.sources:
+                creds.sources["oauth_token"] = creds.sources["api_key"]
+
         # Ensure compatibility with existing keys
         if "oauth_token" in creds:
             creds["access_token"] = creds["oauth_token"]
+            if "oauth_token" in creds.sources:
+                creds.sources["access_token"] = creds.sources["oauth_token"]
         return creds
 
     @staticmethod
@@ -295,6 +326,13 @@ class CredentialProvider:
             return cls._claude_token_cache
 
         creds = cls.get_credentials("anthropic")
+
+        # Prioritize UI-entered token (api_key) if present
+        if "api_key" in creds:
+            token = creds["api_key"]
+            cls._claude_token_cache = token
+            return token
+
         token = creds.get("oauth_token", "")
         if token:
             cls._claude_token_cache = token

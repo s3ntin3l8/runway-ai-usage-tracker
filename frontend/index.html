@@ -107,14 +107,13 @@
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <h3 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Usage Over Time</h3>
                         <div class="flex items-center gap-3 flex-wrap">
-                            <!-- Time range -->
-                            <div class="flex gap-1" id="history-range-btns">
-                                <button class="toggle-btn" data-days="0.042" onclick="setHistoryDays(0.042)">1h</button>
-                                <button class="toggle-btn" data-days="0.25" onclick="setHistoryDays(0.25)">6h</button>
-                                <button class="toggle-btn" data-days="1" onclick="setHistoryDays(1)">1d</button>
-                                <button class="toggle-btn active" data-days="7" onclick="setHistoryDays(7)">7d</button>
-                                <button class="toggle-btn" data-days="30" onclick="setHistoryDays(30)">30d</button>
-                                <button class="toggle-btn" data-days="90" onclick="setHistoryDays(90)">90d</button>
+                            <!-- Window Type Filter -->
+                            <div class="flex gap-1" id="history-window-btns">
+                                <button class="toggle-btn active" data-window="all" onclick="setHistoryWindow('all')">All</button>
+                                <button class="toggle-btn" data-window="session" onclick="setHistoryWindow('session')">Session</button>
+                                <button class="toggle-btn" data-window="daily" onclick="setHistoryWindow('daily')">Daily</button>
+                                <button class="toggle-btn" data-window="weekly" onclick="setHistoryWindow('weekly')">Weekly</button>
+                                <button class="toggle-btn" data-window="monthly" onclick="setHistoryWindow('monthly')">Monthly</button>
                             </div>
                             <!-- Metric -->
                             <div class="flex gap-1" id="history-metric-btns">
@@ -125,8 +124,10 @@
                         </div>
                     </div>
                     <div id="history-sparkline-strip"></div>
-                    <div id="chart-empty" class="hidden text-zinc-500 italic text-sm py-8 text-center">No data for selected range.</div>
-                    <div id="chart-wrap"><canvas id="chart-usage" height="400"></canvas></div>
+                    <div id="chart-empty" class="hidden text-zinc-500 italic text-sm py-12 text-center">No data for selected range.</div>
+                    <div id="chart-wrap" class="relative w-full h-[450px]">
+                        <div id="chart-usage" class="w-full h-full"></div>
+                    </div>
                 </div>
 
                 <!-- Header + CSV download -->
@@ -185,6 +186,18 @@
                         </form>
                         <div id="auth-error" class="mt-4 text-red-500 text-xs font-semibold hidden">Invalid Admin Key</div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Server Error View -->
+            <section id="view-error" class="view hidden">
+                <div class="error-view">
+                    <div class="error-view-icon">📵</div>
+                    <h2 class="text-2xl font-bold text-zinc-50 mb-2">Connection Problem</h2>
+                    <p id="error-message" class="text-zinc-500 text-sm mb-8 max-w-sm">Runway could not reach the backend server. Make sure the server is running and accessible.</p>
+                    <button onclick="location.reload()" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-100 px-8 py-3 rounded-xl font-bold transition-all">
+                        Retry Connection
+                    </button>
                 </div>
             </section>
 

@@ -65,7 +65,10 @@ class TestClassifyStatus:
         assert _classify_status(exp) == "expired"
 
     def test_unknown_when_no_exp(self):
-        assert _classify_status(None) == "unknown"
+        # Without is_opaque, it is unknown
+        assert _classify_status(None, is_opaque=False) == "unknown"
+        # With is_opaque, it is valid (READY)
+        assert _classify_status(None, is_opaque=True) == "valid"
 
 
 class TestTokenHealthService:
@@ -95,6 +98,7 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value=mock_tokens),
             ),
+            patch("os.path.exists", return_value=False),
             _mock_no_db_configs(),
         ):
             result = await service.get_health()
@@ -130,6 +134,7 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value=mock_tokens),
             ),
+            patch("os.path.exists", return_value=False),
             _mock_no_db_configs(),
         ):
             result = await service.get_health()
@@ -157,11 +162,12 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value=mock_tokens),
             ),
+            patch("os.path.exists", return_value=False),
             _mock_no_db_configs(),
         ):
             result = await service.get_health()
 
-        assert result[0]["status"] == "unknown"
+        assert result[0]["status"] == "valid"
         assert result[0]["expires_at"] is None
 
     @pytest.mark.asyncio
@@ -189,6 +195,7 @@ class TestTokenHealthService:
                 "app.services.token_health.token_cache.get",
                 new=AsyncMock(return_value={}),
             ),
+            patch("os.path.exists", return_value=False),
             patch("app.services.token_health.Session", return_value=mock_session),
         ):
             result = await service.get_health()
@@ -199,5 +206,5 @@ class TestTokenHealthService:
         assert r["account_id"] == "config"
         assert r["source"] == "config"
         assert r["token_types"] == ["api_key"]
-        assert r["status"] == "unknown"
+        assert r["status"] == "valid"
         assert r["can_refresh"] is False

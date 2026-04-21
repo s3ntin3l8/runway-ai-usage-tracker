@@ -1,9 +1,9 @@
 // frontend/js/charts.js
-// Chart.js wrapper for the History tab usage panel.
-// Chart.js is lazy-loaded on first use of the History view.
+// Apache ECharts wrapper for the History tab usage panel.
+// ECharts is lazy-loaded on first use of the History view.
 
 let _chart = null;
-let _chartJS = null;
+let _echarts = null;
 
 const PROVIDER_COLORS = {
     anthropic: "#f59e0b",
@@ -16,14 +16,36 @@ const PROVIDER_COLORS = {
     ollama: "#94a3b8",
 };
 
+/**
+ * Get base color for a provider.
+ */
 function colorFor(providerId) {
     return PROVIDER_COLORS[providerId] || "#64748b";
 }
 
 /**
+ * Generate a shade/style for a specific series within a provider.
+ * Uses different opacity and dash patterns to distinguish metrics.
+ */
+function getSeriesStyle(providerId, index) {
+    const baseColor = colorFor(providerId);
+    // Patterns for different lines of the same provider
+    const patterns = [
+        { type: 'solid', dash: null },
+        { type: 'dashed', dash: [5, 5] },
+        { type: 'dotted', dash: [2, 2] },
+        { type: 'dash-dot', dash: [10, 2, 2, 2] }
+    ];
+    const pattern = patterns[index % patterns.length];
+    return {
+        color: baseColor,
+        lineType: pattern.type,
+        lineDash: pattern.dash
+    };
+}
+
+/**
  * Pick bucket granularity for a given window. Mirrors backend _pick_bucket_seconds.
- * @param {number} days
- * @returns {number} bucket size in seconds
  */
 export function pickBucketSeconds(days) {
     if (days >= 2) return 86400;  // 7d/30d/90d → daily
@@ -32,18 +54,11 @@ export function pickBucketSeconds(days) {
     return 60;                     // 1h → 1 min
 }
 
-/**
- * Canonical bucket key for an ISO timestamp at a given granularity.
- * Returns the bucket-start epoch (number) for stable Map/Set equality.
- */
 export function bucketKeyFor(isoTs, bucketSeconds) {
     const t = Math.floor(new Date(isoTs).getTime() / 1000);
     return t - (t % bucketSeconds);
 }
 
-/**
- * Human label for a bucket epoch, formatted at the granularity of the bucket.
- */
 export function formatBucketLabel(bucketEpoch, bucketSeconds) {
     const d = new Date(bucketEpoch * 1000);
     if (bucketSeconds >= 86400) {
@@ -55,24 +70,20 @@ export function formatBucketLabel(bucketEpoch, bucketSeconds) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function extractLabelsAndProviders(snapshots, bucketSeconds) {
-    const bucketEpochs = new Set();
-    const providers = new Set();
+/**
+ * Identify all unique series combinations in the dataset.
+ */
+function extractSeriesKeys(snapshots) {
+    const keys = new Set();
     for (const s of snapshots) {
-        bucketEpochs.add(bucketKeyFor(s.timestamp, bucketSeconds));
-        providers.add(s.provider_id || 'unknown');
+        const key = `${s.provider_id || 'unknown'}|${s.service_name || 'Usage'}|${s.window_type || 'unknown'}`;
+        keys.add(key);
     }
-    const sortedEpochs = Array.from(bucketEpochs).sort((a, b) => a - b);
-    return {
-        bucketEpochs: sortedEpochs,
-        labels: sortedEpochs.map(e => formatBucketLabel(e, bucketSeconds)),
-        providers: Array.from(providers),
-    };
+    return Array.from(keys).sort();
 }
 
 /**
- * Bucket snapshots by (bucket, provider) at the given granularity.
- * @returns {Object} { [bucketEpoch]: { provider_id: { sum, count } } }
+ * Bucket snapshots by (bucket, seriesKey) at the given granularity.
  */
 function bucketByMetric(snapshots, metric, bucketSeconds) {
     const buckets = {};
@@ -85,7 +96,6 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
             if (snap.unit_type !== 'tokens' || snap.used_value == null) continue;
             value = snap.used_value;
         } else {
-            // percent: use direct percent value or derive ratio from quota-type units
             if (snap.unit_type === 'percent' && snap.used_value != null) {
                 value = snap.used_value;
             } else if (['tokens', 'requests', 'messages', 'credits'].includes(snap.unit_type)
@@ -96,55 +106,64 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
             }
         }
         const bucket = bucketKeyFor(snap.timestamp, bucketSeconds);
-        const pid = snap.provider_id || "unknown";
+        const key = `${snap.provider_id || 'unknown'}|${snap.service_name || 'Usage'}|${snap.window_type || 'unknown'}`;
+        
         if (!buckets[bucket]) buckets[bucket] = {};
-        if (!buckets[bucket][pid]) buckets[bucket][pid] = { sum: 0, count: 0 };
-        buckets[bucket][pid].sum += value;
-        buckets[bucket][pid].count += 1;
+        if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0 };
+        buckets[bucket][key].sum += value;
+        buckets[bucket][key].count += 1;
     }
     return buckets;
 }
 
 export function destroyCharts() {
-    if (_chart) { _chart.destroy(); _chart = null; }
+    if (_chart) {
+        _chart.dispose();
+        _chart = null;
+    }
 }
 
-async function ensureChartJS() {
-    if (_chartJS) return _chartJS;
-    if (window.Chart) {
-        _chartJS = window.Chart;
-        return _chartJS;
+async function ensureECharts() {
+    if (_echarts) return _echarts;
+    if (window.echarts) {
+        _echarts = window.echarts;
+        return _echarts;
     }
-    // Dynamically import and execute the script in global context
-    const chartModule = await import('./lib/chart.min.js');
-    // UMD attaches to 'this' (window in browser), not as default export
-    // Re-import via script tag to get it onto window
-    if (!window.Chart) {
+    
+    // Check if it was already loaded via script tag in index.html or needs dynamic loading
+    if (!window.echarts) {
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = '/static/js/lib/chart.min.js';
+            script.src = '/static/js/lib/echarts.min.js';
             script.onload = () => resolve();
-            script.onerror = () => reject(new Error('Failed to load Chart.js'));
+            script.onerror = () => reject(new Error('Failed to load ECharts'));
             document.head.appendChild(script);
         });
     }
-    _chartJS = window.Chart;
-    return _chartJS;
+    _echarts = window.echarts;
+    return _echarts;
 }
 
 /**
  * @param {Array} snapshots - history snapshot objects
  * @param {'percent'|'tokens'|'cost'} [metric='percent'] - which value to plot
- * @param {number} [days=7] - active history window; picks bucket granularity
+ * @param {number} [days=7] - active history window
+ * @param {string} [windowFilter='all'] - optional filter for window_type
  */
-export async function updateCharts(snapshots, metric = 'percent', days = 7) {
+export async function updateCharts(snapshots, metric = 'percent', days = 7, windowFilter = 'all') {
     destroyCharts();
 
-    const canvas = document.getElementById("chart-usage");
+    const container = document.getElementById("chart-usage");
     const emptyEl = document.getElementById("chart-empty");
-    if (!canvas) return;
+    if (!container) return;
 
-    if (!snapshots || snapshots.length === 0) {
+    // Filter by window_type if requested
+    let filteredSnapshots = snapshots;
+    if (windowFilter !== 'all') {
+        filteredSnapshots = snapshots.filter(s => s.window_type === windowFilter);
+    }
+
+    if (!filteredSnapshots || filteredSnapshots.length === 0) {
         emptyEl?.classList.remove("hidden");
         document.getElementById("chart-wrap")?.classList.add("hidden");
         return;
@@ -153,80 +172,176 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7) {
     document.getElementById("chart-wrap")?.classList.remove("hidden");
 
     const bucketSeconds = pickBucketSeconds(days);
-    const { bucketEpochs, labels, providers } = extractLabelsAndProviders(snapshots, bucketSeconds);
-    const buckets = bucketByMetric(snapshots, metric, bucketSeconds);
+    const seriesKeys = extractSeriesKeys(filteredSnapshots);
+    const buckets = bucketByMetric(filteredSnapshots, metric, bucketSeconds);
 
-    // Check if there's any data for this metric
-    const hasData = bucketEpochs.some(ep => providers.some(p => buckets[ep]?.[p]));
-    if (!hasData) {
+    // Get sorted bucket epochs for the X axis
+    const bucketEpochs = Object.keys(buckets).map(Number).sort((a, b) => a - b);
+    if (bucketEpochs.length === 0) {
         emptyEl?.classList.remove("hidden");
         document.getElementById("chart-wrap")?.classList.add("hidden");
         return;
     }
 
+    const xAxisData = bucketEpochs.map(e => formatBucketLabel(e, bucketSeconds));
     const yLabel = metric === 'cost' ? 'Cost (USD)' : metric === 'tokens' ? 'Tokens' : '% Used';
 
-    const datasets = providers.map(provider => {
-        const color = colorFor(provider);
+    // Grouping series by provider for color stability
+    const providerCounts = {};
+    
+    const series = seriesKeys.map(key => {
+        const [pid, name, windowType] = key.split('|');
+        if (providerCounts[pid] === undefined) providerCounts[pid] = 0;
+        const style = getSeriesStyle(pid, providerCounts[pid]++);
+        
         return {
-            label: provider.toUpperCase(),
+            name: `${pid.toUpperCase()}: ${name}`,
+            type: 'line',
+            smooth: true,
+            symbol: 'circle',
+            symbolSize: 4,
+            showSymbol: bucketEpochs.length < 50, // Hide symbols if too many points
+            lineStyle: {
+                width: 2,
+                type: style.lineType,
+                dashOffset: 0,
+            },
+            itemStyle: { color: style.color },
+            areaStyle: {
+                color: {
+                    type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                    colorStops: [{ offset: 0, color: style.color + '33' }, { offset: 1, color: style.color + '00' }]
+                }
+            },
             data: bucketEpochs.map(ep => {
-                const b = buckets[ep]?.[provider];
+                const b = buckets[ep]?.[key];
                 return b ? parseFloat((b.sum / b.count).toFixed(2)) : null;
             }),
-            borderColor: color,
-            backgroundColor: color + "15",
-            borderWidth: 2,
-            tension: 0.3,
-            spanGaps: true,
-            pointRadius: 2,
-            pointHoverRadius: 5,
-            fill: true,
+            connectNulls: true,
+            emphasis: {
+                focus: 'series',
+                lineStyle: { width: 3 }
+            }
         };
     });
 
-    const options = {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 300 },
-        plugins: {
-            legend: {
-                position: 'top', align: 'end',
-                labels: { color: "#71717a", font: { size: 10, weight: 'bold' }, usePointStyle: true, boxWidth: 6 }
-            },
-            tooltip: {
-                mode: "index", intersect: false,
-                backgroundColor: 'rgba(24, 24, 27, 0.95)',
-                titleColor: '#f4f4f5', bodyColor: '#a1a1aa',
-                borderColor: 'rgba(63, 63, 70, 0.5)', borderWidth: 1,
-                padding: 10, bodyFont: { family: 'JetBrains Mono' }
-            },
-        },
-        scales: {
-            x: { ticks: { color: "#52525b", font: { size: 9 }, maxTicksLimit: 7 }, grid: { display: false } },
-            y: {
-                beginAtZero: true,
-                ticks: { color: "#52525b", font: { size: 9 }, maxTicksLimit: 5 },
-                grid: { color: "rgba(39, 39, 42, 0.5)" },
-                title: { display: true, text: yLabel, color: '#52525b', font: { size: 9 } },
-            },
-        },
-    };
-
     try {
-        const Chart = await ensureChartJS();
-        _chart = new Chart(canvas.getContext("2d"), {
-            type: "line",
-            data: { labels, datasets },
-            options,
+        const echarts = await ensureECharts();
+        _chart = echarts.init(container);
+        
+        const option = {
+            backgroundColor: 'transparent',
+            tooltip: {
+                trigger: 'item',
+                backgroundColor: 'rgba(24, 24, 27, 0.95)',
+                borderColor: 'rgba(63, 63, 70, 0.5)',
+                borderWidth: 1,
+                padding: [10, 15],
+                textStyle: { color: '#f4f4f5', fontFamily: 'JetBrains Mono', fontSize: 11 },
+                formatter: (params) => {
+                    const unit = metric === 'percent' ? '%' : (metric === 'cost' ? ' USD' : '');
+                    return `
+                        <div style="margin-bottom: 4px; color: #71717a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${params.name}</div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ${params.color}"></span>
+                            <span style="font-weight: 700; color: #f4f4f5;">${params.seriesName}</span>
+                            <span style="margin-left: 12px; font-family: 'JetBrains Mono'; color: #3b82f6;">${params.value}${unit}</span>
+                        </div>
+                    `;
+                }
+            },
+            legend: {
+                type: 'scroll',
+                bottom: 10,
+                textStyle: { color: '#71717a', fontSize: 10 },
+                pageTextStyle: { color: '#71717a' },
+                icon: 'roundRect'
+            },
+            grid: {
+                top: 40,
+                left: 60,
+                right: 30,
+                bottom: 80,
+                containLabel: false
+            },
+            xAxis: {
+                type: 'category',
+                boundaryGap: false,
+                data: xAxisData,
+                axisLabel: { color: '#52525b', fontSize: 9, margin: 15 },
+                axisLine: { lineStyle: { color: 'rgba(39, 39, 42, 0.5)' } },
+                axisTick: { show: false }
+            },
+            yAxis: {
+                type: 'value',
+                name: yLabel,
+                nameTextStyle: { color: '#52525b', fontSize: 9, align: 'right' },
+                axisLabel: { color: '#52525b', fontSize: 9 },
+                splitLine: { lineStyle: { color: 'rgba(39, 39, 42, 0.5)', type: 'dashed' } },
+                axisLine: { show: false }
+            },
+            toolbox: {
+                show: true,
+                right: 20,
+                top: 0,
+                feature: {
+                    myRange1h: { show: true, title: '1h', icon: 'path://M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z', onclick: () => window.setHistoryDays(0.042) },
+                    myRange6h: { show: true, title: '6h', icon: 'path://M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm1 10V7h-2v6h5v-2h-3z', onclick: () => window.setHistoryDays(0.25) },
+                    myRange1d: { show: true, title: '1d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(1) },
+                    myRange7d: { show: true, title: '7d', icon: 'path://M19 19H5V8h14v11zM19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 8h5v5h-5v-5z', onclick: () => window.setHistoryDays(7) },
+                    myRange30d: { show: true, title: '30d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(30) },
+                    myRange90d: { show: true, title: '90d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(90) }
+                },
+                iconStyle: {
+                    borderColor: '#52525b',
+                    borderWidth: 1
+                },
+                emphasis: {
+                    iconStyle: {
+                        borderColor: '#3b82f6'
+                    }
+                }
+            },
+            dataZoom: [
+                {
+                    type: 'inside',
+                    start: 0,
+                    end: 100
+                },
+                {
+                    type: 'slider',
+                    bottom: 40,
+                    height: 20,
+                    borderColor: 'transparent',
+                    fillerColor: 'rgba(59, 130, 246, 0.1)',
+                    handleIcon: 'path://M10.7,11.9v-1.3H9.3v1.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4v1.3h1.3v-1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,19.6H6.7v-1.4h6.6V19.6z',
+                    handleSize: '80%',
+                    handleStyle: { color: '#3f3f46' },
+                    textStyle: { color: 'transparent' },
+                    dataBackground: {
+                        lineStyle: { color: '#3b82f6', opacity: 0.2 },
+                        areaStyle: { color: '#3b82f6', opacity: 0.1 }
+                    }
+                }
+            ],
+            series: series
+        };
+        
+        _chart.setOption(option);
+
+        // Notify parent if user zooms in significantly
+        _chart.on('datazoom', (params) => {
+            // This is a bit tricky to handle without infinite loops, 
+            // but we can detect if the selected range is very small 
+            // compared to the fetched range.
+            // For now, the toolbox presets are the primary way.
         });
+        
+        window.addEventListener('resize', () => _chart && _chart.resize());
+        
     } catch (err) {
-        console.error('Failed to load Chart.js:', err);
+        console.error('Failed to init ECharts:', err);
         emptyEl.textContent = 'Failed to load chart. Please refresh.';
         emptyEl?.classList.remove("hidden");
     }
-}
-
-export function setChartView(view) {
-    // Legacy support for app.js calls
 }
