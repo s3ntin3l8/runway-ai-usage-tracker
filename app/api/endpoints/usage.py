@@ -94,37 +94,91 @@ async def get_usage_history(
     return {"averages": avg_grouped, "peaks": peak_grouped}
 
 
-# Credit-based providers: their "monthly" is credit bucket, not time window
+@router.get("/history/raw")
+@limiter.limit("30/minute")
+async def get_usage_history_raw(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    days: float = Query(default=1.0, ge=0.01, le=90.0),
+    limit: int = Query(default=500, ge=1, le=2000),
+    session: Session = Depends(get_session),
+):
+    """Fetch raw usage history for chart rendering.
+
+    Returns ungrouped snapshots so chart can display each unique
+    provider+service+window combination as separate line.
+    """
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    statement = select(UsageSnapshot).where(UsageSnapshot.timestamp >= since)
+
+    if provider_id:
+        statement = statement.where(UsageSnapshot.provider_id == provider_id)
+    if account_id:
+        statement = statement.where(UsageSnapshot.account_id == account_id)
+
+    statement = statement.order_by(desc(UsageSnapshot.timestamp))
+    results = session.exec(statement.limit(limit)).all()
+
+    return [
+        {
+            "id": r.id,
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "provider_id": r.provider_id,
+            "account_id": r.account_id,
+            "account_label": r.account_label,
+            "service_name": r.service_name,
+            "used_value": r.used_value,
+            "limit_value": r.limit_value,
+            "unit_type": r.unit_type,
+            "window_type": r.window_type,
+            "data_source": r.data_source,
+        }
+        for r in results
+    ]
+
+
+# Credit-based providers: their "monthly" is a credit bucket, goes to weekly column
 CREDIT_PROVIDERS = {"openrouter", "minimax"}
 
 # Session-like window types
 SESSION_WINDOWS = {"session", "daily", "hourly", "prepaid"}
-# Weekly-like window types
+# Weekly-like window types (including credit provider's "monthly")
 WEEKLY_WINDOWS = {"weekly", "biweekly", "bi-weekly", "monthly"}
 
 
 def _classify_window(window_type: str | None, provider_id: str | None = None) -> str:
     """Classify window_type into category: 'session', 'weekly', or 'other'.
 
-    Handles credit-based providers (openrouter, minimax) differently - their
-    'monthly' is a credit bucket, not a time window.
+    For credit providers (openrouter, minimax):
+    - session/daily/hourly → session column
+    - monthly (credit bucket) → weekly column
+    - other windows → other column
+
+    For other providers:
+    - session/daily/hourly → session column
+    - weekly/biweekly/monthly → weekly column
+    - other (model-specific, etc.) → other column
     """
     if not window_type:
         return "other"
     w = window_type.lower()
 
-    # For credit providers, only session-like windows go to session
-    if provider_id and provider_id.lower() in CREDIT_PROVIDERS:
-        if w in SESSION_WINDOWS:
-            return "session"
-        return "other"
-
-    # Session: short-term windows
+    # Session windows go to session for all providers
     if w in SESSION_WINDOWS:
         return "session"
-    # Weekly: week-boundary windows (includes monthly = ~4 weeks)
+
+    # For credit providers: monthly = credit bucket = weekly column
+    if provider_id and provider_id.lower() in CREDIT_PROVIDERS:
+        if w in WEEKLY_WINDOWS:
+            return "weekly"
+        return "other"
+
+    # For other providers: weekly-like windows go to weekly
     if w in WEEKLY_WINDOWS:
         return "weekly"
+
     return "other"
 
 
