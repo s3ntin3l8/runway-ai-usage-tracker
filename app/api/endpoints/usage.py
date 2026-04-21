@@ -86,9 +86,96 @@ async def get_usage_history(
     bucket_seconds = _pick_bucket_seconds(days)
     raw = session.exec(statement.limit(20000)).all()
     averages, peaks = _dedupe_with_peaks(raw, bucket_seconds)
-    avg_dicts = [_snapshot_to_dict(s) for s in averages[:limit]]
-    peak_dicts = [_snapshot_to_dict(s) for s in peaks[:limit]]
-    return {"averages": avg_dicts, "peaks": peak_dicts}
+
+    # Group by timestamp+provider+account for table display
+    avg_grouped = _group_snapshots(averages[:limit])
+    peak_grouped = _group_snapshots(peaks[:limit])
+
+    return {"averages": avg_grouped, "peaks": peak_grouped}
+
+
+def _classify_window(window_type: str | None) -> str:
+    """Classify window_type into category: 'session', 'weekly', or 'other'."""
+    if not window_type:
+        return "other"
+    w = window_type.lower()
+    if w in ("session", "daily", "hourly"):
+        return "session"
+    if w in ("weekly", "bi-weekly", "monthly"):
+        return "weekly"
+    return "other"
+
+
+def _group_snapshots(
+    snapshots: Sequence[UsageSnapshot],
+) -> list[dict]:
+    """Group snapshots by timestamp+provider+account_label for table display.
+
+    Returns list of grouped records:
+    {
+        "timestamp": "...",
+        "provider_id": "...",
+        "account_label": "...",
+        "session": {"value": float, "unit": str},  # or null
+        "weekly": {"value": float, "unit": str},   # or null
+        "additional": [ {"window": str, "value": float, "unit": str}, ... ]
+    }
+    """
+    from collections import defaultdict
+
+    grouped: dict[tuple, dict] = defaultdict(
+        lambda: {
+            "session": None,
+            "weekly": None,
+            "additional": [],
+        }
+    )
+
+    for s in snapshots:
+        ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=UTC)
+        key = (ts.isoformat(), s.provider_id, s.account_label or s.account_id)
+
+        category = _classify_window(s.window_type)
+        entry = {
+            "value": s.used_value,
+            "unit": s.unit_type,
+        }
+
+        if category == "session":
+            grouped[key]["session"] = entry
+        elif category == "weekly":
+            grouped[key]["weekly"] = entry
+        else:
+            grouped[key]["additional"].append(
+                {
+                    "window": s.window_type,
+                    "value": s.used_value,
+                    "unit": s.unit_type,
+                }
+            )
+
+    result = []
+    for (timestamp, provider_id, account_label), data in grouped.items():
+        additional_str = (
+            " | ".join(f"{a['window']}: {a['value']}{a['unit']}" for a in data["additional"])
+            if data["additional"]
+            else None
+        )
+
+        result.append(
+            {
+                "timestamp": timestamp,
+                "provider_id": provider_id,
+                "account_label": account_label,
+                "session": data["session"],
+                "weekly": data["weekly"],
+                "additional": additional_str,
+            }
+        )
+
+    # Sort by timestamp descending (newest first)
+    result.sort(key=lambda x: x["timestamp"], reverse=True)
+    return result
 
 
 def _pick_bucket_seconds(days: float) -> int:
