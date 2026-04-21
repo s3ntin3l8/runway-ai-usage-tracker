@@ -105,33 +105,56 @@ function updateCsvHref() {
     btn.href = `/api/v1/usage/history?${params.toString()}`;
 }
 
+function formatWindowValue(entry) {
+    if (!entry) return '—';
+    const val = entry.value;
+    const unit = entry.unit || '';
+    if (val === null || val === undefined) return '—';
+    return `${val.toLocaleString()}${unit === 'percent' ? '%' : unit}`;
+}
+
 export function renderHistoryFromCache(skipChartUpdate = false) {
     const history = _historyCache;
     const stripEl = document.getElementById('history-sparkline-strip');
-    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(history, historyState.activeProviders, historyState.days);
 
+    // Build sparklines from grouped data - extract provider_id from each grouped row
+    const sparklineData = history.map(row => ({
+        provider_id: row.provider_id,
+        timestamp: row.timestamp,
+        used_value: row.session?.value ?? row.weekly?.value ?? null,
+        limit_value: null,
+        unit_type: row.session?.unit ?? row.weekly?.unit ?? 'percent',
+        window_type: row.session ? 'session' : (row.weekly ? 'weekly' : 'unknown')
+    }));
+    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
+
+    // Update charts with the same adapted data
+    if (!skipChartUpdate) {
+        updateCharts(sparklineData, historyState.metric, historyState.days, historyState.windowFilter, historyState.showPeaks);
+    }
+
+    const container = document.getElementById('history-content');
+    if (!history || history.length === 0) {
+        container.innerHTML = '<p class="text-zinc-500 italic">No history data found.</p>';
+        return;
+    }
+
+    // Filter by provider if active
     let filtered = history;
     if (historyState.activeProviders) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
 
-    // updateCharts now handles windowFilter internally or we can filter here
-    if (!skipChartUpdate) {
-        updateCharts(filtered, historyState.metric, historyState.days, historyState.windowFilter, historyState.showPeaks);
-    }
-
-    const container = document.getElementById('history-content');
-    if (!filtered || filtered.length === 0) {
-        container.innerHTML = '<p class="text-zinc-500 italic">No history data found.</p>';
-        return;
-    }
-    
-    // Apply window filter to the table
+    // Apply window filter to table (affects what we show in session/weekly columns)
     let tableData = filtered;
     if (historyState.windowFilter !== 'all') {
-        tableData = filtered.filter(s => (s.window_type || 'unknown').toLowerCase() === historyState.windowFilter);
+        tableData = filtered.filter(s => {
+            if (historyState.windowFilter === 'session') return !!s.session;
+            if (historyState.windowFilter === 'weekly') return !!s.weekly;
+            return true;
+        });
     }
-    
+
     const totalItems = tableData.length;
     const pageSize = 20;
     const totalPages = Math.ceil(totalItems / pageSize);
@@ -143,26 +166,26 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
             <tr>
                 <th class="py-2 px-2">Time</th>
                 <th class="py-2 px-2">Provider</th>
-                <th class="py-2 px-2">Service (Window)</th>
-                <th class="py-2 px-2">Source</th>
-                <th class="py-2 px-2">Method</th>
-                <th class="py-2 px-2 text-right">Usage</th>
+                <th class="py-2 px-2">Account</th>
+                <th class="py-2 px-2 text-right">Session</th>
+                <th class="py-2 px-2 text-right">Weekly</th>
+                <th class="py-2 px-2">Additional</th>
             </tr>
         </thead>
         <tbody class="text-zinc-400">`;
     pageData.forEach(s => {
         const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const usage = s.used_value !== null ? `${s.used_value.toLocaleString()}${s.unit_type === 'percent' ? '%' : ''}` : '—';
-        const source = s.sidecar_id || 'local';
-        const method = (s.data_source || 'unknown').replace('_', ' ');
-        
+        const session = formatWindowValue(s.session);
+        const weekly = formatWindowValue(s.weekly);
+        const additional = s.additional || '—';
+
         html += `<tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
             <td class="py-2 px-2 text-zinc-600">${date}</td>
-            <td class="py-2 px-2 text-zinc-500">${escapeHTML(s.provider_id || '—')}</td>
-            <td class="py-2 px-2 font-medium text-zinc-300">${escapeHTML(s.service_name || '—')} <span class="text-[9px] text-zinc-600 uppercase">(${escapeHTML(s.window_type || '—')})</span></td>
-            <td class="py-2 px-2 text-zinc-500 italic">${escapeHTML(source)}</td>
-            <td class="py-2 px-2"><span class="px-1.5 py-0.5 rounded-md bg-zinc-800/50 text-[9px] uppercase text-zinc-500">${escapeHTML(method)}</span></td>
-            <td class="py-2 px-2 text-right font-bold text-zinc-400">${usage}</td>
+            <td class="py-2 px-2 text-zinc-500 font-medium">${escapeHTML(s.provider_id || '—')}</td>
+            <td class="py-2 px-2 text-zinc-500 italic">${escapeHTML(s.account_label || '—')}</td>
+            <td class="py-2 px-2 text-right font-bold text-zinc-300">${session}</td>
+            <td class="py-2 px-2 text-right font-bold text-zinc-300">${weekly}</td>
+            <td class="py-2 px-2 text-zinc-500 italic">${escapeHTML(additional)}</td>
         </tr>`;
     });
     html += '</tbody></table>';
