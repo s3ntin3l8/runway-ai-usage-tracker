@@ -103,6 +103,13 @@ export async function fetchHistory(params = {}) {
     return await resp.json();
 }
 
+export async function fetchHistoryRaw(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/history/raw?${query}`);
+    if (!resp.ok) throw new Error('Failed to fetch raw history');
+    return await resp.json();
+}
+
 export async function fetchSettings() {
     const resp = await fetchWithAuth('/api/v1/system/settings');
     if (!resp.ok) throw new Error('Failed to fetch settings');

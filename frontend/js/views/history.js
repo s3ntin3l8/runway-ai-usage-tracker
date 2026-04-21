@@ -1,4 +1,4 @@
-import { fetchHistory } from '../api.js';
+import { fetchHistory, fetchHistoryRaw } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
 
@@ -11,6 +11,7 @@ const historyState = {
     page: 1,
 };
 let _historyCache = [];
+let _historyRawCache = [];
 
 // History cache for stale-while-revalidate pattern
 const CACHE_TTL_MS = 30_000;
@@ -105,12 +106,19 @@ function updateCsvHref() {
     btn.href = `/api/v1/usage/history?${params.toString()}`;
 }
 
+function formatValue(value, unit) {
+    if (value === null || value === undefined || value === 0) return '—';
+    const unitStr = unit || '';
+    if (unitStr === 'percent') return `${value.toFixed(1)}%`;
+    if (unitStr === 'currency') return `$${value.toFixed(2)}`;
+    if (unitStr === 'tokens') return value.toLocaleString();
+    if (unitStr === 'requests') return `${value.toLocaleString()} requests`;
+    return `${value.toLocaleString()}${unitStr}`;
+}
+
 function formatWindowValue(entry) {
     if (!entry) return '—';
-    const val = entry.value;
-    const unit = entry.unit || '';
-    if (val === null || val === undefined) return '—';
-    return `${val.toLocaleString()}${unit === 'percent' ? '%' : unit}`;
+    return formatValue(entry.value, entry.unit);
 }
 
 function parseAdditional(additionalStr) {
@@ -131,44 +139,25 @@ function parseAdditional(additionalStr) {
 
 export function renderHistoryFromCache(skipChartUpdate = false) {
     const history = _historyCache;
+    const rawHistory = _historyRawCache || [];
     const stripEl = document.getElementById('history-sparkline-strip');
 
-    // Build sparklines from grouped data - expand ALL windows (session, weekly, additional)
+    // Build sparklines from RAW data for chart (each provider+window as separate line)
     const sparklineData = [];
-    history.forEach(row => {
-        // Add session window
-        if (row.session) {
-            sparklineData.push({
-                provider_id: row.provider_id,
-                timestamp: row.timestamp,
-                used_value: row.session.value,
-                limit_value: null,
-                unit_type: row.session.unit,
-                window_type: 'session'
-            });
-        }
-        // Add weekly window
-        if (row.weekly) {
-            sparklineData.push({
-                provider_id: row.provider_id,
-                timestamp: row.timestamp,
-                used_value: row.weekly.value,
-                limit_value: null,
-                unit_type: row.weekly.unit,
-                window_type: 'weekly'
-            });
-        }
-        // Parse and add additional windows
-        const additionalItems = parseAdditional(row.additional);
-        additionalItems.forEach(item => {
-            sparklineData.push({
-                provider_id: row.provider_id,
-                timestamp: row.timestamp,
-                used_value: item.value,
-                limit_value: null,
-                unit_type: item.unit,
-                window_type: item.window_type
-            });
+    rawHistory.forEach(row => {
+        if (row.used_value == null) return;
+        // Filter by metric selector
+        const metric = historyState.metric;
+        if (metric === 'percent' && row.unit_type !== 'percent') return;
+        if (metric === 'tokens' && row.unit_type !== 'tokens') return;
+        if (metric === 'cost' && row.unit_type !== 'currency') return;
+        sparklineData.push({
+            provider_id: row.provider_id,
+            timestamp: row.timestamp,
+            used_value: row.used_value,
+            limit_value: row.limit_value,
+            unit_type: row.unit_type,
+            window_type: row.window_type
         });
     });
     if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
@@ -268,12 +257,20 @@ export async function loadHistoryView() {
     if (container) container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
 
     try {
+        // Fetch grouped data for table
         const response = await fetchHistoryCached({ days: historyState.days, limit: 1000 });
-        // Response is now { averages: [...], peaks: [...] }
-        // Use averages for the table/sparklines, peaks will be passed to chart
         _historyCache = response?.averages || [];
-        // Also store peaks for chart display
         window._historyPeaks = response?.peaks || [];
+
+        // Fetch raw data for chart (each provider+window as separate line)
+        try {
+            const rawResponse = await fetchHistoryRaw({ days: historyState.days, limit: 1000 });
+            _historyRawCache = rawResponse || [];
+        } catch (rawErr) {
+            console.warn('Failed to fetch raw history for chart:', rawErr);
+            _historyRawCache = [];
+        }
+
         renderHistoryFromCache();
     } catch (err) {
         destroyCharts();
