@@ -418,6 +418,7 @@ class OllamaCollector(BaseCollector):
             "unit_type": "percent",
             "reset_at": resets_at.isoformat() if resets_at else None,
             "window_type": block.get("window_type", "unknown"),
+            "account_label": email,
             "data_source": self.DATA_SOURCE_WEB,
             "input_source": getattr(self, "_current_input_source", "unknown"),
             "tier": plan.lower() if plan else "free",

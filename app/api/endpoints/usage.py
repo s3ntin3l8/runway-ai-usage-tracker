@@ -94,16 +94,36 @@ async def get_usage_history(
     return {"averages": avg_grouped, "peaks": peak_grouped}
 
 
-def _classify_window(window_type: str | None) -> str:
-    """Classify window_type into category: 'session', 'weekly', or 'other'."""
+# Credit-based providers: their "monthly" is credit bucket, not time window
+CREDIT_PROVIDERS = {"openrouter", "minimax"}
+
+# Session-like window types
+SESSION_WINDOWS = {"session", "daily", "hourly", "prepaid"}
+# Weekly-like window types
+WEEKLY_WINDOWS = {"weekly", "biweekly", "bi-weekly", "monthly"}
+
+
+def _classify_window(window_type: str | None, provider_id: str | None = None) -> str:
+    """Classify window_type into category: 'session', 'weekly', or 'other'.
+
+    Handles credit-based providers (openrouter, minimax) differently - their
+    'monthly' is a credit bucket, not a time window.
+    """
     if not window_type:
         return "other"
     w = window_type.lower()
+
+    # For credit providers, only session-like windows go to session
+    if provider_id and provider_id.lower() in CREDIT_PROVIDERS:
+        if w in SESSION_WINDOWS:
+            return "session"
+        return "other"
+
     # Session: short-term windows
-    if w in ("session", "daily", "hourly", "prepaid"):
+    if w in SESSION_WINDOWS:
         return "session"
     # Weekly: week-boundary windows (includes monthly = ~4 weeks)
-    if w in ("weekly", "biweekly", "bi-weekly", "monthly"):
+    if w in WEEKLY_WINDOWS:
         return "weekly"
     return "other"
 
@@ -150,7 +170,7 @@ def _group_snapshots(
         if key not in timestamp_map:
             timestamp_map[key] = ts
 
-        category = _classify_window(s.window_type)
+        category = _classify_window(s.window_type, s.provider_id)
         entry = {
             "value": s.used_value,
             "unit": s.unit_type,
@@ -180,16 +200,11 @@ def _group_snapshots(
         # Use the stored representative timestamp for display
         rep_ts = timestamp_map[(bucket_ts_iso, provider_id, account_label)]
 
-        # If account_label is "Default" (the fallback), show empty instead of "Default"
-        display_label = account_label
-        if account_label and account_label.lower() == "default":
-            display_label = None  # Will show as "—" in UI
-
         result.append(
             {
                 "timestamp": rep_ts.isoformat(),
                 "provider_id": provider_id,
-                "account_label": display_label,
+                "account_label": account_label,
                 "session": data["session"],
                 "weekly": data["weekly"],
                 "additional": additional_str,
