@@ -99,9 +99,11 @@ def _classify_window(window_type: str | None) -> str:
     if not window_type:
         return "other"
     w = window_type.lower()
-    if w in ("session", "daily", "hourly"):
+    # Session: short-term windows
+    if w in ("session", "daily", "hourly", "prepaid"):
         return "session"
-    if w in ("weekly", "bi-weekly", "monthly"):
+    # Weekly: week-boundary windows (includes monthly = ~4 weeks)
+    if w in ("weekly", "biweekly", "bi-weekly", "monthly"):
         return "weekly"
     return "other"
 
@@ -178,11 +180,16 @@ def _group_snapshots(
         # Use the stored representative timestamp for display
         rep_ts = timestamp_map[(bucket_ts_iso, provider_id, account_label)]
 
+        # If account_label is "Default" (the fallback), show empty instead of "Default"
+        display_label = account_label
+        if account_label and account_label.lower() == "default":
+            display_label = None  # Will show as "—" in UI
+
         result.append(
             {
                 "timestamp": rep_ts.isoformat(),
                 "provider_id": provider_id,
-                "account_label": account_label,
+                "account_label": display_label,
                 "session": data["session"],
                 "weekly": data["weekly"],
                 "additional": additional_str,
