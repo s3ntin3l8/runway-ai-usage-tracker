@@ -113,19 +113,64 @@ function formatWindowValue(entry) {
     return `${val.toLocaleString()}${unit === 'percent' ? '%' : unit}`;
 }
 
+function parseAdditional(additionalStr) {
+    if (!additionalStr) return [];
+    const items = [];
+    additionalStr.split(' | ').forEach(part => {
+        const match = part.match(/^(.+?): (\d+(?:\.\d+)?)(.*)$/);
+        if (match) {
+            items.push({
+                window_type: match[1],
+                value: parseFloat(match[2]),
+                unit: match[3] || 'generic'
+            });
+        }
+    });
+    return items;
+}
+
 export function renderHistoryFromCache(skipChartUpdate = false) {
     const history = _historyCache;
     const stripEl = document.getElementById('history-sparkline-strip');
 
-    // Build sparklines from grouped data - extract provider_id from each grouped row
-    const sparklineData = history.map(row => ({
-        provider_id: row.provider_id,
-        timestamp: row.timestamp,
-        used_value: row.session?.value ?? row.weekly?.value ?? null,
-        limit_value: null,
-        unit_type: row.session?.unit ?? row.weekly?.unit ?? 'percent',
-        window_type: row.session ? 'session' : (row.weekly ? 'weekly' : 'unknown')
-    }));
+    // Build sparklines from grouped data - expand ALL windows (session, weekly, additional)
+    const sparklineData = [];
+    history.forEach(row => {
+        // Add session window
+        if (row.session) {
+            sparklineData.push({
+                provider_id: row.provider_id,
+                timestamp: row.timestamp,
+                used_value: row.session.value,
+                limit_value: null,
+                unit_type: row.session.unit,
+                window_type: 'session'
+            });
+        }
+        // Add weekly window
+        if (row.weekly) {
+            sparklineData.push({
+                provider_id: row.provider_id,
+                timestamp: row.timestamp,
+                used_value: row.weekly.value,
+                limit_value: null,
+                unit_type: row.weekly.unit,
+                window_type: 'weekly'
+            });
+        }
+        // Parse and add additional windows
+        const additionalItems = parseAdditional(row.additional);
+        additionalItems.forEach(item => {
+            sparklineData.push({
+                provider_id: row.provider_id,
+                timestamp: row.timestamp,
+                used_value: item.value,
+                limit_value: null,
+                unit_type: item.unit,
+                window_type: item.window_type
+            });
+        });
+    });
     if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
 
     // Update charts with the same adapted data
