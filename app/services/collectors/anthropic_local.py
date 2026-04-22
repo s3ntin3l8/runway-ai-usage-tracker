@@ -304,15 +304,29 @@ class AnthropicLocalMixin:
             if tier == "Max"
             else settings.CLAUDE_PRO_LIMIT
         )
-        cutoff = datetime.now(UTC) - timedelta(hours=5)
+        cutoff_5h = datetime.now(UTC) - timedelta(hours=5)
+        cutoff_7d = datetime.now(UTC) - timedelta(days=7)
 
         # Persist identity if found
         if email:
             self.account_label = email
 
-        total_tokens = 0
-        seen_messages: set = set()  # Deduplicate by (message_id, request_id)
-        oldest: datetime | None = None
+        def _empty_bucket() -> dict:
+            return {
+                "input": 0,
+                "output": 0,
+                "cache_read": 0,
+                "cache_creation": 0,
+                "web_search": 0,
+                "web_fetch": 0,
+                "sessions": set(),
+                "models": {},
+                "oldest": None,
+            }
+
+        session_bucket = _empty_bucket()
+        weekly_bucket = _empty_bucket()
+        seen_messages: set = set()
 
         for fpath in all_files:
             try:
@@ -335,7 +349,7 @@ class AnthropicLocalMixin:
                         except ValueError:
                             continue
 
-                        if ts < cutoff:
+                        if ts < cutoff_7d:
                             continue
 
                         msg_data = entry.get("message", {})
@@ -348,15 +362,51 @@ class AnthropicLocalMixin:
                         seen_messages.add(dedup_key)
 
                         usage = msg_data.get("usage", {})
-                        total_tokens += (
-                            usage.get("input_tokens", 0)
-                            + usage.get("output_tokens", 0)
-                            + usage.get("cache_read_tokens", 0)
-                            + usage.get("cache_creation_tokens", 0)
-                        )
+                        inp = usage.get("input_tokens", 0)
+                        out = usage.get("output_tokens", 0)
+                        cache_r = usage.get("cache_read_input_tokens", 0)
+                        cache_w = usage.get("cache_creation_input_tokens", 0)
+                        server_tools = usage.get("server_tool_use") or {}
+                        web_search = server_tools.get("web_search_requests", 0) or 0
+                        web_fetch = server_tools.get("web_fetch_requests", 0) or 0
 
-                        if not oldest or ts < oldest:
-                            oldest = ts
+                        model = msg_data.get("model", "")
+                        short_model = self._short_model_id(model) if model else ""
+                        session_id = entry.get("sessionId", "")
+                        token_sum = inp + out + cache_r + cache_w
+
+                        # Accumulate into weekly bucket (all messages within 7d)
+                        weekly_bucket["input"] += inp
+                        weekly_bucket["output"] += out
+                        weekly_bucket["cache_read"] += cache_r
+                        weekly_bucket["cache_creation"] += cache_w
+                        weekly_bucket["web_search"] += web_search
+                        weekly_bucket["web_fetch"] += web_fetch
+                        if session_id:
+                            weekly_bucket["sessions"].add(session_id)
+                        if short_model:
+                            weekly_bucket["models"][short_model] = (
+                                weekly_bucket["models"].get(short_model, 0) + token_sum
+                            )
+                        if not weekly_bucket["oldest"] or ts < weekly_bucket["oldest"]:
+                            weekly_bucket["oldest"] = ts
+
+                        # Also accumulate into the 5h session bucket
+                        if ts >= cutoff_5h:
+                            session_bucket["input"] += inp
+                            session_bucket["output"] += out
+                            session_bucket["cache_read"] += cache_r
+                            session_bucket["cache_creation"] += cache_w
+                            session_bucket["web_search"] += web_search
+                            session_bucket["web_fetch"] += web_fetch
+                            if session_id:
+                                session_bucket["sessions"].add(session_id)
+                            if short_model:
+                                session_bucket["models"][short_model] = (
+                                    session_bucket["models"].get(short_model, 0) + token_sum
+                                )
+                            if not session_bucket["oldest"] or ts < session_bucket["oldest"]:
+                                session_bucket["oldest"] = ts
 
             except FileNotFoundError:
                 continue
@@ -364,37 +414,138 @@ class AnthropicLocalMixin:
                 logger.warning(f"Error reading Claude log file {fpath}: {e}")
                 continue
 
-        remaining = max(0, limit - total_tokens)
-        pct = (total_tokens / limit * 100) if limit > 0 else 0
-        reset_at = (oldest + timedelta(hours=5)) if oldest else None
+        session_total = (
+            session_bucket["input"]
+            + session_bucket["output"]
+            + session_bucket["cache_read"]
+            + session_bucket["cache_creation"]
+        )
+        weekly_total = (
+            weekly_bucket["input"]
+            + weekly_bucket["output"]
+            + weekly_bucket["cache_read"]
+            + weekly_bucket["cache_creation"]
+        )
 
-        # Put email at the end for regex discovery fallback
+        oldest_session = session_bucket["oldest"]
+        reset_at_session = (oldest_session + timedelta(hours=5)) if oldest_session else None
         identity_suffix = f" | {email}" if email else ""
 
-        return [
+        remaining = max(0, limit - session_total)
+        pct = (session_total / limit * 100) if limit > 0 else 0
+
+        fallback_card = {
+            "service_name": "Claude Pro",
+            "icon": "🟠",
+            "remaining": f"{remaining:,}",
+            "unit": "tokens / 5h",
+            "reset": human_delta(reset_at_session),
+            "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+            "pace": PaceCalculator.estimate_longevity(pct, reset_at_session),
+            "detail": f"{session_total:,} / {limit:,} [Local Logs] | cli-local{identity_suffix}",
+            "used_value": float(session_total),
+            "limit_value": float(limit),
+            "is_unlimited": False,
+            "tier": tier,
+            "account_label": email,
+            "unit_type": "tokens",
+            "window_type": "session",
+            "reset_at": reset_at_session.isoformat() if reset_at_session else None,
+            "data_source": self.DATA_SOURCE_LOCAL,
+            "input_source": "server",
+            "usage_url": "https://claude.ai/settings/usage",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+
+        results: list[dict[str, Any]] = [
             {
-                "service_name": "Claude Pro",
-                "icon": "🟠",
-                "remaining": f"{remaining:,}",
-                "unit": "tokens / 5h",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local{identity_suffix}",
-                "used_value": float(total_tokens),
-                "limit_value": float(limit),
-                "is_unlimited": False,
-                "tier": tier,
-                "account_label": email,
-                "unit_type": "tokens",
                 "window_type": "session",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": self.DATA_SOURCE_LOCAL,
-                "input_source": "server",
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(UTC).isoformat(),
+                "_enrichment_detail": self._build_enrichment_detail(session_bucket),
+                "totals": {
+                    "input": session_bucket["input"],
+                    "output": session_bucket["output"],
+                    "cache_read": session_bucket["cache_read"],
+                    "cache_creation": session_bucket["cache_creation"],
+                    "total": session_total,
+                    "sessions": len(session_bucket["sessions"]),
+                },
+                "_fallback_card": fallback_card,
             }
         ]
+
+        if weekly_total > 0:
+            results.append(
+                {
+                    "window_type": "weekly",
+                    "_enrichment_detail": self._build_enrichment_detail(weekly_bucket),
+                    "totals": {
+                        "input": weekly_bucket["input"],
+                        "output": weekly_bucket["output"],
+                        "cache_read": weekly_bucket["cache_read"],
+                        "cache_creation": weekly_bucket["cache_creation"],
+                        "total": weekly_total,
+                        "sessions": len(weekly_bucket["sessions"]),
+                    },
+                }
+            )
+
+        return results
+
+    @staticmethod
+    def _short_model_id(model: str) -> str:
+        """Map a full Anthropic model ID to a short display name."""
+        m = model.lower()
+        if "opus" in m:
+            return "opus"
+        if "sonnet" in m:
+            return "sonnet"
+        if "haiku" in m:
+            return "haiku"
+        if "omelette" in m or "design" in m:
+            return "design"
+        base = m.replace("claude-", "")
+        return base.split("-")[0] if base else m
+
+    @staticmethod
+    def _fmt_tokens(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1000:
+            return f"{n // 1000}k"
+        return str(n)
+
+    def _build_enrichment_detail(self, bucket: dict) -> str:
+        """Build a compact detail fragment from a token-accumulation bucket."""
+        sections: list[str] = []
+
+        token_parts = []
+        if bucket["input"]:
+            token_parts.append(f"in:{self._fmt_tokens(bucket['input'])}")
+        if bucket["output"]:
+            token_parts.append(f"out:{self._fmt_tokens(bucket['output'])}")
+        if bucket["cache_read"]:
+            token_parts.append(f"cache_r:{self._fmt_tokens(bucket['cache_read'])}")
+        if bucket["cache_creation"]:
+            token_parts.append(f"cache_w:{self._fmt_tokens(bucket['cache_creation'])}")
+        if token_parts:
+            sections.append(" ".join(token_parts))
+
+        model_parts = [
+            f"{mid}:{self._fmt_tokens(cnt)}"
+            for mid, cnt in sorted(bucket["models"].items(), key=lambda x: -x[1])
+        ]
+        if model_parts:
+            sections.append(" ".join(model_parts))
+
+        if bucket["sessions"]:
+            sc = len(bucket["sessions"])
+            sections.append(f"{sc} session{'s' if sc != 1 else ''}")
+
+        web_total = bucket["web_search"] + bucket["web_fetch"]
+        if web_total:
+            sections.append(f"web:{web_total}")
+
+        return " | ".join(sections)
 
     def _get_config_dirs(self) -> list[str]:
         """

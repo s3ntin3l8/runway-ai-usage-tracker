@@ -203,6 +203,29 @@ class AnthropicCollector(
             return []
         return await self._get_claude_oauth(client, token)
 
+    def _enrich_results(
+        self,
+        primary: list[dict[str, Any]] | None,
+        enrichment: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not enrichment or self._is_error_result(enrichment):
+            return primary or []
+
+        # No primary — promote the session enrichment's fallback card.
+        if not primary or self._is_error_result(primary):
+            promoted = [e["_fallback_card"] for e in enrichment if e.get("_fallback_card")]
+            return promoted or (primary or [])
+
+        by_window = {e.get("window_type"): e for e in enrichment if e.get("_enrichment_detail")}
+        for card in primary:
+            match = by_window.get(card.get("window_type"))
+            if not match:
+                continue
+            suffix = match["_enrichment_detail"]
+            if suffix:
+                card["detail"] = f"{card.get('detail', '').rstrip()} | {suffix}".strip(" |")
+        return primary
+
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""
         from app.core.utils import error_card

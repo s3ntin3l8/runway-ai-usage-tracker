@@ -72,6 +72,13 @@ class TestAnthropicCollector:
         assert len(result) >= 1
         assert all("service_name" in card for card in result)
         assert any("Session" in str(card.get("service_name", "")) for card in result)
+        # seven_day_sonnet must fold into weekly window_type with model_id="sonnet"
+        sonnet_card = next(
+            (c for c in result if "Sonnet Weekly" in str(c.get("service_name", ""))), None
+        )
+        assert sonnet_card is not None, "Expected a Sonnet Weekly card from mock data"
+        assert sonnet_card["window_type"] == "weekly"
+        assert sonnet_card["model_id"] == "sonnet"
 
     @pytest.mark.asyncio
     async def test_refresh_token_lookup_is_scoped_to_account(self, mock_http_client):
@@ -395,6 +402,13 @@ class TestAnthropicCollector:
         assert "Claude (Session Window)" in services
         assert "Claude (Weekly Window)" in services
         assert any(card.get("data_source") == "web" for card in result)
+        # Fixture uses snake_case resets_at — must NOT be dropped (regression for camelCase-only bug)
+        assert all(card.get("reset_at") is not None for card in result), (
+            "reset_at should be populated from snake_case resets_at in web API payload"
+        )
+        assert all(card.get("reset") not in ("—", None) for card in result), (
+            "reset human-delta should be non-empty when reset_at is populated"
+        )
 
     @pytest.mark.asyncio
     async def test_collect_enhanced_local_fallback(self, mock_http_client):
@@ -426,7 +440,7 @@ class TestAnthropicCollector:
                 ),
                 patch.object(collector, "_get_valid_token", return_value="invalid_token"),
             ):
-                # Mock local log data with all token types
+                # Mock local log data with all token types (correct JSONL field names)
                 log_data = [
                     json.dumps(
                         {
@@ -438,8 +452,8 @@ class TestAnthropicCollector:
                                 "usage": {
                                     "input_tokens": 1000,
                                     "output_tokens": 500,
-                                    "cache_read_tokens": 2000,
-                                    "cache_creation_tokens": 100,
+                                    "cache_read_input_tokens": 2000,
+                                    "cache_creation_input_tokens": 100,
                                 },
                             },
                         }
@@ -455,8 +469,8 @@ class TestAnthropicCollector:
                                 "usage": {
                                     "input_tokens": 500,
                                     "output_tokens": 200,
-                                    "cache_read_tokens": 0,
-                                    "cache_creation_tokens": 0,
+                                    "cache_read_input_tokens": 0,
+                                    "cache_creation_input_tokens": 0,
                                 },
                             },
                         }
@@ -957,6 +971,152 @@ class TestAnthropicCollector:
         assert result[1]["used_value"] == 5.0
         assert result[1]["remaining"] == "95.0%"
         assert "4d" in result[1]["reset"]
+
+    def test_get_claude_local_enhanced_sync_per_window(self, tmp_path):
+        """Local log sync returns per-window enrichment dicts with correct bucketing."""
+        now = datetime.now(UTC)
+        ts_5h = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        ts_7d = (now - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        entry_session = json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": ts_5h,
+                "sessionId": "sess-a",
+                "message": {
+                    "id": "msg-1",
+                    "requestId": "req-1",
+                    "model": "claude-opus-4-7",
+                    "usage": {
+                        "input_tokens": 1000,
+                        "output_tokens": 500,
+                        "cache_read_input_tokens": 3000,
+                        "cache_creation_input_tokens": 200,
+                        "server_tool_use": {"web_search_requests": 2, "web_fetch_requests": 1},
+                    },
+                },
+            }
+        )
+        entry_weekly = json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": ts_7d,
+                "sessionId": "sess-b",
+                "message": {
+                    "id": "msg-2",
+                    "requestId": "req-2",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {
+                        "input_tokens": 500,
+                        "output_tokens": 200,
+                        "cache_read_input_tokens": 1000,
+                        "cache_creation_input_tokens": 100,
+                    },
+                },
+            }
+        )
+
+        proj_dir = tmp_path / "projects" / "my-proj"
+        proj_dir.mkdir(parents=True)
+        (proj_dir / "session1.jsonl").write_text(entry_session + "\n")
+        (proj_dir / "session2.jsonl").write_text(entry_weekly + "\n")
+
+        collector = AnthropicCollector()
+
+        with (
+            patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
+            patch("app.services.collectors.anthropic_local.settings") as mock_settings,
+            patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
+        ):
+            mock_settings.CLAUDE_PRO_LIMIT = 2_000_000
+            mock_settings.CLAUDE_FREE_LIMIT = 500_000
+            mock_settings.CLAUDE_MAX_LIMIT = 5_000_000
+            result = collector._get_claude_local_enhanced_sync()
+
+        assert len(result) == 2
+        by_window = {r["window_type"]: r for r in result}
+
+        assert "session" in by_window
+        assert "weekly" in by_window
+
+        sess = by_window["session"]
+        assert "_enrichment_detail" in sess
+        assert "_fallback_card" in sess
+        assert "opus" in sess["_enrichment_detail"]
+        assert sess["totals"]["cache_read"] == 3000
+        assert sess["totals"]["sessions"] == 1
+        assert "web:3" in sess["_enrichment_detail"]
+
+        week = by_window["weekly"]
+        assert "_enrichment_detail" in week
+        assert week["totals"]["input"] == 1500
+        assert week["totals"]["cache_read"] == 4000
+        assert week["totals"]["sessions"] == 2
+        assert "opus" in week["_enrichment_detail"]
+        assert "sonnet" in week["_enrichment_detail"]
+
+    def test_enrich_results_matches_by_window(self):
+        """_enrich_results appends the right suffix to the right primary card."""
+        collector = AnthropicCollector()
+
+        primary = [
+            {"window_type": "session", "detail": "5h detail"},
+            {"window_type": "weekly", "detail": "7d detail"},
+        ]
+        enrichment = [
+            {
+                "window_type": "session",
+                "_enrichment_detail": "in:1k out:500",
+                "totals": {},
+                "_fallback_card": {},
+            },
+            {
+                "window_type": "weekly",
+                "_enrichment_detail": "in:10k out:5k",
+                "totals": {},
+            },
+        ]
+
+        result = collector._enrich_results(primary, enrichment)
+
+        by_window = {r["window_type"]: r for r in result}
+        assert "in:1k out:500" in by_window["session"]["detail"]
+        assert "in:10k out:5k" in by_window["weekly"]["detail"]
+
+    def test_enrich_results_no_primary_promotes_fallback(self):
+        """When primary is empty, fallback card from enrichment is promoted."""
+        collector = AnthropicCollector()
+
+        fallback = {
+            "window_type": "session",
+            "detail": "fallback card",
+            "service_name": "Claude Pro",
+        }
+        enrichment = [
+            {
+                "window_type": "session",
+                "_enrichment_detail": "in:1k",
+                "totals": {},
+                "_fallback_card": fallback,
+            },
+        ]
+
+        result = collector._enrich_results(None, enrichment)
+
+        assert len(result) == 1
+        assert result[0]["service_name"] == "Claude Pro"
+
+    def test_enrich_results_error_enrichment_returns_primary(self):
+        """When enrichment contains an error card, primary is returned unchanged."""
+        collector = AnthropicCollector()
+
+        primary = [{"window_type": "session", "detail": "original detail", "remaining": "50%"}]
+        error_enrichment = [{"remaining": "ERR", "detail": "error"}]
+
+        result = collector._enrich_results(primary, error_enrichment)
+
+        assert result is primary
+        assert result[0]["detail"] == "original detail"
 
 
 class TestGeminiCollector:
