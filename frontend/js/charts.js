@@ -5,6 +5,9 @@
 let _chart = null;
 let _echarts = null;
 
+// Registered once at module load; stays alive for the lifetime of the page.
+window.addEventListener('resize', () => _chart && _chart.resize());
+
 const PROVIDER_COLORS = {
     anthropic: "#f59e0b",
     gemini: "#3b82f6",
@@ -394,8 +397,6 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             // compared to the fetched range.
             // For now, the toolbox presets are the primary way.
         });
-        
-        window.addEventListener('resize', () => _chart && _chart.resize());
         
     } catch (err) {
         console.error('Failed to init ECharts:', err);
