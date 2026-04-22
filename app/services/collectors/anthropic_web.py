@@ -25,6 +25,9 @@ from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
+# Holds references to fire-and-forget tasks so the GC doesn't cancel them mid-run.
+_pending_tasks: set[asyncio.Task] = set()
+
 
 class AnthropicWebMixin:
     """
@@ -393,9 +396,11 @@ class AnthropicWebMixin:
 
         # Identity Promotion: sync discovered email/name back to the token cache metadata
         if identity_str and hasattr(self, "account_id") and self.account_id:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 token_cache.update_account_metadata("anthropic", self.account_id, name=identity_str)
             )
+            _pending_tasks.add(task)
+            task.add_done_callback(_pending_tasks.discard)
             self.account_label = identity_str
 
         # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)
