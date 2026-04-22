@@ -456,16 +456,23 @@ async function initUI() {
     initDashboardView();
     initHistoryView();
     
-    // Wake Trigger: When user brings the dashboard back into focus, nudge the poller.
-    // Includes a 30s debounce to prevent spamming the wake endpoint.
+    // Wake Trigger: nudge the poller and refresh data when the tab becomes visible.
+    // Poller wake: 30s debounce. Data refresh: only when tab was hidden for >5 min.
     let lastWakeTime = 0;
+    let tabHiddenAt = 0;
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
+        if (document.visibilityState === 'hidden') {
+            tabHiddenAt = Date.now();
+        } else {
             const now = Date.now();
-            if (now - lastWakeTime > 30000) { 
+            if (now - lastWakeTime > 30000) {
                 lastWakeTime = now;
                 import('./api.js').then(m => m.postWake());
             }
+            if (tabHiddenAt && now - tabHiddenAt > 5 * 60 * 1000) {
+                loadDashboard();
+            }
+            tabHiddenAt = 0;
         }
     });
 }
@@ -708,8 +715,10 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuth().then(authorized => {
         if (authorized) {
             if (STATE.data.length === 0) loadDashboard();
-            // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
-            refreshTimer = setInterval(() => loadDashboard(), 5 * 60 * 1000);
+            // Auto-refresh every 5 minutes — skip silently when the tab is hidden.
+            refreshTimer = setInterval(() => {
+                if (!document.hidden) loadDashboard();
+            }, 5 * 60 * 1000);
         }
     });
 });
