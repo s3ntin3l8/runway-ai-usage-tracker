@@ -244,7 +244,7 @@ class SmartCollector:
 
         tagged = []
         for card in result:
-            card_copy = copy.deepcopy(card)
+            card_copy = card.copy()
             original_detail = card_copy.get("detail", "")
             card_copy["detail"] = f"{original_detail} [Cached {age_str} ago]"
             # Preserve original data_source and input_source if they exist
