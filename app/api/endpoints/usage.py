@@ -250,8 +250,10 @@ def _group_snapshots(
 
     for s in snapshots:
         ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=UTC)
-        # Use bucketed timestamp for grouping (rounds down to bucket boundary)
-        bucket_ts = ts.replace(second=(ts.second // bucket_seconds) * bucket_seconds, microsecond=0)
+        # Epoch-based bucket: floor-divide epoch seconds so all timestamps within
+        # a bucket window (e.g. the same calendar day) hash to the same key.
+        bucket_epoch = int(ts.timestamp()) // bucket_seconds * bucket_seconds
+        bucket_ts = datetime.fromtimestamp(bucket_epoch, tz=UTC)
         resolved_label = (
             _effective_label(s.account_label)
             or (label_map or {}).get((s.provider_id, s.account_id))
