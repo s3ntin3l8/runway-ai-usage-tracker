@@ -3,7 +3,7 @@ import { buildFleetView } from '../components.js';
 
 function escapeHTML(str) {
     if (!str) return '';
-    const map = { '&': '&amp;', '<': '&gt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return str.replace(/[&<>"']/g, m => map[m]);
 }
 
