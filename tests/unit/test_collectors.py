@@ -216,8 +216,8 @@ class TestAnthropicCollector:
             with patch.object(collector, "_get_valid_token", return_value="test_token"):
                 result = await collector.collect(mock_http_client)
 
-        # Should return 6 cards: 4 standard quota windows + Balance + Extra Usage
-        assert len(result) == 6
+        # Should return 7 cards: 5 standard quota windows + Balance + Extra Usage
+        assert len(result) == 7
 
         services = {c["service_name"]: c for c in result}
         assert "Claude (Session Window)" in services
@@ -851,9 +851,9 @@ class TestAnthropicCollector:
         result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
 
         # Should not crash, should return card with reset as "—"
-        # Now returns 4 items because core windows are guaranteed
+        # Now returns 5 items because core windows are guaranteed (including seven_day_omelette)
         assert isinstance(result, list)
-        assert len(result) == 4
+        assert len(result) == 5
         assert result[0]["reset"] == "—"
 
     def test_parse_oauth_response_empty_windows(self):

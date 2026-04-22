@@ -165,6 +165,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             "seven_day": "Weekly Window",
             "seven_day_sonnet": "Sonnet Weekly",
             "seven_day_opus": "Opus Weekly",
+            "seven_day_omelette": "Claude Design",
             "extra_usage": "Extra Usage",
         }
 
@@ -390,7 +391,13 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             self.account_label = identity_str
 
         # Guaranteed keys to show even if null from API
-        core_keys = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"]
+        core_keys = [
+            "five_hour",
+            "seven_day",
+            "seven_day_sonnet",
+            "seven_day_opus",
+            "seven_day_omelette",
+        ]
         all_keys = list(data.keys())
         for ck in core_keys:
             if ck not in all_keys:
