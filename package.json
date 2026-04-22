@@ -1,5 +1,5 @@
 {
-  "name": "ai-usage-tracker",
+  "name": "runway",
   "version": "0.12.2",
   "description": "<p align=\"center\">   <img src=\"assets/logo.svg\" width=\"128\" alt=\"Runway Logo\"> </p>",
   "main": "index.js",
