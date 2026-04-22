@@ -157,8 +157,6 @@ async function ensureECharts() {
  * @param {boolean} [showPeaks=false] - show peak values instead of averages
  */
 export async function updateCharts(snapshots, metric = 'percent', days = 7, windowFilter = 'all', showPeaks = false) {
-    destroyCharts();
-
     const container = document.getElementById("chart-usage");
     const emptyEl = document.getElementById("chart-empty");
     if (!container) return;
@@ -288,8 +286,10 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
     try {
         const echarts = await ensureECharts();
-        _chart = echarts.init(container);
-        
+        if (!_chart) {
+            _chart = echarts.init(container);
+        }
+
         const option = {
             backgroundColor: 'transparent',
             tooltip: {
@@ -388,7 +388,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             series: series
         };
         
-        _chart.setOption(option);
+        _chart.setOption(option, true);  // true = notMerge: replace all series/axes cleanly
 
         // Notify parent if user zooms in significantly
         _chart.on('datazoom', (params) => {
