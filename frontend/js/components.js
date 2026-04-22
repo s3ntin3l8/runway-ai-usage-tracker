@@ -575,7 +575,7 @@ export function buildCard(item) {
         : '';
 
     return `
-        <div class="glass-panel ${h.card} overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">`
+        <div class="glass-panel ${h.card} overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
