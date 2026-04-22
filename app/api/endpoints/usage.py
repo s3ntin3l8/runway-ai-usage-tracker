@@ -424,34 +424,6 @@ def _dedupe_with_peaks(
     return averages, peaks
 
 
-def _snapshot_to_dict(s: UsageSnapshot) -> dict:
-    # Ensure timestamp is timezone-aware UTC before isoformat()
-    ts = s.timestamp
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=UTC)
-
-    return {
-        "id": s.id,
-        "timestamp": ts.isoformat(),
-        "provider_id": s.provider_id,
-        "account_id": s.account_id,
-        "account_label": s.account_label,
-        "service_name": s.service_name,
-        "used_value": s.used_value,
-        "limit_value": s.limit_value,
-        "unit_type": s.unit_type,
-        "currency": s.currency,
-        "tier": s.tier,
-        "model_id": s.model_id,
-        "window_type": s.window_type,
-        "health": s.health,
-        "sidecar_id": s.sidecar_id,
-        "is_unlimited": s.is_unlimited,
-        "data_source": s.data_source,
-        "metadata": s.raw_metadata,
-    }
-
-
 def _history_as_csv(results: Sequence[UsageSnapshot]) -> StreamingResponse:
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=_CSV_COLUMNS, extrasaction="ignore")

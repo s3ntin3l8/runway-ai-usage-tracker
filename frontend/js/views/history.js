@@ -310,7 +310,6 @@ export async function loadHistoryView() {
         // Fetch grouped data for table
         const response = await fetchHistoryCached({ days: historyState.days, limit: 1000 });
         _historyCache = response?.averages || [];
-        window._historyPeaks = response?.peaks || [];
 
         // Fetch raw data for chart (each provider+window as separate line)
         try {

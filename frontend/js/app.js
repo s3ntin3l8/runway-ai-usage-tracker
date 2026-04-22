@@ -2,7 +2,7 @@ import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, lo
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { applyOrder, cardKey, extractProviderOrder, extractCardOrder } from './layout.js';
 import { ensureSortable } from './sortable.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal, buildProviderSparklineStrip } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildProviderModal, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
 import { loadSettingsView, renderProvidersSection, refreshToken, deleteToken } from './views/settings.js';
@@ -152,12 +152,6 @@ function applyFilters(data) {
     });
 }
 
-function renderHealthBar() {
-    const el = document.getElementById('health-bar');
-    if (!el) return;
-    el.innerHTML = buildHealthBar(STATE.data);
-}
-
 function renderGrid() {
     const grid = document.getElementById('grid');
 
@@ -269,41 +263,6 @@ async function refreshProviderModal(providerId) {
         const b = document.getElementById('refresh-provider-btn');
         if (b) { b.classList.remove('animate-spin'); b.disabled = false; }
     }
-}
-
-function renderFilterPills() {
-    const container = document.getElementById('filter-pills');
-    if (!container) return;
-
-    const dim = STATE.filterDimension;
-    const WINDOW_ORDER = ['session', 'daily', 'weekly', 'biweekly', 'monthly', 'prepaid', 'unknown'];
-    const rawValues = [...new Set(STATE.data.map(i => i[dim]).filter(Boolean))];
-    const values = dim === 'window_type'
-        ? rawValues.sort((a, b) => {
-            const ai = WINDOW_ORDER.indexOf(a), bi = WINDOW_ORDER.indexOf(b);
-            if (ai === -1 && bi === -1) return a.localeCompare(b);
-            if (ai === -1) return 1;
-            if (bi === -1) return -1;
-            return ai - bi;
-          })
-        : rawValues.sort();
-    const active = STATE.activeFilter?.value;
-
-    const pills = [`<button class="pill${!active ? ' pill-active' : ''}" onclick="setFilter(null)">All</button>`];
-    values.forEach(v => {
-        pills.push(`<button class="pill${active === v ? ' pill-active' : ''}" onclick="setFilter('${escapeHTMLAttr(v)}')">${escapeHTML(v)}</button>`);
-    });
-    container.innerHTML = pills.join('');
-
-    // Show "Source" dimension button only when sidecars exist
-    const hasSidecars = STATE.data.some(i => i.sidecar_id);
-    const sidecarBtn = document.getElementById('dim-btn-sidecar');
-    if (sidecarBtn) sidecarBtn.classList.toggle('hidden', !hasSidecars);
-
-    // Highlight active dimension button
-    document.querySelectorAll('.dim-btn').forEach(btn => {
-        btn.classList.toggle('dim-btn-active', btn.dataset.dim === dim);
-    });
 }
 
 /**
