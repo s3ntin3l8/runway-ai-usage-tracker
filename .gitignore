@@ -72,6 +72,7 @@ tasks.md
 task.md
 diagnose.py
 docs/internal/
+scratch/
 
 # --- SUPERPOWERS ---
 .superpowers/
