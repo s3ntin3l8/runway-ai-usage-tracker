@@ -169,105 +169,115 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             "extra_usage": "Extra Usage",
         }
 
+        # --- HTTP request ---
         try:
             resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10.0)
+        except httpx.HTTPError as e:
+            logger.error(f"Claude OAuth request failed: {e}")
+            return [
+                error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")
+            ]
 
-            if resp.status_code == 401:
-                return [
-                    error_card(
-                        "Claude Pro",
-                        "🟠",
-                        "Expired/Invalid Token (OAuth)",
-                        error_type="auth_failed",
-                    )
-                ]
-
-            if resp.status_code == 429:
-                logger.info(
-                    "Anthropic API returned 429. Attempting aggressive recovery via token rotation..."
+        if resp.status_code == 401:
+            return [
+                error_card(
+                    "Claude Pro",
+                    "🟠",
+                    "Expired/Invalid Token (OAuth)",
+                    error_type="auth_failed",
                 )
-                # Attempt to get a fresh token (even if not expired)
+            ]
+
+        if resp.status_code == 429:
+            logger.info(
+                "Anthropic API returned 429. Attempting aggressive recovery via token rotation..."
+            )
+            # Attempt to get a fresh token (even if not expired)
+            try:
                 new_token = await self._get_valid_token(client, force_refresh=True)
-                if new_token and new_token != token:
-                    logger.info("Successfully cycled Anthropic token. Retrying usage request...")
-                    # Update headers with new token
-                    headers["Authorization"] = f"Bearer {new_token}"
+            except httpx.HTTPError:
+                new_token = None
+            if new_token and new_token != token:
+                logger.info("Successfully cycled Anthropic token. Retrying usage request...")
+                headers["Authorization"] = f"Bearer {new_token}"
+                try:
                     resp = await http_request_with_retry(
                         client, "GET", url, headers=headers, timeout=15.0
                     )
+                except httpx.HTTPError as e:
+                    logger.warning(f"Aggressive recovery request failed: {e}")
+                else:
                     if resp.status_code == 200:
                         logger.info("Aggressive recovery successful: Usage data retrieved.")
-                        # Proceed to parsing
                     else:
                         logger.warning(
                             f"Aggressive recovery failed: Retry returned {resp.status_code}"
                         )
-                else:
-                    logger.warning("Aggressive recovery failed: Could not obtain a fresh token.")
+            else:
+                logger.warning("Aggressive recovery failed: Could not obtain a fresh token.")
 
-            # Re-check status after potential retry
-            if resp.status_code == 429:
-                # Fallback to standard proactive backoff if recovery failed or was skipped
-                retry_after = resp.headers.get("Retry-After")
-                # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
-                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                wait_sec = max(wait_sec, 300)
+        # Re-check status after potential retry
+        if resp.status_code == 429:
+            # Fallback to standard proactive backoff if recovery failed or was skipped
+            retry_after = resp.headers.get("Retry-After")
+            # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
+            wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+            wait_sec = max(wait_sec, 300)
 
-                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                logger.warning(
-                    f"Anthropic API still rate limited. Proactive backoff set for {wait_sec}s"
-                )
-                return [
-                    error_card(
-                        "Claude Pro",
-                        "🟠",
-                        f"Rate Limited (429) - Try in {wait_sec / 60:.1f}m",
-                        error_type="rate_limited",
-                    )
-                ]
-
-            if resp.status_code != 200:
-                return [
-                    error_card(
-                        "Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error"
-                    )
-                ]
-
-            # Success: Clear any backoff
-            self._last_429_backoff_until = None
-            data = resp.json()
-            creds = await self._get_credentials()
-
-            # Attempt to fetch account info from API if missing in local credentials
-            api_account_info = {}
-            if not creds or not creds.get("oauthAccount", {}).get("emailAddress"):
-                try:
-                    org_resp = await http_request_with_retry(
-                        client,
-                        "GET",
-                        "https://api.anthropic.com/v1/organizations/me",
-                        headers={**headers, "anthropic-version": "2023-06-01"},
-                        timeout=10.0,
-                    )
-                    if org_resp.status_code == 200:
-                        org_data = org_resp.json()
-                        api_account_info["organization"] = org_data.get("name")
-                        api_account_info["email"] = org_data.get("contact_email") or org_data.get(
-                            "email"
-                        )
-                        plan = org_data.get("plan")
-                        if plan:
-                            api_account_info["tier"] = plan.capitalize()
-                except Exception as e:
-                    logger.debug(f"Failed to fetch Anthropic organization info: {e}")
-
-            return self._parse_oauth_response(data, name_map, creds, api_account_info)
-
-        except Exception as e:
-            logger.error(f"Claude OAuth collection failed: {e}")
+            self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+            logger.warning(
+                f"Anthropic API still rate limited. Proactive backoff set for {wait_sec}s"
+            )
             return [
-                error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")
+                error_card(
+                    "Claude Pro",
+                    "🟠",
+                    f"Rate Limited (429) - Try in {wait_sec / 60:.1f}m",
+                    error_type="rate_limited",
+                )
             ]
+
+        if resp.status_code != 200:
+            return [
+                error_card(
+                    "Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error"
+                )
+            ]
+
+        # --- Parse response ---
+        # Success: Clear any backoff
+        self._last_429_backoff_until = None
+        try:
+            data = resp.json()
+        except (ValueError, KeyError) as e:
+            logger.error(f"Claude OAuth response parse failed: {e}")
+            return [error_card("Claude Pro", "🟠", "Invalid API response", error_type="api_error")]
+        creds = await self._get_credentials()
+
+        # Attempt to fetch account info from API if missing in local credentials
+        api_account_info = {}
+        if not creds or not creds.get("oauthAccount", {}).get("emailAddress"):
+            try:
+                org_resp = await http_request_with_retry(
+                    client,
+                    "GET",
+                    "https://api.anthropic.com/v1/organizations/me",
+                    headers={**headers, "anthropic-version": "2023-06-01"},
+                    timeout=10.0,
+                )
+                if org_resp.status_code == 200:
+                    org_data = org_resp.json()
+                    api_account_info["organization"] = org_data.get("name")
+                    api_account_info["email"] = org_data.get("contact_email") or org_data.get(
+                        "email"
+                    )
+                    plan = org_data.get("plan")
+                    if plan:
+                        api_account_info["tier"] = plan.capitalize()
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                logger.debug(f"Failed to fetch Anthropic organization info: {e}")
+
+        return self._parse_oauth_response(data, name_map, creds, api_account_info)
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
         """Extract account identity string from OAuth API response or credentials file."""
