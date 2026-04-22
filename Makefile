@@ -18,7 +18,7 @@ install-hooks: ## Wire up tracked .githooks/ as the git hooks directory
 install: install-hooks ## Set up venv, install Python and Node dependencies
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
+	$(PIP) install -r requirements-dev.txt
 	npm ci
 
 dev: ## Run development server (hot reload, port 8765)

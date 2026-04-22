@@ -9,16 +9,5 @@ keyring>=24.0.0
 cryptography==46.0.7
 secretstorage>=3.3.0
 PyYAML>=6.0.0
-types-PyYAML
-
-# Testing dependencies
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-cov>=4.1.0
-pytest-timeout>=2.2.0
 slowapi==0.1.9
 sqlmodel==0.0.38
-pip-audit>=2.7.3
-ruff>=0.4.4
-mypy>=1.10.0
-detect-secrets>=1.5.0
