@@ -1134,9 +1134,25 @@ export function buildHealthBar(data) {
         .map(t => `<div style="flex:${counts[t.key]};background:${t.color};"></div>`)
         .join('');
 
+    // Aggregate sentence
+    const total = data.length;
+    const worstItem = data
+        .filter(i => !i.is_unlimited && i.used_value != null && i.limit_value > 0)
+        .sort((a, b) => (b.used_value / b.limit_value) - (a.used_value / a.limit_value))[0];
+    let aggParts = [`FLEET: ${total} service${total !== 1 ? 's' : ''}`];
+    if (counts.critical > 0) aggParts.push(`${counts.critical} [CRIT]`);
+    if (counts.warning > 0) aggParts.push(`${counts.warning} [WARN]`);
+    if (worstItem) {
+        const worstPct = ((worstItem.used_value / worstItem.limit_value) * 100).toFixed(0);
+        const resetStr = worstItem.reset ? ` · resets ${escapeHTML(String(worstItem.reset))}` : '';
+        aggParts.push(`worst ${escapeHTML(worstItem.provider_id || worstItem.service_name)} ${worstPct}%${resetStr}`);
+    }
+    const aggLine = `<div style="font-size:9px;color:var(--text-dim);letter-spacing:0.08em;margin-top:6px;padding:0 1px;">${aggParts.join(' · ')}</div>`;
+
     return `<div class="mb-5">
         <div class="grid grid-cols-4 gap-1 mb-1">${tilesHTML}</div>
         <div style="height:3px;display:flex;overflow:hidden;">${barSegments}</div>
+        ${aggLine}
     </div>`;
 }
 
@@ -1207,7 +1223,6 @@ export function buildProviderSummaryCard(providerId, items) {
         : (sourceBadgeHTML ? `<div style="margin-top:3px;">${sourceBadgeHTML}</div>` : '');
 
     const tierBadgeHTML = worst.tier ? getTierBadge(worst.tier) : '';
-    const healthTag = `<span class="tag ${h.tag}">${h.label}</span>`;
 
     // Segmented bar
     const barCounts = { critical: 0, warning: 0, good: 0, unlimited: 0 };
@@ -1240,7 +1255,7 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>`;
     }).join('');
 
-    return `<div class="glass-panel ${h.card} cursor-pointer select-none card-layout relative"
+    return `<div class="glass-panel cursor-pointer select-none card-layout relative"
          data-provider-id="${escapeHTMLAttr(providerId)}"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
@@ -1257,7 +1272,7 @@ export function buildProviderSummaryCard(providerId, items) {
                     <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.14em;">${icon} ${escapeHTML(providerId)}</div>
                     <div class="flex items-center gap-1.5 flex-wrap" style="margin-top:3px;">${tierBadgeHTML}${accountLine}</div>
                 </div>
-                <div style="flex-shrink:0;margin-left:8px;">${healthTag}</div>
+                <span class="lamp ${LAMP[worst.health] || 'lamp-unk'}" style="width:8px;height:8px;flex-shrink:0;margin-top:2px;"></span>
             </div>
             <div class="readout ${h.tag === 'tag-crit' ? 'readout-crit' : h.tag === 'tag-warn' ? 'readout-warn' : h.tag === 'tag-good' ? 'readout-good' : h.tag === 'tag-unlm' ? 'readout-unlm' : 'readout-unk'}">${worstDisplay}</div>
             <div style="font-size:9px;color:var(--text-dim);margin-top:5px;text-transform:uppercase;letter-spacing:0.08em;">${escapeHTML(worst.service_name)} · WORST</div>
@@ -1453,6 +1468,9 @@ export function buildProviderModal(providerId, items, history) {
         </div>`;
     }).join('');
 
+    // RAW payload for debugging
+    const rawPayload = JSON.stringify(items, null, 2);
+
     return `<div>
         <div class="flex justify-between items-start mb-5 pb-4" style="border-bottom:1px solid var(--hairline);">
             <div>
@@ -1466,7 +1484,18 @@ export function buildProviderModal(providerId, items, history) {
                 <button id="close-modal" class="icon-btn transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center" style="color:var(--text-muted);">✕</button>
             </div>
         </div>
-        <div class="space-y-3 max-h-[65vh] overflow-y-auto pr-1" data-provider-id="${escapeHTMLAttr(providerId)}">${serviceRows}</div>
+        <div class="space-y-3 max-h-[55vh] overflow-y-auto pr-1" data-provider-id="${escapeHTMLAttr(providerId)}">${serviceRows}</div>
+        <!-- Actions footer -->
+        <div class="flex items-center gap-2 mt-5 pt-4 flex-wrap" style="border-top:1px solid var(--hairline);">
+            <button class="toggle-btn" onclick="openProviderInHistory('${escapeHTMLAttr(providerId)}')">Open in History</button>
+        </div>
+        <!-- RAW PAYLOAD -->
+        <details class="mt-4" style="font-size:10px;">
+            <summary style="cursor:pointer;color:var(--text-dim);letter-spacing:0.08em;text-transform:uppercase;list-style:none;display:flex;align-items:center;gap:6px;">
+                <span style="font-size:9px;border:1px solid var(--hairline-strong);padding:1px 5px;">▶</span> RAW PAYLOAD
+            </summary>
+            <pre style="margin-top:8px;padding:12px;background:var(--surface-2);border:1px solid var(--hairline);overflow-x:auto;font-size:10px;color:var(--text-muted);max-height:300px;overflow-y:auto;line-height:1.5;">${escapeHTML(rawPayload)}</pre>
+        </details>
     </div>`;
 }
 

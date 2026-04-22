@@ -81,10 +81,6 @@ def test_effective_label_real():
         ("monthly", "minimax", "weekly"),
         # Credit providers: unknown → other
         ("daily", "openrouter", "session"),
-        # Special model windows always → other
-        ("seven_day_sonnet", "anthropic", "other"),
-        ("seven_day_opus", "anthropic", "other"),
-        ("seven_day_omelette", "anthropic", "other"),
         # Unknown window_type
         ("unknown", "anthropic", "other"),
         (None, "anthropic", "other"),
@@ -94,23 +90,35 @@ def test_classify_window(window, provider, expected):
     assert _classify_window(window, provider) == expected
 
 
+def test_classify_window_model_scoped_weekly_goes_to_other():
+    """weekly + model_id set → Additional column (avoids single-cell collision)."""
+    assert _classify_window("weekly", "anthropic", "sonnet") == "other"
+    assert _classify_window("weekly", "anthropic", "opus") == "other"
+    assert _classify_window("weekly", "anthropic", "design") == "other"
+    assert _classify_window("weekly", "anthropic", None) == "weekly"
+
+
 # ── _pick_bucket_seconds ─────────────────────────────────────────────────────
 
 
 def test_pick_bucket_seconds_7d():
-    assert _pick_bucket_seconds(7.0) == 86400
+    assert _pick_bucket_seconds(7.0) == 10800  # 3-hourly → ~56 pts
+
+
+def test_pick_bucket_seconds_30d():
+    assert _pick_bucket_seconds(30.0) == 86400  # daily → ~30 pts
 
 
 def test_pick_bucket_seconds_1d():
-    assert _pick_bucket_seconds(1.0) == 3600
+    assert _pick_bucket_seconds(1.0) == 1800  # 30-min → ~48 pts
 
 
 def test_pick_bucket_seconds_6h():
-    assert _pick_bucket_seconds(0.25) == 900
+    assert _pick_bucket_seconds(0.25) == 900  # 15-min → ~24 pts
 
 
 def test_pick_bucket_seconds_1h():
-    assert _pick_bucket_seconds(0.05) == 60
+    assert _pick_bucket_seconds(0.05) == 300  # 5-min → ~12 slots
 
 
 # ── _group_snapshots bucketing regression ────────────────────────────────────

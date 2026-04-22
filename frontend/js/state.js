@@ -23,12 +23,12 @@ export const STATE = {
     // Dashboard context filter
     activeFilter: (() => {
         const stored = JSON.parse(localStorage.getItem('runway_active_filter') || 'null');
-        if (stored && !['account_label', 'sidecar_id', 'window_type'].includes(stored.dimension)) return null;
+        if (stored && !['account_label', 'sidecar_id', 'window_type', 'provider_id'].includes(stored.dimension)) return null;
         return stored;
     })(),
     filterDimension: (() => {
         const stored = localStorage.getItem('runway_filter_dimension');
-        return ['account_label', 'sidecar_id', 'window_type'].includes(stored) ? stored : 'account_label';
+        return ['account_label', 'sidecar_id', 'window_type', 'provider_id'].includes(stored) ? stored : 'account_label';
     })(),
     // Dashboard reordering
     editMode: false,

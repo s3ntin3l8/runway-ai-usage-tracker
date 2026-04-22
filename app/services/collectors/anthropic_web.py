@@ -23,6 +23,7 @@ from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
+    anthropic_model_id_for,
     classify_anthropic_window_type,
 )
 from app.services.token_cache import token_cache
@@ -154,6 +155,7 @@ class AnthropicWebMixin:
                     "limit_value": 100.0,
                     "unit_type": "percent",
                     "window_type": w_type,
+                    "model_id": anthropic_model_id_for(key),
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": self.DATA_SOURCE_LOCAL,
                     "input_source": "server",
@@ -475,7 +477,7 @@ class AnthropicWebMixin:
             remaining_pct = 100.0 - pct_used
 
             reset_at = None
-            reset_raw = window_data.get("resetsAt")
+            reset_raw = window_data.get("resets_at") or window_data.get("resetsAt")
             if reset_raw:
                 try:
                     reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
@@ -499,6 +501,7 @@ class AnthropicWebMixin:
                     "is_unlimited": False,
                     "unit_type": "percent",
                     "window_type": w_type,
+                    "model_id": anthropic_model_id_for(api_key),
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": self.DATA_SOURCE_WEB,
                     "input_source": getattr(self, "_current_input_source", "unknown"),

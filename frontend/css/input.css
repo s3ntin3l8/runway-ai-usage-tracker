@@ -745,6 +745,92 @@ body, .toggle-btn, .icon-btn {
     color: var(--crit);
 }
 
+/* ============================================
+   STICKY HEALTH BAR
+   ============================================ */
+
+.health-bar-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    margin-bottom: 0;
+    padding-top: 4px;
+}
+
+/* ============================================
+   GRID EMPTY STATE
+   ============================================ */
+
+.grid-empty-state {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1rem;
+    text-align: center;
+    border: 1px dashed var(--hairline-strong);
+}
+
+/* ============================================
+   HISTORY CONTROLS BAR
+   ============================================ */
+
+.history-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 0;
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+}
+
+.history-ctrl-group { display: flex; gap: 2px; align-items: center; }
+
+.history-ctrl-sep {
+    color: var(--hairline-strong);
+    font-size: 11px;
+    padding: 0 4px;
+    user-select: none;
+}
+
+/* ============================================
+   HISTORY SUMMARY LINE
+   ============================================ */
+
+.history-summary {
+    min-height: 20px;
+    margin: 6px 0 2px;
+}
+
+.history-summary-text {
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* ============================================
+   HISTORY SPARKLINE STRIP HEADER
+   ============================================ */
+
+.history-sparkline-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    margin-top: 8px;
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
 /* Settings in light mode */
 :root[data-theme="light"] .settings-nav-item { color: var(--text-dim); }
 :root[data-theme="light"] .settings-nav-item:hover {

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlmodel import Session, desc, select
+from sqlmodel import Session, asc, desc, select
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -109,43 +109,82 @@ async def get_usage_history_raw(
     limit: int = Query(default=500, ge=1, le=2000),
     session: Session = Depends(get_session),
 ):
-    """Fetch raw usage history for chart rendering.
+    """Fetch pre-bucketed usage history for chart rendering.
 
-    Returns ungrouped snapshots so chart can display each unique
-    provider+service+window combination as separate line.
+    Snapshots are grouped into time buckets (granularity determined by the
+    requested window) so that the chart always receives ~50 data points per
+    time range regardless of how many raw polls exist in the DB.  Each
+    returned row carries both the avg and the peak (max_used_value) for its
+    bucket, enabling the BAND mode shaded-area display.
     """
     since = datetime.now(UTC) - timedelta(days=days)
+    bucket_seconds = _pick_bucket_seconds(days)
 
-    statement = select(UsageSnapshot).where(UsageSnapshot.timestamp >= since)
-
+    statement = (
+        select(UsageSnapshot)
+        .where(UsageSnapshot.timestamp >= since)
+        .order_by(asc(UsageSnapshot.timestamp))
+    )
     if provider_id:
         statement = statement.where(UsageSnapshot.provider_id == provider_id)
     if account_id:
         statement = statement.where(UsageSnapshot.account_id == account_id)
 
-    statement = statement.order_by(desc(UsageSnapshot.timestamp))
-    results = session.exec(statement.limit(limit)).all()
+    raw = session.exec(statement.limit(20_000)).all()
+
+    # Python-side bucket aggregation: group by (bucket_ts, series key)
+    buckets: dict[tuple[int, str, str, str, str, str], dict[str, Any]] = {}
+    for r in raw:
+        epoch = int(r.timestamp.timestamp())
+        bt = epoch - (epoch % bucket_seconds)
+        key = (bt, r.provider_id, r.account_id, r.service_name, r.window_type, r.unit_type)
+        if key not in buckets:
+            buckets[key] = {
+                "bucket_ts": bt,
+                "provider_id": r.provider_id,
+                "account_id": r.account_id,
+                "account_label": r.account_label,
+                "service_name": r.service_name,
+                "unit_type": r.unit_type,
+                "window_type": r.window_type,
+                "data_source": r.data_source,
+                "sum": 0.0,
+                "limit_sum": 0.0,
+                "count": 0,
+                "max": float("-inf"),
+            }
+        b = buckets[key]
+        if r.used_value is not None:
+            b["sum"] += r.used_value
+            b["count"] += 1
+            b["max"] = max(b["max"], r.used_value)
+        if r.limit_value is not None:
+            b["limit_sum"] += r.limit_value
 
     label_map = _build_label_map(session)
+    ordered = sorted(buckets.values(), key=lambda x: x["bucket_ts"])
 
     return [
         {
-            "id": r.id,
-            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-            "provider_id": r.provider_id,
-            "account_id": r.account_id,
+            "id": None,
+            "timestamp": datetime.fromtimestamp(b["bucket_ts"], tz=UTC).isoformat(),
+            "provider_id": b["provider_id"],
+            "account_id": b["account_id"],
             "account_label": (
-                _effective_label(r.account_label) or label_map.get((r.provider_id, r.account_id))
+                _effective_label(b["account_label"])
+                or label_map.get((b["provider_id"], b["account_id"]))
             ),
-            "service_name": r.service_name,
-            "used_value": r.used_value,
-            "limit_value": r.limit_value,
-            "unit_type": r.unit_type,
-            "window_type": r.window_type,
-            "data_source": r.data_source,
+            "service_name": b["service_name"],
+            "used_value": round(b["sum"] / b["count"], 4),
+            "limit_value": round(b["limit_sum"] / b["count"], 4) if b["count"] else None,
+            "max_used_value": round(b["max"], 4),
+            "unit_type": b["unit_type"],
+            "window_type": b["window_type"],
+            "data_source": b["data_source"],
         }
-        for r in results
-    ]
+        for b in ordered
+        if b["count"] > 0
+    ][:limit]
 
 
 def _effective_label(raw: str | None) -> str | None:
@@ -175,11 +214,12 @@ SESSION_WINDOWS = {"session", "daily", "hourly", "prepaid"}
 # Weekly-like window types (exact matches only)
 WEEKLY_WINDOWS = {"weekly", "biweekly", "bi-weekly", "monthly"}
 
-# Special model-specific windows that should go to Additional (not Weekly)
-SPECIAL_MODEL_WINDOWS = {"seven_day_sonnet", "seven_day_opus", "seven_day_omelette"}
 
-
-def _classify_window(window_type: str | None, provider_id: str | None = None) -> str:
+def _classify_window(
+    window_type: str | None,
+    provider_id: str | None = None,
+    model_id: str | None = None,
+) -> str:
     """Classify window_type into category: 'session', 'weekly', or 'other'.
 
     For credit providers (openrouter, minimax):
@@ -190,16 +230,12 @@ def _classify_window(window_type: str | None, provider_id: str | None = None) ->
     For other providers:
     - session/daily/hourly → session column
     - weekly/biweekly/monthly → weekly column
-    - Special Claude models (seven_day_sonnet, seven_day_opus, seven_day_omelette) → Additional
+    - weekly + model_id set (sonnet/opus/design) → Additional (avoids collision in single Weekly cell)
     - Other (model-specific, etc.) → Additional
     """
     if not window_type:
         return "other"
     w = window_type.lower()
-
-    # Special model windows always go to Additional
-    if w in SPECIAL_MODEL_WINDOWS:
-        return "other"
 
     # Session windows go to session for all providers
     if w in SESSION_WINDOWS:
@@ -211,9 +247,9 @@ def _classify_window(window_type: str | None, provider_id: str | None = None) ->
             return "weekly"
         return "other"
 
-    # For other providers: weekly-like windows go to weekly
+    # For other providers: weekly-like windows go to weekly, unless model-scoped
     if w in WEEKLY_WINDOWS:
-        return "weekly"
+        return "other" if model_id else "weekly"
 
     return "other"
 
@@ -268,7 +304,7 @@ def _group_snapshots(
         if key not in timestamp_map:
             timestamp_map[key] = ts
 
-        category = _classify_window(s.window_type, s.provider_id)
+        category = _classify_window(s.window_type, s.provider_id, s.model_id)
         entry = {
             "value": s.used_value,
             "unit": s.unit_type,
@@ -283,6 +319,7 @@ def _group_snapshots(
             grouped[key]["additional"].append(
                 {
                     "window": s.window_type,
+                    "model_id": s.model_id,
                     "value": s.used_value,
                     "unit": s.unit_type,
                     "limit": s.limit_value,
@@ -312,13 +349,15 @@ def _group_snapshots(
 
 def _pick_bucket_seconds(days: float) -> int:
     """Bucket size for the history window. Matches the frontend pickBucketSeconds."""
-    if days >= 2:
-        return 86400  # 7d/30d/90d → daily
-    if days >= 0.5:
-        return 3600  # 1d → hourly (≤24 points)
-    if days >= 0.1:
-        return 900  # 6h → 15 min (≤24 points)
-    return 60  # 1h → 1 min (≤60 points)
+    if days >= 30:
+        return 86400  # 30d/90d → daily        (~30–90 pts)
+    if days >= 7:
+        return 10800  # 7d → 3-hourly          (~56 pts)
+    if days >= 1:
+        return 1800  # 24h → 30-min           (~48 pts)
+    if days >= 0.25:
+        return 900  # 6h → 15-min            (~24 pts)
+    return 300  # 1h → 5-min             (~12 slots)
 
 
 def _dedupe_with_peaks(

@@ -18,6 +18,7 @@ from app.core.utils import (
 )
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
+    anthropic_model_id_for,
     classify_anthropic_window_type,
 )
 from app.services.collectors.oauth_base import OAuthBaseCollector
@@ -520,6 +521,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "is_unlimited": False,
                     "unit_type": "percent",
                     "window_type": w_type,
+                    "model_id": anthropic_model_id_for(key),
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": self.DATA_SOURCE_API,
                     "input_source": getattr(self, "_current_input_source", "unknown"),

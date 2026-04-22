@@ -9,13 +9,23 @@ ANTHROPIC_WINDOW_NAME_MAP: dict[str, str] = {
     "extra_usage": "Extra Usage",
 }
 
+# Maps model-specific seven_day API keys → short model_id for UsageSnapshot.
+ANTHROPIC_MODEL_ID_MAP: dict[str, str] = {
+    "seven_day_sonnet": "sonnet",
+    "seven_day_opus": "opus",
+    "seven_day_omelette": "design",
+}
+
 
 def classify_anthropic_window_type(key: str) -> str:
     """Map an Anthropic usage window key to its canonical window_type string."""
     if key == "five_hour":
         return "session"
-    if key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
-        return key  # preserved as-is for per-model classification
     if "seven_day" in key:
         return "weekly"
     return "unknown"
+
+
+def anthropic_model_id_for(key: str) -> str | None:
+    """Return the model_id to stamp on a snapshot for per-model weekly windows."""
+    return ANTHROPIC_MODEL_ID_MAP.get(key)

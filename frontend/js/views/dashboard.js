@@ -1,5 +1,5 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits } from '../api.js';
+import { fetchLimits, collectProvider } from '../api.js';
 import { STATE } from '../state.js';
 import { buildProviderSummaryCard, buildHealthBar, buildProviderModal, buildModalSkeleton } from '../components.js';
 import { fetchHistoryCached } from './history.js';
@@ -62,10 +62,14 @@ export function renderGrid() {
     }
 
     if (!html) {
-        html = '<p class="text-zinc-500 text-sm text-center py-8">No cards match active filters.</p>';
+        const filterLabel = STATE.activeFilter ? escapeHTML(STATE.activeFilter.value) : 'selection';
+        html = `<div class="grid-empty-state">
+            <div style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.12em;margin-bottom:8px;">NO MATCH · ${filterLabel}</div>
+            <button class="toggle-btn" onclick="setFilter(null)">CLEAR FILTER</button>
+        </div>`;
     }
 
-    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">${html}</div>`;
+    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${html}</div>`;
     const footerCount = document.getElementById('footer-count');
     if (footerCount) footerCount.textContent = count;
 }
@@ -126,7 +130,6 @@ export async function loadDashboard() {
     const grid = document.getElementById('grid');
     const loading = document.getElementById('loading');
     const errorBanner = document.getElementById('error-banner');
-    const lastUpdated = document.getElementById('last-updated');
 
     if (grid) {
         grid.innerHTML = '';
@@ -143,11 +146,6 @@ export async function loadDashboard() {
         renderGrid();
         renderHealthBar();
 
-        const now = new Date();
-        if (lastUpdated) {
-            lastUpdated.textContent = `Updated ${now.toLocaleTimeString()}`;
-            lastUpdated.classList.remove('hidden');
-        }
         window._lastFetchTime = Date.now();
     } catch (err) {
         if (myGeneration !== loadDataGeneration) return;
@@ -181,6 +179,9 @@ export function setFilterDimension(dim) {
 }
 
 export function initDashboardView() {
+    // Expose setFilter globally for the empty-state CLEAR button (onclick in rendered HTML)
+    window.setFilter = setFilter;
+
     // Filter buttons
     document.querySelectorAll('.dim-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -232,8 +233,8 @@ export async function openProviderModal(providerId) {
     };
 
     try {
-        // Fetch history using cached fetch (may return stale data immediately)
-        const history = await fetchHistoryCached({ provider_id: providerId, days: 7, limit: 500 });
+        // Fetch 30-day history for richer modal sparklines
+        const history = await fetchHistoryCached({ provider_id: providerId, days: 30, limit: 500 });
         
         // Only update if modal is still open
         if (container.classList.contains('active') && content.querySelector('#close-modal')) {
@@ -253,3 +254,20 @@ export async function openProviderModal(providerId) {
         }
     }
 }
+
+// Close modal and navigate to history with provider filter set
+window.openProviderInHistory = function(providerId) {
+    // Close modal
+    const container = document.getElementById('modal-container');
+    if (container) {
+        container.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+    // Set cross-view filter
+    STATE.activeFilter = { dimension: 'provider_id', value: providerId };
+    STATE.filterDimension = 'provider_id';
+    localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
+    localStorage.setItem('runway_filter_dimension', 'provider_id');
+    // Navigate
+    if (typeof window.switchView === 'function') window.switchView('history');
+};

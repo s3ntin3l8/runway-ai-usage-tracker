@@ -1,10 +1,11 @@
 import { fetchHistory, fetchHistoryRaw } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
+import { STATE } from '../state.js';
 
 const historyState = {
     days: 1,
-    activeProviders: null, // Set of provider IDs
+    activeProviders: null, // Set of provider IDs (null = all)
     metric: 'percent',
     windowFilter: 'all',
     showPeaks: false,
@@ -56,6 +57,16 @@ export function setHistoryDays(days) {
     loadHistoryView();
 }
 
+export function setHistoryRange(days) {
+    historyState.days = days;
+    historyState.page = 1;
+    document.querySelectorAll('#history-range-btns .toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', parseFloat(btn.dataset.range) === days);
+    });
+    updateCsvHref();
+    loadHistoryView();
+}
+
 export function setHistoryMetric(metric) {
     historyState.metric = metric;
     historyState.page = 1;
@@ -94,6 +105,58 @@ export function toggleHistoryProvider(pid) {
     }
     updateCsvHref();
     renderHistoryFromCache();
+}
+
+export function setHistoryProvidersAll() {
+    historyState.activeProviders = null;
+    historyState.page = 1;
+    updateCsvHref();
+    renderHistoryFromCache();
+}
+
+export function setHistoryProvidersNone() {
+    historyState.activeProviders = new Set(); // empty set = nothing visible
+    historyState.page = 1;
+    updateCsvHref();
+    renderHistoryFromCache();
+}
+
+function buildHistorySummary(rawHistory, filteredProviders, metric, days) {
+    if (!rawHistory || rawHistory.length === 0) return '';
+    let rows = rawHistory;
+    if (filteredProviders) rows = rows.filter(r => filteredProviders.has(r.provider_id));
+    if (rows.length === 0) return '';
+
+    // Compute from percent-compatible rows only
+    const pctRows = rows.filter(r => {
+        if (r.used_value == null) return false;
+        if (metric !== 'percent') return r.unit_type === metric;
+        return r.unit_type === 'percent' || (r.limit_value > 0);
+    }).map(r => {
+        if (metric === 'percent') {
+            return r.unit_type === 'percent' ? r.used_value : (r.used_value / r.limit_value) * 100;
+        }
+        return r.used_value;
+    });
+
+    if (pctRows.length === 0) return '';
+
+    const avg = pctRows.reduce((s, v) => s + v, 0) / pctRows.length;
+    const peak = Math.max(...pctRows);
+    const critCount = rawHistory.filter(r => {
+        if (r.used_value == null) return false;
+        if (r.unit_type === 'percent') return r.used_value >= 90;
+        if (r.limit_value > 0) return (r.used_value / r.limit_value) >= 0.9;
+        return false;
+    }).length;
+    const providerCount = new Set(rows.map(r => r.provider_id)).size;
+    const daysLabel = days >= 30 ? '30D' : days >= 7 ? '7D' : days >= 1 ? '24H' : '6H';
+    const unit = metric === 'percent' ? '%' : metric === 'cost' ? ' USD' : '';
+
+    let parts = [`Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${avg.toFixed(1)}${unit} · peak ${peak.toFixed(1)}${unit}`];
+    if (critCount > 0) parts.push(`${critCount} crit events`);
+
+    return `<div class="history-summary-text">${parts.join(' · ')}</div>`;
 }
 
 function updateCsvHref() {
@@ -142,22 +205,25 @@ function adaptEntryToMetric(entry, metric) {
     return entry;
 }
 
-const WINDOW_LABEL_OVERRIDES = {
-    seven_day_omelette: 'design',
-    seven_day_sonnet: 'sonnet',
-    seven_day_opus: 'opus',
+const MODEL_LABEL_OVERRIDES = {
+    sonnet: 'sonnet',
+    opus: 'opus',
+    design: 'design',
 };
 
-function friendlyWindowLabel(windowType) {
-    if (!windowType) return windowType;
-    if (WINDOW_LABEL_OVERRIDES[windowType]) return WINDOW_LABEL_OVERRIDES[windowType];
-    return windowType.replace(/^seven_day_/, '').replace(/_/g, ' ');
+function friendlyWindowLabel(entry) {
+    if (entry?.model_id && MODEL_LABEL_OVERRIDES[entry.model_id]) {
+        return MODEL_LABEL_OVERRIDES[entry.model_id];
+    }
+    const w = entry?.window;
+    if (!w) return '—';
+    return w.replace(/^seven_day_/, '').replace(/_/g, ' ');
 }
 
 function renderAdditional(list) {
     if (!list || list.length === 0) return '<span class="text-zinc-600">—</span>';
     return list.map(a => {
-        const label = escapeHTML(friendlyWindowLabel(a.window));
+        const label = escapeHTML(friendlyWindowLabel(a));
         const val = formatValue(a.value, a.unit);
         return `<span class="inline-block mr-1 px-2 py-0.5 rounded bg-zinc-800/60 text-zinc-400 text-[10px] mono">${label} ${val}</span>`;
     }).join('');
@@ -167,6 +233,15 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     const history = _historyCache;
     const rawHistory = _historyRawCache || [];
     const stripEl = document.getElementById('history-sparkline-strip');
+
+    // Update aggregate summary
+    const summaryEl = document.getElementById('history-summary');
+    if (summaryEl) {
+        summaryEl.innerHTML = buildHistorySummary(rawHistory, historyState.activeProviders, historyState.metric, historyState.days);
+    }
+
+    // Render cross-view filter pill
+    renderHistoryFilterPill();
 
     // Build sparklines from RAW data for chart (each provider+service+window as separate line)
     const sparklineData = [];
@@ -301,10 +376,39 @@ export function setHistoryPage(page) {
     renderHistoryFromCache(true);
 }
 
+function renderHistoryFilterPill() {
+    const pillEl = document.getElementById('history-filter-pill');
+    if (!pillEl) return;
+    const f = STATE.activeFilter;
+    if (!f || !f.value) {
+        pillEl.classList.add('hidden');
+        pillEl.innerHTML = '';
+        return;
+    }
+    pillEl.classList.remove('hidden');
+    pillEl.innerHTML = `<div class="flex items-center gap-2">
+        <span style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.08em;">[FILTER]</span>
+        <span class="pill pill-active">${escapeHTML(f.value)}</span>
+        <button class="pill" onclick="clearHistoryFilter()" style="border-color:var(--hairline-strong);">✕ CLEAR</button>
+    </div>`;
+}
+
+export function clearHistoryFilter() {
+    STATE.activeFilter = null;
+    localStorage.removeItem('runway_active_filter');
+    renderHistoryFromCache();
+}
+
 export async function loadHistoryView() {
     updateCsvHref();
     const container = document.getElementById('history-content');
     if (container) container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
+
+    // Apply cross-view filter: if a provider_id filter is active from the dashboard, pre-select it
+    const f = STATE.activeFilter;
+    if (f && f.dimension === 'provider_id' && f.value) {
+        historyState.activeProviders = new Set([f.value]);
+    }
 
     try {
         // Fetch grouped data for table
@@ -328,11 +432,14 @@ export async function loadHistoryView() {
 }
 
 export function initHistoryView() {
-    // These functions should be globally available for the onclick handlers in index.html
     window.setHistoryDays = setHistoryDays;
+    window.setHistoryRange = setHistoryRange;
     window.setHistoryMetric = setHistoryMetric;
     window.setHistoryWindow = setHistoryWindow;
     window.setHistoryPeak = setHistoryPeak;
     window.toggleHistoryProvider = toggleHistoryProvider;
+    window.setHistoryProvidersAll = setHistoryProvidersAll;
+    window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.setHistoryPage = setHistoryPage;
+    window.clearHistoryFilter = clearHistoryFilter;
 }

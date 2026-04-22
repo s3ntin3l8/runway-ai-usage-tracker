@@ -68,7 +68,6 @@
                                 <path d="M16 16h5v5"/>
                             </svg>
                         </button>
-                        <span id="last-updated" class="hidden" style="font-size:9px;color:var(--text-dim);margin-left:6px;letter-spacing:0.06em;"></span>
                     </div>
                 </div>
 
@@ -80,7 +79,7 @@
 
             <!-- Dashboard View -->
             <section id="view-dashboard" class="view hidden">
-                <div id="health-bar"></div>
+                <div id="health-bar" class="health-bar-sticky"></div>
 
                 <!-- Loading skeletons -->
                 <div id="loading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 hidden">
@@ -96,14 +95,15 @@
                 </div>
 
                 <!-- Context filter bar -->
-                <div id="filter-bar" class="mb-5 flex flex-col gap-2">
-                    <div class="flex gap-2 items-center">
-                        <span style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.12em;">Filter by</span>
+                <div id="filter-bar" class="mb-5">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.12em;">[FILTER]</span>
                         <button class="dim-btn" data-dim="window_type" onclick="setFilterDimension('window_type')">Window</button>
                         <button class="dim-btn" data-dim="account_label" onclick="setFilterDimension('account_label')">Account</button>
                         <button id="dim-btn-sidecar" class="dim-btn hidden" data-dim="sidecar_id" onclick="setFilterDimension('sidecar_id')">Source</button>
+                        <span style="color:var(--hairline-strong);font-size:11px;">│</span>
+                        <div id="filter-pills" class="flex flex-wrap gap-1.5"></div>
                     </div>
-                    <div id="filter-pills" class="flex flex-wrap gap-1.5"></div>
                 </div>
 
                 <!-- Grid -->
@@ -114,28 +114,47 @@
             <section id="view-history" class="view hidden">
                 <!-- Chart Panel -->
                 <div id="history-chart-panel" class="glass-panel p-6 mb-5">
-                    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div class="flex items-center justify-between mb-3">
                         <span style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.12em;">Usage Over Time</span>
-                        <div class="flex items-center gap-3 flex-wrap">
-                            <!-- Window Type Filter -->
-                            <div class="flex gap-1" id="history-window-btns">
-                                <button class="toggle-btn active" data-window="all" onclick="setHistoryWindow('all')">All</button>
-                                <button class="toggle-btn" data-window="session" onclick="setHistoryWindow('session')">Session</button>
-                                <button class="toggle-btn" data-window="daily" onclick="setHistoryWindow('daily')">Daily</button>
-                                <button class="toggle-btn" data-window="weekly" onclick="setHistoryWindow('weekly')">Weekly</button>
-                                <button class="toggle-btn" data-window="monthly" onclick="setHistoryWindow('monthly')">Monthly</button>
-                            </div>
-                            <!-- Metric -->
-                            <div class="flex gap-1" id="history-metric-btns">
-                                <button class="toggle-btn active" data-metric="percent" onclick="setHistoryMetric('percent')">% used</button>
-                                <button class="toggle-btn" data-metric="tokens" onclick="setHistoryMetric('tokens')">tokens</button>
-                                <button class="toggle-btn" data-metric="cost" onclick="setHistoryMetric('cost')">cost</button>
-                            </div>
-                            <!-- Peak Toggle -->
-                            <div class="flex gap-1" id="history-peak-btns">
-                                <button class="toggle-btn active" data-peak="false" onclick="setHistoryPeak(false)">Avg</button>
-                                <button class="toggle-btn" data-peak="true" onclick="setHistoryPeak(true)">Peak</button>
-                            </div>
+                    </div>
+                    <!-- Unified controls bar: RANGE · WINDOW · METRIC · BAND -->
+                    <div class="history-controls mb-3">
+                        <div class="flex gap-1 items-center history-ctrl-group" id="history-range-btns">
+                            <button class="toggle-btn" data-range="0.042" onclick="setHistoryRange(0.042)">1H</button>
+                            <button class="toggle-btn" data-range="0.25" onclick="setHistoryRange(0.25)">6H</button>
+                            <button class="toggle-btn active" data-range="1" onclick="setHistoryRange(1)">24H</button>
+                            <button class="toggle-btn" data-range="7" onclick="setHistoryRange(7)">7D</button>
+                            <button class="toggle-btn" data-range="30" onclick="setHistoryRange(30)">30D</button>
+                            <button class="toggle-btn" data-range="90" onclick="setHistoryRange(90)">ALL</button>
+                        </div>
+                        <span class="history-ctrl-sep">│</span>
+                        <div class="flex gap-1 items-center history-ctrl-group" id="history-window-btns">
+                            <button class="toggle-btn active" data-window="all" onclick="setHistoryWindow('all')">All</button>
+                            <button class="toggle-btn" data-window="session" onclick="setHistoryWindow('session')">Session</button>
+                            <button class="toggle-btn" data-window="daily" onclick="setHistoryWindow('daily')">Daily</button>
+                            <button class="toggle-btn" data-window="weekly" onclick="setHistoryWindow('weekly')">Weekly</button>
+                            <button class="toggle-btn" data-window="monthly" onclick="setHistoryWindow('monthly')">Monthly</button>
+                        </div>
+                        <span class="history-ctrl-sep">│</span>
+                        <div class="flex gap-1 items-center history-ctrl-group" id="history-metric-btns">
+                            <button class="toggle-btn active" data-metric="percent" onclick="setHistoryMetric('percent')">% used</button>
+                            <button class="toggle-btn" data-metric="tokens" onclick="setHistoryMetric('tokens')">tokens</button>
+                            <button class="toggle-btn" data-metric="cost" onclick="setHistoryMetric('cost')">cost</button>
+                        </div>
+                        <span class="history-ctrl-sep">│</span>
+                        <div class="flex gap-1 items-center history-ctrl-group" id="history-peak-btns">
+                            <button class="toggle-btn active" data-peak="false" onclick="setHistoryPeak(false)">Avg</button>
+                            <button class="toggle-btn" data-peak="true" onclick="setHistoryPeak(true)">Band</button>
+                        </div>
+                    </div>
+                    <!-- Aggregate summary line -->
+                    <div id="history-summary" class="history-summary"></div>
+                    <!-- Sparkline strip with header -->
+                    <div id="history-sparkline-header" class="history-sparkline-header">
+                        <span>SERVICES</span>
+                        <div class="flex gap-1">
+                            <button class="toggle-btn" onclick="setHistoryProvidersAll()">ALL</button>
+                            <button class="toggle-btn" onclick="setHistoryProvidersNone()">NONE</button>
                         </div>
                     </div>
                     <div id="history-sparkline-strip"></div>
@@ -145,20 +164,21 @@
                     </div>
                 </div>
 
-                <!-- Header + CSV download -->
-                <div class="flex justify-between items-center mb-4">
-                    <span style="font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.1em;">
-                        <span style="color:var(--accent-cool);">◷</span> Usage History
-                    </span>
-                    <a id="csv-download-btn"
-                       href="/api/v1/usage/history?format=csv"
-                       download
-                       class="toggle-btn text-sm">
-                        Download CSV
-                    </a>
-                </div>
-
+                <!-- Table Panel (heading inside) -->
                 <div class="glass-panel p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <span style="font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.1em;">
+                            <span style="color:var(--accent-cool);">◷</span> Usage History
+                        </span>
+                        <a id="csv-download-btn"
+                           href="/api/v1/usage/history?format=csv"
+                           download
+                           class="toggle-btn text-sm">
+                            Download CSV
+                        </a>
+                    </div>
+                    <!-- Active filter pill (cross-view sync) -->
+                    <div id="history-filter-pill" class="hidden mb-3"></div>
                     <div id="history-content" class="overflow-x-auto">
                         <p style="color:var(--text-dim);font-style:italic;font-size:12px;">No history data found.</p>
                     </div>

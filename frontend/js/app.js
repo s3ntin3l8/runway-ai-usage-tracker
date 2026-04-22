@@ -292,7 +292,7 @@ function applyTheme() {
 }
 
 /**
- * Start the HUD header clock (UTC time + T+ elapsed since last fetch).
+ * Start the HUD header clock (UTC time + T+ elapsed · since HH:MMZ).
  */
 function startHudClock() {
     const clockEl = document.getElementById('utc-clock');
@@ -305,13 +305,22 @@ function startHudClock() {
                 String(n.getUTCMinutes()).padStart(2, '0') + ':' +
                 String(n.getUTCSeconds()).padStart(2, '0') + 'Z';
         }
-        if (tickEl && window._lastFetchTime) {
-            const e = Math.floor((Date.now() - window._lastFetchTime) / 1000);
-            tickEl.textContent =
-                'T+' +
-                String(Math.floor(e / 3600)).padStart(2, '0') + ':' +
-                String(Math.floor((e % 3600) / 60)).padStart(2, '0') + ':' +
-                String(e % 60).padStart(2, '0');
+        if (tickEl) {
+            if (window._lastFetchTime) {
+                const e = Math.floor((Date.now() - window._lastFetchTime) / 1000);
+                const elapsed =
+                    'T+' +
+                    String(Math.floor(e / 3600)).padStart(2, '0') + ':' +
+                    String(Math.floor((e % 3600) / 60)).padStart(2, '0') + ':' +
+                    String(e % 60).padStart(2, '0');
+                const d = new Date(window._lastFetchTime);
+                const since =
+                    String(d.getUTCHours()).padStart(2, '0') + ':' +
+                    String(d.getUTCMinutes()).padStart(2, '0') + 'Z';
+                tickEl.textContent = `${elapsed} · ${since}`;
+            } else {
+                tickEl.textContent = 'T+—';
+            }
         }
     }, 1000);
 }

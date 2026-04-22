@@ -51,10 +51,11 @@ function getSeriesStyle(providerId, index) {
  * Pick bucket granularity for a given window. Mirrors backend _pick_bucket_seconds.
  */
 export function pickBucketSeconds(days) {
-    if (days >= 2) return 86400;  // 7d/30d/90d → daily
-    if (days >= 0.5) return 3600; // 1d → hourly
-    if (days >= 0.1) return 900;  // 6h → 15 min
-    return 60;                     // 1h → 1 min
+    if (days >= 30) return 86400;   // 30d/90d → daily      (~30–90 pts)
+    if (days >= 7)  return 10800;   // 7d → 3-hourly        (~56 pts)
+    if (days >= 1)  return 1800;    // 24h → 30-min         (~48 pts)
+    if (days >= 0.25) return 900;   // 6h → 15-min          (~24 pts)
+    return 300;                     // 1h → 5-min            (~12 slots)
 }
 
 export function bucketKeyFor(isoTs, bucketSeconds) {
@@ -109,6 +110,16 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
                 continue;
             }
         }
+        // Compute peak in the same unit as value, using server-provided max_used_value when available
+        let maxValue = value;
+        if (snap.max_used_value != null) {
+            const rawMax = snap.max_used_value;
+            if (metric === 'cost' && snap.unit_type === 'currency') maxValue = rawMax;
+            else if (metric === 'tokens' && snap.unit_type === 'tokens') maxValue = rawMax;
+            else if (snap.unit_type === 'percent') maxValue = rawMax;
+            else if (snap.limit_value > 0) maxValue = (rawMax / snap.limit_value) * 100;
+        }
+
         const bucket = bucketKeyFor(snap.timestamp, bucketSeconds);
         const key = `${snap.provider_id || 'unknown'}|${snap.service_name || 'Usage'}|${snap.window_type || 'unknown'}`;
 
@@ -116,7 +127,7 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
         if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0, max: -Infinity };
         buckets[bucket][key].sum += value;
         buckets[bucket][key].count += 1;
-        buckets[bucket][key].max = Math.max(buckets[bucket][key].max, value);
+        buckets[bucket][key].max = Math.max(buckets[bucket][key].max, maxValue);
     }
     return buckets;
 }
@@ -193,12 +204,12 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     // Grouping series by provider for color stability
     const providerCounts = {};
 
-    // Build series: always show averages, optionally add peaks as second series
+    // Build series: averages always, BAND mode adds min-max shaded area (not doubled series)
     let series = [];
 
     // First pass: averages (always shown)
     const avgSeries = seriesKeys.map(key => {
-        const [pid, name, windowType] = key.split('|');
+        const [pid, name] = key.split('|');
         if (providerCounts[pid] === undefined) providerCounts[pid] = 0;
         const style = getSeriesStyle(pid, providerCounts[pid]++);
 
@@ -239,49 +250,59 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
     series = avgSeries;
 
-    // If showing peaks, add peak series with shaded area on top
+    // BAND mode: render a single min-max shaded band per series (not doubled legend items)
     if (showPeaks) {
-        const peakCounts = {};
-        const peakSeries = seriesKeys.map(key => {
-            const [pid, name, windowType] = key.split('|');
-            if (peakCounts[pid] === undefined) peakCounts[pid] = 0;
-            const style = getSeriesStyle(pid, peakCounts[pid]++);
+        const bandCounts = {};
+        const bandSeries = seriesKeys.flatMap(key => {
+            const [pid, name] = key.split('|');
+            if (bandCounts[pid] === undefined) bandCounts[pid] = 0;
+            const style = getSeriesStyle(pid, bandCounts[pid]++);
+            const alpha = '28'; // ~16% opacity for band fill
 
-            return {
-                name: `${pid.toUpperCase()}: ${name} (Peak)`,
+            // Lower bound — hidden line at avg, basis for band
+            const minLine = {
+                name: `__band_min_${key}`,
                 type: 'line',
                 smooth: true,
-                symbol: 'circle',
-                symbolSize: 4,
-                showSymbol: bucketEpochs.length < 100,
-                lineStyle: {
-                    width: 1.5,
-                    type: 'dashed',
-                    dashOffset: 0,
-                },
+                symbol: 'none',
+                lineStyle: { opacity: 0 },
                 itemStyle: { color: style.color },
-                areaStyle: {
-                    color: {
-                        type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-                        colorStops: [
-                            { offset: 0, color: style.color + '40' },
-                            { offset: 1, color: style.color + '00' }
-                        ]
-                    }
-                },
+                areaStyle: { color: 'transparent' },
                 data: bucketEpochs.map(ep => {
                     const b = buckets[ep]?.[key];
-                    return b ? parseFloat(b.max.toFixed(2)) : null;
+                    return b ? parseFloat((b.sum / b.count).toFixed(2)) : null;
                 }),
                 connectNulls: true,
-                emphasis: {
-                    focus: 'series',
-                    lineStyle: { width: 3 }
-                },
-                z: 1
+                stack: `band_${key}`,
+                z: 0,
+                legendHoverLink: false,
+                tooltip: { show: false },
             };
+            // Upper bound (max - min) on top of minLine forms the band
+            const bandFill = {
+                name: `__band_fill_${key}`,
+                type: 'line',
+                smooth: true,
+                symbol: 'none',
+                lineStyle: { opacity: 0 },
+                itemStyle: { color: style.color },
+                areaStyle: { color: style.color + alpha },
+                data: bucketEpochs.map(ep => {
+                    const b = buckets[ep]?.[key];
+                    if (!b) return null;
+                    const avg = b.sum / b.count;
+                    // Band width: max minus avg (so center line = avg series, band extends to max)
+                    return parseFloat((b.max - avg).toFixed(2));
+                }),
+                connectNulls: true,
+                stack: `band_${key}`,
+                z: 0,
+                legendHoverLink: false,
+                tooltip: { show: false },
+            };
+            return [minLine, bandFill];
         });
-        series = [...series, ...peakSeries];
+        series = [...bandSeries, ...series]; // bands behind avg lines
     }
 
     try {
@@ -348,21 +369,6 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 axisLabel: { color: cTextDim, fontSize: 9, fontFamily: 'B612 Mono, monospace' },
                 splitLine: { lineStyle: { color: cHairline, type: 'dashed' } },
                 axisLine: { show: false }
-            },
-            toolbox: {
-                show: true,
-                right: 20,
-                top: 0,
-                feature: {
-                    myRange1h: { show: true, title: '1h', icon: 'path://M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z', onclick: () => window.setHistoryDays(0.042) },
-                    myRange6h: { show: true, title: '6h', icon: 'path://M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm1 10V7h-2v6h5v-2h-3z', onclick: () => window.setHistoryDays(0.25) },
-                    myRange1d: { show: true, title: '1d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(1) },
-                    myRange7d: { show: true, title: '7d', icon: 'path://M19 19H5V8h14v11zM19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 8h5v5h-5v-5z', onclick: () => window.setHistoryDays(7) },
-                    myRange30d: { show: true, title: '30d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(30) },
-                    myRange90d: { show: true, title: '90d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(90) }
-                },
-                iconStyle: { borderColor: cTextDim, borderWidth: 1 },
-                emphasis: { iconStyle: { borderColor: cAccent } }
             },
             dataZoom: [
                 { type: 'inside', start: 0, end: 100 },

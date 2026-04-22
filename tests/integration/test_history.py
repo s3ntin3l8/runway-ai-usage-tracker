@@ -192,10 +192,10 @@ def test_get_history_bucket_size_adapts_to_window(client: TestClient, session: S
         session.add(s)
     session.commit()
 
-    # 1h view: 1-minute buckets → expect ~60 rows (one per minute)
+    # 1h view: 5-minute buckets → ~12 rows (5 min-spaced snapshots per bucket)
     r1h = client.get("/api/v1/usage/history?days=0.042&limit=500").json()
-    assert 55 <= len(r1h["averages"]) <= 60, (
-        f"1h window expected ~60 points, got {len(r1h['averages'])}"
+    assert 10 <= len(r1h["averages"]) <= 14, (
+        f"1h window expected ~12 points (5-min buckets), got {len(r1h['averages'])}"
     )
 
     # 6h view: 15-minute buckets → expect ~4 rows
@@ -204,8 +204,8 @@ def test_get_history_bucket_size_adapts_to_window(client: TestClient, session: S
         f"6h window expected ~4 points, got {len(r6h['averages'])}"
     )
 
-    # 1d view: hourly buckets → 60min span crosses at most 2 hour boundaries
+    # 1d view: 30-min buckets → 60min span crosses at most 3 half-hour boundaries
     r1d = client.get("/api/v1/usage/history?days=1&limit=500").json()
-    assert 1 <= len(r1d["averages"]) <= 2, (
-        f"1d window expected 1-2 hourly points, got {len(r1d['averages'])}"
+    assert 1 <= len(r1d["averages"]) <= 3, (
+        f"1d window expected 1-3 points (30-min buckets), got {len(r1d['averages'])}"
     )

@@ -4,6 +4,7 @@ import pytest
 
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
+    anthropic_model_id_for,
     classify_anthropic_window_type,
 )
 
@@ -13,15 +14,30 @@ from app.services.collectors._anthropic_common import (
     [
         ("five_hour", "session"),
         ("seven_day", "weekly"),
-        ("seven_day_sonnet", "seven_day_sonnet"),
-        ("seven_day_opus", "seven_day_opus"),
-        ("seven_day_omelette", "seven_day_omelette"),
+        ("seven_day_sonnet", "weekly"),
+        ("seven_day_opus", "weekly"),
+        ("seven_day_omelette", "weekly"),
         ("extra_usage", "unknown"),
         ("unknown_key", "unknown"),
     ],
 )
 def test_classify_anthropic_window_type(key, expected):
     assert classify_anthropic_window_type(key) == expected
+
+
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("seven_day_sonnet", "sonnet"),
+        ("seven_day_opus", "opus"),
+        ("seven_day_omelette", "design"),
+        ("seven_day", None),
+        ("five_hour", None),
+        ("extra_usage", None),
+    ],
+)
+def test_anthropic_model_id_for(key, expected):
+    assert anthropic_model_id_for(key) == expected
 
 
 def test_name_map_has_all_expected_keys():
