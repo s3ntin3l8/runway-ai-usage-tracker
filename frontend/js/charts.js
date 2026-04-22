@@ -390,14 +390,6 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         
         _chart.setOption(option, true);  // true = notMerge: replace all series/axes cleanly
 
-        // Notify parent if user zooms in significantly
-        _chart.on('datazoom', (params) => {
-            // This is a bit tricky to handle without infinite loops, 
-            // but we can detect if the selected range is very small 
-            // compared to the fetched range.
-            // For now, the toolbox presets are the primary way.
-        });
-        
     } catch (err) {
         console.error('Failed to init ECharts:', err);
         emptyEl.textContent = 'Failed to load chart. Please refresh.';
