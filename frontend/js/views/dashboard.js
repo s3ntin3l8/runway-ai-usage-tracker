@@ -94,11 +94,22 @@ export function renderFilterPills() {
         : rawValues.sort();
     const active = STATE.activeFilter?.value;
 
-    const pills = [`<button class="pill${!active ? ' pill-active' : ''}" onclick="setFilter(null)">All</button>`];
+    const pills = [`<button class="pill${!active ? ' pill-active' : ''}" data-filter-value="">All</button>`];
     values.forEach(v => {
-        pills.push(`<button class="pill${active === v ? ' pill-active' : ''}" onclick="setFilter('${v}')">${escapeHTML(v)}</button>`);
+        pills.push(`<button class="pill${active === v ? ' pill-active' : ''}" data-filter-value="${escapeHTML(v)}">${escapeHTML(v)}</button>`);
     });
     container.innerHTML = pills.join('');
+
+    // Event delegation: one listener handles all pill clicks via data-filter-value
+    if (!container._pillListenerAttached) {
+        container._pillListenerAttached = true;
+        container.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-filter-value]');
+            if (!btn) return;
+            const val = btn.dataset.filterValue;
+            setFilter(val || null);
+        });
+    }
 
     const hasSidecars = STATE.data.some(i => i.sidecar_id);
     const sidecarBtn = document.getElementById('dim-btn-sidecar');
