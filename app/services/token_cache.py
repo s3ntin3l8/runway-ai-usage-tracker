@@ -226,6 +226,11 @@ class TokenCache:
                 }
             return stats
 
+    async def reset(self) -> None:
+        """Clear all cached tokens (used in tests)."""
+        async with self._lock:
+            self._cache.clear()
+
     async def get_all_active_accounts(self) -> list[tuple[str, str, str | None]]:
         """
         Get a list of all active (provider, account_id, account_label) tuples.

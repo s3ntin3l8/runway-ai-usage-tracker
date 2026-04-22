@@ -43,8 +43,7 @@ def setup_test_settings(monkeypatch):
 @pytest.fixture(autouse=True)
 async def clear_token_cache():
     """Clear the global token cache before each test to ensure isolation."""
-    async with token_cache._lock:
-        token_cache._cache.clear()
+    await token_cache.reset()
 
 
 @pytest.fixture(autouse=True)
