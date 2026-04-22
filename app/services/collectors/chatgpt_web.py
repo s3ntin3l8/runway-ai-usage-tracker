@@ -54,12 +54,16 @@ class ChatGPTWebMixin:
             tier = data.get("plan_type", "free")
             email = data.get("email", "")
 
-            # Identity Promotion
-            if email and self.account_id:
-                asyncio.create_task(
-                    token_cache.update_account_metadata("chatgpt", self.account_id, name=email)
-                )
+            # Identity Promotion — always capture email; account_id may be None for default account
+            if email:
                 self.account_label = email
+                effective_account_id = self.account_id or account_id
+                if effective_account_id:
+                    asyncio.create_task(
+                        token_cache.update_account_metadata(
+                            "chatgpt", effective_account_id, name=email
+                        )
+                    )
 
             primary = data.get("rate_limit", {}).get("primary_window", {})
             if primary:

@@ -363,7 +363,9 @@ class BaseCollector(ABC):
                 or not card_data.get("account_label")
                 or card_data.get("account_label").lower() == "default"
             ):
-                card_data["account_label"] = self.account_label or "Default"
+                card_data["account_label"] = (
+                    self.account_label or self._account_label_cache or "Default"
+                )
 
             # Tag input source (origin of credentials)
             if "input_source" not in card_data or card_data.get("input_source") == "unknown":

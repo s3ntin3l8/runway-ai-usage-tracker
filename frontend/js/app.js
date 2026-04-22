@@ -807,10 +807,10 @@ window.viewRawProviderData = async function(providerId) {
     if (!modal || !content) return;
 
     content.innerHTML = `
-        <div class="p-12 text-center">
-            <div class="inline-block w-8 h-8 border-4 border-violet-500/30 border-t-violet-500 rounded-full animate-spin mb-4"></div>
-            <p class="text-zinc-500 font-bold tracking-widest text-xs uppercase">Fetching raw API data from ${escapeHTML(providerId)}...</p>
-            <p class="text-[10px] text-zinc-600 mt-2">This may take up to 30 seconds if it triggers a fresh collection cycle.</p>
+        <div style="padding:3rem;text-align:center;">
+            <div style="display:inline-block;width:28px;height:28px;border:2px solid var(--hairline-strong);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:1rem;"></div>
+            <p class="mono" style="font-size:11px;font-weight:700;letter-spacing:0.14em;color:var(--text-muted);text-transform:uppercase;">Fetching raw data from ${escapeHTML(providerId)}…</p>
+            <p class="mono" style="font-size:10px;color:var(--text-dim);margin-top:6px;">May take up to 30s if triggering a fresh collection cycle.</p>
         </div>
     `;
     modal.classList.add('active');
@@ -833,41 +833,41 @@ window.viewRawProviderData = async function(providerId) {
         
         // 1. Build the skeleton via innerHTML
         content.innerHTML = `
-            <div class="flex flex-col h-full overflow-hidden">
-                <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50 shrink-0">
+            <div style="display:flex;flex-direction:column;gap:0;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid var(--hairline-strong);">
                     <div>
-                        <div class="text-xl font-black text-zinc-100 uppercase tracking-tight">Raw Data: ${escapeHTML(providerId)}</div>
-                        <div class="text-[10px] text-zinc-500 mono mt-1">Provider-specific HTTP interception bundle (DOM-Isolated)</div>
+                        <div class="mono" style="font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.1em;">RAW DATA: ${escapeHTML(providerId)}</div>
+                        <div class="mono" style="font-size:10px;color:var(--text-dim);margin-top:3px;">HTTP interception bundle — ${responses.length} response${responses.length !== 1 ? 's' : ''} captured</div>
                     </div>
-                    <div class="flex gap-2">
-                        <button id="copy-all-raw" class="toggle-btn text-[10px] py-1 px-3">Copy All</button>
-                        <button onclick="document.getElementById('modal-container').classList.remove('active')" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <button id="copy-all-raw" class="toggle-btn" style="font-size:10px;padding:3px 10px;">Copy All</button>
+                        <button class="icon-btn" onclick="document.getElementById('modal-container').classList.remove('active')" style="font-size:1.1rem;width:28px;height:28px;">✕</button>
                     </div>
                 </div>
-                <div id="raw-responses-list" class="flex-1 overflow-y-auto space-y-8 pr-2 custom-scrollbar contain-strict">
+                <div id="raw-responses-list" style="display:flex;flex-direction:column;gap:1.5rem;">
                     ${responses.length === 0 ? `
-                        <div class="bg-zinc-900/50 rounded-xl p-8 text-center border border-dashed border-zinc-800">
-                            <p class="text-zinc-500 text-sm italic">No HTTP requests were captured during the collection cycle.</p>
-                            <p class="text-[10px] text-zinc-600 mt-2">This usually means the data was served from the local cache or an internal strategy.</p>
+                        <div style="padding:2rem;text-align:center;border:1px dashed var(--hairline-strong);">
+                            <p class="mono" style="color:var(--text-muted);font-size:12px;">No HTTP requests were captured during the collection cycle.</p>
+                            <p class="mono" style="color:var(--text-dim);font-size:10px;margin-top:6px;">Data was served from cache or an internal strategy.</p>
                         </div>
                     ` : responses.map((res, idx) => `
-                        <div class="space-y-2 pb-2 border-b border-zinc-800/20 last:border-0">
-                            <div class="flex items-center justify-between gap-2 flex-wrap">
-                                <div class="flex items-center gap-2">
-                                    <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 mono text-[10px] font-bold border border-zinc-700/50">${res.status}</span>
-                                    <span class="px-2 py-0.5 rounded bg-zinc-900 text-violet-400 mono text-[10px] font-bold border border-violet-900/30">${res.method}</span>
-                                    <span class="text-[10px] text-zinc-500 mono truncate max-w-md" title="${escapeHTML(res.url)}">${escapeHTML(res.url)}</span>
+                        <div style="border-bottom:1px solid var(--hairline);padding-bottom:1.25rem;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <span class="tag mono" style="font-size:10px;padding:2px 6px;">${res.status}</span>
+                                    <span class="mono" style="font-size:10px;font-weight:700;color:var(--accent);">${res.method}</span>
+                                    <span class="mono" style="font-size:10px;color:var(--text-muted);word-break:break-all;" title="${escapeHTML(res.url)}">${escapeHTML(res.url)}</span>
                                 </div>
-                                <button data-copy-index="${idx}" class="copy-body-btn text-[9px] uppercase tracking-widest text-zinc-600 hover:text-zinc-400 font-bold transition-colors">Copy Body</button>
+                                <button data-copy-index="${idx}" class="copy-body-btn mono" style="font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);background:none;border:none;cursor:pointer;font-weight:700;">Copy Body</button>
                             </div>
-                            <div class="bg-black/40 rounded-xl p-4 border border-zinc-800/60 overflow-hidden">
-                                <pre id="raw-body-${idx}" class="text-[11px] text-zinc-300 mono whitespace-pre-wrap overflow-x-auto leading-relaxed max-h-[400px] select-text"></pre>
+                            <div style="background:var(--bg);border:1px solid var(--hairline);padding:12px;overflow:hidden;">
+                                <pre id="raw-body-${idx}" class="mono" style="font-size:11px;color:var(--text-muted);white-space:pre-wrap;overflow-x:auto;line-height:1.6;max-height:400px;overflow-y:auto;"></pre>
                             </div>
                         </div>
                     `).join('')}
                 </div>
-                <div class="mt-6 flex justify-end shrink-0">
-                    <button onclick="document.getElementById('modal-container').classList.remove('active')" class="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CLOSE</button>
+                <div style="margin-top:1.5rem;display:flex;justify-content:flex-end;">
+                    <button onclick="document.getElementById('modal-container').classList.remove('active')" class="toggle-btn mono" style="font-size:11px;padding:6px 20px;text-transform:uppercase;letter-spacing:0.1em;">CLOSE</button>
                 </div>
             </div>
         `;
@@ -896,13 +896,11 @@ window.viewRawProviderData = async function(providerId) {
 
     } catch (err) {
         content.innerHTML = `
-            <div class="p-8 text-center">
-                <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                </div>
-                <h2 class="text-xl font-black text-zinc-50 mb-2">Debug Fetch Failed</h2>
-                <p class="text-zinc-400 text-sm mb-6">${escapeHTML(err.message)}</p>
-                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">DISMISS</button>
+            <div style="padding:2.5rem;text-align:center;">
+                <div style="font-size:2rem;margin-bottom:1rem;color:var(--crit);">⚠</div>
+                <div class="mono" style="font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem;">Debug Fetch Failed</div>
+                <p class="mono" style="font-size:11px;color:var(--text-muted);margin-bottom:1.5rem;">${escapeHTML(err.message)}</p>
+                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="toggle-btn mono" style="font-size:11px;padding:6px 20px;text-transform:uppercase;letter-spacing:0.1em;">DISMISS</button>
             </div>
         `;
     }
