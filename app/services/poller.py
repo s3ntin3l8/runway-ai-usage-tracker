@@ -86,8 +86,12 @@ class BackgroundPoller:
                 if card.data_source == "cache":
                     continue  # cached cards don't represent fresh activity
                 key = f"{card.provider_id}:{card.account_id}"
-                # Use a stable string representation
-                poll_states.setdefault(key, []).append(f"{card.used_value}:{card.limit_value}")
+                # Include service_name and window_type so two windows that happen to share
+                # the same (used, limit) pair don't collapse into one dormancy signal.
+                window_id = f"{card.service_name}:{card.window_type}"
+                poll_states.setdefault(key, []).append(
+                    f"{window_id}:{card.used_value}:{card.limit_value}"
+                )
             except Exception:
                 logger.debug("Skipping malformed card in sleep state tracking")
 
