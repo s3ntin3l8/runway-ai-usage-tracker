@@ -1,689 +1,516 @@
 @import "tailwindcss";
 
+/* ============================================
+   DESIGN TOKENS — Aviation HUD Theme
+   ============================================ */
+
+:root {
+    /* Dark palette (default) */
+    --bg:              #0a0c0f;
+    --surface:         #0f1216;
+    --surface-2:       #141820;
+    --hairline:        #1e2630;
+    --hairline-strong: #2a3440;
+    --text:            #e8e4d4;
+    --text-muted:      #9ba3a8;
+    --text-dim:        #5a6068;
+    --accent:          #ffb000;
+    --accent-dim:      rgba(255, 176, 0, 0.12);
+    --accent-cool:     #00d4ff;
+    --crit:            #ff3b30;
+    --warn:            #ffb000;
+    --good:            #5af080;
+    --unlm:            #d580ff;
+    --unk:             #5a6068;
+    --scanline:        0.04;
+
+    /* Motion */
+    --dur-fast: 120ms;
+    --dur:      200ms;
+    --ease:     cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+
+:root[data-theme="light"] {
+    /* Light palette — aviation chart ivory */
+    --bg:              #f5f1e8;
+    --surface:         #ffffff;
+    --surface-2:       #eeeadf;
+    --hairline:        #c8bfaa;
+    --hairline-strong: #a89e85;
+    --text:            #1a1a1a;
+    --text-muted:      #555555;
+    --text-dim:        #8a8580;
+    --accent:          #b87400;
+    --accent-dim:      rgba(184, 116, 0, 0.1);
+    --accent-cool:     #006b8f;
+    --crit:            #c1272d;
+    --warn:            #b87400;
+    --good:            #0a7a3d;
+    --unlm:            #6b2e8f;
+    --unk:             #8a8580;
+    --scanline:        0.015;
+}
+
 @theme {
-    --font-family-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-    --font-family-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --font-family-mono: 'B612 Mono', ui-monospace, monospace;
+    --font-family-sans: 'B612', ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Custom Runway Styles */
+/* ============================================
+   BASE
+   ============================================ */
 
-* { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
-body { background-color: #09090b; color: #fafafa; }
-code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+*, *::before, *::after { box-sizing: border-box; }
 
-.glass-panel {
-    background: #18181b;
-    border: 1px solid rgba(63, 63, 70, 0.6);
-    contain: layout style paint;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-.glass-panel:hover {
-    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+* { font-family: 'B612 Mono', ui-monospace, monospace; }
+
+body {
+    background-color: var(--bg);
+    color: var(--text);
+    transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 
-/* Modal panel: solid, no backdrop-filter, no hover lift */
-.modal-panel {
-    background: rgba(18, 18, 20, 0.98);
-    border: 1px solid rgba(63, 63, 70, 0.6);
-    box-shadow: 0 24px 80px rgba(0,0,0,0.7);
-}
-/* Promote modal icon buttons to own layer for instant hover response */
-#modal-content button {
-    will-change: background-color, color;
-}
+code, .mono { font-family: 'B612 Mono', ui-monospace, monospace; }
+.sans { font-family: 'B612', ui-sans-serif, system-ui, sans-serif; }
 
-/* Card two-zone layout: top zone natural height, bottom zone fills remainder */
-.card-layout {
-    display: grid;
-    grid-template-rows: auto 1fr;
-    min-height: 100%;
-}
-
-/* Health states */
-.health-good    { border-color: rgba(34,197,94,0.35); }
-.health-good:hover { border-color: rgba(34,197,94,0.7); box-shadow: 0 12px 40px rgba(34,197,94,0.08); }
-.health-warning { border-color: rgba(251,191,36,0.35); }
-.health-warning:hover { border-color: rgba(251,191,36,0.7); box-shadow: 0 12px 40px rgba(251,191,36,0.08); }
-.health-critical { border-color: rgba(239,68,68,0.5); }
-.health-critical:hover { border-color: rgba(239,68,68,0.8); box-shadow: 0 12px 40px rgba(239,68,68,0.12); }
-.health-unknown { border-color: rgba(63,63,70,0.6); }
-/* Unlimited health state with rainbow border */
-.health-unlimited {
-    border: 2px solid transparent;
-    background: linear-gradient(#18181b, #18181b) padding-box,
-                conic-gradient(from 0deg, #ff0080, #ff8c00, #40e0d0, #7b2cbf, #ff0080) border-box;
-}
-
-.health-unlimited:hover {
-    box-shadow: 0 8px 30px rgba(139, 92, 246, 0.15);
-}
-
-.dot-unlimited {
-    background: linear-gradient(45deg, #ff0080, #8b5cf6, #40e0d0);
-    background-size: 200% 200%;
-    animation: gradient-shift 2s ease infinite;
-    box-shadow: 0 0 10px rgba(139, 92, 246, 0.8);
-}
-
-@keyframes gradient-shift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-}
-
-/* Unlimited progress bar styling */
-.progress-unlimited {
-    background: linear-gradient(90deg, 
-        rgba(255,0,128,0.2), 
-        rgba(255,140,0,0.2), 
-        rgba(64,224,208,0.2), 
-        rgba(123,44,191,0.2),
-        rgba(255,0,128,0.2)
+/* CRT scanline overlay */
+body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent 0px,
+        transparent 1px,
+        rgb(0 0 0 / var(--scanline)) 1px,
+        rgb(0 0 0 / var(--scanline)) 2px
     );
-    background-size: 300% 100%;
-    animation: shimmer 3s infinite linear;
 }
 
-.progress-unlimited .progress-fill {
-    background: linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0) !important;
-    background-size: 200% 100%;
-    animation: gradient-shift 2s ease infinite;
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hairline-strong); }
+
+/* ============================================
+   SEMANTIC COLOR UTILITIES
+   ============================================ */
+
+.text-accent  { color: var(--accent); }
+.text-cool    { color: var(--accent-cool); }
+.text-crit-c  { color: var(--crit); }
+.text-warn-c  { color: var(--warn); }
+.text-good-c  { color: var(--good); }
+.text-unlm-c  { color: var(--unlm); }
+.text-unk-c   { color: var(--unk); }
+.text-primary { color: var(--text); }
+.text-muted-c { color: var(--text-muted); }
+.text-dim-c   { color: var(--text-dim); }
+
+.bg-surface   { background: var(--surface); }
+.bg-surface-2 { background: var(--surface-2); }
+.bg-bg        { background: var(--bg); }
+
+/* ============================================
+   HUD PANEL
+   ============================================ */
+
+.hud-panel {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 1px;
+    transition: border-color var(--dur) var(--ease);
+    position: relative;
 }
 
-/* Status dot */
-.dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.dot-good     { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.8); }
-.dot-warning  { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.8); }
-.dot-critical { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.7); animation: pulse-dot 1.5s ease-in-out infinite; will-change: opacity, transform; }
-.dot-unknown  { background: #52525b; }
+/* Instrument corner ticks */
+.hud-panel::before,
+.hud-panel::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-color: var(--hairline-strong);
+    border-style: solid;
+    pointer-events: none;
+}
+.hud-panel::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.hud-panel::after  { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
 
-@keyframes pulse-dot {
+/* glass-panel alias: same look, no corner ticks */
+.glass-panel {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 1px;
+    transition: border-color var(--dur) var(--ease);
+    position: relative;
+}
+.glass-panel:hover { border-color: var(--hairline-strong); }
+
+/* ============================================
+   HEALTH STATES
+   ============================================ */
+
+.health-good    { border-color: color-mix(in srgb, var(--good) 35%, var(--hairline)); }
+.health-good.hud-panel:hover,
+.health-good.glass-panel:hover { border-color: color-mix(in srgb, var(--good) 65%, transparent); }
+
+.health-warning { border-color: color-mix(in srgb, var(--warn) 35%, var(--hairline)); }
+.health-warning.hud-panel:hover,
+.health-warning.glass-panel:hover { border-color: color-mix(in srgb, var(--warn) 65%, transparent); }
+
+.health-critical { border-color: var(--crit); }
+.health-critical.hud-panel:hover,
+.health-critical.glass-panel:hover { border-color: var(--crit); }
+
+.health-unknown { border-color: var(--hairline); }
+
+.health-unlimited { border-color: color-mix(in srgb, var(--unlm) 45%, var(--hairline)); }
+.health-unlimited.hud-panel:hover,
+.health-unlimited.glass-panel:hover { border-color: var(--unlm); }
+
+/* ============================================
+   STATUS LAMPS  (new — replaces dot-*)
+   ============================================ */
+
+.lamp {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+}
+.lamp-good { background: var(--good); box-shadow: 0 0 5px var(--good); }
+.lamp-warn { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
+.lamp-crit { background: var(--crit); box-shadow: 0 0 7px var(--crit); animation: lamp-pulse 1.2s ease-in-out infinite; }
+.lamp-unlm { background: var(--unlm); box-shadow: 0 0 5px var(--unlm); }
+.lamp-unk  { background: var(--unk); }
+
+/* Legacy dot-* kept for older components */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.dot-good     { background: var(--good); box-shadow: 0 0 5px var(--good); }
+.dot-warning  { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
+.dot-critical { background: var(--crit); box-shadow: 0 0 7px var(--crit); animation: lamp-pulse 1.2s ease-in-out infinite; will-change: opacity, transform; }
+.dot-unknown  { background: var(--unk); }
+.dot-unlimited { background: var(--unlm); box-shadow: 0 0 5px var(--unlm); }
+
+@keyframes lamp-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%       { opacity: 0.5; transform: scale(0.85); }
 }
 
-/* Progress bar */
-.progress-track { height: 6px; background: rgba(63,63,70,0.5); border-radius: 4px; overflow: hidden; }
-.progress-fill  { height: 100%; border-radius: 4px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+/* ============================================
+   STATUS TAGS  [CRIT] / [WARN] etc.
+   ============================================ */
 
-/* Skeleton loader */
-.skeleton { background: linear-gradient(90deg, rgba(39,39,42,0.8) 25%, rgba(63,63,70,0.5) 50%, rgba(39,39,42,0.8) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 8px; }
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; } 
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 3px; }
-
-/* Compact Mode & Inverted */
-.compact-mode #grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-.compact-mode .glass-panel { padding: 0.75rem; border-radius: 0.75rem; }
-.compact-mode .progress-track { margin-top: auto; height: 5px; }
-.compact-mode .dot { width: 6px; height: 6px; }
-.compact-mode .skeleton { height: 100px; border-radius: 0.75rem; }
-.compact-mode .text-xl { font-size: 1.25rem; line-height: 1.75rem; }
-
-/* Settings sidebar nav */
-.settings-nav-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: #71717a;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+.tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 1px 5px;
+    border: 1px solid currentColor;
+    line-height: 1.6;
     white-space: nowrap;
+    display: inline-block;
+    text-transform: uppercase;
 }
-.settings-nav-item:hover {
-    background: rgba(63, 63, 70, 0.4);
-    color: #d4d4d8;
+.tag-crit {
+    color: var(--crit);
+    background: color-mix(in srgb, var(--crit) 10%, transparent);
+    animation: amber-flicker 1.8s ease-in-out infinite;
 }
-.settings-nav-item.active {
-    background: rgba(63, 63, 70, 0.6);
-    color: #f4f4f5;
+.tag-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.tag-good { color: var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); }
+.tag-unlm { color: var(--unlm); background: color-mix(in srgb, var(--unlm) 10%, transparent); }
+.tag-unk  { color: var(--unk); background: color-mix(in srgb, var(--unk) 8%, transparent); }
+
+/* ============================================
+   READOUT (large metric numbers)
+   ============================================ */
+
+.readout {
+    font-size: 2.5rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+}
+.readout-crit { color: var(--crit); }
+.readout-warn { color: var(--warn); }
+.readout-good { color: var(--good); }
+.readout-unlm { color: var(--unlm); }
+.readout-unk  { color: var(--unk); }
+.readout-xl   { font-size: 3rem; }
+.readout-sm   { font-size: 1.75rem; }
+
+/* ============================================
+   NAVIGATION
+   ============================================ */
+
+.nav-link {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 4px 0;
+    cursor: pointer;
+    position: relative;
+    background: none;
+    border: none;
+    transition: color var(--dur) var(--ease);
+}
+.nav-link:hover { color: var(--text-muted); }
+.nav-link.active { color: var(--accent); }
+.nav-link.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0;
+    width: 100%;
+    height: 1px;
+    background: var(--accent);
 }
 
-.toggle-btn {
-    background: #18181b;
-    border: 1px solid #3f3f46;
-    padding: 4px 12px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: #71717a;
-    letter-spacing: 0.025em;
-}
-.toggle-btn.active {
-    border-color: #3b82f6;
-    color: #eff6ff;
-    background: rgba(59, 130, 246, 0.1);
-}
+#main-nav.nav-locked { pointer-events: none; opacity: 0.5; }
+#main-nav.nav-locked .nav-link { cursor: default; }
+#main-nav.nav-locked .nav-link::after { display: none; }
+
+/* ============================================
+   ICON BUTTONS
+   ============================================ */
+
 .icon-btn {
-    width: 32px;
-    height: 32px;
+    width: 28px; height: 28px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
-    border: 1px solid rgba(63, 63, 70, 0.5);
-    background: rgba(39, 39, 42, 0.4);
-    color: rgb(113, 113, 122);
-    transition: color 0.15s, background 0.15s, border-color 0.15s;
+    border: 1px solid var(--hairline-strong);
+    background: transparent;
+    color: var(--text-dim);
+    transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
     cursor: pointer;
 }
-.icon-btn:hover { color: rgb(228, 228, 231); background: rgba(63, 63, 70, 0.5); }
+.icon-btn:hover { color: var(--accent); border-color: var(--accent); }
 .icon-btn[aria-pressed="true"] {
-    color: rgb(244, 244, 245);
-    background: rgb(63, 63, 70);
-    border-color: rgb(113, 113, 122);
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
 }
 
-/* Edit mode affordances (used in later tasks) */
-.edit-mode [data-provider-id],
-.edit-mode [data-card-key] {
-    cursor: grab;
-    outline: 1px dashed rgba(113, 113, 122, 0.4);
-    outline-offset: 4px;
-}
-.edit-mode [data-provider-id]:active,
-.edit-mode [data-card-key]:active { cursor: grabbing; }
-.drag-handle { display: none; }
-.edit-mode .drag-handle {
-    display: inline-flex;
-    color: rgb(113, 113, 122);
-    opacity: 0.55;
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    pointer-events: none;
-}
-body.bright-mode.edit-mode .drag-handle,
-body.bright-mode .edit-mode .drag-handle {
-    color: rgb(82, 82, 91);
-}
-.sortable-ghost { opacity: 0.4; }
-.sortable-chosen { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.6); }
+/* ============================================
+   TOGGLE / PILL BUTTONS
+   ============================================ */
 
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Tooltip styles */
-.tooltip-container {
-    position: relative;
-    display: inline-block;
+.toggle-btn {
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    padding: 3px 10px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+    color: var(--text-dim);
 }
+.toggle-btn:hover { color: var(--text-muted); border-color: var(--text-dim); }
+.toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+/* ============================================
+   FILTER PILLS & DIMENSION BUTTONS
+   ============================================ */
+
+.pill {
+    padding: 2px 10px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid var(--hairline-strong);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+    background: transparent;
+}
+.pill:hover { border-color: var(--accent); color: var(--accent); }
+.pill-active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.dim-btn {
+    padding: 2px 8px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease);
+    background: none;
+    border: none;
+}
+.dim-btn:hover { color: var(--text-muted); }
+.dim-btn-active { color: var(--accent); }
+
+/* ============================================
+   PROGRESS / METER BARS
+   ============================================ */
+
+.progress-track {
+    height: 3px;
+    background: var(--hairline-strong);
+    overflow: hidden;
+}
+.progress-fill {
+    height: 100%;
+    transition: width 0.6s var(--ease);
+}
+
+.progress-unlimited {
+    background: color-mix(in srgb, var(--unlm) 15%, transparent);
+}
+.progress-unlimited .progress-fill { background: var(--unlm) !important; }
+
+/* ============================================
+   TOOLTIP
+   ============================================ */
+
+.tooltip-container { position: relative; display: inline-block; }
 
 .tooltip {
     visibility: hidden;
     opacity: 0;
     position: absolute;
-    bottom: 100%;
-    right: 0;
-    margin-bottom: 8px;
-    padding: 8px 12px;
-    background: #18181b;
-    border: 1px solid rgba(63, 63, 70, 0.8);
-    border-radius: 8px;
-    color: #fafafa;
-    font-size: 12px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    bottom: 100%; right: 0;
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline-strong);
+    color: var(--text);
+    font-size: 11px;
     white-space: nowrap;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-    transition: opacity 0.2s ease, visibility 0.2s ease;
+    box-shadow: 0 4px 20px rgb(0 0 0 / 0.45);
+    transition: opacity var(--dur-fast) var(--ease), visibility var(--dur-fast) var(--ease);
     z-index: 100;
 }
-
-/* Arrow */
 .tooltip::after {
     content: '';
     position: absolute;
-    top: 100%;
-    right: 12px;
-    border-width: 6px;
-    border-style: solid;
-    border-color: rgba(63, 63, 70, 0.8) transparent transparent transparent;
+    top: 100%; right: 10px;
+    border: 5px solid transparent;
+    border-top-color: var(--hairline-strong);
 }
+.tooltip-container:hover .tooltip { visibility: visible; opacity: 1; }
 
-/* Show on hover */
-.tooltip-container:hover .tooltip {
-    visibility: visible;
-    opacity: 1;
-}
+/* ============================================
+   MODAL
+   ============================================ */
 
-/* Modal styles */
 #modal-container.active {
     opacity: 1;
     pointer-events: auto;
 }
-
 #modal-container.active #modal-content {
     transform: scale(1);
     opacity: 1;
     will-change: opacity, transform;
 }
 
-.modal-detail-item {
-    padding: 1rem;
-    border-bottom: 1px solid rgba(63, 63, 70, 0.4);
+.modal-panel {
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    box-shadow: 0 24px 80px rgb(0 0 0 / 0.65);
 }
 
-.modal-detail-item:last-child {
-    border-bottom: none;
+.modal-detail-item {
+    padding: 0.875rem 0;
+    border-bottom: 1px solid var(--hairline);
 }
+.modal-detail-item:last-child { border-bottom: none; }
 
 .modal-header {
-    background: linear-gradient(180deg, rgba(39, 39, 42, 0.4), transparent);
-    margin: -1.5rem -1.5rem 1.5rem -1.5rem;
-    padding: 2rem 1.5rem 1.5rem 1.5rem;
+    border-bottom: 1px solid var(--hairline-strong);
+    margin: -1.5rem -1.5rem 1.5rem;
+    padding: 1.5rem;
 }
-
 @media (min-width: 768px) {
     .modal-header {
-        margin: -2rem -2rem 2rem -2rem;
-        padding: 2.5rem 2rem 2rem 2rem;
+        margin: -2rem -2rem 2rem;
+        padding: 2rem;
     }
 }
 
-/* Auto-refresh pulsing dot */
-.refresh-active::after {
-    content: '';
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    background: #22c55e;
-    border-radius: 50%;
-    margin-left: 6px;
-    animation: pulse-refresh 1.5s ease-in-out infinite;
-}
+#modal-content button { will-change: background-color, color; }
 
-@keyframes pulse-refresh {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(0.8); }
-}
+/* ============================================
+   CARD LAYOUT
+   ============================================ */
 
-/* Theme toggle button - same size as other toggles */
-#toggle-theme {
-    padding: 4px 10px;
-}
-
-/* Pace icon styling */
-.pace-icon {
-    font-size: 20px;
-    line-height: 1;
-    cursor: help;
-    flex-shrink: 0;
-}
-
-/* Compact mode pace icon */
-.compact-mode .pace-icon {
-    font-size: 16px;
+.card-layout {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 100%;
 }
 
 /* ============================================
-   BRIGHT MODE THEME
+   SKELETON LOADER
    ============================================ */
 
-body.bright-mode {
-    background-color: #fafafa;
-    color: #18181b;
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--surface) 25%,
+        var(--hairline-strong) 50%,
+        var(--surface) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
 }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
-body.bright-mode .glass-panel {
-    background: #ffffff;
-    border: 1px solid rgba(200, 200, 200, 0.5);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-}
+/* ============================================
+   EDIT MODE / DRAG
+   ============================================ */
 
-body.bright-mode .glass-panel:hover {
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-}
-
-/* Text colors in bright mode */
-body.bright-mode .text-zinc-50 { color: #18181b; }
-body.bright-mode .text-zinc-200 { color: #27272a; }
-body.bright-mode .text-zinc-400 { color: #52525b; }
-body.bright-mode .text-zinc-500 { color: #71717a; }
-body.bright-mode .text-zinc-600 { color: #a1a1aa; }
-body.bright-mode .text-zinc-700 { color: #d4d4d8; }
-
-/* Toggle buttons in bright mode */
-body.bright-mode .toggle-btn {
-    background: #f4f4f5;
-    border-color: #d4d4d8;
-    color: #52525b;
-}
-
-body.bright-mode .toggle-btn.active {
-    border-color: #3b82f6;
-    color: #2563eb;
-    background: rgba(59, 130, 246, 0.1);
-}
-
-/* Refresh button in bright mode */
-body.bright-mode #refresh-btn {
-    background: #f4f4f5;
-    border-color: #d4d4d8;
-    color: #27272a;
-}
-
-body.bright-mode #refresh-btn:hover {
-    background: #e4e4e7;
-    border-color: #a1a1aa;
-}
-
-/* Header icon buttons in bright mode */
-body.bright-mode .icon-btn {
-    background: #f4f4f5;
-    border-color: #d4d4d8;
-    color: #52525b;
-}
-body.bright-mode .icon-btn:hover {
-    background: #e4e4e7;
-    color: #18181b;
-}
-body.bright-mode .icon-btn[aria-pressed="true"] {
-    background: #e4e4e7;
-    border-color: #a1a1aa;
-    color: #18181b;
-}
-
-/* Modal in bright mode */
-body.bright-mode .tooltip {
-    background: #ffffff;
-    border-color: rgba(200, 200, 200, 0.8);
-    color: #18181b;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-}
-
-body.bright-mode .tooltip::after {
-    border-color: rgba(200, 200, 200, 0.8) transparent transparent transparent;
-}
-
-body.bright-mode #modal-backdrop {
-    background: rgba(0, 0, 0, 0.4);
-}
-
-body.bright-mode #modal-content {
-    background: rgba(255, 255, 255, 0.95);
-}
-
-body.bright-mode .modal-header {
-    background: linear-gradient(180deg, rgba(244, 244, 245, 0.6), transparent);
-}
-
-body.bright-mode .modal-detail-item {
-    border-bottom-color: rgba(200, 200, 200, 0.4);
-}
-
-/* Scrollbar in bright mode */
-body.bright-mode ::-webkit-scrollbar-thumb {
-    background: #d4d4d8;
-}
-
-/* Skeleton in bright mode */
-body.bright-mode .skeleton {
-    background: linear-gradient(90deg, rgba(228, 228, 231, 0.8) 25%, rgba(212, 212, 216, 0.5) 50%, rgba(228, 228, 231, 0.8) 75%);
-}
-
-/* Pace badge in bright mode */
-body.bright-mode .text-zinc-500.bg-zinc-900\/80 {
-    background: rgba(228, 228, 231, 0.8) !important;
-    border-color: rgba(212, 212, 216, 0.8) !important;
-    color: #52525b !important;
-}
-
-/* Reset element in bright mode */
-body.bright-mode .text-zinc-400.bg-zinc-800\/60 {
-    background: rgba(228, 228, 231, 0.6) !important;
-    color: #52525b !important;
-}
-
-/* Free tier badge in bright mode - blue tint */
-body.bright-mode .bg-zinc-800\/50.text-zinc-500.border-zinc-700\/50 {
-    background: rgba(59, 130, 246, 0.1) !important;
-    border-color: rgba(59, 130, 246, 0.2) !important;
-    color: #3b82f6 !important;
-}
-
-/* Modal technical summary in bright mode */
-body.bright-mode .bg-black\/40 {
-    background: rgba(244, 244, 245, 0.8) !important;
-}
-
-body.bright-mode .border-zinc-800\/60 {
-    border-color: rgba(212, 212, 216, 0.8) !important;
-}
-
-body.bright-mode .border-zinc-800\/80 {
-    border-color: rgba(212, 212, 216, 1) !important;
-}
-
-/* Modal toggle button in bright mode */
-body.bright-mode .bg-zinc-700 {
-    background: #d4d4d8 !important;
-}
-
-/* Modal close button hover in bright mode */
-body.bright-mode .hover\:bg-zinc-800:hover {
-    background: rgba(228, 228, 231, 0.8) !important;
-}
-
-/* Progress track in bright mode */
-body.bright-mode .bg-zinc-800\/50 {
-    background: rgba(228, 228, 231, 0.8) !important;
-}
-
-/* Modal usage URL button in bright mode */
-body.bright-mode a.w-10.h-10.flex.items-center.justify-center.rounded-full {
-    color: #52525b;
-}
-
-body.bright-mode a.w-10.h-10.flex.items-center.justify-center.rounded-full:hover {
-    background: rgba(228, 228, 231, 0.8);
-}
-
-/* Modal borders and dividers */
-body.bright-mode .border-t.border-zinc-800\/60 {
-    border-color: rgba(212, 212, 216, 0.8) !important;
-}
-
-body.bright-mode .border-t.border-zinc-800\/80 {
-    border-color: rgba(212, 212, 216, 1) !important;
-}
-
-/* Card footer border in bright mode */
-body.bright-mode .glass-panel .border-t {
-    border-color: rgba(212, 212, 216, 0.8) !important;
-}
-
-/* Footer link in bright mode */
-body.bright-mode footer a {
-    color: #a1a1aa;
-}
-
-body.bright-mode footer a:hover {
-    color: #52525b;
-}
-
-/* Tier badges in bright mode - Pro/Premium */
-body.bright-mode .bg-amber-500\/10 {
-    background: rgba(245, 158, 11, 0.15) !important;
-}
-
-/* Tier badges in bright mode - Team/Enterprise */
-body.bright-mode .bg-violet-500\/10 {
-    background: rgba(139, 92, 246, 0.15) !important;
-}
-
-/* Health states in bright mode - slightly adjusted for better visibility */
-body.bright-mode .health-good { border-color: rgba(34, 197, 94, 0.4); }
-body.bright-mode .health-good:hover { border-color: rgba(34, 197, 94, 0.8); box-shadow: 0 12px 40px rgba(34, 197, 94, 0.1); }
-
-body.bright-mode .health-warning { border-color: rgba(251, 191, 36, 0.4); }
-body.bright-mode .health-warning:hover { border-color: rgba(251, 191, 36, 0.8); box-shadow: 0 12px 40px rgba(251, 191, 36, 0.1); }
-
-body.bright-mode .health-critical { border-color: rgba(239, 68, 68, 0.5); }
-body.bright-mode .health-critical:hover { border-color: rgba(239, 68, 68, 0.9); box-shadow: 0 12px 40px rgba(239, 68, 68, 0.15); }
-
-body.bright-mode .health-unknown { border-color: rgba(200, 200, 200, 0.6); }
-
-
-/* Background gradients in bright mode */
-body.bright-mode .fixed.inset-0.pointer-events-none {
-    background: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(59, 130, 246, 0.04) 0%, transparent 70%), 
-                radial-gradient(ellipse 50% 40% at 80% 80%, rgba(139, 92, 246, 0.03) 0%, transparent 60%) !important;
-}
-
-/* Error banner in bright mode */
-body.bright-mode #error-banner {
-    background: rgba(254, 242, 242, 0.8);
-    border-color: rgba(254, 202, 202, 0.8);
-    color: #dc2626;
-}
-
-body.bright-mode #error-banner strong {
-    color: #b91c1c;
-}
-
-/* New provider card elements in bright mode */
-body.bright-mode .text-zinc-100 { color: #18181b; }
-body.bright-mode .text-zinc-300 { color: #3f3f46; }
-
-/* Card bottom zone (bg-black/20) */
-body.bright-mode .bg-black\/20 { background: rgba(228, 228, 231, 0.5) !important; }
-
-/* Modal service rows (bg-zinc-950) */
-body.bright-mode .bg-zinc-950 { background: rgba(244, 244, 245, 0.9) !important; }
-
-/* Health bar stat tiles */
-body.bright-mode .bg-zinc-900\/60 { background: rgba(244, 244, 245, 0.9) !important; }
-body.bright-mode .border-zinc-800\/30 { border-color: rgba(212, 212, 216, 0.8) !important; }
-
-/* Pill and dim-btn in bright mode */
-body.bright-mode .pill {
-    background: #f4f4f5;
-    border-color: #d4d4d8;
-    color: #52525b;
-}
-body.bright-mode .pill-active {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: #3b82f6;
-    color: #2563eb;
-}
-body.bright-mode .dim-btn {
-    background: #f4f4f5;
-    border-color: #d4d4d8;
-    color: #71717a;
-}
-body.bright-mode .dim-btn-active {
-    color: #2563eb;
-    border-color: #3b82f6;
-}
-
-/* Smooth transitions for theme switching */
-body, .toggle-btn, #refresh-btn {
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
-
-/* Nav links */
-.nav-link {
-    font-size: 13px;
-    font-weight: 600;
-    color: #71717a;
-    transition: all 0.2s;
-    cursor: pointer;
-    position: relative;
-    padding: 4px 0;
-}
-.nav-link:hover { color: #e4e4e7; }
-.nav-link.active { color: #fafafa; }
-.nav-link.active::after {
-    content: '';
+.drag-handle { display: none; }
+.edit-mode .drag-handle {
+    display: inline-flex;
+    color: var(--text-dim);
+    opacity: 0.7;
     position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: #3b82f6;
-    border-radius: 2px;
+    top: 6px; right: 6px;
+    pointer-events: none;
 }
-
-body.bright-mode .nav-link { color: #71717a; }
-body.bright-mode .nav-link:hover { color: #18181b; }
-body.bright-mode .nav-link.active { color: #18181b; }
-
-/* Settings form inputs in bright mode */
-body.bright-mode .bg-zinc-800 {
-    background: rgba(228, 228, 231, 0.8) !important;
-    color: #18181b !important;
+.edit-mode [data-provider-id],
+.edit-mode [data-card-key] {
+    cursor: grab;
+    outline: 1px dashed var(--hairline-strong);
+    outline-offset: 3px;
 }
-body.bright-mode .border-zinc-700 {
-    border-color: rgba(161, 161, 170, 0.7) !important;
-}
-body.bright-mode .bg-zinc-900\/50 {
-    background: rgba(228, 228, 231, 0.5) !important;
-}
-body.bright-mode .settings-nav-item {
-    color: #52525b;
-}
-body.bright-mode .settings-nav-item:hover {
-    color: #18181b;
-    background: rgba(212, 212, 216, 0.7);
-}
-body.bright-mode .settings-nav-item.settings-nav-active {
-    background: rgba(212, 212, 216, 0.9);
-    color: #18181b;
-}
-
-.view.hidden { display: none; }
+.edit-mode [data-provider-id]:active,
+.edit-mode [data-card-key]:active { cursor: grabbing; }
+.sortable-ghost { opacity: 0.35; }
+.sortable-chosen { box-shadow: 0 0 0 2px var(--accent); }
 
 /* ============================================
-   PHASE 4A — FILTER PILLS & DIMENSION BUTTONS
+   SOURCE BADGE
    ============================================ */
 
-.pill {
-    padding: 3px 12px;
-    border-radius: 9999px;
-    font-size: 10px;
-    font-weight: 600;
-    background: rgba(39,39,42,0.6);
-    border: 1px solid rgba(63,63,70,0.5);
-    color: #a1a1aa;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-.pill:hover { border-color: rgba(139,92,246,0.5); color: #c4b5fd; }
-.pill-active { background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.5); color: #c4b5fd; }
-
-.dim-btn {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    color: #52525b;
-    cursor: pointer;
-    transition: color 0.15s;
-}
-.dim-btn:hover { color: #d4d4d8; }
-.dim-btn-active { color: #e4e4e7; }
-
-/* Source badge — absolute-positioned on top-right of card */
 .source-badge {
     position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 16px;
-    height: 16px;
+    top: 5px; right: 5px;
+    width: 14px; height: 14px;
     border-radius: 50%;
-    background: rgba(139,92,246,0.2);
-    border: 1px solid rgba(139,92,246,0.4);
-    color: #a78bfa;
+    background: color-mix(in srgb, var(--unlm) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--unlm) 40%, transparent);
+    color: var(--unlm);
     font-size: 7px;
     font-weight: 800;
     display: flex;
@@ -693,55 +520,78 @@ body.bright-mode .settings-nav-item.settings-nav-active {
 }
 
 /* ============================================
-   PHASE 4B — FLEET VIEW
+   COMPACT MODE
+   ============================================ */
+
+.compact-mode #grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.compact-mode .hud-panel,
+.compact-mode .glass-panel { padding: 0.6rem; }
+.compact-mode .progress-track { margin-top: auto; height: 3px; }
+.compact-mode .lamp,
+.compact-mode .dot { width: 6px; height: 6px; }
+.compact-mode .skeleton { height: 90px; }
+
+/* ============================================
+   SETTINGS SIDEBAR
+   ============================================ */
+
+.settings-nav-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+    white-space: nowrap;
+}
+.settings-nav-item:hover {
+    background: color-mix(in srgb, var(--hairline-strong) 60%, transparent);
+    color: var(--text-muted);
+}
+.settings-nav-item.active,
+.settings-nav-item.settings-nav-active {
+    background: var(--hairline-strong);
+    color: var(--text);
+}
+
+/* ============================================
+   TAG PILL (fleet / provider tags)
    ============================================ */
 
 .tag-pill {
-    padding: 2px 8px;
-    border-radius: 9999px;
-    font-size: 9px;
+    padding: 1px 7px;
+    font-size: 8px;
     font-weight: 700;
-    background: rgba(139,92,246,0.12);
-    border: 1px solid rgba(139,92,246,0.3);
-    color: #a78bfa;
+    background: color-mix(in srgb, var(--unlm) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--unlm) 30%, transparent);
+    color: var(--unlm);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
 }
 
 /* ============================================
    AUTH PORTAL
    ============================================ */
+
 #view-auth code {
-    background: rgba(39, 39, 42, 0.6);
-    padding: 2px 4px;
-    border-radius: 4px;
-    color: #a1a1aa;
+    background: var(--surface-2);
+    padding: 2px 5px;
+    color: var(--text-muted);
 }
+#admin-key-input { letter-spacing: 0.18em; }
+#admin-key-input::placeholder { letter-spacing: normal; }
 
-#admin-key-input {
-    letter-spacing: 0.2em;
-}
+/* ============================================
+   ERROR VIEW
+   ============================================ */
 
-#admin-key-input::placeholder {
-    letter-spacing: normal;
-}
-
-/* Nav Bar Locked State */
-#main-nav.nav-locked {
-    pointer-events: none;
-    opacity: 0.6;
-    filter: saturate(0.5);
-}
-
-#main-nav.nav-locked .nav-link {
-    cursor: default;
-}
-
-#main-nav.nav-locked .nav-link::after {
-    display: none;
-}
-
-/* Error View */
 .error-view {
     display: flex;
     flex-direction: column;
@@ -751,10 +601,176 @@ body.bright-mode .settings-nav-item.settings-nav-active {
     text-align: center;
     padding: 2rem;
 }
+.error-view-icon { font-size: 2.5rem; margin-bottom: 1rem; }
 
-.error-view-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    filter: drop-shadow(0 0 15px rgba(239, 68, 68, 0.3));
+/* ============================================
+   PACE ICON
+   ============================================ */
+
+.pace-icon { font-size: 18px; line-height: 1; cursor: help; flex-shrink: 0; }
+.compact-mode .pace-icon { font-size: 14px; }
+
+/* ============================================
+   MISC
+   ============================================ */
+
+.view.hidden { display: none; }
+
+/* ============================================
+   KEYFRAMES
+   ============================================ */
+
+@keyframes amber-flicker {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.6; }
 }
 
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Auto-refresh dot */
+.refresh-active::after {
+    content: '';
+    display: inline-block;
+    width: 5px; height: 5px;
+    background: var(--good);
+    border-radius: 50%;
+    margin-left: 5px;
+    animation: lamp-pulse 1.5s ease-in-out infinite;
+}
+
+/* Smooth theme transitions */
+body, .toggle-btn, .icon-btn {
+    transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+/* ============================================
+   LIGHT THEME OVERRIDES
+   Replaces the old body.bright-mode .* pattern.
+   Uses :root[data-theme="light"] for clean cascade.
+   ============================================ */
+
+:root[data-theme="light"] .glass-panel {
+    background: var(--surface);
+    border-color: var(--hairline);
+}
+:root[data-theme="light"] .glass-panel:hover {
+    box-shadow: 0 4px 20px rgb(0 0 0 / 0.08);
+}
+
+/* Text color remappings for Tailwind zinc utilities in light mode */
+:root[data-theme="light"] .text-zinc-50  { color: #1a1a1a; }
+:root[data-theme="light"] .text-zinc-100 { color: #1a1a1a; }
+:root[data-theme="light"] .text-zinc-200 { color: #2a2a2a; }
+:root[data-theme="light"] .text-zinc-300 { color: #3a3a3a; }
+:root[data-theme="light"] .text-zinc-400 { color: #555555; }
+:root[data-theme="light"] .text-zinc-500 { color: #777777; }
+:root[data-theme="light"] .text-zinc-600 { color: #aaaaaa; }
+:root[data-theme="light"] .text-zinc-700 { color: #cccccc; }
+
+/* Background remappings */
+:root[data-theme="light"] .bg-zinc-950  { background: #f8f6f2 !important; }
+:root[data-theme="light"] .bg-zinc-900\/60 { background: rgba(240, 236, 228, 0.9) !important; }
+:root[data-theme="light"] .bg-zinc-800\/50 { background: rgba(220, 215, 205, 0.8) !important; }
+:root[data-theme="light"] .bg-zinc-800\/60 { background: rgba(220, 215, 205, 0.9) !important; }
+:root[data-theme="light"] .bg-zinc-800   { background: rgba(220, 215, 205, 0.9) !important; color: #1a1a1a !important; }
+:root[data-theme="light"] .bg-zinc-900\/50 { background: rgba(230, 226, 218, 0.6) !important; }
+:root[data-theme="light"] .bg-black\/20  { background: rgba(220, 215, 205, 0.5) !important; }
+:root[data-theme="light"] .bg-black\/40  { background: rgba(240, 236, 228, 0.8) !important; }
+
+/* Border remappings */
+:root[data-theme="light"] .border-zinc-800\/30 { border-color: rgba(180, 170, 155, 0.6) !important; }
+:root[data-theme="light"] .border-zinc-800\/50 { border-color: rgba(180, 170, 155, 0.8) !important; }
+:root[data-theme="light"] .border-zinc-800\/60 { border-color: rgba(168, 158, 133, 0.9) !important; }
+:root[data-theme="light"] .border-zinc-800\/80 { border-color: rgba(168, 158, 133, 1) !important; }
+:root[data-theme="light"] .border-zinc-800   { border-color: rgba(168, 158, 133, 0.9) !important; }
+:root[data-theme="light"] .border-zinc-700   { border-color: rgba(168, 158, 133, 0.7) !important; }
+:root[data-theme="light"] .border-t          { border-color: var(--hairline) !important; }
+
+/* Toggle buttons */
+:root[data-theme="light"] .toggle-btn {
+    background: var(--surface);
+    border-color: var(--hairline);
+    color: var(--text-dim);
+}
+:root[data-theme="light"] .toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+/* Modal in light mode */
+:root[data-theme="light"] #modal-backdrop { background: rgb(0 0 0 / 0.4); }
+:root[data-theme="light"] #modal-content  { background: var(--surface); }
+:root[data-theme="light"] .modal-header   { background: transparent; }
+:root[data-theme="light"] .modal-detail-item { border-bottom-color: var(--hairline); }
+
+/* Tooltip in light mode */
+:root[data-theme="light"] .tooltip { box-shadow: 0 4px 20px rgb(0 0 0 / 0.15); }
+
+/* Skeleton in light mode */
+:root[data-theme="light"] .skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--surface) 25%,
+        var(--hairline-strong) 50%,
+        var(--surface) 75%
+    );
+    background-size: 200% 100%;
+}
+
+/* Pill/filter in light mode */
+:root[data-theme="light"] .pill {
+    background: var(--surface);
+    border-color: var(--hairline);
+    color: var(--text-dim);
+}
+:root[data-theme="light"] .pill-active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+:root[data-theme="light"] .dim-btn { color: var(--text-dim); }
+:root[data-theme="light"] .dim-btn-active { color: var(--accent); }
+
+/* Health states in light mode */
+:root[data-theme="light"] .health-good     { border-color: color-mix(in srgb, var(--good) 40%, var(--hairline)); }
+:root[data-theme="light"] .health-warning  { border-color: color-mix(in srgb, var(--warn) 40%, var(--hairline)); }
+:root[data-theme="light"] .health-critical { border-color: var(--crit); }
+:root[data-theme="light"] .health-unknown  { border-color: var(--hairline); }
+
+/* Error banner in light mode */
+:root[data-theme="light"] #error-banner {
+    background: rgba(255, 235, 235, 0.8);
+    border-color: rgba(193, 39, 45, 0.3);
+    color: var(--crit);
+}
+
+/* Settings in light mode */
+:root[data-theme="light"] .settings-nav-item { color: var(--text-dim); }
+:root[data-theme="light"] .settings-nav-item:hover {
+    background: color-mix(in srgb, var(--hairline-strong) 40%, transparent);
+    color: var(--text);
+}
+:root[data-theme="light"] .settings-nav-item.active,
+:root[data-theme="light"] .settings-nav-item.settings-nav-active {
+    background: var(--hairline-strong);
+    color: var(--text);
+}
+
+/* tier badge amber in light mode */
+:root[data-theme="light"] .bg-amber-500\/10 { background: rgba(184, 116, 0, 0.12) !important; }
+:root[data-theme="light"] .bg-violet-500\/10 { background: rgba(107, 46, 143, 0.12) !important; }
+:root[data-theme="light"] .text-amber-400 { color: var(--accent); }
+:root[data-theme="light"] .text-violet-400 { color: var(--unlm); }
+:root[data-theme="light"] .text-emerald-400 { color: var(--good); }
+:root[data-theme="light"] .text-red-400 { color: var(--crit); }
+
+/* Source badge in light mode */
+:root[data-theme="light"] .text-blue-400 { color: var(--accent-cool); }
+
+/* Hover close/icon buttons in modal */
+:root[data-theme="light"] .hover\:bg-zinc-800:hover { background: var(--surface-2) !important; }
+
+/* Footer in light mode */
+:root[data-theme="light"] footer a { color: var(--text-dim); }
+:root[data-theme="light"] footer a:hover { color: var(--text-muted); }

@@ -269,8 +269,8 @@ async function refreshProviderModal(providerId) {
  * Toggle bright/dark mode
  */
 window.toggleTheme = function () {
-    STATE.brightMode = !STATE.brightMode;
-    localStorage.setItem('runway_bright_mode', STATE.brightMode);
+    STATE.theme = STATE.theme === 'light' ? 'dark' : 'light';
+    localStorage.setItem('runway_theme', STATE.theme);
 
     applyTheme();
     updateThemeIcon();
@@ -280,19 +280,40 @@ function updateThemeIcon() {
     const sunIcon = document.getElementById('theme-icon-sun');
     const moonIcon = document.getElementById('theme-icon-moon');
     if (!sunIcon || !moonIcon) return;
-    sunIcon.classList.toggle('hidden', STATE.brightMode);
-    moonIcon.classList.toggle('hidden', !STATE.brightMode);
+    sunIcon.classList.toggle('hidden', STATE.theme === 'light');
+    moonIcon.classList.toggle('hidden', STATE.theme === 'dark');
 }
 
 /**
  * Apply current theme to document
  */
 function applyTheme() {
-    if (STATE.brightMode) {
-        document.body.classList.add('bright-mode');
-    } else {
-        document.body.classList.remove('bright-mode');
-    }
+    document.documentElement.dataset.theme = STATE.theme;
+}
+
+/**
+ * Start the HUD header clock (UTC time + T+ elapsed since last fetch).
+ */
+function startHudClock() {
+    const clockEl = document.getElementById('utc-clock');
+    const tickEl  = document.getElementById('last-tick');
+    setInterval(() => {
+        if (clockEl) {
+            const n = new Date();
+            clockEl.textContent =
+                String(n.getUTCHours()).padStart(2, '0') + ':' +
+                String(n.getUTCMinutes()).padStart(2, '0') + ':' +
+                String(n.getUTCSeconds()).padStart(2, '0') + 'Z';
+        }
+        if (tickEl && window._lastFetchTime) {
+            const e = Math.floor((Date.now() - window._lastFetchTime) / 1000);
+            tickEl.textContent =
+                'T+' +
+                String(Math.floor(e / 3600)).padStart(2, '0') + ':' +
+                String(Math.floor((e % 3600) / 60)).padStart(2, '0') + ':' +
+                String(e % 60).padStart(2, '0');
+        }
+    }, 1000);
 }
 
 let _providerSortable = null;
@@ -410,6 +431,7 @@ async function initUI() {
     // Initialize theme
     applyTheme();
     updateThemeIcon();
+    startHudClock();
 
     checkGitHubStatus();
 

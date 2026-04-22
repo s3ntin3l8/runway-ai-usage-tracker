@@ -290,23 +290,31 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             _chart = echarts.init(container);
         }
 
+        const css = getComputedStyle(document.documentElement);
+        const cText     = css.getPropertyValue('--text').trim()       || '#e8e4d4';
+        const cTextDim  = css.getPropertyValue('--text-dim').trim()   || '#5a6068';
+        const cHairline = css.getPropertyValue('--hairline').trim()   || '#1e2630';
+        const cSurface  = css.getPropertyValue('--surface').trim()    || '#0f1216';
+        const cAccent   = css.getPropertyValue('--accent').trim()     || '#ffb000';
+        const cAccentCl = css.getPropertyValue('--accent-cool').trim()|| '#00d4ff';
+
         const option = {
             backgroundColor: 'transparent',
             tooltip: {
                 trigger: 'item',
-                backgroundColor: 'rgba(24, 24, 27, 0.95)',
-                borderColor: 'rgba(63, 63, 70, 0.5)',
+                backgroundColor: cSurface,
+                borderColor: cHairline,
                 borderWidth: 1,
                 padding: [10, 15],
-                textStyle: { color: '#f4f4f5', fontFamily: 'JetBrains Mono', fontSize: 11 },
+                textStyle: { color: cText, fontFamily: 'B612 Mono, monospace', fontSize: 11 },
                 formatter: (params) => {
                     const unit = metric === 'percent' ? '%' : (metric === 'cost' ? ' USD' : '');
                     return `
-                        <div style="margin-bottom: 4px; color: #71717a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${params.name}</div>
+                        <div style="margin-bottom: 4px; color: ${cTextDim}; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${params.name}</div>
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ${params.color}"></span>
-                            <span style="font-weight: 700; color: #f4f4f5;">${params.seriesName}</span>
-                            <span style="margin-left: 12px; font-family: 'JetBrains Mono'; color: #3b82f6;">${params.value}${unit}</span>
+                            <span style="display: inline-block; width: 6px; height: 6px; background-color: ${params.color}"></span>
+                            <span style="font-weight: 700; color: ${cText};">${params.seriesName}</span>
+                            <span style="margin-left: 12px; font-family: 'B612 Mono', monospace; color: ${cAccent};">${params.value}${unit}</span>
                         </div>
                     `;
                 }
@@ -314,9 +322,9 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             legend: {
                 type: 'scroll',
                 bottom: 10,
-                textStyle: { color: '#71717a', fontSize: 10 },
-                pageTextStyle: { color: '#71717a' },
-                icon: 'roundRect'
+                textStyle: { color: cTextDim, fontSize: 10, fontFamily: 'B612 Mono, monospace' },
+                pageTextStyle: { color: cTextDim },
+                icon: 'rect'
             },
             grid: {
                 top: 40,
@@ -329,16 +337,16 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 type: 'category',
                 boundaryGap: false,
                 data: xAxisData,
-                axisLabel: { color: '#52525b', fontSize: 9, margin: 15 },
-                axisLine: { lineStyle: { color: 'rgba(39, 39, 42, 0.5)' } },
+                axisLabel: { color: cTextDim, fontSize: 9, margin: 15, fontFamily: 'B612 Mono, monospace' },
+                axisLine: { lineStyle: { color: cHairline } },
                 axisTick: { show: false }
             },
             yAxis: {
                 type: 'value',
                 name: yLabel,
-                nameTextStyle: { color: '#52525b', fontSize: 9, align: 'right' },
-                axisLabel: { color: '#52525b', fontSize: 9 },
-                splitLine: { lineStyle: { color: 'rgba(39, 39, 42, 0.5)', type: 'dashed' } },
+                nameTextStyle: { color: cTextDim, fontSize: 9, align: 'right', fontFamily: 'B612 Mono, monospace' },
+                axisLabel: { color: cTextDim, fontSize: 9, fontFamily: 'B612 Mono, monospace' },
+                splitLine: { lineStyle: { color: cHairline, type: 'dashed' } },
                 axisLine: { show: false }
             },
             toolbox: {
@@ -353,35 +361,24 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                     myRange30d: { show: true, title: '30d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(30) },
                     myRange90d: { show: true, title: '90d', icon: 'path://M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z', onclick: () => window.setHistoryDays(90) }
                 },
-                iconStyle: {
-                    borderColor: '#52525b',
-                    borderWidth: 1
-                },
-                emphasis: {
-                    iconStyle: {
-                        borderColor: '#3b82f6'
-                    }
-                }
+                iconStyle: { borderColor: cTextDim, borderWidth: 1 },
+                emphasis: { iconStyle: { borderColor: cAccent } }
             },
             dataZoom: [
-                {
-                    type: 'inside',
-                    start: 0,
-                    end: 100
-                },
+                { type: 'inside', start: 0, end: 100 },
                 {
                     type: 'slider',
                     bottom: 45,
                     height: 20,
                     borderColor: 'transparent',
-                    fillerColor: 'rgba(59, 130, 246, 0.1)',
+                    fillerColor: `${cAccentCl}1a`,
                     handleIcon: 'path://M10.7,11.9v-1.3H9.3v1.3c-4.9,0.3-8.8,4.4-8.8,9.4c0,5,3.9,9.1,8.8,9.4v1.3h1.3v-1.3c4.9-0.3,8.8-4.4,8.8-9.4C19.5,16.3,15.6,12.2,10.7,11.9z M13.3,24.4H6.7V23h6.6V24.4z M13.3,19.6H6.7v-1.4h6.6V19.6z',
                     handleSize: '80%',
-                    handleStyle: { color: '#3f3f46' },
+                    handleStyle: { color: cHairline },
                     textStyle: { color: 'transparent' },
                     dataBackground: {
-                        lineStyle: { color: '#3b82f6', opacity: 0.2 },
-                        areaStyle: { color: '#3b82f6', opacity: 0.1 }
+                        lineStyle: { color: cAccentCl, opacity: 0.2 },
+                        areaStyle: { color: cAccentCl, opacity: 0.1 }
                     }
                 }
             ],

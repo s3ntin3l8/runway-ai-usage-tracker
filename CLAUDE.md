@@ -35,7 +35,7 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 
 ## Code Style & Patterns
 - **Backend**: Python 3.12+, FastAPI, Pydantic v2, `httpx` (async).
-- **Frontend**: Vanilla CSS (glassmorphism) + Tailwind CSS.
+- **Frontend**: Vanilla CSS (aviation HUD) + Tailwind CSS v4.
 - **Async Required**: Everything from endpoints to collectors MUST be `async`.
 - **Typing**: Explicit type hints on all API responses and internal models.
 - **Error Handling**: Graceful degradation — return "Error Card" states instead of crashing.

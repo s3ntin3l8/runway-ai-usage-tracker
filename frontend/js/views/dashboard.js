@@ -148,6 +148,7 @@ export async function loadDashboard() {
             lastUpdated.textContent = `Updated ${now.toLocaleTimeString()}`;
             lastUpdated.classList.remove('hidden');
         }
+        window._lastFetchTime = Date.now();
     } catch (err) {
         if (myGeneration !== loadDataGeneration) return;
         console.error('Failed to fetch limits:', err);

@@ -12,7 +12,12 @@
 export const STATE = {
     compact: localStorage.getItem('runway_compact') === 'true',
     remaining: localStorage.getItem('runway_remaining') === 'true',
-    brightMode: localStorage.getItem('runway_bright_mode') === 'true',
+    theme: (() => {
+        const stored = localStorage.getItem('runway_theme');
+        if (stored === 'light' || stored === 'dark') return stored;
+        // Migrate legacy boolean key
+        return localStorage.getItem('runway_bright_mode') === 'true' ? 'light' : 'dark';
+    })(),
     githubAuth: { authenticated: false, account: null },
     data: [],
     // Dashboard context filter
@@ -53,11 +58,11 @@ export const STATE = {
  * @type {Object.<string, HealthStatusConfig>}
  */
 export const HEALTH_CONFIG = {
-    good:     { dot: 'dot-good',     card: 'health-good',     badge: 'text-emerald-400', bar: '#22c55e', label: 'GOOD' },
-    warning:  { dot: 'dot-warning',  card: 'health-warning',  badge: 'text-amber-400',   bar: '#f59e0b', label: 'WARN' },
-    critical: { dot: 'dot-critical', card: 'health-critical', badge: 'text-red-400',      bar: '#ef4444', label: 'CRIT' },
-    unknown:  { dot: 'dot-unknown',  card: 'health-unknown',  badge: 'text-zinc-500',     bar: '#3f3f46', label: '——' },
-    unlimited:{ dot: 'dot-unlimited',card: 'health-unlimited',badge: 'text-violet-400',   bar: '#8b5cf6', label: '∞' },
+    good:     { dot: 'dot-good',     lamp: 'lamp-good', card: 'health-good',     badge: 'text-good-c',  tag: 'tag-good', bar: '#5af080', label: 'GOOD' },
+    warning:  { dot: 'dot-warning',  lamp: 'lamp-warn', card: 'health-warning',  badge: 'text-warn-c',  tag: 'tag-warn', bar: '#ffb000', label: 'WARN' },
+    critical: { dot: 'dot-critical', lamp: 'lamp-crit', card: 'health-critical', badge: 'text-crit-c',  tag: 'tag-crit', bar: '#ff3b30', label: 'CRIT' },
+    unknown:  { dot: 'dot-unknown',  lamp: 'lamp-unk',  card: 'health-unknown',  badge: 'text-unk-c',   tag: 'tag-unk',  bar: '#5a6068', label: '——'  },
+    unlimited:{ dot: 'dot-unlimited',lamp: 'lamp-unlm', card: 'health-unlimited',badge: 'text-unlm-c',  tag: 'tag-unlm', bar: '#d580ff', label: 'UNLM' },
 };
 
 /**

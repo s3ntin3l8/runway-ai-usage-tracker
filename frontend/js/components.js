@@ -64,25 +64,19 @@ export function buildProviderSection(providerId, items) {
  * @returns {string} HTML for the badge, or empty string if no tier
  */
 function getTierBadge(tier) {
-    // Don't show badge if tier is null, undefined, or empty
-    if (tier === null || tier === undefined || tier === '') return '';
-    const t = tier.toLowerCase();
-    let classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50'; // Default/Free
-    let style = '';
-
+    if (!tier && tier !== 0) return '';
+    const t = String(tier).toLowerCase();
+    let color, bg, border;
     if (t.includes('max')) {
-        // Use inline style to bypass Tailwind JIT stripping
-        style = 'style="color: #c084fc; background-color: rgba(192, 132, 252, 0.1); border-color: rgba(192, 132, 252, 0.2)"';
-        classes = ''; 
+        color = '#c084fc'; bg = 'rgba(192,132,252,0.1)'; border = 'rgba(192,132,252,0.28)';
     } else if (t.includes('pro') || t.includes('premium') || t.includes('plus')) {
-        classes = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+        color = 'var(--accent)'; bg = 'var(--accent-dim)'; border = 'var(--accent)';
     } else if (t.includes('team') || t.includes('enterprise') || t.includes('organization')) {
-        classes = 'bg-violet-500/10 text-violet-400 border-violet-500/20';
-    } else if (t.includes('free')) {
-        classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50';
+        color = 'var(--unlm)'; bg = 'color-mix(in srgb,var(--unlm) 10%,transparent)'; border = 'color-mix(in srgb,var(--unlm) 35%,transparent)';
+    } else {
+        color = 'var(--text-dim)'; bg = 'var(--surface-2)'; border = 'var(--hairline-strong)';
     }
-
-    return `<span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest ${classes}" ${style}>${escapeHTML(tier)}</span>`;
+    return `<span style="font-size:8px;font-weight:700;padding:1px 5px;border:1px solid ${border};color:${color};background:${bg};text-transform:uppercase;letter-spacing:0.1em;white-space:nowrap;line-height:1.6;">${escapeHTML(String(tier))}</span>`;
 }
 
 /**
@@ -488,10 +482,10 @@ export function buildCard(item) {
     // Handle Compact Mode
     if (STATE.compact) {
         const mainDisplay = buildMainDisplay(isUnlimited, hasPercentage, displayPct, item.remaining, isPlaceholder, 'text-2xl leading-none');
-        const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track mt-auto overflow-hidden rounded-full bg-zinc-800/50');
+        const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track mt-auto overflow-hidden');
 
         return `
-            <div class="glass-panel ${h.card} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+            <div class="glass-panel ${h.card} p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
                 <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                         <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
@@ -501,21 +495,21 @@ export function buildCard(item) {
                 </span>
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 min-w-0">
-                        <span class="text-base leading-none">${escapeHTML(item.icon)}</span>
-                        <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-tight truncate">${escapeHTML(item.service_name)}</span>
+                        <span style="font-size:0.9rem;line-height:1;">${escapeHTML(item.icon)}</span>
+                        <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" class="truncate">${escapeHTML(item.service_name)}</span>
                     </div>
-                    <div class="dot ${h.dot} shrink-0"></div>
+                    <div class="lamp ${h.lamp} shrink-0"></div>
                 </div>
 
                 <div class="flex items-end justify-between gap-1 mt-1">
                     <div class="flex flex-col min-w-0">
                         <div class="flex items-baseline gap-1">
                             ${mainDisplay}
-                            ${!isUnlimited && hasPercentage ? `<span class="text-[8px] font-bold text-zinc-500 uppercase">${displayLabel}</span>` : ''}
+                            ${!isUnlimited && hasPercentage ? `<span style="font-size:8px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">${displayLabel}</span>` : ''}
                         </div>
-                        <span class="text-[8px] mono truncate opacity-50 uppercase">${item.data_source || ''}</span>
+                        <span class="mono truncate uppercase" style="font-size:8px;opacity:0.5;">${item.data_source || ''}</span>
                     </div>
-                    <span class="text-[9px] text-zinc-500 mono leading-none mb-0.5 truncate max-w-[160px]" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
+                    <span class="mono leading-none truncate max-w-[160px]" style="font-size:9px;color:var(--text-dim);margin-bottom:2px;" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
                 </div>
 
                 ${progressBar}
@@ -569,19 +563,19 @@ export function buildCard(item) {
     const resetTooltip = formatResetTooltip(item.reset_at);
     const resetElement = resetTooltip ? `
         <div class="tooltip-container">
-            <span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono cursor-help">
+            <span class="mono cursor-help" style="font-size:11px;font-weight:600;color:var(--text-muted);background:var(--surface-2);padding:3px 8px;border-radius:1px;">
                 ${escapeHTML(resetDisplay)}
             </span>
             <div class="tooltip">${resetTooltip}</div>
         </div>
-    ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(resetDisplay)}</span>`;
+    ` : `<span class="mono" style="font-size:11px;font-weight:600;color:var(--text-muted);background:var(--surface-2);padding:3px 8px;border-radius:1px;">${escapeHTML(resetDisplay)}</span>`;
 
     const sourceBadge = item.sidecar_id
         ? `<div class="source-badge" title="${escapeHTML(item.sidecar_id)}">${escapeHTML(item.sidecar_id[0].toUpperCase())}</div>`
         : '';
 
     return `
-        <div class="glass-panel ${h.card} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+        <div class="glass-panel ${h.card} overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">`
             <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
@@ -597,13 +591,13 @@ export function buildCard(item) {
                     <div class="flex items-center gap-2 min-w-0">
                         <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                         <div class="flex flex-col">
-                            <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service_name)}</span>
+                            <span style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" class="truncate">${escapeHTML(item.service_name)}</span>
                             ${getTierBadge(item.tier)}
                         </div>
                     </div>
                     <div class="flex items-center gap-1.5 shrink-0">
-                        <div class="dot ${h.dot}"></div>
-                        <span class="text-sm font-bold ${h.badge} mono">${h.label}</span>
+                        <div class="lamp ${h.lamp}"></div>
+                        <span class="tag ${h.tag}">${h.label}</span>
                     </div>
                 </div>
 
@@ -624,8 +618,8 @@ export function buildCard(item) {
             </div>
 
             <!-- Reset footer (bottom zone with distinct bg) -->
-            <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5 flex items-center justify-between">
-                <span class="text-xs text-zinc-600 mono font-medium">RESETS</span>
+            <div class="px-5 py-3.5 flex items-center justify-between" style="border-top:1px solid var(--hairline);background:var(--surface-2);">
+                <span class="mono" style="font-size:10px;color:var(--text-dim);font-weight:600;">RESETS</span>
                 ${resetElement}
             </div>
         </div>
@@ -671,53 +665,53 @@ export function buildModalContent(item) {
 
     const isAuthFailed = item.error_type === 'auth_failed';
     const retryButton = isAuthFailed ? `
-        <button 
+        <button
             onclick="event.stopPropagation(); window.handleResetProvider(event, '${escapeHTML(item.provider_id)}', '${escapeHTML(item.account_id)}')"
-            class="mt-4 w-full py-3 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-xl transition-all uppercase tracking-widest shadow-lg shadow-amber-900/20"
-        >Retry Authentication</button>
+            style="margin-top:16px;width:100%;padding:10px;background:var(--accent);color:var(--bg);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;"
+            class="transition-all">Retry Authentication</button>
     ` : '';
 
     const linkButton = item.usage_url ? `
-        <a href="${escapeHTML(item.usage_url)}" target="_blank" rel="noopener noreferrer" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400" title="Open usage page">
+        <a href="${escapeHTML(item.usage_url)}" target="_blank" rel="noopener noreferrer" class="icon-btn w-10 h-10 flex items-center justify-center transition-colors" style="color:var(--text-muted);" title="Open usage page">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
         </a>
     ` : '';
 
     return `
-        <div class="modal-header border-b border-zinc-800/80">
+        <div class="modal-header" style="border-bottom:1px solid var(--hairline);padding-bottom:16px;margin-bottom:16px;">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
-                    <span class="text-3xl">${escapeHTML(item.icon)}</span>
+                    <span style="font-size:1.8rem;">${escapeHTML(item.icon)}</span>
                     <div>
-                        <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service_name)}</h2>
+                        <h2 style="font-size:1.1rem;font-weight:700;color:var(--text);letter-spacing:0.04em;">${escapeHTML(item.service_name)}</h2>
                         <div class="flex items-center gap-2 mt-0.5">
-                            <span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} ${healthBoxClasses[item.health] || healthBoxClasses.unknown}">${h.label}</span>
+                            <span class="tag ${h.tag}">${h.label}</span>
                             ${getTierBadge(item.tier)}
                         </div>
                     </div>
                 </div>
                 <div class="flex items-center gap-1">
                     ${linkButton}
-                    <button id="refresh-provider-btn" title="Refresh now" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-zinc-100">
+                    <button id="refresh-provider-btn" title="Refresh now" class="icon-btn w-10 h-10 flex items-center justify-center transition-colors" style="color:var(--text-muted);">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                     </button>
-                    <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
+                    <button id="close-modal" class="icon-btn w-10 h-10 flex items-center justify-center transition-colors" style="color:var(--text-muted);">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
                 </div>
             </div>
-            
-            <div class="mt-6 flex flex-col gap-2">
+
+            <div class="mt-4 flex flex-col gap-2">
                 <div class="flex items-baseline justify-between">
-                    <span class="text-6xl font-black tracking-tighter text-zinc-50">
+                    <span class="readout ${h.tag.replace('tag-', 'readout-')}">
                         ${isUnlimited ? '∞' : (usedPct ? usedPct.toFixed(1) + '%' : escapeHTML(item.remaining))}
                     </span>
-                    <span class="text-sm font-bold text-zinc-500 mono uppercase">${isUnlimited ? 'Unlimited Capacity' : 'Used Capacity'}</span>
+                    <span style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">${isUnlimited ? 'Unlimited Capacity' : 'Used Capacity'}</span>
                 </div>
-                
-                <div class="progress-track h-2 w-full bg-zinc-800/50 rounded-full mt-2">
-                    <div class="progress-fill h-full rounded-full" 
-                         style="width: ${isUnlimited ? 100 : (usedPct || 0)}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};">
+
+                <div class="progress-track h-1.5 w-full mt-2 overflow-hidden" style="background:var(--surface-2);">
+                    <div class="progress-fill h-full"
+                         style="width: ${isUnlimited ? 100 : (usedPct || 0)}%; background: ${isUnlimited ? 'linear-gradient(90deg, var(--crit), var(--warn), var(--accent-cool))' : h.bar};">
                     </div>
                 </div>
             </div>
@@ -725,56 +719,56 @@ export function buildModalContent(item) {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
-                <span class="text-2xl font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Usage Value</span>
+                <span class="mono" style="font-size:1rem;font-weight:600;color:var(--text);">${escapeHTML(formatted.used)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
-                <span class="text-2xl font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Service Limit</span>
+                <span class="mono" style="font-size:1rem;font-weight:600;color:var(--text);">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
-                <span class="text-2xl font-semibold text-zinc-200 mono">${resetTime}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Resets At</span>
+                <span class="mono" style="font-size:1rem;font-weight:600;color:var(--text);">${resetTime}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
-                <span class="text-2xl font-bold ${sourceColor} mono">● ${sourceLabel}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Data Source</span>
+                <span class="mono" style="font-size:1rem;font-weight:700;color:var(--accent);">● ${sourceLabel}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                <span class="text-2xl font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Account</span>
+                <span class="mono truncate" style="font-size:1rem;font-weight:600;color:var(--text);" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xl font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
-                <span class="text-2xl font-semibold text-zinc-200 mono">${updatedTime}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Last Updated</span>
+                <span class="mono" style="font-size:1rem;font-weight:600;color:var(--text);">${updatedTime}</span>
             </div>
         </div>
 
         ${item.detail ? `
-        <div class="mt-6 p-4 rounded-2xl bg-black/40 border border-zinc-800/60">
-            <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-3">Diagnostic Summary</span>
+        <div class="mt-5 p-4" style="background:var(--surface-2);border:1px solid var(--hairline);">
+            <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;display:block;margin-bottom:10px;">Diagnostic Summary</span>
             <div class="space-y-3">
                 <div class="flex flex-col gap-1">
-                    <span class="text-xs font-bold text-zinc-500 uppercase tracking-tight">Backend Source</span>
-                    <p class="text-xs text-zinc-300 mono leading-relaxed">${escapeHTML(item.detail)}</p>
+                    <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Backend Source</span>
+                    <p class="mono leading-relaxed" style="font-size:11px;color:var(--text-muted);">${escapeHTML(item.detail)}</p>
                 </div>
-                <div class="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-800/40">
+                <div class="grid grid-cols-2 gap-3 pt-2" style="border-top:1px solid var(--hairline);">
                     <div class="flex flex-col gap-0.5">
-                        <span class="text-xs font-bold text-zinc-600 uppercase">Provider Key</span>
-                        <span class="text-xs text-zinc-400 mono">${escapeHTML(item.provider_id || 'unknown')}</span>
+                        <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Provider Key</span>
+                        <span class="mono" style="font-size:11px;color:var(--text-muted);">${escapeHTML(item.provider_id || 'unknown')}</span>
                     </div>
                     <div class="flex flex-col gap-0.5">
-                        <span class="text-xs font-bold text-zinc-600 uppercase">Snapshot ID</span>
-                        <span class="text-xs text-zinc-400 mono">${escapeHTML(item.account_id || 'default')}</span>
+                        <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Snapshot ID</span>
+                        <span class="mono" style="font-size:11px;color:var(--text-muted);">${escapeHTML(item.account_id || 'default')}</span>
                     </div>
                 </div>
                 <div class="pt-2">
-                    <p class="text-[9px] text-zinc-600 italic leading-snug">This data is cached in the local SQLite database and synchronized with the in-memory registry for instant delivery.</p>
+                    <p style="font-size:9px;color:var(--text-dim);font-style:italic;line-height:1.5;">This data is cached in the local SQLite database and synchronized with the in-memory registry for instant delivery.</p>
                 </div>
             </div>
             ${item.detail.includes('App-Bound Encryption') ? `
-                <div class="mt-3 p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                    <p class="text-[10px] text-blue-300">💡 <strong>Tip:</strong> Chrome 127+ uses App-Bound Encryption. Try using <strong>Safari</strong> or set credentials via environment variables.</p>
+                <div class="mt-3 p-2" style="background:color-mix(in srgb,var(--accent-cool) 8%,transparent);border:1px solid var(--accent-cool);">
+                    <p style="font-size:10px;color:var(--accent-cool);">💡 <strong>Tip:</strong> Chrome 127+ uses App-Bound Encryption. Try using <strong>Safari</strong> or set credentials via environment variables.</p>
                 </div>
             ` : ''}
         </div>
@@ -782,45 +776,45 @@ export function buildModalContent(item) {
 
         ${item.pace ? `
         <div class="mt-4 flex items-center justify-between px-1">
-            <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Consumption Rate</span>
-            <span class="text-xs font-bold text-zinc-400 mono">${escapeHTML(item.pace)}</span>
+            <span style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Consumption Rate</span>
+            <span class="mono" style="font-size:11px;font-weight:700;color:var(--text-muted);">${escapeHTML(item.pace)}</span>
         </div>
         ` : ''}
 
         ${retryButton}
 
         ${(item.service_name.toLowerCase().includes('github') || item.service_name.toLowerCase().includes('copilot')) ? `
-        <div class="mt-6 p-4 rounded-2xl bg-zinc-900/40 border border-zinc-800/60 flex flex-col gap-3">
+        <div class="mt-5 p-4 flex flex-col gap-3" style="background:var(--surface-2);border:1px solid var(--hairline);">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                    <span class="text-lg">🐙</span>
-                    <span class="text-sm font-bold text-zinc-200 uppercase tracking-tight">GitHub Authentication</span>
+                    <span style="font-size:1rem;">🐙</span>
+                    <span style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.06em;">GitHub Authentication</span>
                 </div>
                 ${STATE.githubAuth.authenticated ? `
-                    <span class="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-tighter">Connected</span>
+                    <span style="font-size:9px;font-weight:700;padding:2px 8px;border:1px solid var(--good);color:var(--good);background:color-mix(in srgb,var(--good) 8%,transparent);text-transform:uppercase;letter-spacing:0.08em;">Connected</span>
                 ` : `
-                    <span class="text-[10px] font-bold text-zinc-500 bg-zinc-800/50 px-2 py-0.5 rounded border border-zinc-700/50 uppercase tracking-tighter">Disconnected</span>
+                    <span style="font-size:9px;font-weight:700;padding:2px 8px;border:1px solid var(--hairline-strong);color:var(--text-dim);background:var(--surface-2);text-transform:uppercase;letter-spacing:0.08em;">Disconnected</span>
                 `}
             </div>
-            
+
             ${STATE.githubAuth.authenticated ? `
                 <div class="flex items-center justify-between gap-4">
                     <div class="flex flex-col">
-                        <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                        <span class="text-sm font-semibold text-zinc-300 mono">${escapeHTML(STATE.githubAuth.account || STATE.githubAuth.name || 'Account')}${STATE.githubAuth.email ? ` <span class="text-zinc-500 font-normal">(${escapeHTML(STATE.githubAuth.email)})</span>` : ''}</span>
+                        <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Account</span>
+                        <span class="mono" style="font-size:0.85rem;color:var(--text-muted);">${escapeHTML(STATE.githubAuth.account || STATE.githubAuth.name || 'Account')}${STATE.githubAuth.email ? ` <span style="color:var(--text-dim);">(${escapeHTML(STATE.githubAuth.email)})</span>` : ''}</span>
                     </div>
-                    <button 
+                    <button
                         onclick="event.stopPropagation(); window.handleGitHubLogout()"
-                        class="px-4 py-2 bg-zinc-800 hover:bg-red-500/10 hover:text-red-400 text-zinc-400 text-[10px] font-bold rounded-lg border border-zinc-700/50 transition-all uppercase tracking-widest"
-                    >Logout</button>
+                        style="padding:6px 14px;background:var(--surface);border:1px solid var(--hairline);color:var(--text-muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;"
+                        class="transition-all">Logout</button>
                 </div>
             ` : `
                 <div class="flex flex-col gap-3">
-                    <p class="text-xs text-zinc-500 leading-relaxed">Connect your GitHub account to fetch live Copilot usage limits directly from the GitHub API.</p>
-                    <button 
+                    <p style="font-size:11px;color:var(--text-dim);line-height:1.5;">Connect your GitHub account to fetch live Copilot usage limits directly from the GitHub API.</p>
+                    <button
                         onclick="event.stopPropagation(); window.startGitHubLogin()"
-                        class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all uppercase tracking-widest shadow-lg shadow-blue-900/20"
-                    >Connect GitHub</button>
+                        style="width:100%;padding:10px;background:color-mix(in srgb,var(--accent-cool) 12%,transparent);border:1px solid var(--accent-cool);color:var(--accent-cool);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;"
+                        class="transition-all">Connect GitHub</button>
                 </div>
             `}
         </div>
@@ -839,12 +833,12 @@ export function buildGitHubOAuthModal(data, error = null) {
     if (error) {
         return `
             <div class="p-6 text-center">
-                <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                <div style="width:56px;height:56px;border:1px solid var(--crit);color:var(--crit);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
                 </div>
-                <h2 class="text-xl font-black text-zinc-50 mb-2">Connection Failed</h2>
-                <p class="text-zinc-400 text-sm mb-6">${escapeHTML(error)}</p>
-                <button id="close-modal" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all">CLOSE</button>
+                <h2 style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:8px;">CONNECTION FAILED</h2>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:20px;">${escapeHTML(error)}</p>
+                <button id="close-modal" style="width:100%;padding:10px;background:var(--surface-2);border:1px solid var(--hairline);color:var(--text-muted);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;" class="transition-all">CLOSE</button>
             </div>
         `;
     }
@@ -852,8 +846,8 @@ export function buildGitHubOAuthModal(data, error = null) {
     if (!data) {
         return `
             <div class="p-12 text-center">
-                <div class="inline-block w-8 h-8 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mb-4"></div>
-                <p class="text-zinc-500 font-bold tracking-widest text-xs uppercase">Initializing GitHub Login...</p>
+                <div style="display:inline-block;width:28px;height:28px;border:2px solid color-mix(in srgb,var(--accent-cool) 30%,transparent);border-top-color:var(--accent-cool);border-radius:50%;margin-bottom:16px;" class="animate-spin"></div>
+                <p style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.12em;">Initializing GitHub Login...</p>
             </div>
         `;
     }
@@ -862,49 +856,49 @@ export function buildGitHubOAuthModal(data, error = null) {
         <div class="p-2">
             <div class="flex items-center justify-between mb-8">
                 <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 bg-zinc-50 text-zinc-950 rounded-full flex items-center justify-center font-bold">🐙</div>
-                    <h2 class="text-xl font-black text-zinc-50 tracking-tight">Connect GitHub</h2>
+                    <div style="width:36px;height:36px;border:1px solid var(--accent);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.1rem;">🐙</div>
+                    <h2 style="font-size:1rem;font-weight:700;color:var(--text);letter-spacing:0.04em;text-transform:uppercase;">Connect GitHub</h2>
                 </div>
-                <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
+                <button id="close-modal" class="icon-btn w-10 h-10 flex items-center justify-center transition-colors" style="color:var(--text-muted);">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
 
             <div class="space-y-6">
                 <div class="text-center">
-                    <p class="text-zinc-400 text-sm mb-1">Enter this code on GitHub to authorize Runway:</p>
-                    <div class="text-4xl font-black tracking-[0.2em] text-blue-400 mono py-4 bg-blue-500/5 rounded-2xl border border-blue-500/20 my-4 select-all">
+                    <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Enter this code on GitHub to authorize Runway:</p>
+                    <div class="mono select-all" style="font-size:2rem;font-weight:700;letter-spacing:0.25em;color:var(--accent);padding:16px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 5%,transparent);margin:12px 0;">
                         ${escapeHTML(data.user_code)}
                     </div>
                 </div>
 
-                <div class="bg-zinc-900/50 rounded-2xl p-5 border border-zinc-800/50">
-                    <ol class="space-y-3 text-sm text-zinc-300">
+                <div style="background:var(--surface-2);padding:16px;border:1px solid var(--hairline);">
+                    <ol class="space-y-3" style="font-size:12px;color:var(--text-muted);">
                         <li class="flex gap-3">
-                            <span class="flex-shrink-0 w-5 h-5 bg-zinc-800 text-zinc-400 rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
-                            <span>Open <a href="${escapeHTML(data.verification_uri)}" target="_blank" class="text-blue-400 hover:underline font-bold">${escapeHTML(data.verification_uri)}</a></span>
+                            <span style="flex-shrink:0;width:18px;height:18px;border:1px solid var(--hairline-strong);color:var(--text-dim);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;">1</span>
+                            <span>Open <a href="${escapeHTML(data.verification_uri)}" target="_blank" style="color:var(--accent-cool);font-weight:700;" class="hover:underline">${escapeHTML(data.verification_uri)}</a></span>
                         </li>
                         <li class="flex gap-3">
-                            <span class="flex-shrink-0 w-5 h-5 bg-zinc-800 text-zinc-400 rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+                            <span style="flex-shrink:0;width:18px;height:18px;border:1px solid var(--hairline-strong);color:var(--text-dim);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;">2</span>
                             <span>Enter the 8-character code shown above.</span>
                         </li>
                         <li class="flex gap-3">
-                            <span class="flex-shrink-0 w-5 h-5 bg-zinc-800 text-zinc-400 rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
+                            <span style="flex-shrink:0;width:18px;height:18px;border:1px solid var(--hairline-strong);color:var(--text-dim);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;">3</span>
                             <span>Once authorized, this window will close automatically.</span>
                         </li>
                     </ol>
                 </div>
 
                 <div class="flex items-center justify-center gap-3 py-2">
-                    <div class="flex gap-1">
-                        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce"></div>
+                    <div class="flex gap-1.5">
+                        <div style="width:5px;height:5px;background:var(--accent-cool);border-radius:50%;" class="animate-bounce [animation-delay:-0.3s]"></div>
+                        <div style="width:5px;height:5px;background:var(--accent-cool);border-radius:50%;" class="animate-bounce [animation-delay:-0.15s]"></div>
+                        <div style="width:5px;height:5px;background:var(--accent-cool);border-radius:50%;" class="animate-bounce"></div>
                     </div>
-                    <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Waiting for authorization...</span>
+                    <span style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;">Waiting for authorization...</span>
                 </div>
 
-                <button id="cancel-github-login" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CANCEL</button>
+                <button id="cancel-github-login" style="width:100%;padding:10px;background:var(--surface-2);border:1px solid var(--hairline);color:var(--text-muted);font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:0.1em;" class="transition-all">CANCEL</button>
             </div>
         </div>
     `;
@@ -917,17 +911,17 @@ export function buildGitHubOAuthModal(data, error = null) {
  */
 export function buildTokenHealthPanel(tokens) {
     if (!tokens || tokens.length === 0) {
-        return `<div class="mt-8 pt-6 border-t border-zinc-800/80">
-            <h3 class="text-sm font-bold text-zinc-300 mb-3 flex items-center gap-2"><span>🔑</span> Token Health</h3>
-            <p class="text-xs text-zinc-600 italic">No active credentials in cache.</p>
+        return `<div class="mt-8 pt-6" style="border-top:1px solid var(--hairline);">
+            <h3 style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.1em;" class="flex items-center gap-2"><span>🔑</span> Token Health</h3>
+            <p style="font-size:11px;color:var(--text-dim);font-style:italic;">No active credentials in cache.</p>
         </div>`;
     }
 
     const STATUS_STYLES = {
-        valid:    { badge: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'READY' },
-        expiring: { badge: 'text-amber-400 bg-amber-500/10 border-amber-500/20', label: 'EXPIRING' },
-        expired:  { badge: 'text-red-400 bg-red-500/10 border-red-500/20', label: 'EXPIRED' },
-        unknown:  { badge: 'text-zinc-500 bg-zinc-800/50 border-zinc-700/50', label: 'UNKNOWN' },
+        valid:    { color: 'var(--good)',   label: 'READY' },
+        expiring: { color: 'var(--warn)',   label: 'EXPIRING' },
+        expired:  { color: 'var(--crit)',   label: 'EXPIRED' },
+        unknown:  { color: 'var(--text-dim)', label: 'UNKNOWN' },
     };
 
     const FRIENDLY_TYPES = {
@@ -974,44 +968,46 @@ export function buildTokenHealthPanel(tokens) {
 
         const refreshBtn = (t.can_refresh && t.status !== 'valid') ? `
             <button onclick="window.refreshToken('${escapeHTMLAttr(t.provider)}', '${escapeHTMLAttr(t.account_id)}')"
-                    class="text-[9px] font-bold px-2 py-0.5 rounded border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 transition-all uppercase tracking-wider">
+                    style="font-size:9px;font-weight:700;padding:2px 8px;border:1px solid var(--unlm);color:var(--unlm);background:color-mix(in srgb,var(--unlm) 8%,transparent);text-transform:uppercase;letter-spacing:0.06em;"
+                    class="transition-all">
                 REFRESH
             </button>` : '';
-        
+
         const purgeBtn = `
             <button onclick="window.deleteToken('${escapeHTMLAttr(t.provider)}', '${escapeHTMLAttr(t.account_id)}')"
-                    class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all ml-1"
+                    class="icon-btn w-7 h-7 flex items-center justify-center transition-all ml-1"
+                    style="color:var(--text-dim);"
                     title="Purge from cache">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
             </button>`;
 
         const sourceBadge = t.source === 'config'
-            ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400" title="Configured in Settings → Providers">⚙ settings</span>`
+            ? `<span class="mono" style="font-size:9px;padding:2px 6px;border:1px solid var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);" title="Configured in Settings → Providers">⚙ settings</span>`
             : t.source
-            ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-violet-400" title="Delivered by sidecar">⬡ ${escapeHTML(t.source)}</span>`
-            : `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40 text-zinc-500" title="Collected locally">local</span>`;
+            ? `<span class="mono" style="font-size:9px;padding:2px 6px;border:1px solid var(--unlm);color:var(--unlm);background:color-mix(in srgb,var(--unlm) 8%,transparent);" title="Delivered by sidecar">⬡ ${escapeHTML(t.source)}</span>`
+            : `<span class="mono" style="font-size:9px;padding:2px 6px;border:1px solid var(--hairline-strong);color:var(--text-dim);background:var(--surface-2);" title="Collected locally">local</span>`;
 
         return `
-        <div class="flex items-center justify-between gap-2 py-3 border-b border-zinc-800/40 last:border-0">
+        <div class="flex items-center justify-between gap-2 py-3" style="border-bottom:1px solid var(--hairline);">
             <div class="flex flex-col min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-xs font-bold text-zinc-200 mono">${escapeHTML(t.provider)}</span>
-                    <span class="text-[10px] text-zinc-500">${escapeHTML(label)}</span>
+                    <span class="mono" style="font-size:11px;font-weight:700;color:var(--text);">${escapeHTML(t.provider)}</span>
+                    <span style="font-size:10px;color:var(--text-muted);">${escapeHTML(label)}</span>
                     ${sourceBadge}
                 </div>
                 <div class="flex flex-wrap gap-1 mt-1">${typesHTML}</div>
-                ${expiryStr ? `<span class="text-[10px] text-zinc-600 mono mt-0.5">${escapeHTML(expiryStr)}</span>` : ''}
+                ${expiryStr ? `<span class="mono mt-0.5" style="font-size:10px;color:var(--text-dim);">${escapeHTML(expiryStr)}</span>` : ''}
             </div>
             <div class="flex items-center gap-1 shrink-0">
                 ${refreshBtn}
                 ${purgeBtn}
-                <span class="text-[9px] font-bold px-2 py-0.5 rounded border ${s.badge} uppercase tracking-wider">${s.label}</span>
+                <span style="font-size:9px;font-weight:700;padding:2px 8px;border:1px solid ${s.color};color:${s.color};background:color-mix(in srgb,${s.color} 8%,transparent);text-transform:uppercase;letter-spacing:0.08em;">${s.label}</span>
             </div>
         </div>`;
     }).join('');
 
-    return `<div class="mt-8 pt-6 border-t border-zinc-800/80">
-        <h3 class="text-sm font-bold text-zinc-300 mb-3 flex items-center gap-2"><span>🔑</span> Token Health</h3>
+    return `<div class="mt-8 pt-6" style="border-top:1px solid var(--hairline);">
+        <h3 style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.1em;" class="flex items-center gap-2"><span>🔑</span> Token Health</h3>
         <div>${rows}</div>
     </div>`;
 }
@@ -1030,45 +1026,48 @@ export function buildFleetView(sidecars) {
         const now = Date.now();
         const lastSeen = s.last_seen ? new Date(s.last_seen) : null;
         const ageMs = lastSeen ? now - lastSeen.getTime() : Infinity;
-        let dotClass, dotTitle;
+        let lampClass, dotTitle;
         if (ageMs < 30 * 60 * 1000) {
-            dotClass = 'dot-good'; dotTitle = 'Active (seen < 30m ago)';
+            lampClass = 'lamp-good'; dotTitle = 'Active (seen < 30m ago)';
         } else if (ageMs < 2 * 60 * 60 * 1000) {
-            dotClass = 'dot-warning'; dotTitle = 'Idle (seen < 2h ago)';
+            lampClass = 'lamp-warn'; dotTitle = 'Idle (seen < 2h ago)';
         } else {
-            dotClass = 'dot-unknown'; dotTitle = 'Stale';
+            lampClass = 'lamp-unk'; dotTitle = 'Stale';
         }
 
         const displayName = s.custom_name || s.hostname || s.sidecar_id;
         const tags = (s.tags || []).map(t => `<span class="tag-pill">${escapeHTML(t)}</span>`).join('');
         const lastSeenStr = lastSeen ? lastSeen.toLocaleString() : '—';
         const staleBanner = s.stale
-            ? `<div class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px]">
-                   <span class="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span>
+            ? `<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent);font-size:10px;color:var(--warn);">
+                   <span class="lamp lamp-warn" style="flex-shrink:0;"></span>
                    No check-in for over ${s.stale_threshold_minutes ?? 60} minutes
                </div>`
             : '';
 
         return `
-        <div class="glass-panel rounded-2xl p-5 flex flex-col gap-3" data-sidecar="${escapeHTML(s.sidecar_id)}">
+        <div class="glass-panel p-5 flex flex-col gap-3" data-sidecar="${escapeHTML(s.sidecar_id)}">
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
-                    <div class="dot ${dotClass}" title="${dotTitle}"></div>
+                    <div class="lamp ${lampClass}" title="${dotTitle}"></div>
                     <div class="flex flex-col min-w-0">
-                        <span class="fleet-name text-sm font-bold text-zinc-100 truncate cursor-pointer hover:text-violet-300 transition-colors"
+                        <span class="fleet-name truncate cursor-pointer transition-colors"
+                              style="font-size:0.85rem;font-weight:700;color:var(--text);"
                               onclick="window.editSidecarName('${escapeHTMLAttr(s.sidecar_id)}')"
                               title="Click to rename">${escapeHTML(displayName)}</span>
-                        <span class="text-[10px] text-zinc-600 mono truncate">${escapeHTML(s.sidecar_id)}</span>
+                        <span class="mono truncate" style="font-size:10px;color:var(--text-dim);">${escapeHTML(s.sidecar_id)}</span>
                     </div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                     <button onclick="window.triggerSidecarCollect('${escapeHTMLAttr(s.sidecar_id)}')"
-                            class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-green-400 hover:bg-green-500/10 transition-all"
+                            class="icon-btn w-7 h-7 flex items-center justify-center transition-all"
+                            style="color:var(--text-dim);"
                             title="Run Now — trigger immediate collection">
                         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                     </button>
                     <button onclick="window.deleteSidecar('${escapeHTMLAttr(s.sidecar_id)}')"
-                            class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                            class="icon-btn w-7 h-7 flex items-center justify-center transition-all"
+                            style="color:var(--text-dim);"
                             title="Remove sidecar">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
                     </button>
@@ -1078,23 +1077,24 @@ export function buildFleetView(sidecars) {
             <div class="flex flex-wrap gap-1 items-center">
                 ${tags}
                 <button onclick="window.addSidecarTag('${escapeHTMLAttr(s.sidecar_id)}')"
-                        class="text-[9px] font-bold text-zinc-600 hover:text-violet-400 px-1.5 py-0.5 rounded border border-dashed border-zinc-700 hover:border-violet-500/50 transition-all">+ TAG</button>
+                        style="font-size:9px;font-weight:700;color:var(--text-dim);padding:2px 6px;border:1px dashed var(--hairline-strong);"
+                        class="transition-all hover:border-accent">+ TAG</button>
             </div>
-            <div class="pt-2 border-t border-zinc-800/60 grid grid-cols-2 gap-2 text-[10px] text-zinc-500 mono">
-                <div><span class="text-zinc-600">LAST SEEN</span><br/>${escapeHTML(lastSeenStr)}</div>
-                <div><span class="text-zinc-600">INGESTS</span><br/>${s.ingest_count ?? 0}</div>
-                <div><span class="text-zinc-600">IP</span><br/>${escapeHTML(s.last_ip || '—')}</div>
-                <div><span class="text-zinc-600">ERRORS</span><br/>${s.error_count ?? 0}</div>
-                <div><span class="text-zinc-600">VERSION</span><br/>${escapeHTML(s.sidecar_version || '—')}</div>
-                <div><span class="text-zinc-600">OS</span><br/>${escapeHTML(s.os_platform || '—')}</div>
+            <div class="pt-2 grid grid-cols-2 gap-2 mono" style="border-top:1px solid var(--hairline);font-size:10px;color:var(--text-muted);">
+                <div><span style="color:var(--text-dim);">LAST SEEN</span><br/>${escapeHTML(lastSeenStr)}</div>
+                <div><span style="color:var(--text-dim);">INGESTS</span><br/>${s.ingest_count ?? 0}</div>
+                <div><span style="color:var(--text-dim);">IP</span><br/>${escapeHTML(s.last_ip || '—')}</div>
+                <div><span style="color:var(--text-dim);">ERRORS</span><br/>${s.error_count ?? 0}</div>
+                <div><span style="color:var(--text-dim);">VERSION</span><br/>${escapeHTML(s.sidecar_version || '—')}</div>
+                <div><span style="color:var(--text-dim);">OS</span><br/>${escapeHTML(s.os_platform || '—')}</div>
             </div>
             ${(s.recent_logs && s.recent_logs.length > 0) ? `
             <details class="mt-0.5">
-                <summary class="text-[9px] text-zinc-600 cursor-pointer hover:text-zinc-400 transition-colors select-none list-none flex items-center gap-1">
+                <summary style="font-size:9px;color:var(--text-dim);cursor:pointer;" class="select-none list-none flex items-center gap-1 transition-colors hover:text-text">
                     <svg class="details-arrow" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                     Recent logs (${s.recent_logs.length} lines)
                 </summary>
-                <pre class="mt-1.5 text-[9px] text-zinc-500 bg-zinc-900/60 rounded-lg p-2 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-all max-h-32 leading-relaxed mono">${s.recent_logs.map(l => escapeHTML(l)).join('\n')}</pre>
+                <pre class="mt-1.5 mono overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-all max-h-32 leading-relaxed" style="font-size:9px;color:var(--text-muted);background:var(--surface-2);padding:8px;border-radius:1px;">${s.recent_logs.map(l => escapeHTML(l)).join('\n')}</pre>
             </details>` : ''}
         </div>`;
     }).join('');
@@ -1114,28 +1114,29 @@ export function buildHealthBar(data) {
     }
     if (data.length === 0) return '';
 
-    const tiles = [
-        { key: 'critical',  label: 'Critical',  textColor: 'text-red-400',    border: 'border-red-900/50',    bg: 'bg-red-950/20'    },
-        { key: 'warning',   label: 'Warning',   textColor: 'text-amber-400',  border: 'border-amber-900/50', bg: 'bg-amber-950/20'  },
-        { key: 'good',      label: 'Good',      textColor: 'text-green-400',  border: 'border-green-900/50', bg: 'bg-green-950/20'  },
-        { key: 'unlimited', label: 'Unlimited', textColor: 'text-violet-400', border: 'border-violet-900/50',bg: 'bg-violet-950/20' },
+    const TILES = [
+        { key: 'critical',  label: 'CRIT',  color: 'var(--crit)' },
+        { key: 'warning',   label: 'WARN',  color: 'var(--warn)' },
+        { key: 'good',      label: 'GOOD',  color: 'var(--good)' },
+        { key: 'unlimited', label: 'UNLM',  color: 'var(--unlm)' },
     ];
-    const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6' };
 
-    const tilesHTML = tiles.map(t => `
-        <div class="glass-panel ${t.border} ${t.bg} rounded-xl p-3 text-center${counts[t.key] === 0 ? ' opacity-30' : ''}">
-            <div class="text-3xl font-black ${t.textColor} leading-none">${counts[t.key]}</div>
-            <div class="text-[9px] text-zinc-500 uppercase tracking-widest mt-1.5">${t.label}</div>
-        </div>`).join('');
+    const tilesHTML = TILES.map(t => {
+        const dim = counts[t.key] === 0;
+        return `<div style="border:1px solid ${dim ? 'var(--hairline)' : t.color};padding:10px 8px;text-align:center;opacity:${dim ? 0.3 : 1};background:color-mix(in srgb,${t.color} ${dim ? 0 : 7}%,transparent);">
+            <div style="font-size:1.6rem;font-weight:700;line-height:1;color:${t.color};font-variant-numeric:tabular-nums;">${String(counts[t.key]).padStart(2, '0')}</div>
+            <div style="font-size:8px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.14em;margin-top:4px;">${t.label}</div>
+        </div>`;
+    }).join('');
 
-    const barSegments = tiles
+    const barSegments = TILES
         .filter(t => counts[t.key] > 0)
-        .map(t => `<div style="flex:${counts[t.key]};background:${BAR_HEX[t.key]};"></div>`)
+        .map(t => `<div style="flex:${counts[t.key]};background:${t.color};"></div>`)
         .join('');
 
-    return `<div class="mb-6">
-        <div class="grid grid-cols-4 gap-3 mb-2">${tilesHTML}</div>
-        <div class="h-1.5 rounded-full overflow-hidden flex gap-0.5">${barSegments}</div>
+    return `<div class="mb-5">
+        <div class="grid grid-cols-4 gap-1 mb-1">${tilesHTML}</div>
+        <div style="height:3px;display:flex;overflow:hidden;">${barSegments}</div>
     </div>`;
 }
 
@@ -1163,121 +1164,108 @@ export function buildProviderSummaryCard(providerId, items) {
     if (!items || items.length === 0) return '';
 
     const icon = PROVIDER_ICONS[providerId] || '🔧';
+    const LAMP = { good: 'lamp-good', warning: 'lamp-warn', critical: 'lamp-crit', unknown: 'lamp-unk', unlimited: 'lamp-unlm' };
+    const BAR_COLORS = { critical: 'var(--crit)', warning: 'var(--warn)', good: 'var(--good)', unlimited: 'var(--unlm)' };
 
-    // Health-sorted copy — drives the "worst" metric display only.
+    // Sort by health severity (worst first)
     const healthSorted = [...items].sort((a, b) => {
-        const severityDiff = (HEALTH_SEVERITY[b.health] || 0) - (HEALTH_SEVERITY[a.health] || 0);
-        if (severityDiff !== 0) return severityDiff;
-        const aRatio = (a.limit_value > 0) ? a.used_value / a.limit_value : 0;
-        const bRatio = (b.limit_value > 0) ? b.used_value / b.limit_value : 0;
-        return bRatio - aRatio;
+        const diff = (HEALTH_SEVERITY[b.health] || 0) - (HEALTH_SEVERITY[a.health] || 0);
+        if (diff !== 0) return diff;
+        const aR = (a.limit_value > 0) ? a.used_value / a.limit_value : 0;
+        const bR = (b.limit_value > 0) ? b.used_value / b.limit_value : 0;
+        return bR - aR;
     });
     const worst = healthSorted[0];
-
-    // Breakdown rows follow the user's saved order; new/unpinned items keep
-    // the health-first order as their default.
-    const ordered = applyOrder(
-        healthSorted,
-        cardKey,
-        STATE.layout?.card_orders?.[providerId] ?? []
-    );
+    const ordered = applyOrder(healthSorted, cardKey, STATE.layout?.card_orders?.[providerId] ?? []);
     const h = HEALTH_CONFIG[worst.health] || HEALTH_CONFIG.unknown;
 
-    // Worst metric display
+    // Worst metric
     let worstPct = null;
     if (!worst.is_unlimited && worst.used_value != null && worst.limit_value > 0) {
         worstPct = (worst.used_value / worst.limit_value) * 100;
     }
-    const worstDisplay = worst.is_unlimited
-        ? '∞'
-        : worstPct != null
-        ? `${worstPct.toFixed(1)}%`
+    const worstDisplay = worst.is_unlimited ? '∞'
+        : worstPct != null ? `${worstPct.toFixed(1)}%`
         : escapeHTML(String(worst.remaining ?? '—'));
 
-    const worstColor = worst.is_unlimited ? 'text-violet-400' : h.badge || 'text-zinc-50';
-
-    // Tier badge (first item's tier — same account = same tier)
-    const tier = worst.tier;
-    const tierBadgeHTML = tier ? getTierBadge(tier) : '';
-
-    // Account and source labels
-    const accounts = [...new Set(items.map(i => i.account_label).filter(Boolean))];
+    // Source badge
     const sources = [...new Set(items.map(i => i.input_source).filter(s => s && s !== 'unknown'))];
-    
-    let sourceBadge = '';
+    let sourceBadgeHTML = '';
     if (sources.length > 0) {
         const s = sources[0];
-        const label = s === 'sidecar' ? 'Sidecar' : s === 'config' ? 'Config' : s === 'server' ? 'Server' : s;
-        const sColor = s === 'sidecar' ? 'text-blue-400 border-blue-400/30' : s === 'config' ? 'text-amber-400 border-amber-400/30' : 'text-zinc-500 border-zinc-500/30';
-        sourceBadge = `<span class="text-[8px] px-1 py-px rounded border ${sColor} uppercase tracking-tighter ml-1.5">${escapeHTML(label)}</span>`;
+        const lbl = s === 'sidecar' ? 'SCA' : s === 'config' ? 'CFG' : 'SRV';
+        const col = s === 'sidecar' ? 'var(--accent-cool)' : s === 'config' ? 'var(--accent)' : 'var(--text-dim)';
+        sourceBadgeHTML = `<span style="font-size:8px;font-weight:700;color:${col};border:1px solid ${col};padding:0 4px;letter-spacing:0.08em;opacity:0.8;line-height:1.6;">${lbl}</span>`;
     }
 
-    const accountHTML = accounts.length === 1
-        ? `<div class="flex items-center text-[10px] text-zinc-500 mt-0.5 min-w-0"><span class="truncate">${escapeHTML(accounts[0])}</span>${sourceBadge}</div>`
-        : accounts.length > 1
-        ? `<div class="flex flex-wrap gap-1 mt-1">${accounts.map(a =>
-            `<span class="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded">${escapeHTML(a)}</span>`
-          ).join('')}</div>`
-        : '';
+    // Account label
+    const accounts = [...new Set(items.map(i => i.account_label).filter(Boolean))];
+    const accountLine = accounts.length > 0
+        ? `<div style="font-size:9px;color:var(--text-dim);margin-top:3px;display:flex;align-items:center;gap:5px;">
+               <span style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(accounts[0])}</span>${sourceBadgeHTML}
+           </div>`
+        : (sourceBadgeHTML ? `<div style="margin-top:3px;">${sourceBadgeHTML}</div>` : '');
 
-    // Health badge (CRIT / WARN / GOOD / UNLM)
-    const badgeLabels = { critical: 'CRIT', warning: 'WARN', good: 'GOOD', unlimited: 'UNLM', unknown: '——' };
-    const healthBadgeHTML = `<span class="text-sm font-bold px-1.5 py-0.5 rounded border ${h.badge} border-current/30">${badgeLabels[worst.health] || '——'}</span>`;
+    const tierBadgeHTML = worst.tier ? getTierBadge(worst.tier) : '';
+    const healthTag = `<span class="tag ${h.tag}">${h.label}</span>`;
 
-    // Segmented bar (per-service health counts)
+    // Segmented bar
     const barCounts = { critical: 0, warning: 0, good: 0, unlimited: 0 };
     items.forEach(i => { if (barCounts[i.health] !== undefined) barCounts[i.health]++; });
-    const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6' };
     const barSegments = Object.entries(barCounts)
         .filter(([, c]) => c > 0)
-        .map(([k, c]) => `<div style="flex:${c};background:${BAR_HEX[k]};"></div>`)
+        .map(([k, c]) => `<div style="flex:${c};background:${BAR_COLORS[k]};"></div>`)
         .join('');
 
-    // Per-service breakdown rows (draggable in edit mode — see data-card-key).
+    // Breakdown rows
     const breakdownRows = ordered.map(item => {
-        const dot = HEALTH_CONFIG[item.health]?.dot || 'dot-unknown';
+        const lamp = LAMP[item.health] || 'lamp-unk';
         let pct = null;
         if (!item.is_unlimited && item.used_value != null && item.limit_value > 0) {
             pct = (item.used_value / item.limit_value) * 100;
         }
         const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
-        const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 flex-shrink-0">${escapeHTML(item.tier.toUpperCase())}</span>` : '';
-        return `<div class="flex justify-between items-center text-xs py-0.5" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+        const rowTier = item.tier
+            ? `<span style="font-size:8px;font-weight:700;color:var(--text-dim);border:1px solid var(--hairline-strong);padding:0 3px;line-height:1.6;">${escapeHTML(item.tier.toUpperCase())}</span>`
+            : '';
+        return `<div class="flex justify-between items-center" style="font-size:10px;padding:2px 0;" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="flex items-center gap-1.5 min-w-0">
-                <span class="dot ${dot} flex-shrink-0" style="width:6px;height:6px;"></span>
-                <span class="text-zinc-300 truncate">${escapeHTML(item.service_name)}</span>
+                <span class="lamp ${lamp}" style="width:6px;height:6px;"></span>
+                <span style="color:var(--text-muted);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(item.service_name)}</span>
             </span>
-            <span class="flex items-center gap-1.5 text-zinc-500 flex-shrink-0 ml-2">${rowTier}<span class="mono text-right" style="min-width:2.5rem">${display}</span></span>
+            <span class="flex items-center gap-1.5 flex-shrink-0 ml-2" style="color:var(--text-dim);">
+                ${rowTier}
+                <span style="min-width:2.8rem;text-align:right;font-variant-numeric:tabular-nums;">${display}</span>
+            </span>
         </div>`;
     }).join('');
 
-    return `<div class="glass-panel ${h.card} rounded-2xl overflow-hidden cursor-pointer select-none hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 card-layout relative"
+    return `<div class="glass-panel ${h.card} cursor-pointer select-none card-layout relative"
          data-provider-id="${escapeHTMLAttr(providerId)}"
          onclick="openProviderModal('${escapeHTMLAttr(providerId)}')">
         <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
                 <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
                 <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
             </svg>
         </span>
-        <div class="p-5">
-            <div class="flex justify-between items-start mb-1">
-                <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">${icon} ${escapeHTML(providerId)}</span>
-                        ${tierBadgeHTML}
-                    </div>
-                    ${accountHTML}
+        <!-- Top zone -->
+        <div style="padding:14px 16px 10px;">
+            <div class="flex justify-between items-start" style="margin-bottom:10px;">
+                <div style="min-width:0;flex:1;">
+                    <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.14em;">${icon} ${escapeHTML(providerId)}</div>
+                    <div class="flex items-center gap-1.5 flex-wrap" style="margin-top:3px;">${tierBadgeHTML}${accountLine}</div>
                 </div>
-                <div class="ml-2 flex-shrink-0">${healthBadgeHTML}</div>
+                <div style="flex-shrink:0;margin-left:8px;">${healthTag}</div>
             </div>
-            <div class="text-4xl font-black ${worstColor} leading-none mt-3">${worstDisplay}</div>
-            <div class="text-xs text-zinc-500 mt-1.5">${escapeHTML(worst.service_name)} · worst</div>
+            <div class="readout ${h.tag === 'tag-crit' ? 'readout-crit' : h.tag === 'tag-warn' ? 'readout-warn' : h.tag === 'tag-good' ? 'readout-good' : h.tag === 'tag-unlm' ? 'readout-unlm' : 'readout-unk'}">${worstDisplay}</div>
+            <div style="font-size:9px;color:var(--text-dim);margin-top:5px;text-transform:uppercase;letter-spacing:0.08em;">${escapeHTML(worst.service_name)} · WORST</div>
         </div>
-        <div class="border-t border-zinc-800/50 bg-black/20 px-5 py-3.5 flex flex-col justify-start">
-            <div class="h-0.5 rounded-full overflow-hidden flex gap-0.5 mb-3">${barSegments}</div>
-            <div class="space-y-1" data-subitems-for="${escapeHTMLAttr(providerId)}">${breakdownRows}</div>
+        <!-- Bottom zone -->
+        <div style="border-top:1px solid var(--hairline);background:var(--surface-2);padding:10px 16px 12px;">
+            <div style="height:2px;display:flex;overflow:hidden;margin-bottom:8px;">${barSegments}</div>
+            <div data-subitems-for="${escapeHTMLAttr(providerId)}">${breakdownRows}</div>
         </div>
     </div>`;
 }
@@ -1335,20 +1323,20 @@ function getTrendArrow(points) {
  */
 export function buildModalSkeleton(count) {
     const rows = Array(Math.min(count, 10)).fill(0).map(() => `
-        <div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4">
+        <div style="background:var(--surface);border:1px solid var(--hairline);padding:16px;border-radius:1px;">
             <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
-                    <div class="skeleton h-6 w-32 mb-2" style="border-radius: 6px;"></div>
+                    <div class="skeleton h-6 w-32 mb-2" style="border-radius:1px;"></div>
                     <div class="flex gap-2">
-                        <div class="skeleton h-4 w-16" style="border-radius: 6px;"></div>
-                        <div class="skeleton h-4 w-12" style="border-radius: 6px;"></div>
+                        <div class="skeleton h-4 w-16" style="border-radius:1px;"></div>
+                        <div class="skeleton h-4 w-12" style="border-radius:1px;"></div>
                     </div>
                 </div>
-                <div class="skeleton w-16 h-7" style="border-radius: 6px;"></div>
+                <div class="skeleton w-16 h-7" style="border-radius:1px;"></div>
             </div>
-            <div class="skeleton h-5 w-full mb-2" style="border-radius: 6px;"></div>
-            <div class="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                <div class="skeleton h-full w-3/4" style="border-radius: 0;"></div>
+            <div class="skeleton h-5 w-full mb-2" style="border-radius:1px;"></div>
+            <div class="h-1 overflow-hidden" style="background:var(--surface-2);">
+                <div class="skeleton h-full w-3/4" style="border-radius:0;"></div>
             </div>
         </div>
     `).join('');
@@ -1373,7 +1361,7 @@ export function buildProviderModal(providerId, items, history) {
     // Preserve the order passed in — openProviderModal already applies the user's layout.
     const sorted = items;
 
-    const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6', unknown: '#3f3f46' };
+    const BAR_HEX = { critical: 'var(--crit)', warning: 'var(--warn)', good: 'var(--good)', unlimited: 'var(--unlm)', unknown: 'var(--unk)' };
     const MODAL_SOURCE_LABELS = { 
         oauth: 'OAuth', 
         web_api: 'Web API', 
@@ -1408,7 +1396,7 @@ export function buildProviderModal(providerId, items, history) {
             .filter(s => s.provider_id === providerId && s.service_name === item.service_name && typeof s.used_value === 'number' && isFinite(s.used_value))
             .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
             .map(s => ({ value: s.used_value }));
-        const sparkColor = item.is_unlimited ? '#8b5cf6' : barColor;
+        const sparkColor = item.is_unlimited ? 'var(--unlm)' : barColor;
         const sparkSVG = buildSparklineSVG(svcHistory, sparkColor);
         const trendArrow = getTrendArrow(svcHistory);
 
@@ -1431,7 +1419,7 @@ export function buildProviderModal(providerId, items, history) {
         const paceIcon = getPaceIcon(item.pace);
         const tierBadge = item.tier ? getTierBadge(item.tier) : '';
 
-        return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4 relative" data-card-key="${escapeHTMLAttr(cardKey(item))}">
+        return `<div style="background:var(--surface);border:1px solid var(--hairline);padding:16px;border-radius:1px;position:relative;" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="drag-handle" aria-hidden="true">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
@@ -1441,41 +1429,41 @@ export function buildProviderModal(providerId, items, history) {
             </span>
             <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
-                    <div class="text-2xl font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
-                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        <span class="text-sm font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
+                    <div style="font-size:1.1rem;font-weight:700;color:var(--text);margin-bottom:6px;">${escapeHTML(item.service_name)}</div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="tag ${h.tag}">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
-                        ${combinedSourceLabel ? `<span class="text-sm text-zinc-500">${combinedSourceLabel}</span>` : ''}
-                        ${paceIcon ? `<span class="text-2xl">${paceIcon}</span>` : ''}
-                        ${item.pace ? `<span class="text-sm text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
+                        ${combinedSourceLabel ? `<span style="font-size:10px;color:var(--text-muted);">${combinedSourceLabel}</span>` : ''}
+                        ${paceIcon ? `<span style="font-size:1rem;">${paceIcon}</span>` : ''}
+                        ${item.pace ? `<span style="font-size:10px;color:var(--text-muted);">${escapeHTML(item.pace)}</span>` : ''}
                     </div>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <span class="text-2xl text-zinc-400">${trendArrow}</span>
+                    <span style="font-size:1rem;color:var(--text-dim);">${trendArrow}</span>
                     ${sparkSVG}
                 </div>
             </div>
-            <div class="flex justify-between text-xl text-zinc-400 mb-2">
-                <span class="font-medium">${usageText}</span>
-                <span>${resetText}</span>
+            <div class="flex justify-between mb-2" style="font-size:0.9rem;color:var(--text-muted);">
+                <span>${usageText}</span>
+                <span style="color:var(--text-dim);">${resetText}</span>
             </div>
-            <div class="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                <div class="h-full rounded-full transition-all" style="width:${Math.min(barWidth, 100).toFixed(1)}%;background:${barColor};"></div>
+            <div class="h-1 overflow-hidden" style="background:var(--surface-2);">
+                <div class="h-full transition-all" style="width:${Math.min(barWidth, 100).toFixed(1)}%;background:${barColor};border-radius:0;"></div>
             </div>
         </div>`;
     }).join('');
 
     return `<div>
-        <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
+        <div class="flex justify-between items-start mb-5 pb-4" style="border-bottom:1px solid var(--hairline);">
             <div>
-                <div class="text-xl font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
-                <div class="text-sm text-zinc-500 mt-1">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
+                <div style="font-size:1.1rem;font-weight:700;color:var(--text);letter-spacing:0.04em;">${icon} ${escapeHTML(providerId)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
             </div>
             <div class="flex items-center gap-1">
-                <button id="refresh-provider-btn" title="Refresh now" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-zinc-100">
+                <button id="refresh-provider-btn" title="Refresh now" class="icon-btn w-8 h-8 flex items-center justify-center transition-colors" style="color:var(--text-muted);">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                 </button>
-                <button id="close-modal" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+                <button id="close-modal" class="icon-btn transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center" style="color:var(--text-muted);">✕</button>
             </div>
         </div>
         <div class="space-y-3 max-h-[65vh] overflow-y-auto pr-1" data-provider-id="${escapeHTMLAttr(providerId)}">${serviceRows}</div>
@@ -1532,19 +1520,19 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
         const sparkSVG = buildSparklineSVG(points, color, 56, 24);
         const trendArrow = getTrendArrow(points);
         const latestValue = points.length > 0 ? points[points.length - 1].value.toFixed(0) : '—';
-        const trendColor = trendArrow === '↑' ? 'text-red-400' : trendArrow === '↓' ? 'text-green-400' : 'text-zinc-400';
+        const trendStyle = trendArrow === '↑' ? 'color:var(--crit);' : trendArrow === '↓' ? 'color:var(--good);' : 'color:var(--text-dim);';
         const activeOpacity = isActive ? '' : 'opacity-40';
 
-        return `<div class="glass-panel border rounded-xl p-3 cursor-pointer select-none hover:opacity-90 transition-all ${activeOpacity}"
-                     style="border-color:${isActive ? color : '#27272a'};"
+        return `<div class="glass-panel cursor-pointer select-none hover:opacity-90 transition-all ${activeOpacity}"
+                     style="border:1px solid ${isActive ? color : 'var(--hairline)'};padding:10px;"
                      onclick="toggleHistoryProvider('${escapeHTMLAttr(pid)}')">
             <div class="flex items-center justify-between gap-2 mb-1.5">
-                <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">${icon} ${escapeHTML(pid)}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">${icon} ${escapeHTML(pid)}</span>
                 ${sparkSVG}
             </div>
             <div class="flex items-baseline gap-1">
-                <span class="text-sm font-black text-zinc-100">${latestValue}</span>
-                <span class="text-[10px] ${trendColor} font-bold">${trendArrow}</span>
+                <span style="font-size:0.85rem;font-weight:700;color:var(--text);">${latestValue}</span>
+                <span style="font-size:10px;font-weight:700;${trendStyle}">${trendArrow}</span>
             </div>
         </div>`;
     }).join('');

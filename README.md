@@ -4,7 +4,7 @@
 
 # Runway — AI Subscription Limits Dashboard
 
-**Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, high-performance glassmorphism dashboard with persistent history and fleet management.
+**Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, high-performance aviation HUD dashboard with persistent history and fleet management.
 
 ![Runway Dashboard](assets/dashboard.png)
 
