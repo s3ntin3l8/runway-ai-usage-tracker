@@ -84,7 +84,10 @@ async def get_usage_history(
     # long views stay compact. Response includes both averages (avg per bucket)
     # and peaks (max per bucket).
     bucket_seconds = _pick_bucket_seconds(days)
-    raw = session.exec(statement.limit(20000)).all()
+    # Fetch enough raw rows to fill the requested output after dedup, but avoid
+    # pulling 20k rows when the caller only needs a small window.
+    raw_limit = min(20000, max(limit * 4, 1000))
+    raw = session.exec(statement.limit(raw_limit)).all()
     averages, peaks = _dedupe_with_peaks(raw, bucket_seconds)
 
     label_map = _build_label_map(session)
