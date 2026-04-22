@@ -672,7 +672,7 @@ export function buildModalContent(item) {
     const isAuthFailed = item.error_type === 'auth_failed';
     const retryButton = isAuthFailed ? `
         <button 
-            onclick="event.stopPropagation(); window.handleResetProvider('${escapeHTML(item.provider_id)}', '${escapeHTML(item.account_id)}')"
+            onclick="event.stopPropagation(); window.handleResetProvider(event, '${escapeHTML(item.provider_id)}', '${escapeHTML(item.account_id)}')"
             class="mt-4 w-full py-3 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-xl transition-all uppercase tracking-widest shadow-lg shadow-amber-900/20"
         >Retry Authentication</button>
     ` : '';

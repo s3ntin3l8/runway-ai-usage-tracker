@@ -714,9 +714,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-window.handleResetProvider = async function(provider, accountId) {
-    const ev = window.event;
-    const btn = ev ? ev.target : null;
+window.handleResetProvider = async function(event, provider, accountId) {
+    const btn = event?.target ?? null;
     const originalText = btn ? btn.innerText : 'RETRY';
     if (btn) {
         btn.disabled = true;
