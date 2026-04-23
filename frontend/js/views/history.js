@@ -275,9 +275,12 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     });
     if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
 
-    // Update charts with the same adapted data
+    // Update charts with the same adapted data, filtered by active providers
     if (!skipChartUpdate) {
-        updateCharts(sparklineData, historyState.metric, historyState.days, historyState.windowFilter, historyState.showPeaks);
+        const chartData = historyState.activeProviders
+            ? sparklineData.filter(s => historyState.activeProviders.has(s.provider_id))
+            : sparklineData;
+        updateCharts(chartData, historyState.metric, historyState.days, historyState.windowFilter, historyState.showPeaks);
     }
 
     const container = document.getElementById('history-content');
