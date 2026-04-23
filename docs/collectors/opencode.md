@@ -14,13 +14,15 @@ OpenCode quota collector with web API (Chrome cookies) and local database fallba
 
 The OpenCode collector supports the following authentication methods:
 
-1.  **Chrome Session Cookie**: Automatically extracted from your Chrome browser.
-    *   **Method**: Ensure you are logged into [opencode.ai](https://opencode.ai) in Chrome.
-    *   **Details**: See [Troubleshooting: Web API returns empty](#web-api-returns-empty) for verification.
+1.  **Manual Cookie (recommended for testing / Docker)**: Paste the `auth` cookie value from opencode.ai into the Runway settings panel.
+    *   **Method**: See [Manual Cookie Setup](#manual-cookie-setup) below.
 
-2.  **Local SQLite Database**: Directly reads usage data from the OpenCode IDE's local database.
-    *   **Method**: Use the OpenCode IDE on your machine.
-    *   **Details**: See [Troubleshooting: Database not found](#database-not-found) for ensuring the database exists.
+2.  **Chrome Session Cookie**: Automatically extracted from your Chrome browser — nothing to configure if you're already logged into opencode.ai in Chrome.
+    *   **Details**: See [Troubleshooting: Web API returns empty](#web-api-returns-empty) if this isn't working.
+
+3.  **Local SQLite Database**: Directly reads usage data from the OpenCode IDE's local database.
+    *   **Method**: Use the OpenCode IDE on your machine at least once to create the DB.
+    *   **Details**: See [Troubleshooting: Database not found](#database-not-found).
 
 ## Data Sources
 
@@ -66,6 +68,32 @@ Aggregates data from multiple hosts via `opencode-<hostname>` providers.
 }
 ```
 
+## Manual Cookie Setup
+
+Use this method when browser cookie auto-extraction isn't available (Docker, Linux without Chrome, or just for testing).
+
+### Step 1 — Get the cookie value
+
+1. Open [opencode.ai](https://opencode.ai) in your browser and log in.
+2. Open DevTools (`F12` or `Cmd+Option+I`).
+3. Go to **Application** → **Storage** → **Cookies** → `https://opencode.ai`.
+4. Find the cookie named **`auth`** and copy its **Value** column.
+
+The value is a long opaque string. Do **not** include the cookie name — paste only the value itself (not `auth=<value>`, just `<value>`). Runway will also accept the full `auth=<value>` format and strip the prefix automatically.
+
+### Step 2 — Paste it into Runway
+
+1. Open the Runway dashboard → **SYS** → **Providers** → **opencode**.
+2. In the **Auth Cookie (web)** field, click **Edit** and paste the value.
+3. Click **Save**.
+
+The next collection cycle will use this cookie to fetch your usage from the OpenCode web API.
+
+### Notes
+
+- The `auth` cookie typically expires after 30 days. If the web API cards stop appearing, refresh the cookie using the steps above.
+- This method works in Docker (where browser extraction is unavailable) if you set the cookie via the dashboard or pass it via sidecar.
+
 ## Configuration
 
 | Variable | Required | Description |
@@ -80,9 +108,15 @@ Sidecar queries local DB or extracts Chrome cookie. See [sidecar documentation](
 ## Troubleshooting
 
 ### Web API returns empty
-**Fix:**
-1. Login to https://opencode.ai in Chrome
-2. Check cookie extraction: `python3 -c "from app.core.browser_cookies import get_opencode_session_cookie; print(get_opencode_session_cookie())"`
+**Checklist:**
+1. Are you logged into [opencode.ai](https://opencode.ai) in Chrome? Browser cookie extraction only works with Chrome/Chromium on the same machine.
+2. Verify browser extraction: `python3 -c "from app.core.browser_cookies import get_opencode_session_cookie; print(get_opencode_session_cookie())"`
+3. If that prints `None`, use [Manual Cookie Setup](#manual-cookie-setup) instead.
+
+### Web API shows "public actor" error in logs
+The `auth` cookie was sent to OpenCode but not recognised. Causes:
+- Cookie has **expired** — get a fresh one from DevTools (see [Manual Cookie Setup](#manual-cookie-setup)).
+- Cookie **value is wrong** — make sure you copied only the Value column, not the full `auth=<value>` string (Runway strips the prefix but double-check DevTools).
 
 ### Database not found
 **Fix:** Use OpenCode IDE at least once to create `~/.local/share/opencode/opencode.db`

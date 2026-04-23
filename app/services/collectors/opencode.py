@@ -32,8 +32,33 @@ from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, error_card, http_request_with_retry
 from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
+
+# Matches each inline JS record from the /usage page's embedded $R[N]={...} objects.
+# Fields are in a fixed order so we can match them positionally.
+_USAGE_RECORD_RE = re.compile(
+    r'\{id:"usg_[^"]*"'
+    r',workspaceID:"[^"]*"'
+    r',timeCreated:(?:\$R\[\d+\]=)?new Date\("([^"]+)"\)'  # G1: ISO timestamp
+    r',timeUpdated:(?:\$R\[\d+\]=)?new Date\("[^"]+"\)'
+    r",timeDeleted:[^,]+"
+    r',model:"([^"]+)"'  # G2: model name
+    r',provider:"([^"]+)"'  # G3: provider
+    r",inputTokens:(-?\d+)"  # G4
+    r",outputTokens:(-?\d+)"  # G5
+    r",reasoningTokens:(-?\d+|null)"  # G6
+    r",cacheReadTokens:(-?\d+)"  # G7
+    r",cacheWrite5mTokens:(-?\d+)"  # G8
+    r",cacheWrite1hTokens:(-?\d+|null)"  # G9
+    r",cost:(-?\d+)"  # G10: cost raw int (÷1e8 = USD)
+    r',keyID:"[^"]*"'
+    r',sessionID:"[^"]*"'
+    r",enrichment:(null|\$R\[\d+\]=\{[^}]+\}|\{[^}]+\})"  # G11: Go marker
+    r"\}"
+)
+_USAGE_COST_SCALE: float = 1e-8  # raw cost int → USD
 
 
 class OpenCodeCollector(BaseCollector):
@@ -51,8 +76,12 @@ class OpenCodeCollector(BaseCollector):
 
     async def is_configured(self) -> bool:
         """Check if OpenCode session cookie or local DB is present."""
-        # Check for session cookie
+        # Check for session cookie (browser or manually entered via UI)
         session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
+        if not session_cookie:
+            session_cookie = await token_cache.get_token(
+                "opencode", "cookie_session", account_id=self.account_id or "default"
+            )
         if session_cookie:
             return True
 
@@ -111,8 +140,23 @@ class OpenCodeCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
         """
-        # Check for session cookie (local Chrome or sidecar cache)
+        # Check for session cookie (browser, then token cache for UI-entered values)
         session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
+        input_source = "server" if session_cookie else None
+
+        if not session_cookie:
+            session_cookie = await token_cache.get_token(
+                "opencode", "cookie_session", account_id=self.account_id or "default"
+            )
+            if session_cookie:
+                input_source = "config"
+
+        if not session_cookie:
+            session_cookie = await token_cache.get_token(
+                "opencode", "session_cookie", account_id=self.account_id or "default"
+            )
+            if session_cookie:
+                input_source = "config"
 
         if not session_cookie:
             return []
@@ -136,13 +180,26 @@ class OpenCodeCollector(BaseCollector):
             if not workspace_id:
                 return []
 
-            # 2. Get subscription data
+            # 2. Get subscription data (rolling-window percentages from /go)
             usage_data = await self._get_subscription_data(client, headers, workspace_id)
             if not usage_data:
                 return []
 
-            # 3. Parse and return cards
-            return self._parse_usage_data(usage_data, workspace_id)
+            # 3. Fetch per-model usage records from /usage (best-effort enrichment)
+            breakdown: dict[str, Any] | None = None
+            try:
+                usage_page = await self._get_usage_page(client, headers, workspace_id)
+                if usage_page:
+                    records = self._parse_usage_records(usage_page)
+                    if records:
+                        breakdown = self._build_usage_breakdown(records, datetime.now(UTC))
+            except Exception:
+                pass  # non-critical — Go cards still render without breakdown
+
+            # 4. Parse and return cards (enriched when breakdown is available)
+            return self._parse_usage_data(
+                usage_data, workspace_id, breakdown, input_source or "server"
+            )
 
         except Exception:
             return []
@@ -233,7 +290,220 @@ class OpenCodeCollector(BaseCollector):
         except Exception:
             return None
 
-    def _parse_usage_data(self, text: str, workspace_id: str) -> list[dict[str, Any]]:
+    async def _get_usage_page(
+        self, client: httpx.AsyncClient, headers: dict[str, str], workspace_id: str
+    ) -> str | None:
+        """Fetch the /usage page which embeds per-model usage records as inline JS."""
+        try:
+            url = f"https://opencode.ai/workspace/{workspace_id}/usage"
+            page_headers = headers.copy()
+            page_headers["Accept"] = (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            resp = await http_request_with_retry(
+                client, "GET", url, headers=page_headers, timeout=15.0, follow_redirects=True
+            )
+            return resp.text if resp.status_code == 200 else None
+        except Exception:
+            return None
+
+    def _parse_usage_records(self, text: str) -> list[dict[str, Any]]:
+        """
+        Extract per-call usage records from the inline JS on the /usage page.
+
+        Each record has: ts (datetime), model_short (str), source ("go"|"free"|"api"),
+        input/output/reasoning/cache_read (int), cost_usd (float).
+
+        Classification rules:
+          enrichment != "null"         → go   (subscription, charged against Go quota)
+          enrichment == "null", cost=0 → free (free-tier model)
+          enrichment == "null", cost>0 → api  (own API key, pay-as-you-go)
+        """
+        records = []
+        for m in _USAGE_RECORD_RE.finditer(text):
+            (
+                ts_str,
+                model,
+                _provider,
+                t_in,
+                t_out,
+                t_reason,
+                cache_r,
+                _cw5,
+                _cw1,
+                cost_raw,
+                enrichment,
+            ) = m.groups()
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            cost_int = int(cost_raw)
+            if enrichment != "null":
+                source = "go"
+            elif cost_int == 0:
+                source = "free"
+            else:
+                source = "api"
+
+            records.append(
+                {
+                    "ts": ts,
+                    "model": model,
+                    "model_short": self._short_model_id_oc(model),
+                    "source": source,
+                    "input": int(t_in),
+                    "output": int(t_out),
+                    "reasoning": 0 if t_reason == "null" else int(t_reason),
+                    "cache_read": int(cache_r),
+                    "cost_usd": cost_int * _USAGE_COST_SCALE,
+                }
+            )
+        return records
+
+    def _build_usage_breakdown(
+        self, records: list[dict[str, Any]], now: datetime
+    ) -> dict[str, Any]:
+        """
+        Aggregate records into per-source / per-window totals.
+
+        Returns:
+            {
+              "go":  {"5h": {cost, msgs, tokens, by_model}, "7d": ..., "30d": ...},
+              "free": {"lifetime": {cost, msgs, tokens, by_model}},
+              "api":  {"lifetime": {cost, msgs, tokens, by_model}},
+            }
+        """
+
+        def _empty_bucket() -> dict[str, Any]:
+            return {
+                "cost": 0.0,
+                "msgs": 0,
+                "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                "by_model": {},
+            }
+
+        def _add_to_bucket(bucket: dict, r: dict) -> None:
+            bucket["cost"] += r["cost_usd"]
+            bucket["msgs"] += 1
+            for k in ("input", "output", "reasoning", "cache_read"):
+                bucket["tokens"][k] += r.get(k, 0)
+            entry = bucket["by_model"].setdefault(r["model_short"], {"cost": 0.0, "msgs": 0})
+            entry["cost"] += r["cost_usd"]
+            entry["msgs"] += 1
+
+        windows = {
+            "5h": now - timedelta(hours=5),
+            "7d": now - timedelta(days=7),
+            "30d": now - timedelta(days=30),
+        }
+
+        result: dict[str, Any] = {
+            "go": {w: _empty_bucket() for w in windows},
+            "free": {"lifetime": _empty_bucket()},
+            "api": {"lifetime": _empty_bucket()},
+        }
+
+        for r in records:
+            source = r["source"]
+            if source == "go":
+                for window_key, cutoff in windows.items():
+                    if r["ts"] >= cutoff:
+                        _add_to_bucket(result["go"][window_key], r)
+            elif source == "free":
+                _add_to_bucket(result["free"]["lifetime"], r)
+            else:
+                _add_to_bucket(result["api"]["lifetime"], r)
+
+        return result
+
+    def _build_free_api_card(
+        self,
+        source: str,
+        data: dict[str, Any],
+        workspace_id: str,
+        email: str,
+        now_iso: str,
+        input_source: str = "server",
+    ) -> dict[str, Any]:
+        """Build a card for Free-tier or API (pay-as-you-go) usage."""
+        usage_url = f"https://opencode.ai/workspace/{workspace_id}/usage"
+        identity_suffix = f" | {email}" if email else ""
+
+        totals = {
+            "cost": data["cost"],
+            "msgs": data["msgs"],
+            "tokens": data["tokens"],
+            "by_model": data["by_model"],
+            "convos": 0,
+        }
+        detail = self._build_oc_enrichment_detail(totals)
+
+        if source == "free":
+            t_in = data["tokens"]["input"]
+            t_out = data["tokens"]["output"]
+            total_tokens = t_in + t_out
+            # Format token count for the primary display (e.g. "1,234,567 tokens")
+            tok_display = f"{total_tokens:,} tokens"
+            detail += f" · Free tier{identity_suffix}"
+            return {
+                "service_name": "OpenCode Free",
+                "icon": "⚡",
+                # remaining shows as the big number; no limit_value → no bar,
+                # detail falls through to the card subtitle
+                "remaining": tok_display,
+                "unit": "free tier",
+                "reset": "Lifetime",
+                "health": "good",
+                "pace": "—",
+                "detail": detail,
+                "used_value": total_tokens,
+                "limit_value": None,
+                "is_unlimited": False,
+                "unit_type": "token",
+                "currency": "USD",
+                "account_label": email,
+                "reset_at": None,
+                "tier": "Free",
+                "data_source": self.DATA_SOURCE_WEB,
+                "input_source": input_source,
+                "usage_url": usage_url,
+                "updated_at": now_iso,
+            }
+        # api
+        detail += f" · API key{identity_suffix}"
+        return {
+            "service_name": "OpenCode API",
+            "icon": "⚡",
+            # remaining shows total spend; detail falls through to subtitle
+            "remaining": f"${data['cost']:.4f}",
+            "unit": "pay-as-you-go",
+            "reset": "Lifetime",
+            "health": "good",
+            "pace": "—",
+            "detail": detail,
+            "used_value": data["cost"],
+            "limit_value": None,
+            "is_unlimited": False,
+            "unit_type": "currency",
+            "currency": "USD",
+            "account_label": email,
+            "reset_at": None,
+            "tier": "API",
+            "data_source": self.DATA_SOURCE_WEB,
+            "input_source": input_source,
+            "usage_url": usage_url,
+            "updated_at": now_iso,
+        }
+
+    def _parse_usage_data(
+        self,
+        text: str,
+        workspace_id: str,
+        breakdown: dict[str, Any] | None = None,
+        input_source: str = "server",
+    ) -> list[dict[str, Any]]:
         """
         Parse JavaScript/React stream response to extract usage data.
         """
@@ -306,12 +576,58 @@ class OpenCodeCollector(BaseCollector):
                     "currency": "USD",
                     "account_label": email,
                     "reset_at": reset_at.isoformat(),
+                    "tier": "Go",
                     "data_source": self.DATA_SOURCE_WEB,
-                    "input_source": "server",
+                    "input_source": input_source,
                     "usage_url": usage_url,
                     "updated_at": now_iso,
                 }
             )
+
+        # Enrich Go cards with per-model token breakdown from the /usage page
+        if breakdown:
+            window_map = {
+                "OpenCode (5h)": "5h",
+                "OpenCode (7d)": "7d",
+                "OpenCode (30d)": "30d",
+            }
+            for card in cards:
+                wk = window_map.get(card.get("service_name", ""))
+                if not wk:
+                    continue
+                go_data = breakdown.get("go", {}).get(wk)
+                if not go_data or go_data["msgs"] == 0:
+                    continue
+                suffix = self._build_oc_enrichment_detail(
+                    {
+                        "cost": go_data["cost"],
+                        "msgs": go_data["msgs"],
+                        "tokens": go_data["tokens"],
+                        "by_model": go_data["by_model"],
+                        "convos": 0,
+                    }
+                )
+                if suffix:
+                    existing = card.get("detail", "").rstrip()
+                    card["detail"] = f"{existing} | {suffix}".strip(" |")
+
+            # Emit Free card if there is any free-tier usage
+            free_data = breakdown.get("free", {}).get("lifetime", {})
+            if free_data.get("msgs", 0) > 0:
+                cards.append(
+                    self._build_free_api_card(
+                        "free", free_data, workspace_id, email, now_iso, input_source
+                    )
+                )
+
+            # Emit API card if there is any pay-as-you-go usage
+            api_data = breakdown.get("api", {}).get("lifetime", {})
+            if api_data.get("msgs", 0) > 0:
+                cards.append(
+                    self._build_free_api_card(
+                        "api", api_data, workspace_id, email, now_iso, input_source
+                    )
+                )
 
         # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
         return cards

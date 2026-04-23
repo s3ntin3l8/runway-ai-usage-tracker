@@ -1804,6 +1804,270 @@ class TestOpenCodeCollector:
         assert collector._enrich_results(primary, []) == primary
         assert collector._enrich_results(primary, [{"remaining": "ERR"}]) == primary
 
+    def test_parse_usage_records_classifies_go_free_api(self):
+        """Records with enrichment→go, cost==0→free, cost>0+no-enrichment→api."""
+        collector = OpenCodeCollector()
+
+        # Build a minimal /usage page HTML snippet with one record of each type.
+        # Uses the exact field order from the live page.
+        def _rec(uid, model, provider, cost, enrichment):
+            return (
+                f"$R[9]={{"
+                f'id:"usg_{uid}",'
+                f'workspaceID:"wrk_TEST",'
+                f'timeCreated:new Date("2026-04-20T10:00:00.000Z"),'
+                f'timeUpdated:new Date("2026-04-20T10:00:00.100Z"),'
+                f"timeDeleted:null,"
+                f'model:"{model}",'
+                f'provider:"{provider}",'
+                f"inputTokens:1000,"
+                f"outputTokens:200,"
+                f"reasoningTokens:null,"
+                f"cacheReadTokens:500,"
+                f"cacheWrite5mTokens:0,"
+                f"cacheWrite1hTokens:null,"
+                f"cost:{cost},"
+                f'keyID:"key_AAA",'
+                f'sessionID:"",'
+                f"enrichment:{enrichment}"
+                f"}}"
+            )
+
+        html = (
+            _rec("GO1", "claude-sonnet-4-6", "anthropic", 970321, '$R[10]={plan:"lite"}')
+            + _rec("FR1", "minimax-m2.5-free", "minimax", 0, "null")
+            + _rec("AP1", "gpt-4o", "openai", 500000, "null")
+        )
+
+        records = collector._parse_usage_records(html)
+        assert len(records) == 3
+
+        by_source = {r["source"]: r for r in records}
+        assert set(by_source) == {"go", "free", "api"}
+        assert abs(by_source["go"]["cost_usd"] - 970321 * 1e-8) < 1e-10
+        assert by_source["free"]["cost_usd"] == 0.0
+        assert by_source["go"]["model_short"] == "sonnet"
+
+    def test_parse_usage_records_empty_html(self):
+        """No records in plain HTML → empty list, no error."""
+        collector = OpenCodeCollector()
+        assert collector._parse_usage_records("<html><body>nothing here</body></html>") == []
+
+    def test_build_usage_breakdown_windows(self):
+        """go records are counted into the correct time windows."""
+        collector = OpenCodeCollector()
+        now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
+
+        def _rec(hours_ago, source, cost=0.01, model="sonnet"):
+            return {
+                "ts": now - timedelta(hours=hours_ago),
+                "model": f"claude-{model}-4-6",
+                "model_short": model,
+                "source": source,
+                "input": 1000,
+                "output": 100,
+                "reasoning": 0,
+                "cache_read": 0,
+                "cost_usd": cost,
+            }
+
+        records = [
+            _rec(1, "go", 0.01),  # inside all windows
+            _rec(6, "go", 0.02),  # outside 5h, inside 7d and 30d
+            _rec(200, "go", 0.04),  # outside 7d, inside 30d
+            _rec(800, "go", 0.08),  # outside all windows
+            _rec(0.5, "free"),  # free
+            _rec(0.5, "api", 0.05),  # api
+        ]
+
+        bd = collector._build_usage_breakdown(records, now)
+
+        assert bd["go"]["5h"]["msgs"] == 1
+        assert abs(bd["go"]["5h"]["cost"] - 0.01) < 1e-9
+        assert bd["go"]["7d"]["msgs"] == 2
+        assert bd["go"]["30d"]["msgs"] == 3
+        assert bd["free"]["lifetime"]["msgs"] == 1
+        assert bd["api"]["lifetime"]["msgs"] == 1
+        assert abs(bd["api"]["lifetime"]["cost"] - 0.05) < 1e-9
+
+    def test_parse_usage_data_enriches_go_cards_and_emits_extra_cards(self):
+        """_parse_usage_data with a breakdown enriches detail and adds Free/API cards."""
+        collector = OpenCodeCollector()
+
+        # Minimal /go page text that produces the three standard Go cards
+        go_text = (
+            "s3ntin3l8@gmail.com "
+            "rollingUsage:{usagePercent:50,resetInSec:3600} "
+            "weeklyUsage:{usagePercent:30,resetInSec:86400} "
+            "monthlyUsage:{usagePercent:20,resetInSec:2592000}"
+        )
+
+        breakdown = {
+            "go": {
+                "5h": {
+                    "cost": 2.50,
+                    "msgs": 10,
+                    "tokens": {"input": 50000, "output": 5000, "reasoning": 0, "cache_read": 0},
+                    "by_model": {"sonnet": {"cost": 2.50, "msgs": 10}},
+                },
+                "7d": {
+                    "cost": 8.00,
+                    "msgs": 40,
+                    "tokens": {"input": 200000, "output": 20000, "reasoning": 0, "cache_read": 0},
+                    "by_model": {"sonnet": {"cost": 8.00, "msgs": 40}},
+                },
+                "30d": {
+                    "cost": 10.00,
+                    "msgs": 50,
+                    "tokens": {"input": 250000, "output": 25000, "reasoning": 0, "cache_read": 0},
+                    "by_model": {"sonnet": {"cost": 10.00, "msgs": 50}},
+                },
+            },
+            "free": {
+                "lifetime": {
+                    "cost": 0.0,
+                    "msgs": 25,
+                    "tokens": {"input": 100000, "output": 5000, "reasoning": 0, "cache_read": 0},
+                    "by_model": {"m2.5-free": {"cost": 0.0, "msgs": 25}},
+                }
+            },
+            "api": {
+                "lifetime": {
+                    "cost": 0.30,
+                    "msgs": 3,
+                    "tokens": {"input": 5000, "output": 500, "reasoning": 0, "cache_read": 0},
+                    "by_model": {"gpt-4o": {"cost": 0.30, "msgs": 3}},
+                }
+            },
+        }
+
+        cards = collector._parse_usage_data(go_text, "wrk_TEST", breakdown)
+
+        # 3 Go + 1 Free + 1 API
+        assert len(cards) == 5
+
+        service_names = {c["service_name"] for c in cards}
+        assert "OpenCode (5h)" in service_names
+        assert "OpenCode Free" in service_names
+        assert "OpenCode API" in service_names
+
+        # Go (5h) card detail should contain the per-model enrichment
+        five_h = next(c for c in cards if c["service_name"] == "OpenCode (5h)")
+        assert "sonnet" in five_h["detail"]
+        assert "$2.50" in five_h["detail"]
+
+        # Free card: is_unlimited=False so detail renders as card subtitle
+        free_card = next(c for c in cards if c["service_name"] == "OpenCode Free")
+        assert free_card["is_unlimited"] is False
+        assert free_card["health"] == "good"
+        assert "tokens" in free_card["remaining"]  # e.g. "105,000 tokens"
+        assert "Free tier" in free_card["detail"]
+
+        # API card: is_unlimited=False so detail renders as card subtitle
+        api_card = next(c for c in cards if c["service_name"] == "OpenCode API")
+        assert api_card["is_unlimited"] is False
+        assert "$0.30" in api_card["detail"] or "0.30" in api_card["remaining"]
+
+        # Tier badges
+        go_cards = [c for c in cards if c["service_name"].startswith("OpenCode (")]
+        assert all(c.get("tier") == "Go" for c in go_cards)
+        assert free_card.get("tier") == "Free"
+        assert api_card.get("tier") == "API"
+
+        # input_source defaults to "server"
+        assert all(c.get("input_source") == "server" for c in cards)
+
+    def test_parse_usage_data_input_source_config(self):
+        """input_source='config' propagates to all cards when cookie came from UI."""
+        collector = OpenCodeCollector()
+
+        go_text = (
+            "s3ntin3l8@gmail.com "
+            "rollingUsage:{usagePercent:50,resetInSec:3600} "
+            "weeklyUsage:{usagePercent:30,resetInSec:86400} "
+            "monthlyUsage:{usagePercent:20,resetInSec:2592000}"
+        )
+        breakdown = {
+            "go": {
+                "5h": {
+                    "cost": 1.0,
+                    "msgs": 5,
+                    "tokens": {"input": 1000, "output": 100, "reasoning": 0, "cache_read": 0},
+                    "by_model": {"sonnet": {"cost": 1.0, "msgs": 5}},
+                },
+                "7d": {
+                    "cost": 2.0,
+                    "msgs": 10,
+                    "tokens": {"input": 2000, "output": 200, "reasoning": 0, "cache_read": 0},
+                    "by_model": {},
+                },
+                "30d": {
+                    "cost": 3.0,
+                    "msgs": 15,
+                    "tokens": {"input": 3000, "output": 300, "reasoning": 0, "cache_read": 0},
+                    "by_model": {},
+                },
+            },
+            "free": {
+                "lifetime": {
+                    "cost": 0.0,
+                    "msgs": 5,
+                    "tokens": {"input": 5000, "output": 500, "reasoning": 0, "cache_read": 0},
+                    "by_model": {},
+                }
+            },
+            "api": {
+                "lifetime": {
+                    "cost": 0.0,
+                    "msgs": 0,
+                    "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                    "by_model": {},
+                }
+            },
+        }
+
+        cards = collector._parse_usage_data(go_text, "wrk_TEST", breakdown, input_source="config")
+        assert all(c.get("input_source") == "config" for c in cards)
+
+    def test_parse_usage_data_no_breakdown_returns_three_go_cards(self):
+        """Without a breakdown, _parse_usage_data still returns the 3 Go cards unchanged."""
+        collector = OpenCodeCollector()
+
+        go_text = (
+            "rollingUsage:{usagePercent:40,resetInSec:3600} "
+            "weeklyUsage:{usagePercent:20,resetInSec:86400} "
+            "monthlyUsage:{usagePercent:10,resetInSec:2592000}"
+        )
+
+        cards = collector._parse_usage_data(go_text, "wrk_TEST", breakdown=None)
+        assert len(cards) == 3
+        assert all("OpenCode" in c["service_name"] for c in cards)
+
+    def test_parse_usage_data_zero_usage_skips_free_api_cards(self):
+        """Free/API cards are omitted when msgs==0."""
+        collector = OpenCodeCollector()
+
+        go_text = (
+            "rollingUsage:{usagePercent:10,resetInSec:100} "
+            "weeklyUsage:{usagePercent:5,resetInSec:200} "
+            "monthlyUsage:{usagePercent:3,resetInSec:300}"
+        )
+
+        empty_bucket = {
+            "cost": 0.0,
+            "msgs": 0,
+            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+            "by_model": {},
+        }
+        breakdown = {
+            "go": {"5h": empty_bucket, "7d": empty_bucket, "30d": empty_bucket},
+            "free": {"lifetime": empty_bucket},
+            "api": {"lifetime": empty_bucket},
+        }
+
+        cards = collector._parse_usage_data(go_text, "wrk_TEST", breakdown)
+        assert len(cards) == 3  # only Go cards, no Free or API
+
 
 class TestZaiCollector:
     """Test suite for zAI (consolidated) collector."""
