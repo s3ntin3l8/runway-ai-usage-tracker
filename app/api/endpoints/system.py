@@ -575,6 +575,13 @@ async def upsert_provider_config(
                     if part.startswith("__Secure-next-auth.session-token="):
                         found = part[32:].strip()
                         break
+            elif provider_id == "opencode":
+                # Extract auth cookie value if user pasted full "auth=<value>" string
+                for part in val.split(";"):
+                    part = part.strip()
+                    if part.startswith("auth="):
+                        found = part[5:].strip()
+                        break
 
             if found:
                 val = found

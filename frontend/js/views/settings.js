@@ -206,7 +206,7 @@ function buildProviderForm(p) {
             ${!p.api_key_set ? '<p class="text-[10px] text-zinc-600 mt-1">No key stored — env var / file / keychain used as fallback.</p>' : ''}
         </div>` : ''}
         ${p.supports_session_cookie ? `<div class="py-3 border-b border-zinc-800/50">
-            <div class="flex items-center justify-between mb-2"><div><span class="text-sm text-zinc-400">Session Cookie</span><p class="text-[10px] text-zinc-600 mt-0.5">Manual override — bypasses browser cookie extraction</p></div><button type="button" id="session-cookie-edit-btn" class="toggle-btn text-xs">Edit</button></div>
+            <div class="flex items-center justify-between mb-2"><div><span class="text-sm text-zinc-400">${escapeHTML(p.session_cookie_label || 'Session Cookie')}</span><p class="text-[10px] text-zinc-600 mt-0.5">${escapeHTML(p.session_cookie_help || 'Manual override — bypasses browser cookie extraction')}</p></div><button type="button" id="session-cookie-edit-btn" class="toggle-btn text-xs">Edit</button></div>
             <div id="session-cookie-display" class="${p.session_cookie_set ? '' : 'hidden'}"><span class="mono text-xs text-zinc-500">••••••••••••••••</span></div>
             <div id="session-cookie-input-row" class="${p.session_cookie_set ? 'hidden' : ''}"><input type="text" id="field-session-cookie" placeholder="${p.session_cookie_set ? 'Leave blank to keep current value' : 'Paste session cookie value'}" class="w-full mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-violet-500"></div>
             ${!p.session_cookie_set ? '<p class="text-[10px] text-zinc-600 mt-1">No cookie stored — browser extraction used as fallback.</p>' : ''}
