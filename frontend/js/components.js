@@ -30,6 +30,17 @@ export function escapeHTMLAttr(str) {
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+function _forecastSeriesKey(entry) {
+    return [
+        entry.provider_id || '',
+        entry.account_id || '',
+        entry.service_name || '',
+        entry.model_id || '',
+        entry.window_type || '',
+        entry.unit_type || '',
+    ].join('||');
+}
+
 const PROVIDER_ICONS = {
     anthropic: '🟠', gemini: '✨', github: '🐙', chatgpt: '🤖',
     openrouter: '🚀', opencode: '⚡', ollama: '🦙', minimax: '💎',
@@ -1176,7 +1187,7 @@ const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimite
  * @param {Array} items - LimitCard items for this provider
  * @returns {string} HTML string
  */
-export function buildProviderSummaryCard(providerId, items) {
+export function buildProviderSummaryCard(providerId, items, forecastMap = new Map()) {
     if (!items || items.length === 0) return '';
 
     const icon = PROVIDER_ICONS[providerId] || '🔧';
@@ -1243,6 +1254,18 @@ export function buildProviderSummaryCard(providerId, items) {
         const rowTier = item.tier
             ? `<span style="font-size:8px;font-weight:700;color:var(--text-dim);border:1px solid var(--hairline-strong);padding:0 3px;line-height:1.6;">${escapeHTML(item.tier.toUpperCase())}</span>`
             : '';
+
+        // Forecast projection line
+        const fcEntry = forecastMap.get(_forecastSeriesKey(item));
+        let forecastHtml = '';
+        if (fcEntry && fcEntry.projected_pct != null) {
+            const STATUS_COLOR = { risk: 'var(--crit)', warn: 'var(--warn)', ok: 'var(--good)' };
+            const fcColor = STATUS_COLOR[fcEntry.status] || 'var(--text-dim)';
+            const fcPct = fcEntry.projected_pct.toFixed(0);
+            const confidenceLabel = fcEntry.confidence >= 0.66 ? '' : fcEntry.confidence >= 0.33 ? '~' : '?';
+            forecastHtml = `<div style="font-size:8px;color:${fcColor};text-align:right;padding-top:1px;opacity:0.85;">→ ${confidenceLabel}${fcPct}% projected</div>`;
+        }
+
         return `<div class="flex justify-between items-center" style="font-size:10px;padding:2px 0;" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="flex items-center gap-1.5 min-w-0">
                 <span class="lamp ${lamp}" style="width:6px;height:6px;"></span>
@@ -1252,7 +1275,7 @@ export function buildProviderSummaryCard(providerId, items) {
                 ${rowTier}
                 <span style="min-width:2.8rem;text-align:right;font-variant-numeric:tabular-nums;">${display}</span>
             </span>
-        </div>`;
+        </div>${forecastHtml}`;
     }).join('');
 
     return `<div class="glass-panel cursor-pointer select-none card-layout relative"

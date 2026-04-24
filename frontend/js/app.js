@@ -7,6 +7,7 @@ import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
 import { loadSettingsView, renderProvidersSection, refreshToken, deleteToken } from './views/settings.js';
 import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar, triggerSidecarCollect } from './views/fleet.js';
+import { loadForecastView, initForecastView } from './views/forecast.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
 
 // Alias for backwards compatibility
@@ -28,7 +29,7 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
 /**
  * View Management
  */
-const KNOWN_VIEWS = ['dashboard', 'history', 'fleet', 'settings', 'auth', 'error'];
+const KNOWN_VIEWS = ['dashboard', 'history', 'forecast', 'fleet', 'settings', 'auth', 'error'];
 
 window.switchView = async function(viewId) {
     if (!KNOWN_VIEWS.includes(viewId)) viewId = 'dashboard';
@@ -51,6 +52,7 @@ window.switchView = async function(viewId) {
         await loadDashboard();
     }
     if (viewId === 'history') loadHistoryView();
+    if (viewId === 'forecast') loadForecastView();
     if (viewId === 'settings') loadSettingsView();
     if (viewId === 'fleet') loadFleetView();
 };
@@ -486,6 +488,7 @@ async function initUI() {
     // Initialize dashboard view event listeners
     initDashboardView();
     initHistoryView();
+    initForecastView();
     
     // Wake Trigger: nudge the poller and refresh data when the tab becomes visible.
     // Poller wake: 30s debounce. Data refresh: only when tab was hidden for >5 min.

@@ -11,8 +11,9 @@ from sqlmodel import Session, asc, desc, select
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.models.db import ProviderConfig, UsageSnapshot
-from app.models.schemas import LimitCard, LimitsResponse
+from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
+from app.services.forecast import compute_all_forecasts
 
 router = APIRouter()
 
@@ -49,6 +50,33 @@ async def fetch_all_limits(request: Request) -> dict[str, Any]:
 
     # Return dict with None values included (needed for tier field)
     return response.model_dump(exclude_none=False)
+
+
+@router.get("/forecast")
+@limiter.limit("30/minute")
+async def get_usage_forecast(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    window_type: str | None = None,
+    session: Session = Depends(get_session),
+) -> ForecastResponse:
+    """Project quota usage to reset time using linear extrapolation in the current window."""
+    results = manager.get_registry_snapshot()
+    if not results:
+        # Bootstrap fallback: registry not yet populated (first request races startup)
+        results = await manager.collect_all()
+
+    cards = [LimitCard(**item) for item in results]
+
+    if provider_id:
+        cards = [c for c in cards if c.provider_id == provider_id]
+    if account_id:
+        cards = [c for c in cards if c.account_id == account_id]
+    if window_type:
+        cards = [c for c in cards if c.window_type == window_type]
+
+    return compute_all_forecasts(cards, session)
 
 
 @router.get("/history")
