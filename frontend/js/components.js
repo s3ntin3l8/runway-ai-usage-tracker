@@ -1258,12 +1258,16 @@ export function buildProviderSummaryCard(providerId, items, forecastMap = new Ma
         // Forecast projection line
         const fcEntry = forecastMap.get(_forecastSeriesKey(item));
         let forecastHtml = '';
-        if (fcEntry && fcEntry.projected_pct != null) {
-            const STATUS_COLOR = { risk: 'var(--crit)', warn: 'var(--warn)', ok: 'var(--good)' };
-            const fcColor = STATUS_COLOR[fcEntry.status] || 'var(--text-dim)';
-            const fcPct = fcEntry.projected_pct.toFixed(0);
-            const confidenceLabel = fcEntry.confidence >= 0.66 ? '' : fcEntry.confidence >= 0.33 ? '~' : '?';
-            forecastHtml = `<div style="font-size:8px;color:${fcColor};text-align:right;padding-top:1px;opacity:0.85;">→ ${confidenceLabel}${fcPct}% projected</div>`;
+        if (fcEntry) {
+            if (fcEntry.status === 'stable') {
+                forecastHtml = `<div style="font-size:8px;color:var(--text-dim);text-align:right;padding-top:1px;opacity:0.85;">→ stable</div>`;
+            } else if (fcEntry.projected_pct != null) {
+                const STATUS_COLOR = { risk: 'var(--crit)', warn: 'var(--warn)', ok: 'var(--good)' };
+                const fcColor = STATUS_COLOR[fcEntry.status] || 'var(--text-dim)';
+                const fcPct = fcEntry.projected_pct.toFixed(0);
+                const confidenceLabel = fcEntry.confidence >= 0.66 ? '' : fcEntry.confidence >= 0.33 ? '~' : '?';
+                forecastHtml = `<div style="font-size:8px;color:${fcColor};text-align:right;padding-top:1px;opacity:0.85;">→ ${confidenceLabel}${fcPct}% projected</div>`;
+            }
         }
 
         return `<div class="flex justify-between items-center" style="font-size:10px;padding:2px 0;" data-card-key="${escapeHTMLAttr(cardKey(item))}">

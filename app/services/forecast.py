@@ -13,6 +13,11 @@ WINDOW_DURATIONS: dict[str, timedelta] = {
     "monthly": timedelta(days=30),
 }
 
+# Minimum snapshot count before we trust a slope. With a 15-min poll cadence,
+# 4 samples ≈ 45–60 min of history — enough to distinguish "genuinely flat"
+# from "too early to tell".
+MIN_SAMPLES_FOR_TREND = 4
+
 
 def _fit_linear(xs: list[float], ys: list[float]) -> LinearRegression | None:
     if len(xs) < 2:
@@ -119,7 +124,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
     else:
         now_pct = None
 
-    if len(valid_rows) < 2:
+    if len(valid_rows) < MIN_SAMPLES_FOR_TREND:
         return _make_entry(
             card=card,
             status="insufficient_data",
