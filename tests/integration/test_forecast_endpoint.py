@@ -52,7 +52,7 @@ class TestForecastEndpoint:
             _card(service_name="Service B", account_id="acc2"),
         ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "_registry", registry):
+        with patch.object(manager, "get_registry_snapshot", return_value=registry):
             response = client.get("/api/v1/usage/forecast")
 
         assert response.status_code == 200
@@ -78,7 +78,7 @@ class TestForecastEndpoint:
             _card(service_name="ChatGPT Card", provider_id="chatgpt", account_id="b1"),
         ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "_registry", registry):
+        with patch.object(manager, "get_registry_snapshot", return_value=registry):
             response = client.get("/api/v1/usage/forecast?provider_id=anthropic")
 
         assert response.status_code == 200
@@ -100,7 +100,7 @@ class TestForecastEndpoint:
             ),
         ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "_registry", registry):
+        with patch.object(manager, "get_registry_snapshot", return_value=registry):
             response = client.get("/api/v1/usage/forecast?window_type=weekly")
 
         assert response.status_code == 200
@@ -118,7 +118,7 @@ class TestForecastEndpoint:
             _card(service_name="Account B", provider_id="anthropic", account_id="acc-beta"),
         ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "_registry", registry):
+        with patch.object(manager, "get_registry_snapshot", return_value=registry):
             response = client.get("/api/v1/usage/forecast?account_id=acc-alpha")
 
         assert response.status_code == 200
@@ -138,7 +138,7 @@ class TestForecastEndpoint:
             ),
         ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "_registry", registry):
+        with patch.object(manager, "get_registry_snapshot", return_value=registry):
             response = client.get("/api/v1/usage/forecast")
 
         assert response.status_code == 200

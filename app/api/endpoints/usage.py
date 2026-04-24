@@ -69,12 +69,11 @@ async def get_usage_forecast(
 
     cards = [LimitCard(**item) for item in results]
 
-    # Apply optional filters before forecasting
-    if provider_id is not None:
+    if provider_id:
         cards = [c for c in cards if c.provider_id == provider_id]
-    if account_id is not None:
+    if account_id:
         cards = [c for c in cards if c.account_id == account_id]
-    if window_type is not None:
+    if window_type:
         cards = [c for c in cards if c.window_type == window_type]
 
     return compute_all_forecasts(cards, session)
