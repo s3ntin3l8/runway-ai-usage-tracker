@@ -181,6 +181,7 @@ function _renderChart(forecasts) {
 }
 
 function _populateProviderFilter(forecasts) {
+    if (_filterProvider) return;  // keep full list while a filter is active
     const sel = document.getElementById('forecast-filter-provider');
     if (!sel) return;
     const providers = [...new Set(forecasts.map(f => f.provider_id))].sort();
