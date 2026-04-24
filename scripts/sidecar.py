@@ -216,6 +216,23 @@ __REGISTRY__ = {
                 },
             ],
         },
+        "kimi_coding": {
+            "name": "Kimi Coding",
+            "icon": "🌙",
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "KIMI_AUTH_TOKEN",
+                    "mapping": {"value": "session_cookie"},
+                },
+                {
+                    "type": "cookie",
+                    "domains": ["kimi.moonshot.cn", "kimi.com"],
+                    "name": "kimi-auth",
+                    "mapping": {"value": "session_cookie"},
+                },
+            ],
+        },
         "zai": {
             "name": "zAI API",
             "icon": "\ud83c\udf10",
