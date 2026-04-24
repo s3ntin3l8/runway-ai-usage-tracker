@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -11,6 +12,27 @@ from app.core.db import get_session
 from app.main import app as fastapi_app
 from app.models.db import UsageSnapshot
 from app.services.collector_manager import manager
+
+
+@pytest.fixture(autouse=True)
+def _empty_db():
+    """Override get_session with an empty in-memory SQLite so the forecast
+    endpoint never touches the real on-disk database (which may not exist in CI)."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session():
+        with Session(engine) as session:
+            yield session
+
+    fastapi_app.dependency_overrides[get_session] = _get_session
+    yield engine
+    fastapi_app.dependency_overrides.pop(get_session, None)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
