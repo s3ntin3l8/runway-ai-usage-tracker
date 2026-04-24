@@ -196,4 +196,4 @@ class TestForecastEndpoint:
                 f"Expected a real forecast status, got: {entry['status']}"
             )
         finally:
-            fastapi_app.dependency_overrides.clear()
+            fastapi_app.dependency_overrides.pop(get_session, None)
