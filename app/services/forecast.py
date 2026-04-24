@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from statistics import LinearRegression, linear_regression
 
-from sqlmodel import Session, select
+from sqlmodel import Session, asc, select
 
 from app.models.db import UsageSnapshot
 from app.models.schemas import ForecastEntry, ForecastResponse, LimitCard
@@ -68,7 +68,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
             UsageSnapshot.unit_type == card.unit_type,
             UsageSnapshot.timestamp >= window_start,
         )
-        .order_by(UsageSnapshot.timestamp)
+        .order_by(asc(UsageSnapshot.timestamp))
     )
     rows = session.exec(stmt).all()
 
@@ -132,7 +132,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         )
 
     xs = [_coerce_utc_timestamp(r.timestamp) for r in valid_rows]
-    ys = [r.used_value for r in valid_rows]  # type: ignore[misc]
+    ys = [r.used_value for r in valid_rows if r.used_value is not None]
 
     fit = _fit_linear(xs, ys)
     if fit is None:
@@ -160,6 +160,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
     slope, intercept = fit.slope, fit.intercept
 
     current_used_value = valid_rows[-1].used_value
+    assert current_used_value is not None  # valid_rows filtered to non-None used_value
 
     if abs(slope) < 1e-9:
         return ForecastEntry(
@@ -184,7 +185,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         )
 
     projected_used = intercept + slope * reset_at_dt.timestamp()
-    projected_used = max(projected_used, current_used_value)  # type: ignore[type-var]
+    projected_used = max(projected_used, current_used_value)
 
     if card.unit_type == "percent":
         projected_pct = projected_used

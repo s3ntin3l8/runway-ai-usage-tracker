@@ -201,10 +201,10 @@ def test_percent_unit_bypasses_limit_division(db_session):
     result = compute_forecast(card, db_session)
     assert result is not None
     assert result.projected_pct is not None
-    # projected_pct should be in range 0–200 (not divided by 100 again)
-    # A 20→60 trend over 3 of 7 days projects to around 120+ at reset
-    # Key assertion: not divided by limit (which would give ~0.6)
-    assert result.projected_pct > 1.0
+    # projected_pct should be the raw used_value (already a %), not divided by limit.
+    # A 20→60 trend over 3 of 7 days projects to ~120+% at reset.
+    # If the bug (re-dividing by 100) were present, result would be ~1.2 — this catches it.
+    assert result.projected_pct > 50.0
 
 
 def test_excludes_unlimited(db_session):
