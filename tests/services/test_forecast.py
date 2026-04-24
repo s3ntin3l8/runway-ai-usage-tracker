@@ -216,7 +216,7 @@ def test_excludes_unlimited(db_session):
 
 def test_excludes_pay_as_you_go(db_session):
     """unit=pay-as-you-go → compute_forecast returns None."""
-    card = _make_card(unit="pay-as-you-go", limit_value=None)
+    card = _make_card(unit="pay-as-you-go", limit_value=1_000_000.0)
     result = compute_forecast(card, db_session)
     assert result is None
 
