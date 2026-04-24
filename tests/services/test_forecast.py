@@ -204,7 +204,7 @@ def test_percent_unit_bypasses_limit_division(db_session):
     # projected_pct should be the raw used_value (already a %), not divided by limit.
     # A 20→60 trend over 3 of 7 days projects to ~120+% at reset.
     # If the bug (re-dividing by 100) were present, result would be ~1.2 — this catches it.
-    assert result.projected_pct > 50.0
+    assert result.projected_pct > 90.0
 
 
 def test_excludes_unlimited(db_session):
@@ -295,11 +295,9 @@ def test_negative_slope_clamps_to_current(db_session):
     window_start = reset_at - timedelta(days=7)
 
     # Declining: 500k → 400k → 300k (mid-window reset artifact)
-    snapshots = []
     for i, used in enumerate([500_000.0, 400_000.0, 300_000.0]):
         ts = window_start + timedelta(hours=24 * i)
-        snap = _make_snapshot(session=db_session, ts=ts, used_value=used)
-        snapshots.append(snap)
+        _make_snapshot(session=db_session, ts=ts, used_value=used)
 
     current_used = 300_000.0
     card = _make_card(
@@ -309,6 +307,47 @@ def test_negative_slope_clamps_to_current(db_session):
     )
     result = compute_forecast(card, db_session)
     assert result is not None
-    # Projected should not go below the last observed value
-    if result.projected_used is not None:
-        assert result.projected_used >= current_used
+    assert result.projected_used is not None, "expected a projection, got None"
+    assert result.projected_used >= current_used
+
+
+def test_warn_status_at_80_percent(db_session):
+    """Trajectory projecting to ~85% at reset → status='warn'."""
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=3)
+    window_start = reset_at - timedelta(days=7)
+    limit = 1_000_000.0
+
+    # Seed: 400k → 500k → 600k over first 4 days; projects to ~750-800k at reset
+    for i, used in enumerate([400_000.0, 500_000.0, 600_000.0]):
+        ts = window_start + timedelta(days=i * 1.5)
+        _make_snapshot(session=db_session, ts=ts, used_value=used, limit_value=limit)
+
+    card = _make_card(used_value=600_000.0, limit_value=limit, reset_at=reset_at.isoformat())
+    result = compute_forecast(card, db_session)
+    assert result is not None
+    assert result.projected_pct is not None
+    assert result.status in ("warn", "risk"), f"expected warn or risk, got {result.status}"
+    assert result.projected_pct >= 80.0
+
+
+def test_risk_status_at_100_percent(db_session):
+    """Steep trajectory projecting past 100% → status='risk'."""
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=2)
+    window_start = reset_at - timedelta(days=7)
+    limit = 1_000_000.0
+
+    # Seed: rapid growth, will clearly exceed limit by reset
+    for i, used in enumerate([400_000.0, 600_000.0, 800_000.0]):
+        ts = window_start + timedelta(days=i * 1.5)
+        _make_snapshot(session=db_session, ts=ts, used_value=used, limit_value=limit)
+
+    card = _make_card(used_value=800_000.0, limit_value=limit, reset_at=reset_at.isoformat())
+    result = compute_forecast(card, db_session)
+    assert result is not None
+    assert result.projected_pct is not None
+    assert result.status == "risk", (
+        f"expected risk, got {result.status} ({result.projected_pct:.1f}%)"
+    )
+    assert result.projected_pct >= 100.0
