@@ -71,7 +71,7 @@ function _renderTable(forecasts) {
     tbody.innerHTML = sorted.map(f => {
         const color = STATUS_COLOR[f.status] || 'var(--text-dim)';
         const nowPct = f.now_pct != null ? f.now_pct.toFixed(1) + '%' : '—';
-        const projPct = f.projected_pct != null ? f.projected_pct.toFixed(1) + '%' : '—';
+        const projPct = (f.status === 'stable' || f.projected_pct == null) ? '—' : f.projected_pct.toFixed(1) + '%';
         const conf = _confidenceLabel(f.confidence);
         const resetDate = f.reset_at ? new Date(f.reset_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
         const label = f.service_name || f.provider_id;
@@ -96,8 +96,11 @@ function _renderChart(forecasts) {
         _forecastChart = null;
     }
 
-    // Only chart forecasts that have real projections
-    const chartable = forecasts.filter(f => f.projected_pct != null && f.now_pct != null);
+    // Only chart forecasts with meaningful projections (exclude stable/no-data noise)
+    const chartable = forecasts.filter(
+        f => f.projected_pct != null && f.now_pct != null
+            && f.status !== 'stable' && f.status !== 'insufficient_data'
+    );
     if (chartable.length === 0) {
         el.style.display = 'none';
         return;

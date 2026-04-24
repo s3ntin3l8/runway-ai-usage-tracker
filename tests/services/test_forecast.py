@@ -119,17 +119,18 @@ def test_linear_fit_clean_trajectory(db_session):
     assert result.samples_used == 4
 
 
-def test_insufficient_data_single_sample(db_session):
-    """Single snapshot → insufficient_data, projected_pct is None."""
+def test_insufficient_data_below_threshold(db_session):
+    """3 snapshots (below MIN_SAMPLES_FOR_TREND=4) → insufficient_data."""
     now = datetime.now(UTC)
     reset_at = now + timedelta(days=4)
     window_start = reset_at - timedelta(days=7)
 
-    _make_snapshot(
-        session=db_session,
-        ts=window_start + timedelta(hours=6),
-        used_value=100_000.0,
-    )
+    for i in range(3):
+        _make_snapshot(
+            session=db_session,
+            ts=window_start + timedelta(hours=6 * i),
+            used_value=100_000.0 + 10_000.0 * i,
+        )
 
     card = _make_card(reset_at=reset_at.isoformat())
     result = compute_forecast(card, db_session)
@@ -137,7 +138,27 @@ def test_insufficient_data_single_sample(db_session):
     assert result.status == "insufficient_data"
     assert result.projected_pct is None
     assert result.projected_used is None
-    assert result.samples_used == 1
+    assert result.samples_used == 3
+
+
+def test_insufficient_data_exactly_three_samples(db_session):
+    """Exactly 3 samples → insufficient_data (threshold is 4)."""
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=4)
+    window_start = reset_at - timedelta(days=7)
+
+    for i in range(3):
+        _make_snapshot(
+            session=db_session,
+            ts=window_start + timedelta(hours=24 * i),
+            used_value=200_000.0 + 50_000.0 * i,
+        )
+
+    card = _make_card(reset_at=reset_at.isoformat())
+    result = compute_forecast(card, db_session)
+    assert result is not None
+    assert result.status == "insufficient_data"
+    assert result.samples_used == 3
 
 
 def test_insufficient_data_zero_samples(db_session):
@@ -242,8 +263,8 @@ def test_series_key_isolates_by_service_name(db_session):
     reset_at = now + timedelta(days=4)
     window_start = reset_at - timedelta(days=7)
 
-    # Service A: slow growth (20k → 40k over 3 samples)
-    for i, used in enumerate([20_000.0, 30_000.0, 40_000.0]):
+    # Service A: slow growth (20k → 50k over 4 samples)
+    for i, used in enumerate([20_000.0, 30_000.0, 40_000.0, 50_000.0]):
         ts = window_start + timedelta(hours=24 * i)
         _make_snapshot(
             session=db_session,
@@ -252,8 +273,8 @@ def test_series_key_isolates_by_service_name(db_session):
             service_name="Service A",
         )
 
-    # Service B: fast growth (200k → 400k over 3 samples)
-    for i, used in enumerate([200_000.0, 300_000.0, 400_000.0]):
+    # Service B: fast growth (200k → 500k over 4 samples)
+    for i, used in enumerate([200_000.0, 300_000.0, 400_000.0, 500_000.0]):
         ts = window_start + timedelta(hours=24 * i)
         _make_snapshot(
             session=db_session,
@@ -264,12 +285,12 @@ def test_series_key_isolates_by_service_name(db_session):
 
     card_a = _make_card(
         service_name="Service A",
-        used_value=40_000.0,
+        used_value=50_000.0,
         reset_at=reset_at.isoformat(),
     )
     card_b = _make_card(
         service_name="Service B",
-        used_value=400_000.0,
+        used_value=500_000.0,
         reset_at=reset_at.isoformat(),
     )
 
@@ -279,8 +300,8 @@ def test_series_key_isolates_by_service_name(db_session):
     entry_a = next(e for e in response.forecasts if e.service_name == "Service A")
     entry_b = next(e for e in response.forecasts if e.service_name == "Service B")
 
-    assert entry_a.samples_used == 3
-    assert entry_b.samples_used == 3
+    assert entry_a.samples_used == 4
+    assert entry_b.samples_used == 4
 
     # Service B has 10x higher usage → higher projected_pct
     assert entry_b.projected_pct is not None
@@ -294,8 +315,8 @@ def test_negative_slope_clamps_to_current(db_session):
     reset_at = now + timedelta(days=4)
     window_start = reset_at - timedelta(days=7)
 
-    # Declining: 500k → 400k → 300k (mid-window reset artifact)
-    for i, used in enumerate([500_000.0, 400_000.0, 300_000.0]):
+    # Declining: 500k → 400k → 300k → 200k (mid-window reset artifact)
+    for i, used in enumerate([500_000.0, 400_000.0, 300_000.0, 200_000.0]):
         ts = window_start + timedelta(hours=24 * i)
         _make_snapshot(session=db_session, ts=ts, used_value=used)
 
@@ -318,9 +339,9 @@ def test_warn_status_at_80_percent(db_session):
     window_start = reset_at - timedelta(days=7)
     limit = 1_000_000.0
 
-    # Seed: 400k → 500k → 600k over first 4 days; projects to ~750-800k at reset
-    for i, used in enumerate([400_000.0, 500_000.0, 600_000.0]):
-        ts = window_start + timedelta(days=i * 1.5)
+    # Seed: 400k → 500k → 600k → 650k over first 4 days; projects to ~750-800k at reset
+    for i, used in enumerate([400_000.0, 500_000.0, 600_000.0, 650_000.0]):
+        ts = window_start + timedelta(days=i * 1.0)
         _make_snapshot(session=db_session, ts=ts, used_value=used, limit_value=limit)
 
     card = _make_card(used_value=600_000.0, limit_value=limit, reset_at=reset_at.isoformat())
@@ -339,8 +360,8 @@ def test_risk_status_at_100_percent(db_session):
     limit = 1_000_000.0
 
     # Seed: rapid growth, will clearly exceed limit by reset
-    for i, used in enumerate([400_000.0, 600_000.0, 800_000.0]):
-        ts = window_start + timedelta(days=i * 1.5)
+    for i, used in enumerate([400_000.0, 600_000.0, 800_000.0, 900_000.0]):
+        ts = window_start + timedelta(days=i * 1.0)
         _make_snapshot(session=db_session, ts=ts, used_value=used, limit_value=limit)
 
     card = _make_card(used_value=800_000.0, limit_value=limit, reset_at=reset_at.isoformat())
