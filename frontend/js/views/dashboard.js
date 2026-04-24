@@ -1,5 +1,5 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits, collectProvider } from '../api.js';
+import { fetchLimits, collectProvider, fetchForecast } from '../api.js';
 import { STATE } from '../state.js';
 import { buildProviderSummaryCard, buildHealthBar, buildProviderModal, buildModalSkeleton } from '../components.js';
 import { fetchHistoryCached } from './history.js';
@@ -11,6 +11,17 @@ function escapeHTML(str) {
     if (!str) return '';
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return str.replace(/[&<>"']/g, m => map[m]);
+}
+
+function _forecastSeriesKey(entry) {
+    return [
+        entry.provider_id || '',
+        entry.account_id || '',
+        entry.service_name || '',
+        entry.model_id || '',
+        entry.window_type || '',
+        entry.unit_type || '',
+    ].join('||');
 }
 
 export function applyFilters(data) {
@@ -54,7 +65,7 @@ export function renderGrid() {
     for (const key of sorted) {
         const items = groups.get(key);
         try {
-            html += buildProviderSummaryCard(key, items);
+            html += buildProviderSummaryCard(key, items, STATE.forecastMap);
             count += items.length;
         } catch (e) {
             console.error('Failed to render provider card:', key, e);
@@ -139,21 +150,36 @@ export async function loadDashboard() {
     if (errorBanner) errorBanner.classList.add('hidden');
 
     try {
-        const json = await fetchLimits();
+        // Fetch limits and forecast in parallel; forecast failure is non-fatal
+        const [limitsResult, forecastResult] = await Promise.allSettled([
+            fetchLimits(),
+            fetchForecast(),
+        ]);
+
         if (myGeneration !== loadDataGeneration) return;
-        STATE.data = json.limits;
+
+        if (limitsResult.status === 'rejected') throw limitsResult.reason;
+        STATE.data = limitsResult.value.limits;
+
+        // Build forecast lookup map (series key → ForecastEntry)
+        if (forecastResult.status === 'fulfilled') {
+            const newMap = new Map();
+            for (const entry of (forecastResult.value.forecasts || [])) {
+                newMap.set(_forecastSeriesKey(entry), entry);
+            }
+            STATE.forecastMap = newMap;
+        }
+
         renderFilterPills();
         renderGrid();
         renderHealthBar();
-
         window._lastFetchTime = Date.now();
     } catch (err) {
         if (myGeneration !== loadDataGeneration) return;
         console.error('Failed to fetch limits:', err);
         const errorMsg = err.message || 'Unknown error occurred';
-        const displayMsg = `⚠ ${errorMsg}`;
         if (errorBanner) {
-            errorBanner.textContent = displayMsg;
+            errorBanner.textContent = `⚠ ${errorMsg}`;
             errorBanner.classList.remove('hidden');
         }
     } finally {

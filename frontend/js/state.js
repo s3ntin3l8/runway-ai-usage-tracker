@@ -41,6 +41,8 @@ export const STATE = {
         } catch {}
         return { provider_order: [], card_orders: {} };
     })(),
+    // Forecast projections: series key → ForecastEntry from /api/v1/usage/forecast
+    forecastMap: new Map(),
 };
 
 /**

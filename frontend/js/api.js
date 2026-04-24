@@ -110,6 +110,13 @@ export async function fetchHistoryRaw(params = {}) {
     return await resp.json();
 }
 
+export async function fetchForecast(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/forecast?${query}`);
+    if (!resp.ok) throw new Error('Failed to fetch forecast');
+    return await resp.json();
+}
+
 export async function fetchSettings() {
     const resp = await fetchWithAuth('/api/v1/system/settings');
     if (!resp.ok) throw new Error('Failed to fetch settings');
