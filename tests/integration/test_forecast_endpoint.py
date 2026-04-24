@@ -111,6 +111,22 @@ class TestForecastEndpoint:
         assert forecasts[0]["window_type"] == "weekly"
         assert forecasts[0]["service_name"] == "Weekly Card"
 
+    def test_forecast_endpoint_filters_by_account_id(self):
+        """Only cards matching account_id should be returned."""
+        registry = [
+            _card(service_name="Account A", provider_id="anthropic", account_id="acc-alpha"),
+            _card(service_name="Account B", provider_id="anthropic", account_id="acc-beta"),
+        ]
+        client = TestClient(fastapi_app)
+        with patch.object(manager, "_registry", registry):
+            response = client.get("/api/v1/usage/forecast?account_id=acc-alpha")
+
+        assert response.status_code == 200
+        data = response.json()
+        forecasts = data["forecasts"]
+        assert len(forecasts) == 1
+        assert forecasts[0]["service_name"] == "Account A"
+
     def test_forecast_endpoint_excludes_unlimited(self):
         """Unlimited cards must not appear in the forecast output."""
         registry = [
