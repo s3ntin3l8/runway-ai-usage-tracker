@@ -139,7 +139,7 @@ export function destroyCharts() {
     }
 }
 
-async function ensureECharts() {
+export async function ensureECharts() {
     if (_echarts) return _echarts;
     if (window.echarts) {
         _echarts = window.echarts;
