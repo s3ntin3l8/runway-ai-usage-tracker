@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from statistics import LinearRegression, linear_regression
 
@@ -5,6 +6,8 @@ from sqlmodel import Session, asc, select
 
 from app.models.db import UsageSnapshot
 from app.models.schemas import ForecastEntry, ForecastResponse, LimitCard
+
+logger = logging.getLogger(__name__)
 
 WINDOW_DURATIONS: dict[str, timedelta] = {
     "daily": timedelta(hours=24),
@@ -103,16 +106,20 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         .where(
             UsageSnapshot.provider_id == (card.provider_id or ""),
             UsageSnapshot.account_id == (card.account_id or ""),
-            UsageSnapshot.service_name == card.service_name,
-            UsageSnapshot.model_id == card.model_id,
             UsageSnapshot.window_type == card.window_type,
             UsageSnapshot.unit_type == card.unit_type,
+            UsageSnapshot.model_id == card.model_id,
             UsageSnapshot.timestamp >= window_start,
         )
         .order_by(asc(UsageSnapshot.timestamp))
     )
     rows = session.exec(stmt).all()
     valid_rows = [r for r in rows if r.used_value is not None]
+
+    logger.debug(
+        f"Forecast for {card.service_name}: found {len(valid_rows)}/{len(rows)} valid snapshots "
+        f"(need {MIN_SAMPLES_FOR_TREND} for trend)"
+    )
 
     total_window_secs = (reset_at_dt - window_start).total_seconds()
     elapsed_secs = (now - window_start).total_seconds()
@@ -130,6 +137,10 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         now_pct = None
 
     if len(valid_rows) < MIN_SAMPLES_FOR_TREND:
+        logger.warning(
+            f"Forecast unavailable for {card.service_name}: only {len(valid_rows)} snapshots "
+            f"(need {MIN_SAMPLES_FOR_TREND}). Wait for more collection cycles."
+        )
         return _make_entry(
             card=card,
             status="insufficient_data",

@@ -257,56 +257,102 @@ def test_excludes_stale_reset_at(db_session):
     assert result is None
 
 
-def test_series_key_isolates_by_service_name(db_session):
-    """Two service_names under same provider produce separate ForecastEntry results."""
+def test_series_key_isolates_by_model_id(db_session):
+    """Two model_ids under same provider produce separate ForecastEntry results.
+
+    Service name variations (e.g., display label changes) should NOT affect isolation.
+    Model-specific windows (Sonnet/Opus/Design) MUST remain separate.
+    """
     now = datetime.now(UTC)
     reset_at = now + timedelta(days=4)
     window_start = reset_at - timedelta(days=7)
 
-    # Service A: slow growth (20k → 50k over 4 samples)
+    # Sonnet: slow growth (20k → 50k over 4 samples)
     for i, used in enumerate([20_000.0, 30_000.0, 40_000.0, 50_000.0]):
         ts = window_start + timedelta(hours=24 * i)
         _make_snapshot(
             session=db_session,
             ts=ts,
             used_value=used,
-            service_name="Service A",
+            service_name="Claude (Sonnet Weekly)",
+            model_id="sonnet",
         )
 
-    # Service B: fast growth (200k → 500k over 4 samples)
+    # Opus: fast growth (200k → 500k over 4 samples)
     for i, used in enumerate([200_000.0, 300_000.0, 400_000.0, 500_000.0]):
         ts = window_start + timedelta(hours=24 * i)
         _make_snapshot(
             session=db_session,
             ts=ts,
             used_value=used,
-            service_name="Service B",
+            service_name="Claude (Opus Weekly)",
+            model_id="opus",
         )
 
-    card_a = _make_card(
-        service_name="Service A",
+    card_sonnet = _make_card(
+        service_name="Claude (Sonnet Weekly)",
+        model_id="sonnet",
         used_value=50_000.0,
         reset_at=reset_at.isoformat(),
     )
-    card_b = _make_card(
-        service_name="Service B",
+    card_opus = _make_card(
+        service_name="Claude (Opus Weekly)",
+        model_id="opus",
         used_value=500_000.0,
         reset_at=reset_at.isoformat(),
     )
 
-    response = compute_all_forecasts([card_a, card_b], db_session)
+    response = compute_all_forecasts([card_sonnet, card_opus], db_session)
     assert len(response.forecasts) == 2
 
-    entry_a = next(e for e in response.forecasts if e.service_name == "Service A")
-    entry_b = next(e for e in response.forecasts if e.service_name == "Service B")
+    entry_sonnet = next(e for e in response.forecasts if e.model_id == "sonnet")
+    entry_opus = next(e for e in response.forecasts if e.model_id == "opus")
 
-    assert entry_a.samples_used == 4
-    assert entry_b.samples_used == 4
+    assert entry_sonnet.samples_used == 4
+    assert entry_opus.samples_used == 4
 
-    # Service B has 10x higher usage → higher projected_pct
-    assert entry_b.projected_pct is not None
-    assert entry_a.projected_pct is not None
-    assert entry_b.projected_pct > entry_a.projected_pct * 5
+    # Opus has 10x higher usage → higher projected_pct
+    assert entry_opus.projected_pct is not None
+    assert entry_sonnet.projected_pct is not None
+    assert entry_opus.projected_pct > entry_sonnet.projected_pct * 5
+
+
+def test_service_name_variations_share_forecast(db_session):
+    """Service name display variations should NOT create separate forecasts.
+
+    Validates that Claude quota with varying service_name labels (e.g., tier suffixes)
+    share the same historical data for forecasting.
+    """
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=4)
+    window_start = reset_at - timedelta(days=7)
+
+    # Historical snapshots with one service_name
+    for i, used in enumerate([20_000.0, 30_000.0, 40_000.0, 50_000.0]):
+        ts = window_start + timedelta(hours=24 * i)
+        _make_snapshot(
+            session=db_session,
+            ts=ts,
+            used_value=used,
+            service_name="Claude (Weekly Window)",
+            model_id=None,
+        )
+
+    # Current card has slightly different service_name (e.g., tier label added)
+    card = _make_card(
+        service_name="Claude (Weekly Window) [Pro]",
+        model_id=None,
+        used_value=50_000.0,
+        reset_at=reset_at.isoformat(),
+    )
+
+    response = compute_all_forecasts([card], db_session)
+    assert len(response.forecasts) == 1
+
+    # Should find all 4 historical snapshots despite service_name difference
+    entry = response.forecasts[0]
+    assert entry.samples_used == 4
+    assert entry.model_id is None
 
 
 def test_tiny_positive_slope_reported_as_stable(db_session):
