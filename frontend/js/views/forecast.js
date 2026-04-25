@@ -1,3 +1,4 @@
+import { ensureECharts } from '../charts.js';
 import { fetchForecast } from '../api.js';
 
 const STATUS_COLOR = {
@@ -87,7 +88,9 @@ function _renderTable(forecasts) {
     }).join('');
 }
 
-function _renderChart(forecasts) {
+async function _renderChart(forecasts) {
+    await ensureECharts();
+    
     const el = document.getElementById('forecast-chart');
     if (!el || typeof echarts === 'undefined') return;
 
@@ -202,7 +205,7 @@ export async function loadForecastView() {
         _renderKpi(summary);
         _populateProviderFilter(forecasts);
         _renderTable(forecasts);
-        _renderChart(forecasts);
+        await _renderChart(forecasts);
 
         const genAt = document.getElementById('forecast-generated-at');
         if (genAt && data.generated_at) {
