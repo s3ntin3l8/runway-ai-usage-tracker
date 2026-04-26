@@ -84,16 +84,19 @@ class ForecastEntry(BaseModel):
     now_pct: float | None
     projected_used: float | None
     projected_pct: float | None
+    projected_limit_hit_at: str | None = None
     limit_value: float
     reset_at: str  # ISO-8601 UTC (copied from card)
     window_start: str  # ISO-8601 UTC
     samples_used: int
     confidence: float  # 0.0–1.0
-    status: str  # "ok" | "warn" | "risk" | "insufficient_data" | "stable"
+    status: str  # "ok" | "warn" | "risk" | "insufficient_data" | "stable" | "exhausted"
     method: str  # "linear" for now
 
 
 class ForecastResponse(BaseModel):
     forecasts: list[ForecastEntry]
-    summary: dict[str, int]  # {"risk": n, "warn": n, "ok": n, "insufficient_data": n, "stable": n}
+    summary: dict[
+        str, int
+    ]  # {"risk": n, "warn": n, "ok": n, "insufficient_data": n, "stable": n, "exhausted": n}
     generated_at: str  # ISO-8601 UTC

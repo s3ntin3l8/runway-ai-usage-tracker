@@ -2,6 +2,7 @@ import { ensureECharts } from '../charts.js';
 import { fetchForecast } from '../api.js';
 
 const STATUS_COLOR = {
+    exhausted: 'var(--crit)',
     risk: 'var(--crit)',
     warn: 'var(--warn)',
     ok: 'var(--good)',
@@ -42,6 +43,7 @@ function _renderKpi(summary) {
     if (!kpi) return;
     const items = [
         { label: 'RISK', key: 'risk', color: 'var(--crit)' },
+        { label: 'EXHAUSTED', key: 'exhausted', color: 'var(--crit)' },
         { label: 'WARN', key: 'warn', color: 'var(--warn)' },
         { label: 'OK', key: 'ok', color: 'var(--good)' },
         { label: 'STABLE', key: 'stable', color: 'var(--accent)' },
@@ -72,7 +74,16 @@ function _renderTable(forecasts) {
     tbody.innerHTML = sorted.map(f => {
         const color = STATUS_COLOR[f.status] || 'var(--text-dim)';
         const nowPct = f.now_pct != null ? f.now_pct.toFixed(1) + '%' : '—';
-        const projPct = (f.status === 'stable' || f.projected_pct == null) ? '—' : f.projected_pct.toFixed(1) + '%';
+
+        let projPct = (f.status === 'stable' || f.status === 'exhausted' || f.projected_pct == null) ? '—' : f.projected_pct.toFixed(1) + '%';
+        if (f.projected_limit_hit_at) {
+
+            const hitAt = new Date(f.projected_limit_hit_at);
+            const timeStr = hitAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dateStr = hitAt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            projPct = `100% (${dateStr} ${timeStr})`;
+        }
+
         const conf = _confidenceLabel(f.confidence);
         const resetDate = f.reset_at ? new Date(f.reset_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
         const label = f.service_name || f.provider_id;
@@ -141,9 +152,23 @@ async function _renderChart(forecasts) {
             padding: [8, 12],
             textStyle: { color: cText, fontFamily: 'B612 Mono, monospace', fontSize: 10 },
             formatter: (params) => {
-                const label = params[0]?.name ?? '';
-                const lines = params.map(p => `<div>${p.seriesName}: <b>${p.value}%</b></div>`).join('');
-                return `<div style="color:${cTextDim};font-size:9px;margin-bottom:4px;">${label}</div>${lines}`;
+                const name = params[0].name;
+                const nowVal = params[0].value;
+                const projVal = params[1].value;
+                const f = chartable[params[0].dataIndex];
+
+                let t = `<div style="font-weight:700;margin-bottom:8px;">${name}</div>`;
+                t += `<div>Current: <span style="font-weight:600;">${nowVal}%</span></div>`;
+
+                if (f.projected_limit_hit_at) {
+                    const hitAt = new Date(f.projected_limit_hit_at);
+                    const timeStr = hitAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const dateStr = hitAt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    t += `<div style="margin-top:4px;">Projected: <span style="font-weight:600;color:var(--crit)">Hits 100% on ${dateStr} at ${timeStr}</span></div>`;
+                } else {
+                    t += `<div style="margin-top:4px;">Projected: <span style="font-weight:600;">${projVal}%</span></div>`;
+                }
+                return t;
             }
         },
         grid: { top: 20, left: 60, right: 20, bottom: 40, containLabel: false },

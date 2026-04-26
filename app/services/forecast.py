@@ -10,6 +10,7 @@ from app.models.schemas import ForecastEntry, ForecastResponse, LimitCard
 logger = logging.getLogger(__name__)
 
 WINDOW_DURATIONS: dict[str, timedelta] = {
+    "session": timedelta(hours=5),
     "daily": timedelta(hours=24),
     "weekly": timedelta(days=7),
     "biweekly": timedelta(days=14),
@@ -24,7 +25,7 @@ MIN_SAMPLES_FOR_TREND = 4
 # A projection within this many percentage points of now_pct is reported as
 # "stable" rather than a real forecast. Covers rounded-series noise and
 # downward-clamped slopes where the "forecast" would just echo the current value.
-STABLE_PCT_EPSILON = 1.0
+STABLE_PCT_EPSILON = 0.1
 
 
 def _fit_linear(xs: list[float], ys: list[float]) -> LinearRegression | None:
@@ -50,6 +51,7 @@ def _make_entry(
     now_pct: float | None,
     projected_used: float | None = None,
     projected_pct: float | None = None,
+    projected_limit_hit_at: str | None = None,
 ) -> ForecastEntry:
     return ForecastEntry(
         provider_id=card.provider_id or "",
@@ -63,6 +65,7 @@ def _make_entry(
         now_pct=now_pct,
         projected_used=projected_used,
         projected_pct=projected_pct,
+        projected_limit_hit_at=projected_limit_hit_at,
         limit_value=card.limit_value,  # type: ignore[arg-type]  # caller verified non-None
         reset_at=card.reset_at,  # type: ignore[arg-type]  # caller verified non-None
         window_start=window_start.isoformat(),
@@ -82,24 +85,40 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         return None
     if card.unit == "pay-as-you-go":
         return None
-    if card.window_type == "session":
-        return None
     if card.window_type not in WINDOW_DURATIONS:
         return None
 
     try:
-        reset_at_dt = datetime.fromisoformat(card.reset_at)
-        if reset_at_dt.tzinfo is None:
-            reset_at_dt = reset_at_dt.replace(tzinfo=UTC)
+        if card.reset_at:
+            reset_at_dt = datetime.fromisoformat(card.reset_at)
+            if reset_at_dt.tzinfo is None:
+                reset_at_dt = reset_at_dt.replace(tzinfo=UTC)
+        else:
+            # Missing reset_at. Assume rolling window relative to now.
+            reset_at_dt = datetime.now(UTC)
     except (ValueError, TypeError):
         return None
 
     now = datetime.now(UTC)
-    if reset_at_dt <= now + timedelta(seconds=60):
-        return None
-
     window_duration = WINDOW_DURATIONS[card.window_type]
-    window_start = reset_at_dt - window_duration
+
+    # Determine window_start and the target projection date.
+    # For fixed windows, reset_at is typically the end of the window.
+    # For rolling windows (like Claude's 7-day or 5-hour limits), reset_at is often
+    # the time the *oldest* usage drops off, which can be near 'now' or even in the past.
+    if reset_at_dt < now + (window_duration * 0.1):
+        # Treat as a rolling window: analyze the last full window duration,
+        # and project forward by a full window duration from now.
+        window_start = now - window_duration
+        forecast_target_dt = now + window_duration
+    else:
+        window_start = reset_at_dt - window_duration
+        forecast_target_dt = reset_at_dt
+
+    # Trend start: prioritize recent data for the slope calculation to capture
+    # current activity bursts (e.g. usage this morning) without being diluted
+    # by days of flat history.
+    trend_start = max(window_start, now - timedelta(hours=24))
 
     stmt = (
         select(UsageSnapshot)
@@ -108,8 +127,10 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
             UsageSnapshot.account_id == (card.account_id or ""),
             UsageSnapshot.window_type == card.window_type,
             UsageSnapshot.unit_type == card.unit_type,
-            UsageSnapshot.model_id == card.model_id,
-            UsageSnapshot.timestamp >= window_start,
+            UsageSnapshot.model_id == card.model_id
+            if card.model_id is not None
+            else UsageSnapshot.model_id.is_(None),
+            UsageSnapshot.timestamp >= trend_start,
         )
         .order_by(asc(UsageSnapshot.timestamp))
     )
@@ -121,7 +142,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         f"(need {MIN_SAMPLES_FOR_TREND} for trend)"
     )
 
-    total_window_secs = (reset_at_dt - window_start).total_seconds()
+    total_window_secs = (forecast_target_dt - window_start).total_seconds()
     elapsed_secs = (now - window_start).total_seconds()
     # window_progress: fraction of the reset window that has elapsed (0.0 = start, 1.0 = reset)
     confidence = max(
@@ -174,33 +195,50 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
     current_used_value = valid_rows[-1].used_value
     assert current_used_value is not None  # valid_rows filtered to non-None used_value
 
-    projected_used = intercept + slope * reset_at_dt.timestamp()
+    projected_used = intercept + slope * forecast_target_dt.timestamp()
     # Clamp against both the last snapshot and the card's live value to avoid projecting downward
     clamp_floor = max(current_used_value, card.used_value or 0.0)
     projected_used = max(projected_used, clamp_floor)
 
     if card.unit_type == "percent":
         projected_pct = projected_used
+        target_val = 100.0
     else:
         projected_pct = projected_used / card.limit_value * 100
+        target_val = card.limit_value
 
-    # Stable: no meaningful upward projection. Catches exact-zero slopes, negative slopes
-    # that got clamp-floored to current, and tiny-positive slopes on rounded series
-    # (e.g., Claude's server-rounded percentages) where the projection rounds to now_pct.
-    if now_pct is not None and projected_pct - now_pct < STABLE_PCT_EPSILON:
+    # Stability check MUST happen before capping, so we detect real trends
+    # even if they are projected to hit the limit soon.
+    is_stable = now_pct is not None and projected_pct - now_pct < STABLE_PCT_EPSILON
+    if is_stable or (now_pct is not None and now_pct >= 99.9):
+        # Already at 100% or stable -> no projection necessary
+        is_exhausted = now_pct is not None and now_pct >= 99.9
         return _make_entry(
             card=card,
-            status="stable",
+            status="exhausted" if is_exhausted else "stable",
             window_start=window_start,
             samples_used=len(valid_rows),
             confidence=confidence,
             now_used=now_used,
             now_pct=now_pct,
-            projected_used=projected_used,
-            projected_pct=now_pct,
+            projected_used=target_val if is_exhausted else projected_used,
+            projected_pct=100.0 if is_exhausted else now_pct,
         )
 
+    # Calculate exact time the trend hits the limit
+    projected_limit_hit_at = None
     if projected_pct >= 100:
+        if slope > 0 and (now_pct is None or now_pct < 99.9):
+            hit_timestamp = (target_val - intercept) / slope
+            # Only report if the hit time is in the future
+            if hit_timestamp > now.timestamp():
+                projected_limit_hit_at = datetime.fromtimestamp(hit_timestamp, tz=UTC).isoformat()
+
+        # Cap the visual projection at 100%
+        projected_pct = 100.0
+        projected_used = target_val
+
+    if projected_pct >= 100 or projected_limit_hit_at:
         status = "risk"
     elif projected_pct >= 80:
         status = "warn"
@@ -217,12 +255,20 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         now_pct=now_pct,
         projected_used=projected_used,
         projected_pct=projected_pct,
+        projected_limit_hit_at=projected_limit_hit_at,
     )
 
 
 def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastResponse:
     forecasts: list[ForecastEntry] = []
-    summary: dict[str, int] = {"risk": 0, "warn": 0, "ok": 0, "insufficient_data": 0, "stable": 0}
+    summary: dict[str, int] = {
+        "risk": 0,
+        "warn": 0,
+        "ok": 0,
+        "insufficient_data": 0,
+        "stable": 0,
+        "exhausted": 0,
+    }
 
     for card in cards:
         entry = compute_forecast(card, session)

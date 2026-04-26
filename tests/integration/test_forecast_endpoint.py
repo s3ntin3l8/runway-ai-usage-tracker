@@ -84,7 +84,14 @@ class TestForecastEndpoint:
         assert len(data["forecasts"]) == 2
 
         assert "summary" in data
-        assert set(data["summary"].keys()) == {"risk", "warn", "ok", "insufficient_data", "stable"}
+        assert set(data["summary"].keys()) == {
+            "risk",
+            "warn",
+            "ok",
+            "insufficient_data",
+            "stable",
+            "exhausted",
+        }
 
         assert "generated_at" in data
         assert data["generated_at"]  # non-empty
