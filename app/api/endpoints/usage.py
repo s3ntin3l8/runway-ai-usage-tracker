@@ -124,7 +124,7 @@ async def get_usage_history(
 
     # SQL aggregation
     stmt = (
-        select(
+        select(  # type: ignore[call-overload]
             bucket_expr,
             UsageSnapshot.provider_id,
             UsageSnapshot.account_id,
@@ -235,7 +235,7 @@ async def get_usage_history_raw(
 
     # SQL aggregation: AVG for trend, MAX for spike preservation (BAND mode)
     stmt = (
-        select(
+        select(  # type: ignore[call-overload]
             bucket_expr,
             UsageSnapshot.provider_id,
             UsageSnapshot.account_id,
