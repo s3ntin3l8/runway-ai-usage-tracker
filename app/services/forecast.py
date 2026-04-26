@@ -129,7 +129,7 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
             UsageSnapshot.unit_type == card.unit_type,
             UsageSnapshot.model_id == card.model_id
             if card.model_id is not None
-            else UsageSnapshot.model_id.is_(None),
+            else UsageSnapshot.model_id == None,  # noqa: E711
             UsageSnapshot.timestamp >= trend_start,
         )
         .order_by(asc(UsageSnapshot.timestamp))
