@@ -1880,7 +1880,7 @@ class TestOpenCodeCollector:
             _rec(0.5, "api", 0.05),  # api
         ]
 
-        bd = collector._build_usage_breakdown(records, now)
+        bd = collector._build_usage_breakdown(records, now, {})
 
         assert bd["go"]["5h"]["msgs"] == 1
         assert abs(bd["go"]["5h"]["cost"] - 0.01) < 1e-9

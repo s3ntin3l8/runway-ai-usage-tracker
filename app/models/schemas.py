@@ -43,6 +43,15 @@ class LimitCard(BaseModel):
     model_id: str | None = None  # None=aggregate snapshot; specific=per-model
     sidecar_id: str | None = None  # Originating host FQDN/tag; None=local
     window_type: str = "unknown"  # "daily","weekly","monthly","session","rolling","unknown"
+    # Token usage breakdown from usage page scraping
+    token_usage: dict[str, Any] | None = (
+        None  # {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "total": 0}
+    )
+    by_model: dict[str, Any] | None = (
+        None  # {"model-name": {"cost": float, "msgs": int, "tokens": dict}}
+    )
+    msgs: int | None = None  # Total message count
+    pct_used: float | None = None  # Percentage used (based on cost vs limit)
 
     @field_validator("service_name", "remaining", "unit", "reset", "pace", "detail", "tier")
     @classmethod

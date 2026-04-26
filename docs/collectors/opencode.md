@@ -7,7 +7,7 @@ OpenCode quota collector with web API (Chrome cookies) and local database fallba
 ## Overview
 
 - **Collection Strategy**: web (Web API) → local (SQLite DB)
-- **Cards**: 3 cards (5h rolling, 7d rolling, 30d rolling windows)
+- **Cards**: 3 cards (5h session, 7d weekly, 30d monthly windows)
 - **Authentication:** Chrome session cookie (web) or local SQLite database (local)
 
 ## Setup Methods Quick Overview
@@ -42,31 +42,64 @@ Aggregates data from multiple hosts via `opencode-<hostname>` providers.
 **Mechanism:** Directly reads the message database for cost snapshots.
 **Windows:** 5h ($12), 7d ($30), 30d ($60) limits.
 
+## Window Types
+
+OpenCode tracks usage across three time windows with different reset behaviors:
+
+| Window | Label | window_type | Reset Behavior |
+|--------|-------|------------|---------------|
+| 5h | "5h" | `session` | Rolling - resets ~5 hours from now |
+| 7d | "7d" | `weekly` | Fixed - resets on fixed date (~4 days from now) |
+| 30d | "Monthly" | `monthly` | Fixed - resets on fixed date (~10 days from now) |
+
+The collector detects window type by examining `resetInSec` from the OpenCode API:
+- `resetInSec > 86,400` (1 day) → **fixed** reset (7d, 30d)
+- `resetInSec < 86,400` → **rolling** window (5h)
+
 ## Output Format
 
 ```python
 {
-    "service": "OpenCode (5h)",
+    "service_name": "OpenCode (5h)",
     "icon": "⚡",
     "remaining": "$6.60",
     "unit": "$12 limit",
-    "reset": "Rolling 5h",
+    "reset": "5h",
     "health": "good",
     "pace": "Stable",
-    "detail": "$5.40 used (45.0%) · Web API",
+    "detail": "$5.40 used (45.0%) · Web API | user@email.com",
     "used_value": 5.40,
     "limit_value": 12.0,
     "is_unlimited": False,
     "unit_type": "currency",
     "currency": "USD",
-    "reset_at": None,  # Rolling window - no fixed reset
+    "reset_at": "2026-04-26T19:43:00+00:00",  # Rolling window - resets in ~5 hours
+    "window_type": "session",  # 5h=session, 7d=weekly, 30d=monthly
     "data_source": "web",
-    "input_source": "server",
-    "tier": None,
+    "input_source": "config",
+    "tier": "Go",
     "usage_url": "https://opencode.ai/workspace/{workspace_id}/go",
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "updated_at": "2026-04-26T14:30:00+00:00",
+    # Token breakdown fields (when usage data available)
+    "token_usage": {"input": 300, "output": 22014, "reasoning": 0, "cache_read": 6812194, "total": 22314},
+    "by_model": {"qwen3.5-plus": {"cost": 0.23, "msgs": 50}},
+    "msgs": 50,
+    "pct_used": 1.0
 }
 ```
+
+## Token Breakdown Fields
+
+When usage data is available from the OpenCode usage page, the collector enriches cards with structured token data:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token_usage` | dict | Token breakdown: `input`, `output`, `reasoning`, `cache_read`, `total` |
+| `by_model` | dict | Per-model breakdown with `cost` and `msgs` |
+| `msgs` | int | Total message count |
+| `pct_used` | float | Percentage used based on cost vs limit |
+
+This data enables token usage display in the UI and history graphs.
 
 ## Manual Cookie Setup
 

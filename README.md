@@ -185,17 +185,32 @@ interface LimitCard {
   limit_value?: number;     // Raw limit amount
   is_unlimited?: boolean;
   unit_type?: string;       // "currency" | "tokens" | "requests" | "percent"
-  currency?: string;        // "USD" | "EUR" | "CNY"
-  window_type?: string;     // "daily" | "weekly" | "monthly" | "session" | "rolling" | "unknown"
+  currency?: string;      // "USD" | "EUR" | "CNY"
+  window_type?: string;    // "daily" | "weekly" | "monthly" | "session" | "rolling" | "unknown"
+
+  // Token breakdown (when available)
+  token_usage?: {          // Token count breakdown
+    input: number;        // Input tokens
+    output: number;       // Output tokens
+    reasoning?: number;    // Reasoning tokens (if available)
+    cache_read?: number;    // Cache read tokens (if available)
+    total: number;       // Total tokens
+  };
+  by_model?: Record<string, {  // Per-model breakdown
+    cost: number;           // Cost for this model
+    msgs: number;           // Messages from this model
+    tokens?: number;        // Tokens for this model (if available)
+  }>;
+  msgs?: number;            // Total message count
+  pct_used?: number;      // Percentage used based on cost
 
   // Metadata
-  reset_at?: string;        // ISO 8601 timestamp for tooltip
-  data_source?: string;     // "oauth" | "web_api" | "local" | "api" | "cache"
-  tier?: string;            // "Free" | "Pro" | "Enterprise"
-  usage_url?: string;       // Link to provider usage page
-  updated_at?: string;      // ISO 8601 timestamp
+  reset_at?: string;     // ISO 8601 timestamp for tooltip
+  data_source?: string;   // "oauth" | "web_api" | "local" | "api" | "cache"
+  tier?: string;          // "Free" | "Pro" | "Enterprise"
+  usage_url?: string;     // Link to provider usage page
+  updated_at?: string;    // ISO 8601 timestamp
 }
-```
 
 ## Optional Security
 
@@ -227,4 +242,4 @@ Runway provides a flexible, multi-layered security model:
 
 MIT License - see [LICENSE](LICENSE) file.
 
-*Last updated: 2026-04-13*
+*Last updated: 2026-04-26*

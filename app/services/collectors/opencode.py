@@ -185,20 +185,29 @@ class OpenCodeCollector(BaseCollector):
             if not usage_data:
                 return []
 
-            # 3. Fetch per-model usage records from /usage (best-effort enrichment)
+            # 3. Extract window info from usage_data first (for breakdown filtering)
+            window_info = self._extract_window_info(usage_data)
+
+            # Log window detection for debugging
+            for win_key, info in window_info.items():
+                logger.info(f"OpenCode: {win_key} window: is_fixed={info.get('is_fixed')}")
+
+            # 4. Fetch per-model usage records from /usage (best-effort enrichment)
             breakdown: dict[str, Any] | None = None
             try:
                 usage_page = await self._get_usage_page(client, headers, workspace_id)
                 if usage_page:
                     records = self._parse_usage_records(usage_page)
                     if records:
-                        breakdown = self._build_usage_breakdown(records, datetime.now(UTC))
+                        breakdown = self._build_usage_breakdown(
+                            records, datetime.now(UTC), window_info
+                        )
             except Exception:
                 pass  # non-critical — Go cards still render without breakdown
 
-            # 4. Parse and return cards (enriched when breakdown is available)
+            # 5. Parse and return cards (enriched when breakdown is available)
             return self._parse_usage_data(
-                usage_data, workspace_id, breakdown, input_source or "server"
+                usage_data, workspace_id, breakdown, input_source or "server", window_info
             )
 
         except Exception:
@@ -303,8 +312,22 @@ class OpenCodeCollector(BaseCollector):
             resp = await http_request_with_retry(
                 client, "GET", url, headers=page_headers, timeout=15.0, follow_redirects=True
             )
+
+            if resp.status_code == 200:
+                record_count = resp.text.count('id:"usg_')
+                logger.info(
+                    f"OpenCode: Fetched /usage page, length: {len(resp.text)}, records: {record_count}"
+                )
+                debug_path = "/home/bjoern/projects/ai-usage-tracker/scratch/opencode_usage.html"
+                with open(debug_path, "w") as f:
+                    f.write(resp.text)
+                logger.warning(f"OpenCode: Dumped /usage page to {debug_path}")
+            else:
+                logger.warning(f"OpenCode: /usage fetch failed, status: {resp.status_code}")
+
             return resp.text if resp.status_code == 200 else None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"OpenCode: /usage fetch exception: {e}")
             return None
 
     def _parse_usage_records(self, text: str) -> list[dict[str, Any]]:
@@ -360,13 +383,31 @@ class OpenCodeCollector(BaseCollector):
                     "cost_usd": cost_int * _USAGE_COST_SCALE,
                 }
             )
+
+        if records:
+            logger.info(f"OpenCode: Parsed {len(records)} usage records")
+        else:
+            logger.warning(f"OpenCode: No usage records parsed, text length: {len(text)}")
+            sample = text[:800] if text else "(empty)"
+            logger.warning(f"OpenCode: /usage page sample:\n{sample}")
+
         return records
 
     def _build_usage_breakdown(
-        self, records: list[dict[str, Any]], now: datetime
+        self,
+        records: list[dict[str, Any]],
+        now: datetime,
+        window_info: dict[str, dict] | None = None,
     ) -> dict[str, Any]:
         """
         Aggregate records into per-source / per-window totals.
+
+        Args:
+            records: List of parsed usage records
+            now: Current time
+            window_info: Dict keyed by window_name (e.g., "rollingUsage")
+                       with cutoff timestamps and is_fixed bool.
+                       If None/empty, falls back to rolling windows for backward compatibility.
 
         Returns:
             {
@@ -393,14 +434,18 @@ class OpenCodeCollector(BaseCollector):
             entry["cost"] += r["cost_usd"]
             entry["msgs"] += 1
 
-        windows = {
-            "5h": now - timedelta(hours=5),
-            "7d": now - timedelta(days=7),
-            "30d": now - timedelta(days=30),
+        # Map window keys to internal window names
+        window_map = {
+            "rollingUsage": "5h",
+            "weeklyUsage": "7d",
+            "monthlyUsage": "30d",
         }
 
+        # If no window_info provided, fall back to rolling windows (backward compat)
+        use_fallback = not window_info
+
         result: dict[str, Any] = {
-            "go": {w: _empty_bucket() for w in windows},
+            "go": {w: _empty_bucket() for w in ["5h", "7d", "30d"]},
             "free": {"lifetime": _empty_bucket()},
             "api": {"lifetime": _empty_bucket()},
         }
@@ -408,9 +453,23 @@ class OpenCodeCollector(BaseCollector):
         for r in records:
             source = r["source"]
             if source == "go":
-                for window_key, cutoff in windows.items():
+                # Find which windows this record belongs to
+                for win_key, internal_name in window_map.items():
+                    if use_fallback:
+                        # Fallback: use simple rolling windows
+                        if internal_name == "5h":
+                            cutoff = now - timedelta(hours=5)
+                        elif internal_name == "7d":
+                            cutoff = now - timedelta(days=7)
+                        else:
+                            cutoff = now - timedelta(days=30)
+                    elif win_key in window_info:
+                        cutoff = window_info[win_key]["cutoff"]
+                    else:
+                        continue
+
                     if r["ts"] >= cutoff:
-                        _add_to_bucket(result["go"][window_key], r)
+                        _add_to_bucket(result["go"][internal_name], r)
             elif source == "free":
                 _add_to_bucket(result["free"]["lifetime"], r)
             else:
@@ -503,6 +562,7 @@ class OpenCodeCollector(BaseCollector):
         workspace_id: str,
         breakdown: dict[str, Any] | None = None,
         input_source: str = "server",
+        window_info: dict[str, dict] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Parse JavaScript/React stream response to extract usage data.
@@ -524,11 +584,15 @@ class OpenCodeCollector(BaseCollector):
         identity_suffix = f" | {email}" if email else ""
 
         # Definition of windows to search for
+        # Each window: (key, service_name, limit, reset_label, is_fixed)
+        # is_fixed determined from resetInSec value: > 30 days (~2.6M sec) = fixed
         windows = [
-            ("rollingUsage", "OpenCode (5h)", 12.0, "Rolling 5h"),
-            ("weeklyUsage", "OpenCode (7d)", 30.0, "Rolling 7d"),
+            ("rollingUsage", "OpenCode (5h)", 12.0, "5h"),
+            ("weeklyUsage", "OpenCode (7d)", 30.0, "7d"),
             ("monthlyUsage", "OpenCode (30d)", 60.0, "Monthly"),
         ]
+
+        window_info: dict[str, dict] = {}
 
         for key, service_name, limit, reset_label in windows:
             # Even more flexible regex
@@ -553,11 +617,55 @@ class OpenCodeCollector(BaseCollector):
 
             pct = float(pct_match.group(1))
             reset_sec = int(reset_match.group(1))
-            # logger.info(f"OpenCode: Parsed {key}: {pct}% used, reset in {reset_sec}s")
+
+            # Detect window type from reset_sec value
+            # If > 1 day (~86400 seconds), it's a FIXED reset date (7d/30d have ~4-10 days until reset)
+            # If < 1 day, it's rolling (5h has ~5h until reset)
+            FIXED_RESET_THRESHOLD = 86400  # 1 day in seconds
+            is_fixed = reset_sec > FIXED_RESET_THRESHOLD
+
+            # Calculate window cutoff based on type
+            if is_fixed:
+                # Fixed: cutoff is reset_at - window_duration
+                reset_at = now + timedelta(seconds=reset_sec)
+                if key == "weeklyUsage":
+                    window_cutoff = reset_at - timedelta(days=7)
+                elif key == "monthlyUsage":
+                    window_cutoff = reset_at - timedelta(days=30)
+                else:
+                    window_cutoff = reset_at - timedelta(hours=5)
+            # Rolling: cutoff is now - window_duration
+            elif key == "rollingUsage":
+                window_cutoff = now - timedelta(hours=5)
+            elif key == "weeklyUsage":
+                window_cutoff = now - timedelta(days=7)
+            else:
+                window_cutoff = now - timedelta(days=30)
+
+            # Store window info for token aggregation
+            window_info[key] = {
+                "cutoff": window_cutoff,
+                "is_fixed": is_fixed,
+                "reset_at": (now + timedelta(seconds=reset_sec)) if is_fixed else None,
+            }
 
             used = (pct / 100) * limit
             remaining = max(0, limit - used)
             reset_at = now + timedelta(seconds=reset_sec)
+
+            # Map window key to window_type for forecast
+            window_type_map = {"5h": "session", "7d": "weekly", "30d": "monthly"}
+            window_type = (
+                window_type_map.get(key.split("Usage")[0].lower().replace("rolling", ""), "unknown")
+                if key
+                else "unknown"
+            )
+            if key and "rolling" in key.lower():
+                window_type = "session"
+            elif key and "weekly" in key.lower():
+                window_type = "weekly"
+            elif key and "monthly" in key.lower():
+                window_type = "monthly"
 
             cards.append(
                 {
@@ -576,6 +684,7 @@ class OpenCodeCollector(BaseCollector):
                     "currency": "USD",
                     "account_label": email,
                     "reset_at": reset_at.isoformat(),
+                    "window_type": window_type,
                     "tier": "Go",
                     "data_source": self.DATA_SOURCE_WEB,
                     "input_source": input_source,
@@ -586,6 +695,8 @@ class OpenCodeCollector(BaseCollector):
 
         # Enrich Go cards with per-model token breakdown from the /usage page
         if breakdown:
+            logger.info(f"OpenCode: breakdown keys: {breakdown.keys()}")
+            logger.info(f"OpenCode: breakdown[go] keys: {breakdown.get('go', {}).keys()}")
             window_map = {
                 "OpenCode (5h)": "5h",
                 "OpenCode (7d)": "7d",
@@ -593,11 +704,61 @@ class OpenCodeCollector(BaseCollector):
             }
             for card in cards:
                 wk = window_map.get(card.get("service_name", ""))
+                logger.info(f"OpenCode: card {card.get('service_name')} -> window key: {wk}")
                 if not wk:
                     continue
                 go_data = breakdown.get("go", {}).get(wk)
+                logger.info(f"OpenCode: go_data for {wk}: {go_data}")
                 if not go_data or go_data["msgs"] == 0:
+                    logger.info(f"OpenCode: Skipping {wk} - no data")
                     continue
+
+                # Build token_usage dict
+                tokens = go_data["tokens"]
+                token_usage = {
+                    "input": tokens.get("input", 0),
+                    "output": tokens.get("output", 0),
+                    "reasoning": tokens.get("reasoning", 0),
+                    "cache_read": tokens.get("cache_read", 0),
+                }
+                # Calculate total
+                token_usage["total"] = (
+                    token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
+                )
+
+                # Add structured token fields to card
+                card["token_usage"] = token_usage
+                card["by_model"] = go_data.get("by_model", {})
+                card["msgs"] = go_data["msgs"]
+                card["pct_used"] = (
+                    (card.get("used_value", 0) / card.get("limit_value", 1)) * 100
+                    if card.get("limit_value")
+                    else 0
+                )
+                logger.info(
+                    f"OpenCode: Added token fields to {card.get('service_name')}: token={token_usage.get('total')}"
+                )
+
+                # Build token_usage dict
+                tokens = go_data["tokens"]
+                token_usage = {
+                    "input": tokens.get("input", 0),
+                    "output": tokens.get("output", 0),
+                    "reasoning": tokens.get("reasoning", 0),
+                    "cache_read": tokens.get("cache_read", 0),
+                }
+                # Calculate total
+                token_usage["total"] = (
+                    token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
+                )
+
+                # Add structured token fields to card
+                card["token_usage"] = token_usage
+                card["by_model"] = go_data.get("by_model", {})
+                card["msgs"] = go_data["msgs"]
+                card["pct_used"] = pct
+
+                # Also update detail string for display
                 suffix = self._build_oc_enrichment_detail(
                     {
                         "cost": go_data["cost"],
@@ -822,6 +983,59 @@ class OpenCodeCollector(BaseCollector):
         # Trim -free / -latest suffixes
         m = re.sub(r"-(free|latest|preview)$", "", m)
         return m or model_id
+
+    def _extract_window_info(self, text: str) -> dict[str, dict]:
+        """
+        Extract window type (rolling vs fixed) from the usage text.
+
+        Returns dict keyed by window name (e.g., "rollingUsage")
+        with cutoff timestamp and is_fixed flag.
+        """
+        now = datetime.now(UTC)
+        windows = [
+            ("rollingUsage", "5h"),
+            ("weeklyUsage", "7d"),
+            ("monthlyUsage", "30d"),
+        ]
+
+        FIXED_RESET_THRESHOLD = 86400  # 1 day in seconds
+        result: dict[str, dict] = {}
+
+        for key, duration_label in windows:
+            pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
+            match = re.search(pattern, text)
+            if not match:
+                continue
+
+            obj_content = match.group(1)
+            reset_match = re.search(r"resetInSec:(\d+)", obj_content)
+            if not reset_match:
+                continue
+
+            reset_sec = int(reset_match.group(1))
+            is_fixed = reset_sec > FIXED_RESET_THRESHOLD
+
+            if is_fixed:
+                reset_at = now + timedelta(seconds=reset_sec)
+                if key == "weeklyUsage":
+                    cutoff = reset_at - timedelta(days=7)
+                elif key == "monthlyUsage":
+                    cutoff = reset_at - timedelta(days=30)
+                else:
+                    cutoff = reset_at - timedelta(hours=5)
+            elif key == "rollingUsage":
+                cutoff = now - timedelta(hours=5)
+            elif key == "weeklyUsage":
+                cutoff = now - timedelta(days=7)
+            else:
+                cutoff = now - timedelta(days=30)
+
+            result[key] = {
+                "cutoff": cutoff,
+                "is_fixed": is_fixed,
+            }
+
+        return result
 
     def _build_oc_enrichment_detail(self, totals: dict) -> str:
         """Build the enrichment detail string from per-window totals."""

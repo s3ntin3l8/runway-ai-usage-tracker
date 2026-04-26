@@ -16,6 +16,13 @@ A `Makefile` wraps all common tasks — run `make help` for the full list. Key t
 - **Lint**: `make lint` (ruff + mypy + pip-audit)
 - **Sidecar**: `make sidecar`
 
+## Schema Fields
+When adding new card fields, update both `LimitCard` in `app/models/schemas.py` and the README.md TypeScript interface. Token breakdown fields:
+- `token_usage`: dict with input/output/reasoning/cache_read/total
+- `by_model`: dict with per-model cost/msgs/tokens
+- `msgs`: int
+- `pct_used`: float
+
 ## CI/CD
 Pipeline runs on push/PR to `main` and on version tags (`v*`):
 - **lint-python**: ruff, mypy, detect-secrets, pip-audit
