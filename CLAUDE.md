@@ -63,22 +63,12 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 
 ## Collector Strategy Patterns
 
-### Fallback Pattern (Legacy)
-Traditional multi-tier fallback: primary strategy runs first, if it fails, try next, etc.
-- Example: `api` → `web` → `local`
+Strategies are categorized by data type, collected in phases, and merged into a single card per provider:
 
-### Enrichment Pattern (New)
-Primary strategy runs first. If successful, enrichment strategies run *in addition* and merge their data into the primary results.
-- Use case: Combining API quota limits with local token usage
-- Example: API returns quota/limits, local session logs add token usage breakdown
-- Implementation: Strategies marked with `{"enrich": True}` in STRATEGIES dict
+| Type | Strategies | Provides |
+|------|------------|----------|
+| **quota** | api, web, sidecar | Percentages, currency limits, tier |
+| **mixed** | cli, statusline | Quota + session tokens (split during collection) |
+| **enrichment** | local | Token breakdown, session counts |
 
-#### Defining Enrichment Strategies
-```python
-STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
-    "api": ("API", "_collect_via_api"),                              # Primary - provides main card data
-    "local": ("Local", "_collect_via_logs", {"enrich": True}),       # Enrichment - adds token details
-}
-```
-
-The enrichment data is merged into the primary card's `detail` string. Override `_enrich_results()` in subclasses for custom merging logic.
+Collection pipeline: quota → mixed extraction → enrichment → merge into single card.

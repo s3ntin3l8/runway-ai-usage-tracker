@@ -1,11 +1,11 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits, collectProvider, fetchForecast } from '../api.js';
+import { fetchLimits, fetchForecast, fetchHistoryRaw } from '../api.js';
 import { STATE } from '../state.js';
-import { buildProviderSummaryCard, buildHealthBar, buildProviderModal, buildModalSkeleton } from '../components.js';
-import { fetchHistoryCached } from './history.js';
-import { applyOrder, cardKey } from '../layout.js';
+import { buildHorizonCard, buildCardModalContent, providerDisplayLabel } from '../components.js';
+import { cardKey, applyOrder } from '../layout.js';
 
 let loadDataGeneration = 0;
+let _searchQuery = '';
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -24,133 +24,273 @@ function _forecastSeriesKey(entry) {
     ].join('||');
 }
 
+/** Filter cards by STATE.activeFilter and live search query. */
 export function applyFilters(data) {
     const f = STATE.activeFilter;
     return data.filter(item => {
         if (f && item[f.dimension] !== f.value) return false;
+        if (_searchQuery) {
+            const q = _searchQuery.toLowerCase();
+            const haystack = [item.service_name, item.account_label, item.provider_id].join(' ').toLowerCase();
+            if (!haystack.includes(q)) return false;
+        }
         return true;
     });
 }
 
-export function renderGrid() {
-    const grid = document.getElementById('grid');
-    if (!grid) return;
+/** Render fleet-health lights — one cell per card, no padding. */
+function renderFleetHealth(cards) {
+    const lightsEl  = document.getElementById('fleet-lights');
+    const nominalEl = document.getElementById('fleet-nominal');
+    const totalEl   = document.getElementById('fleet-total');
+    const countsEl  = document.getElementById('fleet-counts');
+    if (!lightsEl) return;
 
-    const visible = applyFilters(STATE.data);
-
-    const groups = new Map();
-    visible.forEach(item => {
-        const key = item.provider_id || '__other__';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(item);
+    const buckets = cards.map(c => {
+        if (c.health === 'critical') return 'crit';
+        if (c.health === 'warning')  return 'warn';
+        if (c.health === 'good' || c.health === 'unlimited') return '';
+        return 'off';
     });
 
-    const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const defaultSorted = [...groups.keys()].sort((a, b) => {
-        if (a === '__other__') return 1;
-        if (b === '__other__') return -1;
-        const aWorst = groups.get(a).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
-        const bWorst = groups.get(b).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
-        if (bWorst !== aWorst) return bWorst - aWorst;
-        return a.localeCompare(b);
-    });
-    const sorted = applyOrder(
-        defaultSorted.map(pid => ({ pid })),
-        x => x.pid,
-        STATE.layout?.provider_order ?? []
-    ).map(x => x.pid);
+    // Dynamic column count: repeat(N, 1fr)
+    lightsEl.style.gridTemplateColumns = `repeat(${Math.max(1, buckets.length)}, 1fr)`;
+    lightsEl.innerHTML = buckets.map(cls => `<i class="${cls}"></i>`).join('');
 
-    let html = '';
-    let count = 0;
-    for (const key of sorted) {
-        const items = groups.get(key);
-        try {
-            html += buildProviderSummaryCard(key, items, STATE.forecastMap);
-            count += items.length;
-        } catch (e) {
-            console.error('Failed to render provider card:', key, e);
+    const nominal = cards.filter(c => c.health === 'good' || c.health === 'unlimited').length;
+    if (nominalEl) nominalEl.textContent = nominal;
+    if (totalEl)   totalEl.textContent   = cards.length;
+
+    // Compute subtext: sidecars · providers · accounts
+    if (countsEl) {
+        const sidecars  = new Set(cards.map(c => c.sidecar_id).filter(Boolean)).size;
+        const providers = new Set(cards.map(c => c.provider_id).filter(Boolean)).size;
+        const accounts  = new Set(cards.map(c => `${c.provider_id}|${c.account_id}`).filter(c => c !== '|')).size;
+        const parts = [];
+        if (sidecars > 0) parts.push(`${sidecars} sidecar${sidecars !== 1 ? 's' : ''}`);
+        parts.push(`${providers} provider${providers !== 1 ? 's' : ''}`);
+        parts.push(`${accounts} account${accounts !== 1 ? 's' : ''}`);
+        countsEl.textContent = parts.join(' · ');
+    }
+}
+
+/** Render the aggregate % remaining ring + hero numbers. */
+function renderAggregateHero(cards, forecastMap) {
+    const ringEl     = document.getElementById('agg-ring');
+    const pctValEl   = document.getElementById('agg-pct-val');
+    const resetLineEl = document.getElementById('agg-reset-line');
+    const paceLineEl  = document.getElementById('agg-pace-line');
+
+    // Only include cards that have a computable remaining %
+    const eligible = cards.filter(c =>
+        !c.error_type && !c.is_unlimited && c.health !== 'unknown' &&
+        c.pct_used != null || (c.used_value != null && c.limit_value)
+    );
+
+    const pctOf = c => c.pct_used != null ? c.pct_used
+        : (c.used_value != null && c.limit_value ? c.used_value / c.limit_value * 100 : null);
+
+    let sumRemaining = 0, sumWeight = 0;
+    eligible.forEach(c => {
+        const p = pctOf(c);
+        if (p == null) return;
+        const w = c.limit_value || 1;
+        sumRemaining += (100 - p) * w;
+        sumWeight    += w;
+    });
+
+    const avgRemaining = sumWeight > 0 ? sumRemaining / sumWeight : null;
+    const pctInt = avgRemaining != null ? Math.round(avgRemaining) : null;
+
+    if (pctValEl) pctValEl.textContent = pctInt != null ? pctInt : '—';
+
+    // Soonest reset
+    const resets = cards.map(c => c.reset_at).filter(Boolean).map(r => new Date(r)).filter(d => !isNaN(d));
+    if (resetLineEl) {
+        if (resets.length) {
+            const soonest = new Date(Math.min(...resets));
+            const diffMs  = soonest - Date.now();
+            const h = Math.floor(diffMs / 3600000);
+            const m = Math.floor((diffMs % 3600000) / 60000);
+            const label = diffMs < 0 ? 'now' : h > 0 ? `${h}h ${m}m` : `${m}m`;
+            resetLineEl.innerHTML = `resets in <b>${label}</b>`;
+        } else {
+            resetLineEl.textContent = '—';
         }
     }
 
-    if (!html) {
-        const filterLabel = STATE.activeFilter ? escapeHTML(STATE.activeFilter.value) : 'selection';
-        html = `<div class="grid-empty-state">
-            <div style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.12em;margin-bottom:8px;">NO MATCH · ${filterLabel}</div>
-            <button class="toggle-btn" onclick="setFilter(null)">CLEAR FILTER</button>
-        </div>`;
+    // Aggregate pace from worst forecast status
+    if (paceLineEl) {
+        const statuses = [...forecastMap.values()].map(f => f.status).filter(Boolean);
+        const fast = statuses.some(s => s === 'risk' || s === 'exhausted');
+        const warn = !fast && statuses.some(s => s === 'warn');
+        if (fast)       paceLineEl.innerHTML = `<span class="pace-dot fast" style="display:inline-block;"></span>pace fast`;
+        else if (warn)  paceLineEl.innerHTML = `<span class="pace-dot moderate" style="display:inline-block;"></span>pace moderate`;
+        else if (statuses.some(s => s === 'ok' || s === 'stable'))
+                        paceLineEl.innerHTML = `<span class="pace-dot" style="display:inline-block;"></span>pace stable`;
+        else            paceLineEl.textContent = '';
     }
 
-    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">${html}</div>`;
-    const footerCount = document.getElementById('footer-count');
-    if (footerCount) footerCount.textContent = count;
+    // SVG ring
+    if (!ringEl) return;
+    if (pctInt == null) { ringEl.innerHTML = ''; return; }
+
+    const r = 75, C = 2 * Math.PI * r;
+    const offset = C * (1 - pctInt / 100);
+    ringEl.innerHTML = `
+        <svg viewBox="0 0 170 170">
+            <circle class="track" cx="85" cy="85" r="${r}"/>
+            <circle class="progress" cx="85" cy="85" r="${r}"
+                stroke-dasharray="${C.toFixed(2)}"
+                stroke-dashoffset="${offset.toFixed(2)}"/>
+        </svg>
+        <div class="c">
+            <div class="v">${pctInt}%</div>
+            <div class="l">remain</div>
+        </div>`;
 }
 
-export function renderHealthBar() {
-    const el = document.getElementById('health-bar');
-    if (!el) return;
-    el.innerHTML = buildHealthBar(STATE.data);
+/** Render provider chips + search in the filterbar. */
+function renderFilterBar(cards) {
+    const chipsEl = document.getElementById('provider-chips');
+    if (!chipsEl) return;
+
+    // Count cards per provider
+    const provCounts = new Map();
+    cards.forEach(c => {
+        const k = c.provider_id || '__other__';
+        provCounts.set(k, (provCounts.get(k) || 0) + 1);
+    });
+
+    const activeVal = STATE.activeFilter?.dimension === 'provider_id' ? STATE.activeFilter.value : null;
+
+    const allCls = !activeVal ? ' on' : '';
+    let html = `<button class="chip${allCls}" data-prov="">All<span class="n">${cards.length}</span></button>`;
+    for (const [pid, cnt] of [...provCounts.entries()].sort()) {
+        const cls = activeVal === pid ? ' on' : '';
+        const label = providerDisplayLabel(pid);
+        html += `<button class="chip${cls}" data-prov="${escapeHTML(pid)}">${escapeHTML(label)}<span class="n">${cnt}</span></button>`;
+    }
+
+    chipsEl.innerHTML = html;
 }
 
-export function renderFilterPills() {
-    const container = document.getElementById('filter-pills');
+/** Build and inject per-provider sections (the main card grid). */
+function renderProviderSections(cards) {
+    const container = document.getElementById('dashboard-sections');
     if (!container) return;
 
-    const dim = STATE.filterDimension;
-    const WINDOW_ORDER = ['session', 'daily', 'weekly', 'biweekly', 'monthly', 'prepaid', 'unknown'];
-    const rawValues = [...new Set(STATE.data.map(i => i[dim]).filter(Boolean))];
-    const values = dim === 'window_type'
-        ? rawValues.sort((a, b) => {
-            const ai = WINDOW_ORDER.indexOf(a), bi = WINDOW_ORDER.indexOf(b);
-            if (ai === -1 && bi === -1) return a.localeCompare(b);
-            if (ai === -1) return 1;
-            if (bi === -1) return -1;
-            return ai - bi;
-          })
-        : rawValues.sort();
-    const active = STATE.activeFilter?.value;
-
-    const pills = [`<button class="pill${!active ? ' pill-active' : ''}" data-filter-value="">All</button>`];
-    values.forEach(v => {
-        pills.push(`<button class="pill${active === v ? ' pill-active' : ''}" data-filter-value="${escapeHTML(v)}">${escapeHTML(v)}</button>`);
-    });
-    container.innerHTML = pills.join('');
-
-    // Event delegation: one listener handles all pill clicks via data-filter-value
-    if (!container._pillListenerAttached) {
-        container._pillListenerAttached = true;
-        container.addEventListener('click', e => {
-            const btn = e.target.closest('button[data-filter-value]');
-            if (!btn) return;
-            const val = btn.dataset.filterValue;
-            setFilter(val || null);
-        });
+    const visible = applyFilters(cards);
+    if (!visible.length) {
+        container.innerHTML = `<div class="dash-empty">NO MATCH · <button class="toggle-btn" onclick="setFilter(null)">CLEAR FILTER</button></div>`;
+        return;
     }
 
-    const hasSidecars = STATE.data.some(i => i.sidecar_id);
-    const sidecarBtn = document.getElementById('dim-btn-sidecar');
-    if (sidecarBtn) sidecarBtn.classList.toggle('hidden', !hasSidecars);
-
-    document.querySelectorAll('.dim-btn').forEach(btn => {
-        btn.classList.toggle('dim-btn-active', btn.dataset.dim === dim);
+    // Group by provider
+    const groups = new Map();
+    visible.forEach(card => {
+        const key = card.provider_id || '__other__';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(card);
     });
+
+    // Sort providers by worst health, then alphabetically
+    const SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
+    const defaultOrder = [...groups.keys()].sort((a, b) => {
+        if (a === '__other__') return 1;
+        if (b === '__other__') return -1;
+        const aW = groups.get(a).reduce((m, c) => Math.max(m, SEVERITY[c.health] || 0), 0);
+        const bW = groups.get(b).reduce((m, c) => Math.max(m, SEVERITY[c.health] || 0), 0);
+        return bW !== aW ? bW - aW : a.localeCompare(b);
+    });
+
+    const sorted = applyOrder(
+        defaultOrder.map(pid => ({ pid })), x => x.pid, STATE.layout?.provider_order ?? []
+    ).map(x => x.pid);
+
+    let totalCount = 0;
+    let html = '';
+    for (const pid of sorted) {
+        const items = applyOrder(
+            groups.get(pid), cardKey, STATE.layout?.card_orders?.[pid] ?? []
+        );
+        let cardsHtml = '';
+        for (const card of items) {
+            const fKey = _forecastSeriesKey(card);
+            const fe = STATE.forecastMap.get(fKey);
+            try { cardsHtml += buildHorizonCard(card, fe); } catch (e) { console.error('buildHorizonCard failed:', e); }
+        }
+        if (!cardsHtml) continue;
+        const label = providerDisplayLabel(pid);
+        html += `<div class="section" data-provider-id="${escapeHTML(pid)}">
+            <div class="section-head">${escapeHTML(label)}<div class="ln"></div><span class="count">${items.length}</span></div>
+            <div class="hz-grid">${cardsHtml}</div>
+        </div>`;
+        totalCount += items.length;
+    }
+
+    container.innerHTML = html || `<div class="dash-empty">NO MATCH</div>`;
+
+    const footerCount = document.getElementById('footer-count');
+    if (footerCount) footerCount.textContent = totalCount;
 }
 
+/** Open the per-card detail modal. */
+export async function openCardModal(card) {
+    const container = document.getElementById('modal-container');
+    const content   = document.getElementById('modal-content');
+    if (!container || !content) return;
+
+    const fKey = _forecastSeriesKey(card);
+    const fe   = STATE.forecastMap.get(fKey);
+
+    // Show skeleton while fetching history
+    content.innerHTML = `<div style="padding:3rem;text-align:center;"><div style="font-size:10px;color:var(--text-dim);letter-spacing:0.12em;text-transform:uppercase;">Loading…</div></div>`;
+    container.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    const closeModal = () => {
+        container.classList.remove('active');
+        document.body.style.overflow = '';
+    };
+    document.getElementById('modal-backdrop').onclick = closeModal;
+    window._currentCloseModal = closeModal;
+
+    let history24h = [];
+    try {
+        const raw = await fetchHistoryRaw({
+            provider_id: card.provider_id,
+            account_id:  card.account_id,
+            days: 1,
+            limit: 288,
+        });
+        history24h = raw.filter(p =>
+            p.window_type === card.window_type &&
+            (!card.service_name || p.service_name === card.service_name)
+        );
+    } catch (e) {
+        console.warn('Could not fetch 24h history for modal:', e.message);
+    }
+
+    if (!container.classList.contains('active')) return;
+
+    content.innerHTML = buildCardModalContent(card, fe, history24h);
+    document.getElementById('close-modal').onclick = closeModal;
+}
+
+/** Full data load: limits + forecast in parallel, then render everything. */
 export async function loadDashboard() {
     const myGeneration = ++loadDataGeneration;
 
-    const grid = document.getElementById('grid');
-    const loading = document.getElementById('loading');
+    const sections = document.getElementById('dashboard-sections');
+    const loading  = document.getElementById('loading');
     const errorBanner = document.getElementById('error-banner');
 
-    if (grid) {
-        grid.innerHTML = '';
-        grid.classList.add('hidden');
-    }
-    if (loading) loading.classList.remove('hidden');
+    if (sections) sections.innerHTML = '';
+    if (loading)  { loading.classList.remove('hidden'); loading.style.display = 'grid'; }
     if (errorBanner) errorBanner.classList.add('hidden');
 
     try {
-        // Fetch limits and forecast in parallel; forecast failure is non-fatal
         const [limitsResult, forecastResult] = await Promise.allSettled([
             fetchLimits(),
             fetchForecast(),
@@ -161,7 +301,6 @@ export async function loadDashboard() {
         if (limitsResult.status === 'rejected') throw limitsResult.reason;
         STATE.data = limitsResult.value.limits;
 
-        // Build forecast lookup map (series key → ForecastEntry)
         if (forecastResult.status === 'fulfilled') {
             const newMap = new Map();
             for (const entry of (forecastResult.value.forecasts || [])) {
@@ -170,29 +309,28 @@ export async function loadDashboard() {
             STATE.forecastMap = newMap;
         }
 
-        renderFilterPills();
-        renderGrid();
-        renderHealthBar();
+        renderFleetHealth(STATE.data);
+        renderAggregateHero(STATE.data, STATE.forecastMap);
+        renderFilterBar(STATE.data);
+        renderProviderSections(STATE.data);
         window._lastFetchTime = Date.now();
     } catch (err) {
         if (myGeneration !== loadDataGeneration) return;
         console.error('Failed to fetch limits:', err);
-        const errorMsg = err.message || 'Unknown error occurred';
         if (errorBanner) {
-            errorBanner.textContent = `⚠ ${errorMsg}`;
+            errorBanner.textContent = `⚠ ${err.message || 'Unknown error occurred'}`;
             errorBanner.classList.remove('hidden');
         }
     } finally {
-        if (loading) loading.classList.add('hidden');
-        if (grid) grid.classList.remove('hidden');
+        if (loading) { loading.classList.add('hidden'); loading.style.display = 'none'; }
     }
 }
 
 export function setFilter(value) {
-    STATE.activeFilter = value ? { dimension: STATE.filterDimension, value } : null;
+    STATE.activeFilter = value ? { dimension: 'provider_id', value } : null;
     localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
-    renderFilterPills();
-    renderGrid();
+    renderFilterBar(STATE.data);
+    renderProviderSections(STATE.data);
 }
 
 export function setFilterDimension(dim) {
@@ -200,100 +338,59 @@ export function setFilterDimension(dim) {
     STATE.activeFilter = null;
     localStorage.setItem('runway_filter_dimension', dim);
     localStorage.removeItem('runway_active_filter');
-    renderFilterPills();
-    renderGrid();
+    renderFilterBar(STATE.data);
+    renderProviderSections(STATE.data);
 }
 
 export function initDashboardView() {
-    // Expose setFilter globally for the empty-state CLEAR button (onclick in rendered HTML)
     window.setFilter = setFilter;
 
-    // Filter buttons
-    document.querySelectorAll('.dim-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            setFilterDimension(btn.dataset.dim);
+    // Provider chip click delegation
+    const chipsContainer = document.getElementById('provider-chips');
+    if (chipsContainer) {
+        chipsContainer.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-prov]');
+            if (!btn) return;
+            const val = btn.dataset.prov;
+            setFilter(val || null);
         });
-    });
+    }
 
-    // Clear filter
-    document.getElementById('filter-pills')?.addEventListener('click', (e) => {
-        if (e.target.classList.contains('hover:text-white')) {
-            setFilter(null);
-        }
-    });
+    // Search input
+    const searchInput = document.getElementById('card-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            _searchQuery = searchInput.value.trim();
+            renderProviderSections(STATE.data);
+        });
+    }
 
-    // Card click delegation
-    document.getElementById('grid')?.addEventListener('click', (e) => {
-        const card = e.target.closest('.card-clickable');
-        if (card) {
-            const providerId = card.dataset.providerId;
-            openProviderModal(providerId);
-        }
-    });
-}
-
-export async function openProviderModal(providerId) {
-    let items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
-    items = applyOrder(items, cardKey, STATE.layout?.card_orders?.[providerId] ?? []);
-    if (!items.length) return;
-
-    const container = document.getElementById('modal-container');
-    const content = document.getElementById('modal-content');
-    if (!container || !content) return;
-
-    // Keep order already applied by applyOrder (pinned first, then unpinned).
-    // For unpinned items, preserve API order; user can reorder via edit mode.
-    const sorted = items;
-
-    // Show skeleton immediately while fetching
-    content.innerHTML = buildModalSkeleton(items.length);
-    container.classList.add('active');
-    document.body.style.overflow = 'hidden';
-    document.getElementById('modal-backdrop').onclick = () => {
-        container.classList.remove('active');
-        document.body.style.overflow = '';
-    };
-    document.getElementById('close-modal').onclick = () => {
-        container.classList.remove('active');
-        document.body.style.overflow = '';
-    };
-
-    try {
-        // Fetch 30-day history for richer modal sparklines
-        const history = await fetchHistoryCached({ provider_id: providerId, days: 30, limit: 500 });
-        
-        // Only update if modal is still open
-        if (container.classList.contains('active') && content.querySelector('#close-modal')) {
-            content.innerHTML = buildProviderModal(providerId, sorted, history);
-            document.getElementById('close-modal').onclick = () => {
-                container.classList.remove('active');
-                document.body.style.overflow = '';
-            };
-            if (typeof window.__reattachCardSortables === 'function') await window.__reattachCardSortables();
-        }
-    } catch (e) {
-        console.warn('Could not fetch history for modal sparklines:', e.message);
-        // Still show the modal without sparklines
-        if (container.classList.contains('active')) {
-            content.innerHTML = buildProviderModal(providerId, sorted, []);
-            if (typeof window.__reattachCardSortables === 'function') await window.__reattachCardSortables();
-        }
+    // Card click delegation (open per-card modal)
+    const sections = document.getElementById('dashboard-sections');
+    if (sections) {
+        sections.addEventListener('click', e => {
+            const card = e.target.closest('article.card');
+            if (!card) return;
+            const cardKey_ = card.dataset.cardKey;
+            const prov = card.dataset.prov;
+            const found = STATE.data.find(c =>
+                (c.provider_id || '') === prov && cardKey(c) === cardKey_
+            );
+            if (found) openCardModal(found);
+        });
     }
 }
 
-// Close modal and navigate to history with provider filter set
+// Cross-view navigation: close modal → switch to history view with provider filter
 window.openProviderInHistory = function(providerId) {
-    // Close modal
     const container = document.getElementById('modal-container');
     if (container) {
         container.classList.remove('active');
         document.body.style.overflow = '';
     }
-    // Set cross-view filter
     STATE.activeFilter = { dimension: 'provider_id', value: providerId };
     STATE.filterDimension = 'provider_id';
     localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
     localStorage.setItem('runway_filter_dimension', 'provider_id');
-    // Navigate
     if (typeof window.switchView === 'function') window.switchView('history');
 };

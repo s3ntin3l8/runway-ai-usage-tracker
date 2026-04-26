@@ -1595,3 +1595,254 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
 
     return `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">${cards}</div>`;
 }
+
+/* ============================================================
+   Horizon Card v2 + Card Modal  (Dashboard Phase 1)
+   ============================================================ */
+
+const _PROV_MAP = {
+    anthropic:      { label: 'Anthropic · Claude', key: 'claude',      init: 'CL' },
+    openai:         { label: 'OpenAI · ChatGPT',   key: 'chatgpt',     init: 'AI' },
+    google_gemini:  { label: 'Google · Gemini',    key: 'gemini',      init: 'GM' },
+    github_copilot: { label: 'GitHub · Copilot',   key: 'copilot',     init: 'GH' },
+    opencode:       { label: 'Opencode',            key: 'opencode',    init: 'OC' },
+    zai:            { label: 'Z.AI',                key: 'zai',         init: 'ZI' },
+    kimi_api:       { label: 'Kimi',                key: 'kimi',        init: 'KM' },
+    kimi_coding:    { label: 'Kimi Coding',         key: 'kimi',        init: 'KC' },
+    kimi_k2:        { label: 'Kimi K2',             key: 'kimi',        init: 'K2' },
+    minimax:        { label: 'MiniMax',             key: 'minimax',     init: 'MM' },
+    openrouter:     { label: 'OpenRouter',          key: 'openrouter',  init: 'OR' },
+    ollama:         { label: 'Ollama',              key: 'ollama',      init: 'OL' },
+    antigravity:    { label: 'Antigravity',         key: 'antigravity', init: 'AG' },
+};
+
+export function providerDisplayLabel(providerId) {
+    return _PROV_MAP[providerId]?.label || providerId || 'Other';
+}
+
+function _hzHealthClass(health) {
+    const m = { good: 'h-good', warning: 'h-warn', critical: 'h-crit', unknown: 'h-unk', unlimited: 'h-unlm' };
+    return m[health] || '';
+}
+
+function _srcBadgeClass(dataSource) {
+    if (!dataSource) return '';
+    const s = String(dataSource).toLowerCase();
+    if (s === 'api' || s === 'oauth') return ' src-oauth';
+    if (s === 'web')                  return ' src-web';
+    if (s === 'local')                return ' src-log';
+    if (s === 'sidecar')              return ' src-sidecar';
+    return '';
+}
+
+function _forecastPaceBucket(forecastEntry) {
+    if (!forecastEntry) return null;
+    const s = forecastEntry.status;
+    if (s === 'risk' || s === 'exhausted') return 'fast';
+    if (s === 'warn') return 'moderate';
+    if (s === 'ok'   || s === 'stable')   return 'stable';
+    return null;
+}
+
+function _windowLabel(wt) {
+    const m = { session: 'session', daily: 'daily', weekly: 'weekly', biweekly: 'biweekly',
+                monthly: 'monthly', prepaid: 'prepaid', rolling: 'rolling', unknown: '—' };
+    return m[wt] || wt || '—';
+}
+
+function _buildHzFoot(card, forecastEntry, pace, projPct, usedPct) {
+    if (card.is_unlimited) return '';
+    const parts = [];
+    if (pace) {
+        parts.push(`<div class="hz-meta"><span class="hz-lbl"><span class="pace-dot ${pace}"></span>pace</span><b>${pace}</b></div>`);
+    }
+    if (projPct != null) {
+        parts.push(`<div class="hz-meta"><span class="hz-lbl">land at</span><b>${Math.round(projPct)}%</b></div>`);
+    }
+    if (forecastEntry && projPct != null) {
+        const safe = projPct < 90;
+        parts.push(`<div class="hz-meta"><span class="hz-lbl">status</span><b class="${safe ? 'ok' : 'risk'}">${safe ? 'safe' : 'risk'}</b></div>`);
+    }
+    return parts.length ? `<div class="hz-foot">${parts.join('')}</div>` : '';
+}
+
+/**
+ * Build a Horizon-variant quota card for the v2 dashboard.
+ * @param {Object} card  - LimitCard from /api/v1/usage/limits
+ * @param {Object|null} forecastEntry - ForecastEntry from STATE.forecastMap (may be undefined)
+ * @returns {string} HTML for one <article> card
+ */
+export function buildHorizonCard(card, forecastEntry) {
+    const prov = _PROV_MAP[card.provider_id] || { key: 'default', init: (card.provider_id || '??').slice(0, 2).toUpperCase() };
+    const hCls = _hzHealthClass(card.health);
+    const cKey = cardKey(card);
+
+    const tierBadge = card.tier
+        ? `<span class="badge">${escapeHTML(String(card.tier))}</span>`
+        : '';
+    const srcBadge = card.data_source
+        ? `<span class="badge${_srcBadgeClass(card.data_source)}">${escapeHTML(card.data_source.slice(0, 7))}</span>`
+        : '';
+
+    const head = `<div class="row">
+        <div class="plogo c-${prov.key}">${escapeHTML(prov.init)}</div>
+        <div class="stack-xs">
+            <span class="title">${escapeHTML(card.service_name)}</span>
+            <span class="sub">${escapeHTML(card.account_label || '')}</span>
+        </div>
+        <div class="health"></div>
+        <div class="badges">${tierBadge}${srcBadge}</div>
+    </div>`;
+
+    // Error card variant
+    if (card.error_type) {
+        return `<article class="glass card err ${hCls}" data-prov="${escapeHTMLAttr(card.provider_id || '')}" data-card-key="${escapeHTMLAttr(cKey)}">
+            ${head}
+            <div class="hz-head"><div class="pct" style="font-size:18px;color:var(--crit);">collector error</div></div>
+            <button class="retry" onclick="event.stopPropagation();window.handleResetProvider(event,'${escapeHTMLAttr(card.provider_id || '')}','${escapeHTMLAttr(card.account_id || '')}')">↺ retry</button>
+        </article>`;
+    }
+
+    // Compute percentages
+    const pctUsed = card.pct_used != null ? card.pct_used
+        : (card.used_value != null && card.limit_value ? card.used_value / card.limit_value * 100 : null);
+    const pctRemaining = pctUsed != null ? Math.max(0, Math.round(100 - pctUsed)) : null;
+    const usedPct = Math.min(100, Math.round(pctUsed ?? 0));
+
+    // Forecast stripe
+    const projPct = forecastEntry?.projected_pct;
+    const projWidth = projPct != null
+        ? Math.max(0, Math.min(100 - usedPct, Math.round(projPct) - usedPct))
+        : null;
+    const pace = _forecastPaceBucket(forecastEntry);
+
+    // Reset display
+    const resetStr = card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : (card.reset || '—');
+
+    const hzHeadContent = card.is_unlimited
+        ? `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`
+        : pctRemaining != null
+            ? `<div class="pct">${pctRemaining}<em>%</em></div><span class="sub">${card.unit_type === 'currency' ? 'budget left' : 'remaining'}</span>`
+            : `<div class="pct" style="color:var(--unk);">—</div>`;
+
+    const hzBar = card.is_unlimited ? '' : `<div class="horizon">
+        <div class="used" style="width:${usedPct}%"></div>
+        ${projWidth != null && projWidth > 0 ? `<div class="projected" style="left:${usedPct}%;width:${projWidth}%"></div>` : ''}
+        <div class="now" style="left:${usedPct}%"></div>
+        <div class="reset-mk"></div>
+        <div class="axis"><span>NOW</span><span>+1h</span><span>+2h</span><span>RESET</span></div>
+    </div>`;
+
+    return `<article class="glass card v-horizon ${hCls}" data-prov="${escapeHTMLAttr(card.provider_id || '')}" data-card-key="${escapeHTMLAttr(cKey)}">
+        ${head}
+        <div class="hz-head">${hzHeadContent}<div class="reset">resets <b>${escapeHTML(resetStr)}</b></div></div>
+        ${hzBar}
+        ${_buildHzFoot(card, forecastEntry, pace, projPct, usedPct)}
+    </article>`;
+}
+
+function _buildSparklineSVG(history) {
+    if (!history || history.length < 2) {
+        return `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-dim);border:1px dashed var(--hairline-2);">No history data</div>`;
+    }
+    const W = 640, H = 120;
+    const sorted = [...history].sort((a, b) => new Date(a.timestamp || a.recorded_at) - new Date(b.timestamp || b.recorded_at));
+    const vals = sorted.map(p => {
+        if (p.pct_used != null) return p.pct_used;
+        if (p.avg_used != null && p.avg_limit) return p.avg_used / p.avg_limit * 100;
+        if (p.used_value != null && p.limit_value) return p.used_value / p.limit_value * 100;
+        return null;
+    }).filter(v => v != null);
+    if (vals.length < 2) {
+        return `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-dim);border:1px dashed var(--hairline-2);">Insufficient data</div>`;
+    }
+    const n = vals.length;
+    const pts = vals.map((v, i) => `${((i / (n - 1)) * W).toFixed(1)},${(H - (v / 100) * H).toFixed(1)}`).join(' ');
+    const fill = `0,${H} ${pts} ${W},${H}`;
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:120px;display:block;">
+        <defs><linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/>
+        </linearGradient></defs>
+        <polygon points="${fill}" fill="url(#sparkFill)"/>
+        <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>`;
+}
+
+/**
+ * Build content for the per-card detail modal (v2).
+ * @param {Object} card           - LimitCard from STATE.data
+ * @param {Object|null} forecastEntry - ForecastEntry or null
+ * @param {Array}  history24h     - Array from fetchHistoryRaw
+ * @returns {string} Inner HTML for #modal-content
+ */
+export function buildCardModalContent(card, forecastEntry, history24h) {
+    const prov = _PROV_MAP[card.provider_id] || { key: 'default', init: (card.provider_id || '??').slice(0, 2).toUpperCase() };
+    const pace = _forecastPaceBucket(forecastEntry);
+
+    const pctUsed = card.pct_used != null ? card.pct_used
+        : (card.used_value != null && card.limit_value ? card.used_value / card.limit_value * 100 : null);
+    const remainingPct = pctUsed != null ? (100 - pctUsed).toFixed(1) : '—';
+
+    const { used: usedFmt, limit: limitFmt, unit } = formatUsageValues(
+        card.used_value, card.limit_value, card.unit_type, card.currency
+    );
+
+    const isCurrency = card.unit_type === 'currency';
+
+    const paceRow = pace
+        ? `<dt>Pace</dt><dd><span class="pace-dot ${pace}" style="display:inline-block;"></span>${pace}</dd>`
+        : '';
+    const projRow = forecastEntry?.projected_pct != null
+        ? `<dt>Projected</dt><dd>${Math.round(forecastEntry.projected_pct)}% used</dd>`
+        : '';
+    const costRow = isCurrency
+        ? `<dt>Remaining</dt><dd>${escapeHTML(card.remaining || remainingPct + '%')}</dd>`
+        : '';
+    const tierRow = card.tier
+        ? `<dt>Tier</dt><dd>${escapeHTML(String(card.tier))}</dd>`
+        : '';
+    const sidecarRow = card.sidecar_id
+        ? `<dt>Sidecar</dt><dd>${escapeHTML(card.sidecar_id)}</dd>`
+        : '';
+
+    return `
+        <div class="modal-v2-hd">
+            <div class="plogo c-${prov.key}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:10px;font-weight:700;flex-shrink:0;">${escapeHTML(prov.init)}</div>
+            <div class="stack-xs">
+                <span class="title">${escapeHTML(card.service_name)}</span>
+                <span style="font-size:10px;color:var(--text-dim);letter-spacing:0.06em;text-transform:uppercase;">${escapeHTML(card.account_label || '')} · ${escapeHTML(card.data_source || '')} · ${escapeHTML(formatRelativeTime(card.updated_at))}</span>
+            </div>
+            <button class="icon-btn" onclick="openProviderInHistory('${escapeHTMLAttr(card.provider_id || '')}')" title="Open in History" style="margin-left:auto;">↗</button>
+            <button class="x" id="close-modal" style="cursor:pointer;color:var(--text-dim);font-size:20px;background:none;border:none;padding:0 4px;line-height:1;">✕</button>
+        </div>
+        <div class="modal-v2-body">
+            <div>
+                <h4>Current Window</h4>
+                <dl class="kv">
+                    <dt>Remaining</dt><dd>${escapeHTML(card.remaining || remainingPct + '%')}</dd>
+                    <dt>Used</dt><dd>${escapeHTML(usedFmt)} / ${escapeHTML(limitFmt)}${unit ? ' ' + unit : ''}</dd>
+                    <dt>Window</dt><dd>${escapeHTML(_windowLabel(card.window_type))}</dd>
+                    <dt>Reset</dt><dd>${escapeHTML(card.reset || formatResetDisplay(card.reset_at))}</dd>
+                    ${paceRow}${projRow}${costRow}
+                </dl>
+            </div>
+            <div>
+                <h4>Metadata</h4>
+                <dl class="kv">
+                    <dt>Provider</dt><dd>${escapeHTML(card.provider_id || '—')}</dd>
+                    <dt>Source</dt><dd>${escapeHTML(card.data_source || '—')}</dd>
+                    ${tierRow}${sidecarRow}
+                    <dt>Updated</dt><dd>${escapeHTML(formatRelativeTime(card.updated_at))}</dd>
+                </dl>
+            </div>
+            <div class="historyline">
+                <div style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:6px;">Last 24 hours</div>
+                ${_buildSparklineSVG(history24h)}
+            </div>
+            <details style="margin-top:1rem;font-size:10px;">
+                <summary style="cursor:pointer;color:var(--text-dim);letter-spacing:0.08em;text-transform:uppercase;list-style:none;display:flex;align-items:center;gap:6px;"><span style="font-size:9px;border:1px solid var(--hairline-strong);padding:1px 5px;">▶</span> Raw data</summary>
+                <pre style="margin-top:8px;padding:12px;background:var(--surface-2);border:1px solid var(--hairline);overflow-x:auto;font-size:10px;color:var(--text-muted);max-height:300px;overflow-y:auto;line-height:1.5;">${escapeHTML(JSON.stringify(card, null, 2))}</pre>
+            </details>
+        </div>`;
+}

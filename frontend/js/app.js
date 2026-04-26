@@ -1,8 +1,8 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
+import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { applyOrder, cardKey, extractProviderOrder, extractCardOrder } from './layout.js';
 import { ensureSortable } from './sortable.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildProviderModal, buildProviderSparklineStrip } from './components.js';
+import { buildGitHubOAuthModal, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
 import { loadSettingsView, renderProvidersSection, refreshToken, deleteToken } from './views/settings.js';
@@ -142,132 +142,6 @@ async function checkAuth() {
 // View routing and global state initialization moved to end of file
 
 /**
- * Render quota cards to the grid
- * Builds HTML from STATE.data and populates the grid element.
- * Cards are grouped by provider_id and filtered by the active context filter.
- */
-function applyFilters(data) {
-    const f = STATE.activeFilter;
-    return data.filter(item => {
-        if (f && item[f.dimension] !== f.value) return false;
-        return true;
-    });
-}
-
-function renderGrid() {
-    const grid = document.getElementById('grid');
-
-    const visible = applyFilters(STATE.data);
-
-    // Group by provider_id; cards without a provider_id go to '__other__'
-    const groups = new Map();
-    visible.forEach(item => {
-        const key = item.provider_id || '__other__';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(item);
-    });
-
-    // Default sort: providers with worst health first, then alphabetically
-    const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const defaultSorted = [...groups.keys()].sort((a, b) => {
-        if (a === '__other__') return 1;
-        if (b === '__other__') return -1;
-        const aWorst = groups.get(a).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
-        const bWorst = groups.get(b).reduce((m, i) => Math.max(m, HEALTH_SEVERITY[i.health] || 0), 0);
-        if (bWorst !== aWorst) return bWorst - aWorst;
-        return a.localeCompare(b);
-    });
-
-    // Apply user-defined provider order on top of the default sort
-    const sorted = applyOrder(
-        defaultSorted.map(pid => ({ pid })),
-        x => x.pid,
-        STATE.layout?.provider_order ?? []
-    ).map(x => x.pid);
-
-    let html = '';
-    let count = 0;
-    for (const key of sorted) {
-        const items = groups.get(key);
-        try {
-            html += buildProviderSummaryCard(key, items);
-            count += items.length;
-        } catch (e) {
-            console.error('Failed to render provider card:', key, e);
-        }
-    }
-
-    if (!html) {
-        html = '<p class="text-zinc-500 text-sm text-center py-8">No cards match active filters.</p>';
-    }
-
-    // Provider cards use a responsive grid (not provider sections)
-    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">${html}</div>`;
-    document.getElementById('footer-count').textContent = count;
-}
-
-/**
- * Open the provider drill-down modal. Renders immediately, loads sparklines async.
- * @param {string} providerId
- */
-window.openProviderModal = async function(providerId) {
-    let items = STATE.data.filter(d => (d.provider_id || '__other__') === providerId);
-    items = applyOrder(items, cardKey, STATE.layout?.card_orders?.[providerId] ?? []);
-    if (!items.length) return;
-
-    const container = document.getElementById('modal-container');
-    const content = document.getElementById('modal-content');
-
-    // Keep order already applied by applyOrder (pinned first, then unpinned).
-    // For unpinned items, preserve API order; user can reorder via edit mode.
-    const sorted = items;
-
-    // Render immediately without history so modal opens instantly
-    content.innerHTML = buildProviderModal(providerId, sorted, []);
-    container.classList.add('active');
-    document.body.style.overflow = 'hidden';
-    document.getElementById('modal-backdrop').onclick = closeModal;
-    document.getElementById('close-modal').onclick = closeModal;
-    document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
-        refreshProviderModal(providerId)
-    );
-    await window.__reattachCardSortables();
-
-    // Load sparklines in the background — re-render only if modal is still open
-    try {
-        const history = await fetchHistory({ provider_id: providerId, days: 7, limit: 500 });
-        if (container.classList.contains('active') && content.querySelector('#close-modal')) {
-            content.innerHTML = buildProviderModal(providerId, sorted, history);
-            document.getElementById('close-modal').onclick = closeModal;
-            document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
-                refreshProviderModal(providerId)
-            );
-            await window.__reattachCardSortables();
-        }
-    } catch (e) {
-        console.warn('Could not fetch history for modal sparklines:', e.message);
-    }
-};
-
-async function refreshProviderModal(providerId) {
-    const btn = document.getElementById('refresh-provider-btn');
-    if (btn) { btn.classList.add('animate-spin'); btn.disabled = true; }
-    try {
-        await collectProvider(providerId, null);
-        const json = await fetchLimits();
-        STATE.data = json.limits;
-        renderGrid();
-        // Re-open with fresh data
-        await window.openProviderModal(providerId);
-    } catch (err) {
-        console.error('Provider modal refresh failed:', err);
-    } finally {
-        const b = document.getElementById('refresh-provider-btn');
-        if (b) { b.classList.remove('animate-spin'); b.disabled = false; }
-    }
-}
-
-/**
  * Toggle bright/dark mode
  */
 window.toggleTheme = function () {
@@ -297,33 +171,19 @@ function applyTheme() {
  * Start the HUD header clock (UTC time + T+ elapsed · since HH:MMZ).
  */
 function startHudClock() {
-    const clockEl = document.getElementById('utc-clock');
-    const tickEl  = document.getElementById('last-tick');
+    const tickEl = document.getElementById('last-tick');
     setInterval(() => {
-        if (clockEl) {
-            const n = new Date();
-            clockEl.textContent =
-                String(n.getUTCHours()).padStart(2, '0') + ':' +
-                String(n.getUTCMinutes()).padStart(2, '0') + ':' +
-                String(n.getUTCSeconds()).padStart(2, '0') + 'Z';
+        if (!tickEl) return;
+        if (!window._lastFetchTime) {
+            tickEl.textContent = 'syncing…';
+            return;
         }
-        if (tickEl) {
-            if (window._lastFetchTime) {
-                const e = Math.floor((Date.now() - window._lastFetchTime) / 1000);
-                const elapsed =
-                    'T+' +
-                    String(Math.floor(e / 3600)).padStart(2, '0') + ':' +
-                    String(Math.floor((e % 3600) / 60)).padStart(2, '0') + ':' +
-                    String(e % 60).padStart(2, '0');
-                const d = new Date(window._lastFetchTime);
-                const since =
-                    String(d.getUTCHours()).padStart(2, '0') + ':' +
-                    String(d.getUTCMinutes()).padStart(2, '0') + 'Z';
-                tickEl.textContent = `${elapsed} · ${since}`;
-            } else {
-                tickEl.textContent = 'T+—';
-            }
-        }
+        const e = Math.floor((Date.now() - window._lastFetchTime) / 1000);
+        let label;
+        if (e < 60)        label = `${e}s ago`;
+        else if (e < 3600) label = `${Math.floor(e / 60)}m ago`;
+        else               label = `${Math.floor(e / 3600)}h ago`;
+        tickEl.textContent = `synced ${label}`;
     }, 1000);
 }
 
@@ -338,22 +198,24 @@ async function enterEditMode() {
 
     const Sortable = await ensureSortable();
 
-    // Provider grid (the inner flex/grid wrapper injected by renderGrid)
-    const providerGrid = document.querySelector('#grid > div');
-    if (providerGrid) {
-        _providerSortable = new Sortable(providerGrid, {
+    // Provider sections grid in the new dashboard
+    const sectionsContainer = document.getElementById('dashboard-sections');
+    if (sectionsContainer) {
+        _providerSortable = new Sortable(sectionsContainer, {
             animation: 150,
-            draggable: '[data-provider-id]',
+            draggable: '.section[data-provider-id]',
             onEnd: onProviderDrop,
         });
     }
 
-    // Per-service breakdown rows inside each provider summary card on the dashboard
-    document.querySelectorAll('[data-subitems-for]').forEach(container => {
+    // Per-card grids within each provider section
+    document.querySelectorAll('#dashboard-sections .hz-grid').forEach(container => {
+        const section = container.closest('.section[data-provider-id]');
+        if (!section) return;
         const s = new Sortable(container, {
             animation: 150,
             draggable: '[data-card-key]',
-            onEnd: () => onCardDrop(container.dataset.subitemsFor, container),
+            onEnd: () => onCardDrop(section.dataset.providerId, container),
         });
         _cardSortables.push(s);
     });
@@ -382,8 +244,8 @@ function exitEditMode() {
 }
 
 async function onProviderDrop() {
-    const providerGrid = document.querySelector('#grid > div');
-    const order = extractProviderOrder(providerGrid);
+    const sectionsContainer = document.getElementById('dashboard-sections');
+    const order = extractProviderOrder(sectionsContainer);
     STATE.layout = { ...STATE.layout, provider_order: order };
     await persistLayout();
 }
@@ -409,12 +271,14 @@ async function persistLayout() {
 window.__reattachCardSortables = async function() {
     if (!STATE.editMode) return;
     const Sortable = await ensureSortable();
-    document.querySelectorAll('#modal-content [data-provider-id]').forEach(section => {
-        const cardContainer = section.querySelector('.grid') || section;
-        const s = new Sortable(cardContainer, {
+    // Re-attach sortables for any card grids in the open modal
+    document.querySelectorAll('#modal-content .hz-grid').forEach(container => {
+        const section = container.closest('[data-provider-id]');
+        if (!section) return;
+        const s = new Sortable(container, {
             animation: 150,
             draggable: '[data-card-key]',
-            onEnd: () => onCardDrop(section.dataset.providerId, cardContainer),
+            onEnd: () => onCardDrop(section.dataset.providerId, container),
         });
         _cardSortables.push(s);
     });
@@ -643,51 +507,6 @@ function getErrorType(err) {
 }
 
 /**
- * Open the detail modal for a specific service
- * @param {string} serviceName - Name of the service to show
- */
-function openModal(serviceName) {
-    const item = STATE.data.find(d => d.service_name === serviceName);
-    if (!item) return;
-
-    const container = document.getElementById('modal-container');
-    const content = document.getElementById('modal-content');
-
-    content.innerHTML = buildModalContent(item);
-    container.classList.add('active');
-    document.body.style.overflow = 'hidden';
-
-    document.getElementById('close-modal').onclick = closeModal;
-    document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
-        refreshModalProvider(item.provider_id, item.account_id, item.service_name)
-    );
-}
-
-async function refreshModalProvider(providerId, accountId, serviceName) {
-    const btn = document.getElementById('refresh-provider-btn');
-    if (btn) { btn.classList.add('animate-spin'); btn.disabled = true; }
-    try {
-        await collectProvider(providerId, accountId);
-        // Reload global state then re-render modal with fresh data
-        const json = await fetchLimits();
-        STATE.data = json.limits;
-        renderGrid();
-        const fresh = STATE.data.find(d => d.service_name === serviceName);
-        if (fresh) {
-            document.getElementById('modal-content').innerHTML = buildModalContent(fresh);
-            document.getElementById('close-modal').onclick = closeModal;
-            document.getElementById('refresh-provider-btn')?.addEventListener('click', () =>
-                refreshModalProvider(fresh.provider_id, fresh.account_id, fresh.service_name)
-            );
-        }
-    } catch (err) {
-        console.error('Provider refresh failed:', err);
-    } finally {
-        if (btn) { btn.classList.remove('animate-spin'); btn.disabled = false; }
-    }
-}
-
-/**
  * Close the detail modal
  */
 function closeModal() {
@@ -725,36 +544,26 @@ window.addEventListener('beforeunload', () => {
 });
 
 // Initial load
-document.addEventListener('DOMContentLoaded', () => {
-    const grid = document.getElementById('grid');
+document.addEventListener('DOMContentLoaded', async () => {
     const modalBackdrop = document.getElementById('modal-backdrop');
 
-    // Grid click delegation for cards
-    grid.addEventListener('click', (e) => {
-        const card = e.target.closest('.glass-panel');
-        if (card && card.dataset.service) {
-            openModal(card.dataset.service);
-        }
-    });
-
-    // Modal close listeners
-    modalBackdrop.addEventListener('click', closeModal);
+    // Modal close via backdrop click or Escape key
+    modalBackdrop?.addEventListener('click', closeModal);
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeModal();
     });
 
-    initUI();  // also calls initHistoryView() and switchView('dashboard') → loadDashboard if empty
+    // initUI awaits switchView('dashboard') → loadDashboard on cold start.
+    // checkAuth runs after so it can't race and double-fire loadDashboard.
+    await initUI();
 
-    // Check auth; only trigger an explicit load if switchView hasn't already fetched.
-    checkAuth().then(authorized => {
-        if (authorized) {
-            if (STATE.data.length === 0) loadDashboard();
-            // Auto-refresh every 5 minutes — skip silently when the tab is hidden.
-            refreshTimer = setInterval(() => {
-                if (!document.hidden) loadDashboard();
-            }, 5 * 60 * 1000);
-        }
-    });
+    const authorized = await checkAuth();
+    if (authorized) {
+        // Auto-refresh every 5 minutes — skip silently when the tab is hidden.
+        refreshTimer = setInterval(() => {
+            if (!document.hidden) loadDashboard();
+        }, 5 * 60 * 1000);
+    }
 });
 
 window.handleResetProvider = async function(event, provider, accountId) {
