@@ -82,6 +82,29 @@ export function loadSettingsView() {
     });
     renderSettingsSection(activeSection);
     updateNavCounts();
+    prefetchNavCounts(activeSection);
+}
+
+async function prefetchNavCounts(activeSection) {
+    const tasks = [];
+    if (activeSection !== 'providers') {
+        tasks.push(fetchProviderConfigs()
+            .then(({ providers }) => { _providerCount = providers.length; })
+            .catch(() => {}));
+    }
+    if (activeSection !== 'tokens') {
+        tasks.push(fetchTokenHealth()
+            .then(h => { _tokenCount = (h.tokens || []).length; })
+            .catch(() => {}));
+    }
+    if (activeSection !== 'webhooks') {
+        tasks.push(fetch('/api/v1/system/webhooks')
+            .then(r => r.json())
+            .then(d => { _webhookCount = (d.webhooks || []).length; })
+            .catch(() => {}));
+    }
+    await Promise.all(tasks);
+    updateNavCounts();
 }
 
 export function switchSettingsSection(name) {
@@ -196,7 +219,7 @@ export async function renderProvidersSection(pane) {
 function buildProviderRowHTML(p) {
     const isExpanded = p.provider_id === _expandedProviderId;
     const tier = deriveTier(p);
-    const stratCount = (p.supported_strategies || []).length;
+    const stratIds = (p.supported_strategies || []).map(s => s.id).join(' · ') || '—';
     const pollOpts = POLL_OPTIONS.map(o =>
         `<option value="${o.value}" ${p.poll_interval_seconds === o.value ? 'selected' : ''}>${o.label}</option>`
     ).join('');
@@ -210,7 +233,7 @@ function buildProviderRowHTML(p) {
             <div class="plogo c-${escapeHTMLAttr(p.provider_id)}">${escapeHTML(p.icon || (p.name?.[0] ?? '?'))}</div>
             <div>
                 <div class="pr-name">${escapeHTML(p.name)}</div>
-                <div class="pr-meta">${stratCount} source${stratCount !== 1 ? 's' : ''} · ${tier.toLowerCase()}</div>
+                <div class="pr-meta">${escapeHTML(stratIds)}</div>
             </div>
             <div class="pr-poll">poll
                 <select>
