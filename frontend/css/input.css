@@ -775,61 +775,6 @@ body, .toggle-btn, .icon-btn {
     border: 1px dashed var(--hairline-strong);
 }
 
-/* ============================================
-   HISTORY CONTROLS BAR
-   ============================================ */
-
-.history-controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 0;
-    border-top: 1px solid var(--hairline);
-    border-bottom: 1px solid var(--hairline);
-}
-
-.history-ctrl-group { display: flex; gap: 2px; align-items: center; }
-
-.history-ctrl-sep {
-    color: var(--hairline-strong);
-    font-size: 11px;
-    padding: 0 4px;
-    user-select: none;
-}
-
-/* ============================================
-   HISTORY SUMMARY LINE
-   ============================================ */
-
-.history-summary {
-    min-height: 20px;
-    margin: 6px 0 2px;
-}
-
-.history-summary-text {
-    font-size: 9px;
-    color: var(--text-dim);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-
-/* ============================================
-   HISTORY SPARKLINE STRIP HEADER
-   ============================================ */
-
-.history-sparkline-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 4px;
-    margin-top: 8px;
-    font-size: 8px;
-    font-weight: 700;
-    color: var(--text-dim);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-}
 
 /* Settings in light mode */
 :root[data-theme="light"] .settings-nav-item { color: var(--text-dim); }
@@ -1187,7 +1132,7 @@ header.top .icon-btn[aria-pressed="true"] {
     overflow: hidden; display: block;
 }
 .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
-.card .row { display: flex; align-items: center; gap: 10px; }
+.card .row { display: flex; align-items: flex-start; gap: 10px; }
 .card .plogo {
     width: 28px; height: 28px; display: grid; place-items: center;
     background: transparent; box-shadow: inset 0 0 0 1px var(--hairline-2);
@@ -1205,7 +1150,7 @@ header.top .icon-btn[aria-pressed="true"] {
 .card .plogo.c-kimi       { color: var(--accent-cool); box-shadow: inset 0 0 0 1px var(--accent-cool); background: color-mix(in srgb, var(--accent-cool) 10%, transparent); }
 .card .plogo.c-minimax    { color: var(--unlm); box-shadow: inset 0 0 0 1px var(--unlm); background: color-mix(in srgb, var(--unlm) 10%, transparent); }
 .card .plogo.c-antigravity { color: var(--good); box-shadow: inset 0 0 0 1px var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); }
-.card .title { font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--text); }
+.card .title { font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--text); display: block; min-height: 2.6em; }
 .card .sub   { font-size: 10px; font-weight: 400; color: var(--text-dim); letter-spacing: 0.06em; text-transform: uppercase; margin-top: 2px; }
 .stack-xs    { display: flex; flex-direction: column; gap: 2px; }
 .row-between { display: flex; align-items: center; justify-content: space-between; }
@@ -1213,6 +1158,7 @@ header.top .icon-btn[aria-pressed="true"] {
 .card .health {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--good); flex-shrink: 0; box-shadow: 0 0 5px var(--good);
+    margin-top: 5px;
 }
 .card.h-warn .health  { background: var(--warn); box-shadow: 0 0 5px var(--warn); }
 .card.h-crit .health  { background: var(--crit); box-shadow: 0 0 7px var(--crit); animation: critblink 1.2s ease-in-out infinite; }
@@ -1221,18 +1167,15 @@ header.top .icon-btn[aria-pressed="true"] {
 .card.err .health     { background: var(--crit); box-shadow: 0 0 7px var(--crit); }
 
 /* Badge cluster */
-.badges { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.badges { display: flex; flex-direction: column; gap: 3px; margin-left: auto; align-items: flex-end; }
 .badge {
     font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-    padding: 1px 5px; background: transparent;
+    padding: 1px 5px; background: transparent; white-space: nowrap;
     box-shadow: inset 0 0 0 1px var(--hairline-2); color: var(--text-dim);
 }
-.badge.src-api,
-.badge.src-oauth   { color: var(--info); box-shadow: inset 0 0 0 1px var(--info); }
-.badge.src-web     { color: var(--unlm); box-shadow: inset 0 0 0 1px var(--unlm); }
-.badge.src-local,
-.badge.src-log     { color: var(--text-muted); }
-.badge.src-sidecar { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.badge.tier-free { color: var(--text-dim); box-shadow: inset 0 0 0 1px var(--hairline-2); }
+.badge.tier-pro  { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.badge.tier-max  { color: var(--unlm); box-shadow: inset 0 0 0 1px var(--unlm); }
 
 /* Error card variant */
 .card.err { opacity: 0.85; }
@@ -1729,4 +1672,252 @@ header.top .icon-btn[aria-pressed="true"] {
     .token-row { grid-template-columns: 30px 1fr 80px 60px; }
     .token-row > :nth-child(4) { display: none; }
     .sys-row { grid-template-columns: 1fr; gap: 8px; }
+}
+
+/* ============================================
+   History v2 — HUD restyle
+   ============================================ */
+
+.history-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+}
+
+.hc-left {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.hc-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hc-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--hairline-2);
+    flex-shrink: 0;
+}
+
+/* Segmented button groups */
+.seg-range {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+}
+
+/* Chart panel */
+.history-chart {
+    padding: 18px 20px 14px;
+}
+
+.hc-head {
+    margin-bottom: 16px;
+}
+
+.hc-kicker {
+    font: 700 10px var(--mono);
+    color: var(--ink-3);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.hc-summary {
+    min-height: 18px;
+    margin-top: 4px;
+    font: 400 11px var(--mono);
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+}
+
+/* Sparkline header */
+.history-sparkline-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 14px 0 6px;
+    font: 700 9px var(--mono);
+    color: var(--ink-3);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+/* Chart container */
+.chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 450px;
+    margin-top: 8px;
+}
+
+.chart-host {
+    width: 100%;
+    height: 100%;
+}
+
+.chart-empty {
+    padding: 48px 0;
+    text-align: center;
+    font: 400 12px var(--mono);
+    color: var(--ink-3);
+    font-style: italic;
+    letter-spacing: 0.04em;
+}
+
+/* Table panel */
+.history-table {
+    overflow: hidden;
+}
+
+.ht-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid var(--hairline-2);
+}
+
+.ht-head h3 {
+    margin: 0;
+    font: 700 10px var(--mono);
+    color: var(--ink-3);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.ht-sub {
+    font: 400 10px var(--mono);
+    color: var(--ink-4);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-left: auto;
+}
+
+.ht-filter {
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--hairline);
+}
+
+.ht-scroll {
+    overflow-x: auto;
+}
+
+.ht-empty {
+    padding: 16px 20px;
+    font: 400 12px var(--mono);
+    color: var(--ink-3);
+    font-style: italic;
+}
+
+/* Table */
+.history-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font: 500 12px var(--mono);
+}
+
+.history-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    font: 700 9px var(--mono);
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--hairline-2);
+    white-space: nowrap;
+}
+
+.history-table th.num,
+.history-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.history-table tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--hairline);
+    color: var(--ink-2);
+    white-space: nowrap;
+}
+
+.history-table tbody tr:hover td {
+    background: var(--surface-2);
+    color: var(--ink);
+}
+
+.history-table td.ht-time   { color: var(--ink-4); }
+.history-table td.ht-bold   { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.history-table td.ht-italic { color: var(--ink-3); font-style: italic; }
+
+.history-table .src-pill {
+    display: inline-block;
+    font: 700 9px var(--mono);
+    padding: 1px 6px;
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--hairline-2);
+    color: var(--ink-3);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.history-table .delta-up   { color: var(--good); }
+.history-table .delta-down { color: var(--crit); }
+
+/* Pagination */
+.ht-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-top: 1px solid var(--hairline);
+}
+
+.ht-pager-info {
+    font: 400 10px var(--mono);
+    color: var(--ink-4);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.ht-pager-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ht-pager-num {
+    font: 700 11px var(--mono);
+    color: var(--ink-3);
+    padding: 0 6px;
+    font-variant-numeric: tabular-nums;
+}
+
+.ht-pager-num span { color: var(--ink-4); margin: 0 4px; }
+
+/* Additional window-type labels inside table cells */
+.ht-extra {
+    display: inline-block;
+    font: 400 10px var(--mono);
+    padding: 1px 6px;
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+    color: var(--ink-3);
+    margin-right: 3px;
+}
+
+@media (max-width: 1100px) {
+    .history-controls { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .hc-right { margin-left: 0; }
+    .hc-sep { display: none; }
 }
