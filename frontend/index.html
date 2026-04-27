@@ -306,17 +306,16 @@
 
             <!-- Settings View -->
             <section id="view-settings" class="view hidden">
-                <div class="flex gap-0 min-h-[560px]">
-                    <!-- Sidebar nav -->
-                    <nav id="settings-nav" class="w-32 shrink-0 flex flex-col gap-1 pt-1 pr-4">
-                        <button class="settings-nav-item" data-section="providers">Providers</button>
-                        <button class="settings-nav-item" data-section="tokens">Tokens</button>
-                        <button class="settings-nav-item" data-section="webhooks">Webhooks</button>
-                        <button class="settings-nav-item" data-section="system">System</button>
-                    </nav>
-                    <!-- Content pane -->
-                    <div id="settings-pane" class="flex-1 glass-panel p-6 min-h-[400px]">
-                        <!-- Injected by JS -->
+                <div class="settings-grid">
+                    <aside id="settings-nav" class="settings-nav glass">
+                        <div class="sn-kicker">Settings</div>
+                        <button class="sn-item settings-nav-item" data-section="providers">Providers <span id="sn-count-providers"></span></button>
+                        <button class="sn-item settings-nav-item" data-section="tokens">Token health <span id="sn-count-tokens"></span></button>
+                        <button class="sn-item settings-nav-item" data-section="webhooks">Webhooks <span id="sn-count-webhooks"></span></button>
+                        <button class="sn-item settings-nav-item" data-section="system">System</button>
+                    </aside>
+                    <div class="settings-main">
+                        <div id="settings-pane"><!-- Injected by JS --></div>
                     </div>
                 </div>
             </section>

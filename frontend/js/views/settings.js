@@ -1,10 +1,11 @@
 import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, fetchSettings, fetchAppConfig, putAppConfig } from '../api.js';
 import { STATE } from '../state.js';
-import { buildTokenHealthPanel } from '../components.js';
 import { ensureSortable } from '../sortable.js';
 
-let _settingsSelectedProvider = null;
-let _settingsProviderOriginal = null;
+let _expandedProviderId = localStorage.getItem('settings_expanded_provider') || null;
+let _providerCount = null;
+let _tokenCount = null;
+let _webhookCount = null;
 
 const POLL_OPTIONS = [
     { label: '1 min',   value: 60 },
@@ -14,9 +15,18 @@ const POLL_OPTIONS = [
     { label: '1 hour',  value: 3600 },
 ];
 
+const FRIENDLY_TOKEN_TYPES = {
+    'api_key': 'API Key',
+    'session_cookie': 'Cookie',
+    'oauth_token': 'OAuth',
+    'access_token': 'Token',
+    'id_token': 'ID Token',
+    'refresh_token': 'Refresh',
+};
+
 function escapeHTML(str) {
     if (!str) return '';
-    const map = { '&': '&amp;', '<': '&gt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return str.replace(/[&<>"']/g, m => map[m]);
 }
 
@@ -25,19 +35,59 @@ function escapeHTMLAttr(str) {
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+function setExpanded(id) {
+    _expandedProviderId = id;
+    if (id) localStorage.setItem('settings_expanded_provider', id);
+    else localStorage.removeItem('settings_expanded_provider');
+}
+
+function updateNavCounts() {
+    if (_providerCount !== null) {
+        const el = document.getElementById('sn-count-providers');
+        if (el) el.textContent = _providerCount;
+    }
+    if (_tokenCount !== null) {
+        const el = document.getElementById('sn-count-tokens');
+        if (el) el.textContent = _tokenCount;
+    }
+    if (_webhookCount !== null) {
+        const el = document.getElementById('sn-count-webhooks');
+        if (el) el.textContent = _webhookCount;
+    }
+}
+
+function deriveTier(p) {
+    const strats = p.supported_strategies || [];
+    if (strats.some(s => s.id === 'api')) return 'API';
+    if (strats.some(s => s.id === 'web')) return 'Web';
+    return 'Local';
+}
+
+function flashRow(pane, providerId) {
+    const row = pane.querySelector(`.provider-row[data-provider-id="${CSS.escape(providerId)}"]`);
+    if (!row) return;
+    row.classList.remove('pr-saved');
+    // Force reflow to restart animation
+    void row.offsetWidth;
+    row.classList.add('pr-saved');
+    setTimeout(() => row.classList.remove('pr-saved'), 750);
+}
+
 export function loadSettingsView() {
+    _expandedProviderId = localStorage.getItem('settings_expanded_provider') || null;
     const activeSection = localStorage.getItem('settings_section') || 'providers';
     document.querySelectorAll('.settings-nav-item').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.section === activeSection);
+        btn.classList.toggle('on', btn.dataset.section === activeSection);
         btn.addEventListener('click', () => switchSettingsSection(btn.dataset.section));
     });
     renderSettingsSection(activeSection);
+    updateNavCounts();
 }
 
 export function switchSettingsSection(name) {
     localStorage.setItem('settings_section', name);
     document.querySelectorAll('.settings-nav-item').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.section === name);
+        btn.classList.toggle('on', btn.dataset.section === name);
     });
     renderSettingsSection(name);
 }
@@ -45,271 +95,305 @@ export function switchSettingsSection(name) {
 function renderSettingsSection(name) {
     const pane = document.getElementById('settings-pane');
     if (!pane) return;
-    pane.innerHTML = '<p class="text-zinc-500 animate-pulse text-sm">Loading…</p>';
+    pane.innerHTML = '<p style="padding:20px;color:var(--ink-3);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;">Loading…</p>';
     if (name === 'providers') renderProvidersSection(pane);
     else if (name === 'tokens') renderTokensSection(pane);
     else if (name === 'webhooks') renderWebhooksSection(pane);
     else if (name === 'system') renderSystemSection(pane);
 }
 
+// ─── Providers ───────────────────────────────────────────────────────────────
+
 export async function renderProvidersSection(pane) {
     try {
         const { providers } = await fetchProviderConfigs();
-        
-        // Load from localStorage if not set in memory
-        if (!_settingsSelectedProvider) {
-            _settingsSelectedProvider = localStorage.getItem('settings_selected_provider');
-        }
 
-        // If still not set, or no longer valid, default to first provider
-        if (providers.length > 0) {
-            const exists = providers.some(p => p.provider_id === _settingsSelectedProvider);
-            if (!exists) {
-                _settingsSelectedProvider = providers[0].provider_id;
-            }
+        if (_expandedProviderId && !providers.some(p => p.provider_id === _expandedProviderId)) {
+            setExpanded(null);
         }
+        _providerCount = providers.length;
+        updateNavCounts();
 
-        pane.innerHTML = buildProvidersSectionHTML(providers);
-        pane.querySelectorAll('.provider-list-item').forEach(item => {
-            item.addEventListener('click', () => {
-                _settingsSelectedProvider = item.dataset.providerId;
-                localStorage.setItem('settings_selected_provider', _settingsSelectedProvider);
+        const rowsHTML = providers.length
+            ? providers.map(p => buildProviderRowHTML(p)).join('')
+            : '<p style="padding:16px;color:var(--ink-3);font-size:11px;">No providers configured.</p>';
+
+        pane.innerHTML = `<div class="settings-panel glass">
+            <header class="sp-head">
+                <div>
+                    <h3>Providers</h3>
+                    <p>Enable / disable collection and tune poll intervals per provider.</p>
+                </div>
+                <button class="btn-ghost" id="providers-refresh-btn">Refresh all</button>
+            </header>
+            <div id="provider-list">${rowsHTML}</div>
+        </div>`;
+
+        // Accordion toggle
+        pane.querySelectorAll('.provider-row-header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                if (e.target.closest('.pr-poll') || e.target.closest('.toggle')) return;
+                const providerId = header.dataset.providerId;
+                setExpanded(_expandedProviderId === providerId ? null : providerId);
                 renderProvidersSection(pane);
             });
         });
-        const form = pane.querySelector('#provider-config-form');
-        if (form) {
-            const selected = providers.find(p => p.provider_id === _settingsSelectedProvider);
-            _settingsProviderOriginal = selected ? { ...selected } : null;
 
-            pane.querySelector('#provider-save-btn')?.addEventListener('click', () => saveProviderConfig(pane, form, _settingsSelectedProvider));
-            pane.querySelector('#provider-discard-btn')?.addEventListener('click', () => renderProvidersSection(pane));
-            pane.querySelector('#provider-raw-data-btn')?.addEventListener('click', () => {
-                if (typeof window.viewRawProviderData === 'function') {
-                    window.viewRawProviderData(_settingsSelectedProvider);
-                } else {
-                    console.error('viewRawProviderData is not defined');
+        // Poll interval auto-save
+        pane.querySelectorAll('.pr-poll select').forEach(sel => {
+            sel.addEventListener('change', async () => {
+                const row = sel.closest('.provider-row');
+                const providerId = row?.dataset.providerId;
+                if (!providerId) return;
+                const prev = providers.find(p => p.provider_id === providerId)?.poll_interval_seconds ?? null;
+                const value = parseInt(sel.value, 10) || 0;
+                try {
+                    await putProviderConfig(providerId, { poll_interval_seconds: value });
+                    flashRow(pane, providerId);
+                } catch (err) {
+                    sel.value = prev ?? '';
+                    alert(`Save failed: ${err.message}`);
                 }
             });
-            pane.querySelector('#field-enabled-toggle')?.addEventListener('click', function() {
-                const next = this.dataset.enabled !== 'true';
-                this.dataset.enabled = String(next);
-                this.classList.toggle('bg-violet-600', next);
-                this.classList.toggle('bg-zinc-700', !next);
-                this.querySelector('span').classList.toggle('translate-x-5', next);
-                this.querySelector('span').classList.toggle('translate-x-0', !next);
-            });
-            pane.querySelector('#api-key-edit-btn')?.addEventListener('click', () => toggleApiKeyEdit(pane));
-            pane.querySelector('#session-cookie-edit-btn')?.addEventListener('click', () => toggleSessionCookieEdit(pane));
+        });
 
-            // Wire strategy toggle buttons
-            pane.querySelectorAll('.strategy-toggle').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const next = this.dataset.enabled !== 'true';
-                    this.dataset.enabled = String(next);
-                    this.classList.toggle('bg-violet-600', next);
-                    this.classList.toggle('bg-zinc-700', !next);
-                    this.querySelector('span').classList.toggle('translate-x-4', next);
-                    this.querySelector('span').classList.toggle('translate-x-0', !next);
-                });
+        // Enabled toggle auto-save
+        pane.querySelectorAll('.provider-row-header .toggle').forEach(toggle => {
+            toggle.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const row = toggle.closest('.provider-row');
+                const providerId = row?.dataset.providerId;
+                if (!providerId) return;
+                const newEnabled = !toggle.classList.contains('on');
+                toggle.classList.toggle('on', newEnabled);
+                toggle.querySelector('span').textContent = newEnabled ? 'On' : 'Off';
+                try {
+                    await putProviderConfig(providerId, { enabled: newEnabled });
+                    flashRow(pane, providerId);
+                    if (!newEnabled && _expandedProviderId === providerId) {
+                        setExpanded(null);
+                        renderProvidersSection(pane);
+                    }
+                } catch (err) {
+                    toggle.classList.toggle('on', !newEnabled);
+                    toggle.querySelector('span').textContent = !newEnabled ? 'On' : 'Off';
+                    alert(`Save failed: ${err.message}`);
+                }
             });
+        });
 
-            // Wire drag-to-reorder on strategy list via SortableJS
-            const strategyList = pane.querySelector('#strategy-list');
-            if (strategyList) {
-                ensureSortable().then(Sortable => {
-                    Sortable.create(strategyList, {
-                        handle: '.strategy-drag-handle',
-                        animation: 150,
-                        ghostClass: 'opacity-30',
-                    });
-                }).catch(err => console.warn('Could not load Sortable.js:', err));
-            }
-        }
+        // Wire the expanded detail form
+        const selected = providers.find(p => p.provider_id === _expandedProviderId);
+        if (selected) wireProviderDetail(pane, selected);
+
+        pane.querySelector('#providers-refresh-btn')?.addEventListener('click', () => renderProvidersSection(pane));
+
     } catch (err) {
-        pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load providers: ${escapeHTML(err.message)}</p>`;
+        pane.innerHTML = `<div class="settings-panel glass"><p style="padding:20px;color:var(--crit);font-size:11px;">Failed to load providers: ${escapeHTML(err.message)}</p></div>`;
     }
 }
 
-export function buildProvidersSectionHTML(providers) {
-    const listHTML = providers.map(p => {
-        const isSelected = p.provider_id === _settingsSelectedProvider;
-        const badge = p.enabled
-            ? '<span class="text-[9px] text-green-400 mono">ON</span>'
-            : '<span class="text-[9px] text-zinc-600 mono">OFF</span>';
-        return `<button class="provider-list-item w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl transition-colors ${isSelected ? 'bg-zinc-700/50 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}" data-provider-id="${escapeHTMLAttr(p.provider_id)}">
-            <span class="text-base leading-none">${p.icon}</span>
-            <span class="text-xs font-medium truncate flex-1">${escapeHTML(p.name)}</span>
-            ${badge}
-        </button>`;
-    }).join('');
+function buildProviderRowHTML(p) {
+    const isExpanded = p.provider_id === _expandedProviderId;
+    const tier = deriveTier(p);
+    const stratCount = (p.supported_strategies || []).length;
+    const pollOpts = POLL_OPTIONS.map(o =>
+        `<option value="${o.value}" ${p.poll_interval_seconds === o.value ? 'selected' : ''}>${o.label}</option>`
+    ).join('');
 
-    const selected = providers.find(p => p.provider_id === _settingsSelectedProvider);
-    const formHTML = selected ? buildProviderForm(selected) : '<p class="text-zinc-500 text-sm">Select a provider.</p>';
+    const detail = isExpanded
+        ? `<div class="provider-detail">${buildProviderDetailHTML(p)}</div>`
+        : '';
 
-    return `<div class="flex gap-4 h-full">
-        <div class="w-36 shrink-0 flex flex-col gap-0.5 overflow-y-auto">
-            <p class="text-[10px] uppercase tracking-widest text-zinc-600 px-3 mb-1">Providers</p>
-            ${listHTML}
+    return `<div class="provider-row${isExpanded ? ' expanded' : ''}" data-provider-id="${escapeHTMLAttr(p.provider_id)}">
+        <div class="provider-row-header" data-provider-id="${escapeHTMLAttr(p.provider_id)}">
+            <div class="plogo c-${escapeHTMLAttr(p.provider_id)}">${escapeHTML(p.icon || (p.name?.[0] ?? '?'))}</div>
+            <div>
+                <div class="pr-name">${escapeHTML(p.name)}</div>
+                <div class="pr-meta">${stratCount} source${stratCount !== 1 ? 's' : ''} · ${tier.toLowerCase()}</div>
+            </div>
+            <div class="pr-poll">poll
+                <select>
+                    <option value="" ${!p.poll_interval_seconds ? 'selected' : ''}>default</option>
+                    ${pollOpts}
+                </select>
+            </div>
+            <div class="pr-tier">${tier}</div>
+            <label class="toggle${p.enabled ? ' on' : ''}">
+                <i></i><span>${p.enabled ? 'On' : 'Off'}</span>
+            </label>
         </div>
-        <div class="flex-1 min-w-0">${formHTML}</div>
+        ${detail}
     </div>`;
 }
 
-function buildProviderForm(p) {
-    const defaultTtlLabel = POLL_OPTIONS.find(o => o.value === p.default_ttl_seconds)?.label || `${p.default_ttl_seconds}s`;
-    const pollSelectOpts = POLL_OPTIONS.map(o => `<option value="${o.value}" ${p.poll_interval_seconds === o.value ? 'selected' : ''}>${o.label}</option>`).join('');
+function buildProviderDetailHTML(p) {
+    const defaultTtlLabel = POLL_OPTIONS.find(o => o.value === p.default_ttl_seconds)?.label ?? `${p.default_ttl_seconds}s`;
 
-    // Build strategy rows (only for providers that declare strategies)
+    const apiKeyHTML = p.supports_api_key ? `<div class="pd-row">
+        <div>
+            <div class="pd-key">API Key</div>
+            ${!p.api_key_set ? '<div class="pd-sub">No key stored — env var / file / keychain used as fallback.</div>' : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+            <div id="api-key-display"${p.api_key_set ? '' : ' style="display:none"'}>
+                <span style="font-size:10px;color:var(--ink-3);">••••••••••••••••</span>
+            </div>
+            <div id="api-key-input-row"${p.api_key_set ? ' style="display:none"' : ''}>
+                <input type="text" id="field-api-key" placeholder="${p.api_key_set ? 'Leave blank to keep current' : 'Enter API key'}" class="pd-inp">
+            </div>
+            <button type="button" id="api-key-edit-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Edit</button>
+        </div>
+    </div>` : '';
+
+    const cookieHTML = p.supports_session_cookie ? `<div class="pd-row">
+        <div>
+            <div class="pd-key">${escapeHTML(p.session_cookie_label || 'Session Cookie')}</div>
+            <div class="pd-sub">${escapeHTML(p.session_cookie_help || 'Manual override — bypasses browser cookie extraction')}</div>
+            ${!p.session_cookie_set ? '<div class="pd-sub" style="margin-top:2px;">No cookie stored — browser extraction used as fallback.</div>' : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+            <div id="session-cookie-display"${p.session_cookie_set ? '' : ' style="display:none"'}>
+                <span style="font-size:10px;color:var(--ink-3);">••••••••••••••••</span>
+            </div>
+            <div id="session-cookie-input-row"${p.session_cookie_set ? ' style="display:none"' : ''}>
+                <input type="text" id="field-session-cookie" placeholder="${p.session_cookie_set ? 'Leave blank to keep current' : 'Paste session cookie value'}" class="pd-inp">
+            </div>
+            <button type="button" id="session-cookie-edit-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Edit</button>
+        </div>
+    </div>` : '';
+
+    const oauthHTML = p.provider_id === 'github' ? `<div class="pd-row">
+        <div>
+            <div class="pd-key">GitHub OAuth</div>
+            <div class="pd-sub">${STATE.githubAuth?.authenticated
+                ? `Connected as ${escapeHTML(STATE.githubAuth.account || STATE.githubAuth.name || 'Account')}${STATE.githubAuth.email ? ` (${escapeHTML(STATE.githubAuth.email)})` : ''}`
+                : 'Not connected'
+            }</div>
+        </div>
+        ${STATE.githubAuth?.authenticated
+            ? `<button type="button" onclick="handleGitHubLogout()" class="btn-ghost" style="padding:4px 10px;font-size:9px;color:var(--crit);">Disconnect</button>`
+            : `<button type="button" onclick="startGitHubLogin()" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Connect</button>`
+        }
+    </div>` : '';
+
     const strategies = p.supported_strategies || [];
     let strategyHTML = '';
     if (strategies.length > 1) {
-        // Merge saved user config with supported list to determine order + enabled state
-        const savedConfig = p.collection_strategies || null;
-        const resolvedList = buildResolvedStrategyList(strategies, savedConfig);
-
-        const rows = resolvedList.map((s, i) => {
-            const isEnabled = s.enabled;
-            return `<div class="strategy-row flex items-center gap-2 py-2 px-1 border-b border-zinc-800/40" data-strategy-id="${escapeHTMLAttr(s.id)}">
-                <span class="strategy-drag-handle text-zinc-500 text-sm select-none cursor-grab active:cursor-grabbing px-1.5" title="Drag to reorder">⠿</span>
-                <div class="flex-1 min-w-0 truncate">
-                    <span class="text-xs text-zinc-300 font-medium">${escapeHTML(s.label)}</span>
-                </div>
-                <button type="button" class="strategy-toggle relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isEnabled ? 'bg-violet-600' : 'bg-zinc-700'}" data-enabled="${isEnabled}">
-                    <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isEnabled ? 'translate-x-4' : 'translate-x-0'}"></span>
-                </button>
-            </div>`;
-        }).join('');
-
-        strategyHTML = `<div class="py-3 border-b border-zinc-800/50">
-            <div class="mb-2 px-1">
-                <span class="text-sm text-zinc-400">Data Sources</span>
-                <p class="text-[10px] text-zinc-600 mt-0.5">Drag to reorder · toggle to enable/disable</p>
-            </div>
-            <div id="strategy-list" class="space-y-0.5">${rows}</div>
+        const resolvedList = buildResolvedStrategyList(strategies, p.collection_strategies || null);
+        const rows = resolvedList.map(s => `
+            <div class="strategy-item" data-strategy-id="${escapeHTMLAttr(s.id)}">
+                <span class="strategy-drag-handle" title="Drag to reorder">⠿</span>
+                <span class="strategy-label">${escapeHTML(s.label)}</span>
+                <label class="toggle${s.enabled ? ' on' : ''}">
+                    <i></i><span>${s.enabled ? 'On' : 'Off'}</span>
+                </label>
+            </div>`).join('');
+        strategyHTML = `<div class="pd-row" style="display:block;">
+            <div class="pd-key">Data Sources</div>
+            <div class="pd-sub">Drag to reorder · toggle to enable/disable</div>
+            <div id="strategy-list" class="strategy-list">${rows}</div>
         </div>`;
     }
 
-    return `<form id="provider-config-form" class="space-y-4 min-w-0 overflow-x-hidden px-1" onsubmit="return false">
-        <h3 class="text-base font-semibold text-zinc-100 flex items-center gap-2"><span>${p.icon}</span> ${escapeHTML(p.name)}</h3>
-        <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-            <div><span class="text-sm text-zinc-400">Enabled</span><p class="text-[10px] text-zinc-600 mt-0.5">Polling active for this provider</p></div>
-            <button type="button" id="field-enabled-toggle" data-enabled="${p.enabled}" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${p.enabled ? 'bg-violet-600' : 'bg-zinc-700'}">
-                <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${p.enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-            </button>
+    return `<div id="provider-config-form">
+        ${apiKeyHTML}
+        ${cookieHTML}
+        ${oauthHTML}
+        <div class="pd-row">
+            <div class="pd-key">Account Label</div>
+            <input type="text" id="field-account-label" value="${escapeHTMLAttr(p.account_label || '')}" placeholder="Auto-detected" class="pd-inp">
+        </div>
+        <div class="pd-row">
+            <div>
+                <div class="pd-key">Poll Interval</div>
+                <div class="pd-sub">Effective: ${p.effective_poll_interval}s (${p.poll_interval_source}) · default: ${defaultTtlLabel}</div>
+            </div>
+            <span style="font-size:10px;color:var(--ink-3);">use row shortcut to override</span>
         </div>
         ${strategyHTML}
-        ${p.supports_api_key ? `<div class="py-3 border-b border-zinc-800/50">
-            <div class="flex items-center justify-between mb-2"><span class="text-sm text-zinc-400">API Key</span><button type="button" id="api-key-edit-btn" class="toggle-btn text-xs">Edit</button></div>
-            <div id="api-key-display" class="${p.api_key_set ? '' : 'hidden'}"><span class="mono text-xs text-zinc-500">••••••••••••••••</span></div>
-            <div id="api-key-input-row" class="${p.api_key_set ? 'hidden' : ''}"><input type="text" id="field-api-key" placeholder="${p.api_key_set ? 'Leave blank to keep current key' : 'Enter API key'}" class="w-full mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-violet-500"></div>
-            ${!p.api_key_set ? '<p class="text-[10px] text-zinc-600 mt-1">No key stored — env var / file / keychain used as fallback.</p>' : ''}
-        </div>` : ''}
-        ${p.supports_session_cookie ? `<div class="py-3 border-b border-zinc-800/50">
-            <div class="flex items-center justify-between mb-2"><div><span class="text-sm text-zinc-400">${escapeHTML(p.session_cookie_label || 'Session Cookie')}</span><p class="text-[10px] text-zinc-600 mt-0.5">${escapeHTML(p.session_cookie_help || 'Manual override — bypasses browser cookie extraction')}</p></div><button type="button" id="session-cookie-edit-btn" class="toggle-btn text-xs">Edit</button></div>
-            <div id="session-cookie-display" class="${p.session_cookie_set ? '' : 'hidden'}"><span class="mono text-xs text-zinc-500">••••••••••••••••</span></div>
-            <div id="session-cookie-input-row" class="${p.session_cookie_set ? 'hidden' : ''}"><input type="text" id="field-session-cookie" placeholder="${p.session_cookie_set ? 'Leave blank to keep current value' : 'Paste session cookie value'}" class="w-full mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-violet-500"></div>
-            ${!p.session_cookie_set ? '<p class="text-[10px] text-zinc-600 mt-1">No cookie stored — browser extraction used as fallback.</p>' : ''}
-        </div>` : ''}
-        ${p.provider_id === 'github' ? `<div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-                <div>
-                    <span class="text-sm text-zinc-400">GitHub OAuth</span>
-                    <p class="text-[10px] text-zinc-600 mt-0.5">${STATE.githubAuth?.authenticated ? `Connected as <span class="text-zinc-400">${escapeHTML(STATE.githubAuth.account || STATE.githubAuth.name || 'Account')}${STATE.githubAuth.email ? ` (${escapeHTML(STATE.githubAuth.email)})` : ''}</span>` : 'Not connected'}</p>
-                </div>
-  ${STATE.githubAuth?.authenticated ? `<button type="button" onclick="handleGitHubLogout()" class="toggle-btn text-xs text-red-400" style="border-color:#f87171">Disconnect</button>` : `<button type="button" onclick="startGitHubLogin()" class="toggle-btn text-xs">Connect</button>`}
-        </div>` : ''}
-        <label class="flex items-center justify-between py-3 border-b border-zinc-800/50"><span class="text-sm text-zinc-400">Account Label</span><input type="text" id="field-account-label" value="${escapeHTMLAttr(p.account_label || '')}" placeholder="Auto-detected" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 w-48 focus:outline-none focus:border-violet-500"></label>
-        <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-            <div>
-                <span class="text-sm text-zinc-400">Poll Interval Override</span>
-                <p class="text-[10px] text-zinc-600 mt-0.5">Effective: ${p.effective_poll_interval}s (${p.poll_interval_source})</p>
+        <div class="pd-footer">
+            <button type="button" id="provider-raw-data-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">View Raw Data</button>
+            <div style="display:flex;gap:8px;">
+                <button type="button" id="provider-discard-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Discard</button>
+                <button type="button" id="provider-save-btn" class="btn-primary" style="padding:4px 10px;font-size:9px;">Save</button>
             </div>
-            <select id="field-poll-interval" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500"><option value="" ${!p.poll_interval_seconds ? 'selected' : ''}>Default (${defaultTtlLabel})</option>${pollSelectOpts}</select>
         </div>
-        <div class="flex justify-between items-center pt-2">
-            <button type="button" id="provider-raw-data-btn" class="toggle-btn text-xs" style="border-color:#3f3f46;color:#a1a1aa;">View Raw Data</button>
-            <div class="flex gap-2"><button type="button" id="provider-discard-btn" class="toggle-btn text-xs">Discard</button><button type="button" id="provider-save-btn" class="toggle-btn text-xs" style="border-color:#7c3aed;color:#c4b5fd;">Save</button></div>
-        </div>
-    </form>`;
+    </div>`;
 }
 
-/** Build the merged and ordered strategy list for display. */
-function buildResolvedStrategyList(supported, savedConfig) {
-    if (!savedConfig || savedConfig.length === 0) {
-        // No saved config — show all in default order, all enabled
-        return supported.map(s => ({ ...s, enabled: true }));
-    }
+function wireProviderDetail(pane, selected) {
+    pane.querySelector('#provider-save-btn')?.addEventListener('click', () =>
+        saveProviderConfig(pane, selected.provider_id)
+    );
+    pane.querySelector('#provider-discard-btn')?.addEventListener('click', () =>
+        renderProvidersSection(pane)
+    );
+    pane.querySelector('#provider-raw-data-btn')?.addEventListener('click', () => {
+        if (typeof window.viewRawProviderData === 'function') {
+            window.viewRawProviderData(selected.provider_id);
+        }
+    });
+    pane.querySelector('#api-key-edit-btn')?.addEventListener('click', () => toggleFieldEdit(pane, 'api-key'));
+    pane.querySelector('#session-cookie-edit-btn')?.addEventListener('click', () => toggleFieldEdit(pane, 'session-cookie'));
 
-    // Start from saved order
-    const result = [];
-    const supportedMap = Object.fromEntries(supported.map(s => [s.id, s]));
-    const seenIds = new Set();
+    // Strategy toggles
+    pane.querySelectorAll('#strategy-list .toggle').forEach(toggle => {
+        toggle.addEventListener('click', function () {
+            const newEnabled = !this.classList.contains('on');
+            this.classList.toggle('on', newEnabled);
+            this.querySelector('span').textContent = newEnabled ? 'On' : 'Off';
+        });
+    });
 
-    for (const saved of savedConfig) {
-        if (supportedMap[saved.id]) {
-            result.push({
-                id: saved.id,
-                label: supportedMap[saved.id].label,
-                enabled: saved.enabled !== false,
+    // Sortable drag-reorder
+    const strategyList = pane.querySelector('#strategy-list');
+    if (strategyList) {
+        ensureSortable().then(Sortable => {
+            Sortable.create(strategyList, {
+                handle: '.strategy-drag-handle',
+                animation: 150,
+                ghostClass: 'opacity-30',
             });
-            seenIds.add(saved.id);
-        }
+        }).catch(err => console.warn('Could not load Sortable.js:', err));
     }
-
-    // Append any new strategies not in saved config (enabled by default)
-    for (const s of supported) {
-        if (!seenIds.has(s.id)) {
-            result.push({ id: s.id, label: s.label, enabled: true });
-        }
-    }
-
-    return result;
 }
 
-function toggleApiKeyEdit(pane) {
-    const display = pane.querySelector('#api-key-display');
-    const input = pane.querySelector('#api-key-input-row');
+function toggleFieldEdit(pane, prefix) {
+    const display = pane.querySelector(`#${prefix}-display`);
+    const input = pane.querySelector(`#${prefix}-input-row`);
     if (!display || !input) return;
-    display.classList.toggle('hidden');
-    input.classList.toggle('hidden');
+    const showing = input.style.display !== 'none';
+    display.style.display = showing ? '' : 'none';
+    input.style.display = showing ? 'none' : '';
 }
 
-function toggleSessionCookieEdit(pane) {
-    const display = pane.querySelector('#session-cookie-display');
-    const input = pane.querySelector('#session-cookie-input-row');
-    if (!display || !input) return;
-    display.classList.toggle('hidden');
-    input.classList.toggle('hidden');
-}
-
-async function saveProviderConfig(pane, form, providerId) {
+async function saveProviderConfig(pane, providerId) {
     const btn = pane.querySelector('#provider-save-btn');
     if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
 
-    const enabledToggle = pane.querySelector('#field-enabled-toggle');
-    const enabled = enabledToggle ? enabledToggle.dataset.enabled === 'true' : true;
-    const accountLabel = form.querySelector('#field-account-label')?.value ?? null;
+    const expandedRow = pane.querySelector('.provider-row.expanded');
+    const enabledToggle = expandedRow?.querySelector('.provider-row-header .toggle');
+    const enabled = enabledToggle ? enabledToggle.classList.contains('on') : true;
 
-    const apiKeyInputRow = pane.querySelector('#api-key-input-row');
-    const apiKeyVisible = apiKeyInputRow && !apiKeyInputRow.classList.contains('hidden');
-    const apiKey = apiKeyVisible ? (form.querySelector('#field-api-key')?.value ?? '') : undefined;
+    const accountLabel = pane.querySelector('#field-account-label')?.value ?? null;
 
-    const sessionCookieInputRow = pane.querySelector('#session-cookie-input-row');
-    const sessionCookieVisible = sessionCookieInputRow && !sessionCookieInputRow.classList.contains('hidden');
-    const sessionCookie = sessionCookieVisible ? (form.querySelector('#field-session-cookie')?.value ?? '') : undefined;
+    const apiKeyInput = pane.querySelector('#api-key-input-row');
+    const apiKeyVisible = apiKeyInput && apiKeyInput.style.display !== 'none';
+    const apiKey = apiKeyVisible ? (pane.querySelector('#field-api-key')?.value ?? '') : undefined;
 
-    const pollRaw = form.querySelector('#field-poll-interval')?.value;
-    const pollIntervalSeconds = pollRaw ? parseInt(pollRaw, 10) : 0;
+    const cookieInput = pane.querySelector('#session-cookie-input-row');
+    const cookieVisible = cookieInput && cookieInput.style.display !== 'none';
+    const sessionCookie = cookieVisible ? (pane.querySelector('#field-session-cookie')?.value ?? '') : undefined;
 
-    // Read strategy ordering + enabled state from the DOM
     let collectionStrategies = null;
     const strategyList = pane.querySelector('#strategy-list');
     if (strategyList) {
-        const rows = strategyList.querySelectorAll('.strategy-row');
+        const rows = strategyList.querySelectorAll('.strategy-item');
         if (rows.length > 0) {
             collectionStrategies = Array.from(rows).map(row => ({
                 id: row.dataset.strategyId,
-                enabled: row.querySelector('.strategy-toggle')?.dataset.enabled === 'true',
+                enabled: row.querySelector('.toggle')?.classList.contains('on') ?? true,
             }));
         }
     }
@@ -320,7 +404,6 @@ async function saveProviderConfig(pane, form, providerId) {
             ...(apiKey !== undefined ? { api_key: apiKey } : {}),
             ...(sessionCookie !== undefined ? { session_cookie: sessionCookie } : {}),
             account_label: accountLabel,
-            poll_interval_seconds: pollIntervalSeconds,
             ...(collectionStrategies !== null ? { collection_strategies: collectionStrategies } : {}),
         });
         renderProvidersSection(pane);
@@ -330,13 +413,121 @@ async function saveProviderConfig(pane, form, providerId) {
     }
 }
 
+function buildResolvedStrategyList(supported, savedConfig) {
+    if (!savedConfig || savedConfig.length === 0) {
+        return supported.map(s => ({ ...s, enabled: true }));
+    }
+    const result = [];
+    const supportedMap = Object.fromEntries(supported.map(s => [s.id, s]));
+    const seenIds = new Set();
+    for (const saved of savedConfig) {
+        if (supportedMap[saved.id]) {
+            result.push({ id: saved.id, label: supportedMap[saved.id].label, enabled: saved.enabled !== false });
+            seenIds.add(saved.id);
+        }
+    }
+    for (const s of supported) {
+        if (!seenIds.has(s.id)) result.push({ id: s.id, label: s.label, enabled: true });
+    }
+    return result;
+}
+
+// ─── Tokens ──────────────────────────────────────────────────────────────────
+
 async function renderTokensSection(pane) {
     try {
         const health = await fetchTokenHealth();
-        pane.innerHTML = `<h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide mb-4">Token Health</h3>${buildTokenHealthPanel(health.tokens)}`;
+        const tokens = health.tokens || [];
+        _tokenCount = tokens.length;
+        updateNavCounts();
+
+        const rowsHTML = tokens.length === 0
+            ? '<p style="padding:16px;color:var(--ink-3);font-size:11px;">No active credentials in cache.</p>'
+            : tokens.map(t => buildTokenRowHTML(t)).join('');
+
+        pane.innerHTML = `<div class="settings-panel glass">
+            <header class="sp-head">
+                <div>
+                    <h3>Token health</h3>
+                    <p>OAuth tokens and browser cookies discovered by Runway.</p>
+                </div>
+                <button class="btn-ghost" id="tokens-refresh-btn">Refresh all</button>
+            </header>
+            <div class="token-list">${rowsHTML}</div>
+        </div>`;
+
+        pane.querySelectorAll('.tk-refresh[data-provider]:not([data-purge])').forEach(btn => {
+            btn.addEventListener('click', () => refreshToken(btn.dataset.provider, btn.dataset.account));
+        });
+        pane.querySelectorAll('.tk-refresh[data-purge]').forEach(btn => {
+            btn.addEventListener('click', () => deleteToken(btn.dataset.provider, btn.dataset.account));
+        });
+        pane.querySelector('#tokens-refresh-btn')?.addEventListener('click', () => renderTokensSection(pane));
+
     } catch (err) {
-        pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load token health: ${escapeHTML(err.message)}</p>`;
+        pane.innerHTML = `<div class="settings-panel glass"><p style="padding:20px;color:var(--crit);font-size:11px;">Failed to load token health: ${escapeHTML(err.message)}</p></div>`;
     }
+}
+
+function buildTokenRowHTML(t) {
+    // Expiry info
+    let expiryLabel = 'no expiry', expiryCls = '', expiryPct = 100;
+    if (t.status === 'expired') {
+        expiryLabel = 'expired'; expiryCls = 'crit'; expiryPct = 0;
+    } else if (t.expires_at) {
+        const days = Math.ceil((new Date(t.expires_at) - Date.now()) / 86400000);
+        if (days <= 0) { expiryLabel = 'expired'; expiryCls = 'crit'; expiryPct = 0; }
+        else {
+            expiryCls = days <= 2 ? 'crit' : days <= 14 ? 'warn' : '';
+            expiryPct = Math.max(4, Math.min(100, days / 180 * 100));
+            expiryLabel = days === 1 ? '1 day' : `${days} days`;
+        }
+    } else if (t.ttl_remaining_seconds > 0) {
+        const days = Math.ceil(t.ttl_remaining_seconds / 86400);
+        expiryCls = days <= 2 ? 'crit' : days <= 14 ? 'warn' : '';
+        expiryPct = Math.max(4, Math.min(100, days / 180 * 100));
+        expiryLabel = `~${days}d`;
+    }
+
+    // Kind for badge
+    const types = t.token_types || [];
+    let kind = 'local';
+    if (types.some(k => k === 'oauth_token' || k === 'access_token')) kind = 'oauth';
+    else if (types.some(k => k === 'api_key')) kind = 'api';
+    else if (types.some(k => k.includes('cookie') || k.includes('session') || k.startsWith('COOKIE_') || k.startsWith('__Secure-'))) kind = 'web';
+
+    // Friendly kind label
+    const seenKinds = new Set();
+    const kindLabels = [];
+    for (const k of types) {
+        let clean = FRIENDLY_TOKEN_TYPES[k] || k;
+        if (k.startsWith('COOKIE_') || k.startsWith('__Secure-') || k.toLowerCase().includes('session')) clean = 'Cookie';
+        if (!seenKinds.has(clean)) { kindLabels.push(clean); seenKinds.add(clean); }
+    }
+    const kindLabel = kindLabels[0] || 'Token';
+
+    // Account display
+    let account = t.account_label || t.account_id || '';
+    if (['default', 'config', 'config-cookie'].includes(account)) account = '';
+
+    const canRefresh = t.can_refresh && t.status !== 'valid';
+
+    return `<div class="token-row">
+        <div class="plogo c-${escapeHTMLAttr(t.provider)}">${escapeHTML(t.provider?.[0] ?? '?')}</div>
+        <div>
+            <div class="tk-name">${escapeHTML(t.provider)}</div>
+            <div class="tk-acc">${account ? escapeHTML(account) + ' · ' : ''}${escapeHTML(kindLabel)}</div>
+        </div>
+        <div>
+            <div class="tk-expiry${expiryCls ? ' ' + expiryCls : ''}">${escapeHTML(expiryLabel)}</div>
+            <div class="tk-bar${expiryCls ? ' ' + expiryCls : ''}"><i style="width:${expiryPct}%"></i></div>
+        </div>
+        <span class="badge src-${kind}">${kind}</span>
+        <div style="display:flex;gap:4px;align-items:center;justify-content:flex-end;">
+            ${canRefresh ? `<button class="tk-refresh" data-provider="${escapeHTMLAttr(t.provider)}" data-account="${escapeHTMLAttr(t.account_id)}">↻</button>` : ''}
+            <button class="tk-refresh" data-purge data-provider="${escapeHTMLAttr(t.provider)}" data-account="${escapeHTMLAttr(t.account_id)}" style="color:var(--crit);" title="Purge from cache">✕</button>
+        </div>
+    </div>`;
 }
 
 export async function refreshToken(provider, accountId) {
@@ -354,11 +545,10 @@ export async function refreshToken(provider, accountId) {
 }
 
 export async function deleteToken(provider, accountId) {
-    if (!confirm(`Are you sure you want to purge the ${provider} session for ${accountId} from the live cache?`)) return;
-    
+    if (!confirm(`Purge the ${provider} session for ${accountId} from the live cache?`)) return;
     try {
         const res = await fetch(`/api/v1/system/token-health/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`, {
-            method: 'DELETE'
+            method: 'DELETE',
         });
         const d = await res.json();
         if (res.ok) {
@@ -372,6 +562,8 @@ export async function deleteToken(provider, accountId) {
     }
 }
 
+// ─── Webhooks ─────────────────────────────────────────────────────────────────
+
 async function renderWebhooksSection(pane) {
     let webhooks = [];
     try {
@@ -379,35 +571,87 @@ async function renderWebhooksSection(pane) {
         webhooks = (await res.json()).webhooks || [];
     } catch (e) { /* ignore */ }
 
-    pane.innerHTML = `<div>
-        <div class="flex items-center justify-between mb-4">
-            <h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide">Webhook Alerts</h3>
-            <button onclick="addWebhookRow()" class="toggle-btn text-xs">+ Add</button>
+    _webhookCount = webhooks.length;
+    updateNavCounts();
+
+    const cardsHTML = webhooks.length
+        ? webhooks.map(w => webhookCardHtml(w)).join('')
+        : '<p style="padding:16px;color:var(--ink-3);font-size:11px;">No webhook rules. Click "+ New rule" to add one.</p>';
+
+    pane.innerHTML = `<div class="settings-panel glass">
+        <header class="sp-head">
+            <div>
+                <h3>Webhooks · threshold alerts</h3>
+                <p>Rules fire when any matching quota crosses its threshold.</p>
+            </div>
+            <button class="btn-primary" id="add-webhook-btn">+ New rule</button>
+        </header>
+        <div class="webhook-list" id="webhook-rows">${cardsHTML}</div>
+    </div>`;
+
+    wireWebhookCards(pane);
+    pane.querySelector('#add-webhook-btn')?.addEventListener('click', () => addWebhookRow());
+}
+
+function webhookCardHtml(w) {
+    const icon = w.channel === 'slack' ? '#' : 'D';
+    const url = w.url || '';
+    const shortUrl = url.length > 48 ? url.slice(0, 48) + '…' : url || '—';
+    return `<div class="webhook-card" data-webhook-id="${w.id}">
+        <div class="wh-head">
+            <div class="wh-icon ${escapeHTMLAttr(w.channel)}">${icon}</div>
+            <div style="flex:1;min-width:0;">
+                <div class="wh-title">${escapeHTML(w.provider_id || '*')}</div>
+                <div class="wh-url">${escapeHTML(shortUrl)}</div>
+            </div>
+            <label class="toggle on"><i></i><span>Active</span></label>
         </div>
-        <div id="webhook-rows" class="space-y-3">${webhooks.map(w => webhookRowHtml(w)).join('')}</div>
+        <div class="wh-rule">
+            <input type="text" data-field="provider_id" value="${escapeHTMLAttr(w.provider_id)}" placeholder="provider or *" class="inp" style="width:80px;">
+            <input type="number" data-field="threshold_pct" value="${w.threshold_pct}" min="1" max="100" step="1" class="inp" style="width:52px;">
+            <span style="color:var(--ink-3);font-size:10px;">%</span>
+            <select data-field="channel" class="inp" style="width:auto;">
+                <option value="discord" ${w.channel === 'discord' ? 'selected' : ''}>Discord</option>
+                <option value="slack" ${w.channel === 'slack' ? 'selected' : ''}>Slack</option>
+            </select>
+            <input type="url" data-field="url" value="${escapeHTMLAttr(url)}" placeholder="Webhook URL" class="inp" style="flex:1;min-width:120px;">
+            <button class="btn-ghost wh-test" style="padding:4px 10px;font-size:9px;">Test</button>
+            <button class="btn-ghost wh-delete" style="padding:4px 10px;font-size:9px;color:var(--crit);">✕</button>
+        </div>
     </div>`;
 }
 
-function webhookRowHtml(w) {
-    return `<div class="flex flex-wrap gap-2 items-center p-3 bg-zinc-900/50 rounded-xl" data-webhook-id="${w.id}">
-        <input type="text" value="${escapeHTMLAttr(w.provider_id)}" placeholder="provider or *" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-24 text-zinc-200" onchange="patchWebhook(${w.id}, 'provider_id', this.value)">
-        <input type="number" value="${w.threshold_pct}" min="1" max="100" step="1" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-16 text-zinc-200" onchange="patchWebhook(${w.id}, 'threshold_pct', parseFloat(this.value))">
-        <span class="text-zinc-600 text-xs">%</span>
-        <select class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200" onchange="patchWebhook(${w.id}, 'channel', this.value)">
-            <option value="discord" ${w.channel === 'discord' ? 'selected' : ''}>Discord</option>
-            <option value="slack" ${w.channel === 'slack' ? 'selected' : ''}>Slack</option>
-        </select>
-        <input type="url" value="${escapeHTMLAttr(w.url)}" placeholder="Webhook URL" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 flex-1 min-w-[180px] text-zinc-200" onchange="patchWebhook(${w.id}, 'url', this.value)">
-        <button onclick="testWebhook(${w.id})" class="toggle-btn text-xs">Test</button>
-        <button onclick="deleteWebhook(${w.id})" class="toggle-btn text-xs text-red-400">✕</button>
-    </div>`;
+function wireWebhookCards(pane) {
+    pane.querySelectorAll('.webhook-card').forEach(card => {
+        const webhookId = parseInt(card.dataset.webhookId, 10);
+        card.querySelectorAll('[data-field]').forEach(el => {
+            el.addEventListener('change', async () => {
+                const field = el.dataset.field;
+                const value = el.type === 'number' ? parseFloat(el.value) : el.value;
+                await patchWebhook(webhookId, field, value);
+                // Sync header display
+                if (field === 'provider_id') {
+                    const title = card.querySelector('.wh-title');
+                    if (title) title.textContent = el.value || '*';
+                } else if (field === 'url') {
+                    const urlEl = card.querySelector('.wh-url');
+                    if (urlEl) urlEl.textContent = el.value.length > 48 ? el.value.slice(0, 48) + '…' : (el.value || '—');
+                } else if (field === 'channel') {
+                    const ico = card.querySelector('.wh-icon');
+                    if (ico) { ico.className = `wh-icon ${el.value}`; ico.textContent = el.value === 'slack' ? '#' : 'D'; }
+                }
+            });
+        });
+        card.querySelector('.wh-test')?.addEventListener('click', () => testWebhook(webhookId));
+        card.querySelector('.wh-delete')?.addEventListener('click', () => deleteWebhook(webhookId));
+    });
 }
 
 export async function addWebhookRow() {
     const res = await fetch('/api/v1/system/webhooks', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({provider_id: '*', threshold_pct: 90, url: '', channel: 'discord'}),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: '*', threshold_pct: 90, url: '', channel: 'discord' }),
     });
     if (res.ok) {
         const pane = document.getElementById('settings-pane');
@@ -418,22 +662,24 @@ export async function addWebhookRow() {
 export async function patchWebhook(id, field, value) {
     await fetch(`/api/v1/system/webhooks/${id}`, {
         method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({[field]: value}),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
     });
 }
 
 export async function testWebhook(id) {
-    const res = await fetch(`/api/v1/system/webhooks/${id}/test`, {method: 'POST'});
+    const res = await fetch(`/api/v1/system/webhooks/${id}/test`, { method: 'POST' });
     const data = await res.json();
     alert(res.ok ? 'Test sent!' : `Failed: ${data.detail}`);
 }
 
 export async function deleteWebhook(id) {
-    await fetch(`/api/v1/system/webhooks/${id}`, {method: 'DELETE'});
+    await fetch(`/api/v1/system/webhooks/${id}`, { method: 'DELETE' });
     const pane = document.getElementById('settings-pane');
     if (pane) renderWebhooksSection(pane);
 }
+
+// ─── System ───────────────────────────────────────────────────────────────────
 
 async function renderSystemSection(pane) {
     try {
@@ -442,96 +688,129 @@ async function renderSystemSection(pane) {
         const globalPollVal = cfg.default_poll_interval_seconds ?? '';
         const localCollectorOn = cfg.local_collector_enabled;
         const credScrapingOn = cfg.local_credential_scraping_enabled;
-        const pollSelectOpts = POLL_OPTIONS.map(o => `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`).join('');
-        pane.innerHTML = `<h3 class="text-sm font-semibold text-zinc-300 uppercase tracking-wide mb-4">System</h3>
-            <div class="space-y-4">
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50"><span class="text-zinc-400 text-sm">Run Mode</span><span class="text-zinc-100 mono bg-zinc-800 px-2 py-0.5 rounded text-xs">${escapeHTML(s.run_mode)}</span></div>
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50"><span class="text-zinc-400 text-sm">Host / Port</span><span class="text-zinc-100 mono text-sm">${escapeHTML(s.app_host)}:${s.app_port}</span></div>
-                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-                    <div><span class="text-zinc-400 text-sm">Local Collectors</span><p class="text-[10px] text-zinc-600 mt-0.5">Enable reading local files and DBs (CLI tools, logs)</p></div>
-                    <button type="button" id="toggle-local-collector" data-enabled="${localCollectorOn}" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${localCollectorOn ? 'bg-violet-600' : 'bg-zinc-700'}"><span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${localCollectorOn ? 'translate-x-5' : 'translate-x-0'}"></span></button>
+        const pollSelectOpts = POLL_OPTIONS.map(o =>
+            `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`
+        ).join('');
+
+        pane.innerHTML = `<div class="settings-panel glass">
+            <header class="sp-head">
+                <div>
+                    <h3>System</h3>
+                    <p>Global configuration · overrides environment variables.</p>
                 </div>
-                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-                    <div><span class="text-zinc-400 text-sm">Credential Scraping</span><p class="text-[10px] text-zinc-600 mt-0.5">Allow reading browser cookies and credential files</p></div>
-                    <button type="button" id="toggle-cred-scraping" data-enabled="${credScrapingOn}" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${credScrapingOn ? 'bg-violet-600' : 'bg-zinc-700'}"><span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${credScrapingOn ? 'translate-x-5' : 'translate-x-0'}"></span></button>
+            </header>
+            <div class="sys-grid">
+                <div class="sys-row">
+                    <div><div class="sys-k">Run Mode</div></div>
+                    <span class="inp" style="display:block;width:auto;">${escapeHTML(s.run_mode)}</span>
                 </div>
-                <div class="flex justify-between items-center py-3 border-b border-zinc-800/50"><span class="text-zinc-400 text-sm">Database Encryption</span><span class="${s.encryption_enabled ? 'text-green-400' : 'text-yellow-500'} mono text-sm">${s.encryption_enabled ? '✅ Active' : '🔓 Plaintext'}</span></div>
-                ${!s.encryption_enabled ? '<p class="text-[10px] text-yellow-600 italic mt-1">Set DB_ENCRYPTION_KEY env var to secure your snapshots.</p>' : ''}
-                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-                    <div><span class="text-zinc-400 text-sm">Default Poll Interval</span><p class="text-[10px] text-zinc-600 mt-0.5">Applies to all providers; per-provider overrides take precedence</p></div>
-                    <div class="flex gap-2 items-center"><select id="field-global-poll" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 focus:outline-none focus:border-violet-500"><option value="" ${!globalPollVal ? 'selected' : ''}>Per-collector default</option>${pollSelectOpts}</select><button id="save-global-poll-btn" class="toggle-btn text-xs">Save</button></div>
+                <div class="sys-row">
+                    <div><div class="sys-k">Host / Port</div></div>
+                    <span style="font-size:12px;color:var(--ink);">${escapeHTML(s.app_host)}:${s.app_port}</span>
                 </div>
-                <div class="flex items-center justify-between py-3 border-b border-zinc-800/50">
-                    <div><span class="text-zinc-400 text-sm">Browser Preference</span><p class="text-[10px] text-zinc-600 mt-0.5">Cookie-auth order for Claude web, ChatGPT, Ollama… (e.g. safari,chrome,firefox)</p></div>
-                    <div class="flex gap-2 items-center"><input id="field-browser-pref" type="text" value="${browserPref}" class="mono text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 w-52 focus:outline-none focus:border-violet-500" placeholder="safari,chrome,chromium,edge,firefox"><button id="save-browser-pref-btn" class="toggle-btn text-xs">Save</button></div>
+                <div class="sys-row">
+                    <div>
+                        <div class="sys-k">Local Collectors</div>
+                        <div class="sys-s">Enable reading local files and DBs (CLI tools, logs)</div>
+                    </div>
+                    <label class="toggle${localCollectorOn ? ' on' : ''}" data-cfg-key="local_collector_enabled">
+                        <i></i><span>${localCollectorOn ? 'Enabled' : 'Disabled'}</span>
+                    </label>
+                </div>
+                <div class="sys-row">
+                    <div>
+                        <div class="sys-k">Credential Scraping</div>
+                        <div class="sys-s">Allow reading browser cookies and credential files</div>
+                    </div>
+                    <label class="toggle${credScrapingOn ? ' on' : ''}" data-cfg-key="local_credential_scraping_enabled">
+                        <i></i><span>${credScrapingOn ? 'Enabled' : 'Disabled'}</span>
+                    </label>
+                </div>
+                <div class="sys-row">
+                    <div><div class="sys-k">Database Encryption</div></div>
+                    <span style="font-size:11px;color:${s.encryption_enabled ? 'var(--good)' : 'var(--warn)'};">${s.encryption_enabled ? '✅ Active' : '🔓 Plaintext'}</span>
+                </div>
+                ${!s.encryption_enabled ? `<div class="sys-row">
+                    <div class="sys-s" style="color:var(--warn);">Set <code>DB_ENCRYPTION_KEY</code> env var to secure your snapshots.</div>
+                    <div></div>
+                </div>` : ''}
+                <div class="sys-row">
+                    <div>
+                        <div class="sys-k">Default Poll Interval</div>
+                        <div class="sys-s">Applies to all providers; per-provider overrides take precedence</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="field-global-poll" class="inp" style="width:auto;">
+                            <option value="" ${!globalPollVal ? 'selected' : ''}>Per-collector default</option>
+                            ${pollSelectOpts}
+                        </select>
+                        <button id="save-global-poll-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
+                    </div>
+                </div>
+                <div class="sys-row">
+                    <div>
+                        <div class="sys-k">Browser Preference</div>
+                        <div class="sys-s">Cookie-auth order for Claude web, ChatGPT, Ollama… (e.g. safari,chrome,firefox)</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input id="field-browser-pref" type="text" value="${browserPref}" class="inp" placeholder="safari,chrome,chromium,edge,firefox">
+                        <button id="save-browser-pref-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
+                    </div>
                 </div>
             </div>
-            <div class="mt-8 p-4 bg-blue-900/20 border border-blue-800/30 rounded-xl text-xs text-blue-300 leading-relaxed"><strong>Tip:</strong> Core configuration is still managed via <code class="bg-blue-900/40 px-1 rounded">.env</code>. Provider-specific overrides can be set in the Providers section above.</div>`;
+            <div class="glass" style="margin-top:16px;padding:14px;border-left:2px solid var(--accent);font-size:11px;line-height:1.6;">
+                <strong>Tip:</strong> Core configuration is still managed via <code style="background:var(--surface-2);padding:1px 5px;color:var(--accent);">.env</code>. Provider-specific overrides can be set in the Providers section above.
+            </div>
+        </div>`;
 
-        pane.querySelector('#save-global-poll-btn')?.addEventListener('click', async function() {
+        // System toggles
+        pane.querySelectorAll('.toggle[data-cfg-key]').forEach(toggle => {
+            toggle.addEventListener('click', async function () {
+                const cfgKey = this.dataset.cfgKey;
+                const newVal = !this.classList.contains('on');
+                this.classList.toggle('on', newVal);
+                this.querySelector('span').textContent = newVal ? 'Enabled' : 'Disabled';
+                try {
+                    await putAppConfig({ [cfgKey]: newVal });
+                } catch (err) {
+                    this.classList.toggle('on', !newVal);
+                    this.querySelector('span').textContent = !newVal ? 'Enabled' : 'Disabled';
+                    alert(`Save failed: ${err.message}`);
+                }
+            });
+        });
+
+        pane.querySelector('#save-global-poll-btn')?.addEventListener('click', async function () {
             const select = pane.querySelector('#field-global-poll');
             const val = select?.value ? parseInt(select.value, 10) : 0;
-            this.textContent = 'Saving…';
-            this.disabled = true;
+            this.textContent = 'Saving…'; this.disabled = true;
             try {
                 await putAppConfig({ default_poll_interval_seconds: val });
                 this.textContent = 'Saved';
                 setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
-            } catch (err) {
-                this.textContent = 'Error';
-                this.disabled = false;
+            } catch {
+                this.textContent = 'Error'; this.disabled = false;
             }
         });
 
-        pane.querySelector('#save-browser-pref-btn')?.addEventListener('click', async function() {
+        pane.querySelector('#save-browser-pref-btn')?.addEventListener('click', async function () {
             const input = pane.querySelector('#field-browser-pref');
             const val = input?.value.trim() || null;
-            this.textContent = 'Saving…';
-            this.disabled = true;
+            this.textContent = 'Saving…'; this.disabled = true;
             try {
                 await putAppConfig({ browser_preference: val });
                 this.textContent = 'Saved';
                 setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
-            } catch (err) {
-                this.textContent = 'Error';
-                this.disabled = false;
+            } catch {
+                this.textContent = 'Error'; this.disabled = false;
             }
         });
 
-        function wireSystemToggle(btnId, cfgKey) {
-            const btn = pane.querySelector(`#${btnId}`);
-            if (!btn) return;
-            btn.addEventListener('click', async function() {
-                const newVal = this.dataset.enabled !== 'true';
-                this.dataset.enabled = newVal;
-                this.classList.toggle('bg-violet-600', newVal);
-                this.classList.toggle('bg-zinc-700', !newVal);
-                const knob = this.querySelector('span');
-                if (knob) {
-                    knob.classList.toggle('translate-x-5', newVal);
-                    knob.classList.toggle('translate-x-0', !newVal);
-                }
-                try {
-                    await putAppConfig({ [cfgKey]: newVal });
-                } catch (err) {
-                    this.dataset.enabled = !newVal;
-                    this.classList.toggle('bg-violet-600', !newVal);
-                    this.classList.toggle('bg-zinc-700', newVal);
-                    if (knob) {
-                        knob.classList.toggle('translate-x-5', !newVal);
-                        knob.classList.toggle('translate-x-0', newVal);
-                    }
-                }
-            });
-        }
-        wireSystemToggle('toggle-local-collector', 'local_collector_enabled');
-        wireSystemToggle('toggle-cred-scraping', 'local_credential_scraping_enabled');
     } catch (err) {
-        pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load system info: ${escapeHTML(err.message)}</p>`;
+        pane.innerHTML = `<div class="settings-panel glass"><p style="padding:20px;color:var(--crit);font-size:11px;">Failed to load system info: ${escapeHTML(err.message)}</p></div>`;
     }
 }
 
 export function initSettingsView() {
-    // Settings view uses inline onclick handlers in HTML
-    // No additional event listener setup needed
+    // Event listeners are attached after each section render
 }
