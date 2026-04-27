@@ -56,13 +56,6 @@ function updateNavCounts() {
     }
 }
 
-function deriveTier(p) {
-    const strats = p.supported_strategies || [];
-    if (strats.some(s => s.id === 'api')) return 'API';
-    if (strats.some(s => s.id === 'web')) return 'Web';
-    return 'Local';
-}
-
 function flashRow(pane, providerId) {
     const row = pane.querySelector(`.provider-row[data-provider-id="${CSS.escape(providerId)}"]`);
     if (!row) return;
@@ -216,10 +209,17 @@ export async function renderProvidersSection(pane) {
     }
 }
 
+function formatEffectivePoll(p) {
+    const secs = p.effective_poll_interval;
+    const label = POLL_OPTIONS.find(o => o.value === secs)?.label ?? `${secs}s`;
+    const src = p.poll_interval_source === 'provider_override' ? 'override'
+              : p.poll_interval_source === 'global_override'   ? 'global'
+              : 'default';
+    return `every ${label} · ${src}`;
+}
+
 function buildProviderRowHTML(p) {
     const isExpanded = p.provider_id === _expandedProviderId;
-    const tier = deriveTier(p);
-    const stratIds = (p.supported_strategies || []).map(s => s.id).join(' · ') || '—';
     const pollOpts = POLL_OPTIONS.map(o =>
         `<option value="${o.value}" ${p.poll_interval_seconds === o.value ? 'selected' : ''}>${o.label}</option>`
     ).join('');
@@ -233,7 +233,7 @@ function buildProviderRowHTML(p) {
             <div class="plogo c-${escapeHTMLAttr(p.provider_id)}">${escapeHTML(p.icon || (p.name?.[0] ?? '?'))}</div>
             <div>
                 <div class="pr-name">${escapeHTML(p.name)}</div>
-                <div class="pr-meta">${escapeHTML(stratIds)}</div>
+                <div class="pr-meta">${escapeHTML(formatEffectivePoll(p))}</div>
             </div>
             <div class="pr-poll">poll
                 <select>
@@ -241,7 +241,6 @@ function buildProviderRowHTML(p) {
                     ${pollOpts}
                 </select>
             </div>
-            <div class="pr-tier">${tier}</div>
             <label class="toggle${p.enabled ? ' on' : ''}">
                 <i></i><span>${p.enabled ? 'On' : 'Off'}</span>
             </label>

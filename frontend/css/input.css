@@ -1511,7 +1511,7 @@ header.top .icon-btn[aria-pressed="true"] {
 .provider-row:last-child { border-bottom: 0; }
 .provider-row-header {
     display: grid;
-    grid-template-columns: 30px 1fr 140px 70px 80px;
+    grid-template-columns: 30px 1fr 160px 80px;
     gap: 12px;
     align-items: center;
     padding: 10px 4px;
@@ -1724,8 +1724,8 @@ header.top .icon-btn[aria-pressed="true"] {
     .settings-nav { position: static; display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; }
     .sn-kicker { display: none; }
     .sn-item { flex: 1; min-width: 80px; }
-    .provider-row-header { grid-template-columns: 30px 1fr 100px 60px; }
-    .provider-row-header .pr-tier { display: none; }
+    .provider-row-header { grid-template-columns: 30px 1fr 80px; }
+    .provider-row-header .pr-poll { display: none; }
     .token-row { grid-template-columns: 30px 1fr 80px 60px; }
     .token-row > :nth-child(4) { display: none; }
     .sys-row { grid-template-columns: 1fr; gap: 8px; }
