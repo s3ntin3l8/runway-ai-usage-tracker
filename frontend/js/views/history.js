@@ -156,7 +156,7 @@ function buildHistorySummary(rawHistory, filteredProviders, metric, days) {
     let parts = [`Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${avg.toFixed(1)}${unit} · peak ${peak.toFixed(1)}${unit}`];
     if (critCount > 0) parts.push(`${critCount} crit events`);
 
-    return `<div class="history-summary-text">${parts.join(' · ')}</div>`;
+    return parts.join(' · ');
 }
 
 function updateCsvHref() {
@@ -221,11 +221,11 @@ function friendlyWindowLabel(entry) {
 }
 
 function renderAdditional(list) {
-    if (!list || list.length === 0) return '<span class="text-zinc-600">—</span>';
+    if (!list || list.length === 0) return '—';
     return list.map(a => {
         const label = escapeHTML(friendlyWindowLabel(a));
         const val = formatValue(a.value, a.unit);
-        return `<span class="inline-block mr-1 px-2 py-0.5 rounded bg-zinc-800/60 text-zinc-400 text-[10px] mono">${label} ${val}</span>`;
+        return `<span class="ht-extra">${label} ${val}</span>`;
     }).join('');
 }
 
@@ -285,7 +285,7 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
 
     const container = document.getElementById('history-content');
     if (!history || history.length === 0) {
-        container.innerHTML = '<p class="text-zinc-500 italic">No history data found.</p>';
+        container.innerHTML = '<p class="ht-empty">No history data found.</p>';
         return;
     }
 
@@ -324,49 +324,45 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     const start = (historyState.page - 1) * pageSize;
     const pageData = tableData.slice(start, start + pageSize);
 
-    let html = `<table class="w-full text-left mono text-[11px]">
-        <thead class="text-zinc-600 border-b border-zinc-800/50">
+    const daysLabel = historyState.days >= 30 ? '30d' : historyState.days >= 7 ? '7d' : historyState.days >= 1 ? '24h' : '6h';
+    const metaEl = document.getElementById('history-table-meta');
+    if (metaEl) metaEl.textContent = `${totalItems.toLocaleString()} rows · last ${daysLabel}`;
+
+    let html = `<table>
+        <thead>
             <tr>
-                <th class="py-2 px-2">Time</th>
-                <th class="py-2 px-2">Provider</th>
-                <th class="py-2 px-2">Account</th>
-                <th class="py-2 px-2 text-right">Session</th>
-                <th class="py-2 px-2 text-right">Weekly</th>
-                <th class="py-2 px-2">Additional</th>
+                <th>Time</th>
+                <th>Provider</th>
+                <th>Account</th>
+                <th class="num">Session</th>
+                <th class="num">Weekly</th>
+                <th>Additional</th>
             </tr>
         </thead>
-        <tbody class="text-zinc-400">`;
+        <tbody>`;
     pageData.forEach(s => {
         const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const session = formatWindowValue(s.session);
         const weekly = formatWindowValue(s.weekly);
 
-        html += `<tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
-            <td class="py-2 px-2 text-zinc-600">${date}</td>
-            <td class="py-2 px-2 text-zinc-500 font-medium">${escapeHTML(s.provider_id || '—')}</td>
-            <td class="py-2 px-2 text-zinc-500 italic">${escapeHTML(s.account_label || '—')}</td>
-            <td class="py-2 px-2 text-right font-bold text-zinc-300">${session}</td>
-            <td class="py-2 px-2 text-right font-bold text-zinc-300">${weekly}</td>
-            <td class="py-2 px-2">${renderAdditional(s.additional.length ? s.additional : null)}</td>
+        html += `<tr>
+            <td class="ht-time">${date}</td>
+            <td>${escapeHTML(s.provider_id || '—')}</td>
+            <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
+            <td class="num ht-bold">${session}</td>
+            <td class="num ht-bold">${weekly}</td>
+            <td>${renderAdditional(s.additional.length ? s.additional : null)}</td>
         </tr>`;
     });
     html += '</tbody></table>';
 
     if (totalPages > 1) {
-        html += `<div class="mt-6 flex items-center justify-between">
-            <div class="text-[10px] text-zinc-600 uppercase tracking-widest">
-                Showing ${start + 1}–${Math.min(start + pageSize, totalItems)} of ${totalItems}
-            </div>
-            <div class="flex items-center gap-1">
-                <button class="toggle-btn px-4 py-1" ${historyState.page <= 1 ? 'disabled' : ''} onclick="setHistoryPage(${historyState.page - 1})">
-                    Previous
-                </button>
-                <div class="px-3 text-[11px] font-bold text-zinc-400 mono">
-                    ${historyState.page} <span class="text-zinc-700 mx-1">/</span> ${totalPages}
-                </div>
-                <button class="toggle-btn px-4 py-1" ${historyState.page >= totalPages ? 'disabled' : ''} onclick="setHistoryPage(${historyState.page + 1})">
-                    Next
-                </button>
+        html += `<div class="ht-pager">
+            <div class="ht-pager-info">Showing ${start + 1}–${Math.min(start + pageSize, totalItems)} of ${totalItems}</div>
+            <div class="ht-pager-nav">
+                <button class="toggle-btn" ${historyState.page <= 1 ? 'disabled' : ''} onclick="setHistoryPage(${historyState.page - 1})">Previous</button>
+                <div class="ht-pager-num">${historyState.page}<span>/</span>${totalPages}</div>
+                <button class="toggle-btn" ${historyState.page >= totalPages ? 'disabled' : ''} onclick="setHistoryPage(${historyState.page + 1})">Next</button>
             </div>
         </div>`;
     }
@@ -389,11 +385,9 @@ function renderHistoryFilterPill() {
         return;
     }
     pillEl.classList.remove('hidden');
-    pillEl.innerHTML = `<div class="flex items-center gap-2">
-        <span style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.08em;">[FILTER]</span>
-        <span class="pill pill-active">${escapeHTML(f.value)}</span>
-        <button class="pill" onclick="clearHistoryFilter()" style="border-color:var(--hairline-strong);">✕ CLEAR</button>
-    </div>`;
+    pillEl.innerHTML = `<span class="pill" style="cursor:default;border-style:dashed;">filter</span>
+        <span class="pill pill-active" style="margin-left:4px;">${escapeHTML(f.value)}</span>
+        <button class="pill" onclick="clearHistoryFilter()" style="margin-left:4px;">✕ clear</button>`;
 }
 
 export function clearHistoryFilter() {
@@ -405,7 +399,7 @@ export function clearHistoryFilter() {
 export async function loadHistoryView() {
     updateCsvHref();
     const container = document.getElementById('history-content');
-    if (container) container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
+    if (container) container.innerHTML = '<p class="ht-empty">Loading history…</p>';
 
     // Apply cross-view filter: if a provider_id filter is active from the dashboard, pre-select it
     const f = STATE.activeFilter;
@@ -430,7 +424,7 @@ export async function loadHistoryView() {
         renderHistoryFromCache();
     } catch (err) {
         destroyCharts();
-        if (container) container.innerHTML = `<p class="text-red-400">Failed to load history: ${escapeHTML(err.message)}</p>`;
+        if (container) container.innerHTML = `<p class="ht-empty" style="color:var(--crit);">Failed to load history: ${escapeHTML(err.message)}</p>`;
     }
 }
 
