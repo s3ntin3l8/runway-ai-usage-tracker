@@ -18,6 +18,22 @@ logger = logging.getLogger(__name__)
 class GeminiApiMixin:
     """Mixin for Gemini Cloud Code API collection."""
 
+    def _handle_429(self, response, now: datetime) -> list[dict[str, Any]] | None:
+        """Handle a 429 response: set backoff and return error card, or None."""
+        if response.status_code != 429:
+            return None
+        retry_after = response.headers.get("Retry-After")
+        wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+        self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+        return [
+            error_card(
+                "Gemini",
+                "🔵",
+                f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
+                error_type="rate_limited",
+            )
+        ]
+
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
         now = datetime.now(UTC)
@@ -50,18 +66,9 @@ class GeminiApiMixin:
                 timeout=10,
             )
 
-            if tier_resp.status_code == 429:
-                retry_after = tier_resp.headers.get("Retry-After")
-                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                return [
-                    error_card(
-                        "Gemini",
-                        "🔵",
-                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
-                        error_type="rate_limited",
-                    )
-                ]
+            err = self._handle_429(tier_resp, now)
+            if err:
+                return err
 
             tier_info = tier_resp.json()
             project_id = tier_info.get("cloudaicompanionProject", "")
@@ -88,18 +95,9 @@ class GeminiApiMixin:
                 timeout=10,
             )
 
-            if quota_resp.status_code == 429:
-                retry_after = quota_resp.headers.get("Retry-After")
-                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                return [
-                    error_card(
-                        "Gemini",
-                        "🔵",
-                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
-                        error_type="rate_limited",
-                    )
-                ]
+            err = self._handle_429(quota_resp, now)
+            if err:
+                return err
 
             self._last_429_backoff_until = None
             quota_data = quota_resp.json()
@@ -119,14 +117,7 @@ class GeminiApiMixin:
 
             for bucket in buckets:
                 raw_model = bucket.get("modelId", "Unknown")
-                if "flash-lite" in raw_model:
-                    model_class = "flash-lite"
-                elif "flash" in raw_model:
-                    model_class = "flash"
-                elif "pro" in raw_model:
-                    model_class = "pro"
-                else:
-                    model_class = raw_model
+                model_class = self._map_model_to_class(raw_model)
 
                 if model_class in seen_classes:
                     continue

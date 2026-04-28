@@ -3,6 +3,7 @@ Google Gemini quota collector orchestrating API and log fallback strategies.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -120,7 +121,13 @@ class GeminiCollector(
                 ]
 
                 if reset_at:
-                    window_messages = [m for m in model_messages if m["timestamp"] < reset_at]
+                    reset_dt = self._parse_timestamp(reset_at)
+                    window_messages = [
+                        m
+                        for m in model_messages
+                        if (self._parse_timestamp(m["timestamp"]) is not None)
+                        and (self._parse_timestamp(m["timestamp"]) < reset_dt)
+                    ]
                 else:
                     window_messages = model_messages
 
@@ -156,21 +163,6 @@ class GeminiCollector(
 
         return primary
 
-    def _map_model_to_class(self, model_name: str) -> str:
-        """Map raw model name to card category (pro, flash, flash-lite)."""
-        if not model_name:
-            return "unknown"
-        lower = model_name.lower()
-        if "flash-lite" in lower:
-            return "flash-lite"
-        if "flash" in lower:
-            return "flash"
-        if "pro" in lower:
-            return "pro"
-        if "ultra" in lower:
-            return "ultra"
-        return model_name
-
     def _aggregate_window_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Aggregate tokens from filtered messages."""
         totals = {
@@ -190,3 +182,17 @@ class GeminiCollector(
             totals["total"] += tokens.get("total", 0)
             totals["session_count"] += 1
         return totals
+
+    @staticmethod
+    def _parse_timestamp(value: str | int | float | None) -> datetime | None:
+        """Normalize a timestamp to a timezone-aware datetime."""
+        if value is None:
+            return None
+        if isinstance(value, int | float):
+            return datetime.fromtimestamp(value, tz=UTC)
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                return None
+        return None
