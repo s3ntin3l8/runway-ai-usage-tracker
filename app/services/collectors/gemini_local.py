@@ -62,6 +62,13 @@ class GeminiLocalMixin:
                     data = json.loads(content)
                     session_messages = data.get("messages", [])
 
+                # Track message counts per model for by_model stats
+                msg_counts_by_model: dict[str, int] = {}
+                for msg in session_messages:
+                    if msg.get("tokens"):
+                        model = msg.get("model") or "unknown"
+                        msg_counts_by_model[model] = msg_counts_by_model.get(model, 0) + 1
+
                 last_msg = None
                 for msg in reversed(session_messages):
                     if msg.get("tokens"):
@@ -93,13 +100,14 @@ class GeminiLocalMixin:
                 totals["total"] += last_tokens.get("total", 0)
                 totals["session_count"] += 1
 
+                # Update by_model with actual message count (not session count)
                 if raw_model not in totals["by_model"]:
                     totals["by_model"][raw_model] = {
                         "msgs": 0,
                         "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
                     }
                 bm = totals["by_model"][raw_model]
-                bm["msgs"] += 1
+                bm["msgs"] += msg_counts_by_model.get(raw_model, 0)
                 bm["tokens"]["input"] += last_tokens.get("input", 0)
                 bm["tokens"]["output"] += last_tokens.get("output", 0)
                 bm["tokens"]["reasoning"] += last_tokens.get("thoughts", 0)

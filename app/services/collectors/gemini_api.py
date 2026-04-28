@@ -14,17 +14,6 @@ from app.core.utils import (
 
 logger = logging.getLogger(__name__)
 
-# Model display name mapping
-MODEL_DISPLAY_NAMES = {
-    "gemini-2.5-flash": "Gemini 2.5 Flash",
-    "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
-    "gemini-2.5-pro": "Gemini 2.5 Pro",
-    "gemini-3-flash-preview": "Gemini 3 Flash (Preview)",
-    "gemini-3-pro-preview": "Gemini 3 Pro (Preview)",
-    "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite (Preview)",
-    "gemini-3.1-pro-preview": "Gemini 3.1 Pro (Preview)",
-}
-
 
 class GeminiApiMixin:
     """Mixin for Gemini Cloud Code API collection."""
@@ -129,19 +118,15 @@ class GeminiApiMixin:
             identity_suffix = f" · {email}" if email else ""
 
             for bucket in buckets:
-                model_id = bucket.get("modelId", "Unknown")
-                if "flash-lite" in model_id:
-                    display_name = "Gemini Flash Lite"
+                raw_model = bucket.get("modelId", "Unknown")
+                if "flash-lite" in raw_model:
                     model_class = "flash-lite"
-                elif "flash" in model_id:
-                    display_name = "Gemini Flash"
+                elif "flash" in raw_model:
                     model_class = "flash"
-                elif "pro" in model_id:
-                    display_name = "Gemini Pro"
+                elif "pro" in raw_model:
                     model_class = "pro"
                 else:
-                    display_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
-                    model_class = model_id
+                    model_class = raw_model
 
                 if model_class in seen_classes:
                     continue
@@ -174,14 +159,15 @@ class GeminiApiMixin:
                     limit_val = float(quota_limit)
                 else:
                     detail_text = (
-                        f"{percent_remaining}% remaining | Model: {model_id}{identity_suffix}"
+                        f"{percent_remaining}% remaining | Model: {raw_model}{identity_suffix}"
                     )
                     used_val = float(percent_used)
                     limit_val = 100.0
 
                 results.append(
                     {
-                        "service_name": display_name,
+                        "service_name": "Gemini",
+                        "model_id": model_class,
                         "icon": "🔵",
                         "remaining": f"{percent_used}%",
                         "unit": "used",

@@ -35,10 +35,40 @@ function _forecastSeriesKey(entry) {
         entry.provider_id || '',
         entry.account_id || '',
         entry.service_name || '',
+        entry.variant || '',
         entry.model_id || '',
         entry.window_type || '',
         entry.unit_type || '',
     ].join('||');
+}
+
+// Display maps for composing card subtitles from canonical fields.
+const MODEL_DISPLAY_NAMES = {
+    'sonnet': 'Sonnet', 'opus': 'Opus', 'haiku': 'Haiku',
+    'design': 'Design', 'flash': 'Flash', 'pro': 'Pro',
+    'flash-lite': 'Flash Lite',
+};
+const WINDOW_DISPLAY_NAMES = {
+    'session': 'Session', 'daily': 'Daily',
+    'weekly': 'Weekly', 'monthly': 'Monthly',
+    // 'rolling' and 'unknown' deliberately omitted — no useful subtitle component.
+};
+
+/** Compose a card subtitle from variant + model_id + window_type. */
+function cardSubtitleParts(card) {
+    if (!card) return [];
+    const parts = [];
+    if (card.variant) parts.push(String(card.variant));
+    if (card.model_id) {
+        parts.push(MODEL_DISPLAY_NAMES[card.model_id] || String(card.model_id).replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+    }
+    const w = WINDOW_DISPLAY_NAMES[card.window_type];
+    if (w) parts.push(w);
+    return parts;
+}
+
+function cardSubtitleText(card) {
+    return cardSubtitleParts(card).join(' · ');
 }
 
 const PROVIDER_ICONS = {
@@ -507,7 +537,10 @@ export function buildCard(item) {
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span style="font-size:0.9rem;line-height:1;">${escapeHTML(item.icon)}</span>
-                        <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" class="truncate">${escapeHTML(item.service_name)}</span>
+                        <div class="flex flex-col min-w-0">
+                            <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" class="truncate">${escapeHTML(item.service_name)}</span>
+                            ${_windowSubtitle(item)}
+                        </div>
                     </div>
                     <div class="lamp ${h.lamp} shrink-0"></div>
                 </div>
@@ -603,6 +636,7 @@ export function buildCard(item) {
                         <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                         <div class="flex flex-col">
                             <span style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" class="truncate">${escapeHTML(item.service_name)}</span>
+                            ${_windowSubtitle(item)}
                             ${getTierBadge(item.tier)}
                         </div>
                     </div>
@@ -695,6 +729,7 @@ export function buildModalContent(item) {
                     <span style="font-size:1.8rem;">${escapeHTML(item.icon)}</span>
                     <div>
                         <h2 style="font-size:1.1rem;font-weight:700;color:var(--text);letter-spacing:0.04em;">${escapeHTML(item.service_name)}</h2>
+                        ${_windowSubtitle(item)}
                         <div class="flex items-center gap-2 mt-0.5">
                             <span class="tag ${h.tag}">${h.label}</span>
                             ${getTierBadge(item.tier)}
@@ -1273,7 +1308,7 @@ export function buildProviderSummaryCard(providerId, items, forecastMap = new Ma
         return `<div class="flex justify-between items-center" style="font-size:10px;padding:2px 0;" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="flex items-center gap-1.5 min-w-0">
                 <span class="lamp ${lamp}" style="width:6px;height:6px;"></span>
-                <span style="color:var(--text-muted);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(item.service_name)}</span>
+                <span style="color:var(--text-muted);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(item.service_name)}${cardSubtitleText(item) ? ' · ' + escapeHTML(cardSubtitleText(item)) : ''}</span>
             </span>
             <span class="flex items-center gap-1.5 flex-shrink-0 ml-2" style="color:var(--text-dim);">
                 ${rowTier}
@@ -1302,7 +1337,7 @@ export function buildProviderSummaryCard(providerId, items, forecastMap = new Ma
                 <span class="lamp ${LAMP[worst.health] || 'lamp-unk'}" style="width:8px;height:8px;flex-shrink:0;margin-top:2px;"></span>
             </div>
             <div class="readout ${h.tag === 'tag-crit' ? 'readout-crit' : h.tag === 'tag-warn' ? 'readout-warn' : h.tag === 'tag-good' ? 'readout-good' : h.tag === 'tag-unlm' ? 'readout-unlm' : 'readout-unk'}">${worstDisplay}</div>
-            <div style="font-size:9px;color:var(--text-dim);margin-top:5px;text-transform:uppercase;letter-spacing:0.08em;">${escapeHTML(worst.service_name)} · WORST</div>
+            <div style="font-size:9px;color:var(--text-dim);margin-top:5px;text-transform:uppercase;letter-spacing:0.08em;">${escapeHTML(worst.service_name)}${cardSubtitleText(worst) ? ' · ' + escapeHTML(cardSubtitleText(worst)) : ''} · WORST</div>
         </div>
         <!-- Bottom zone -->
         <div style="border-top:1px solid var(--hairline);background:var(--surface-2);padding:10px 16px 12px;">
@@ -1433,9 +1468,15 @@ export function buildProviderModal(providerId, items, history) {
         }
         const barWidth = item.is_unlimited ? 100 : (pct ?? 0);
 
-        // Sparkline — filter history for this service
+        // Sparkline — filter history for this service+window so two windows of the
+        // same service don't bleed into one mixed sparkline.
         const svcHistory = (history || [])
-            .filter(s => s.provider_id === providerId && s.service_name === item.service_name && typeof s.used_value === 'number' && isFinite(s.used_value))
+            .filter(s => s.provider_id === providerId
+                && s.service_name === item.service_name
+                && (s.variant || null) === (item.variant || null)
+                && (s.window_type || null) === (item.window_type || null)
+                && (s.model_id || null) === (item.model_id || null)
+                && typeof s.used_value === 'number' && isFinite(s.used_value))
             .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
             .map(s => ({ value: s.used_value }));
         const sparkColor = item.is_unlimited ? 'var(--unlm)' : barColor;
@@ -1471,8 +1512,9 @@ export function buildProviderModal(providerId, items, history) {
             </span>
             <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
-                    <div style="font-size:1.1rem;font-weight:700;color:var(--text);margin-bottom:6px;">${escapeHTML(item.service_name)}</div>
-                    <div class="flex flex-wrap items-center gap-1.5">
+                    <div style="font-size:1.1rem;font-weight:700;color:var(--text);">${escapeHTML(item.service_name)}</div>
+                    ${_windowSubtitle(item)}
+                    <div class="flex flex-wrap items-center gap-1.5" style="margin-top:6px;">
                         <span class="tag ${h.tag}">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
                         ${combinedSourceLabel ? `<span style="font-size:10px;color:var(--text-muted);">${combinedSourceLabel}</span>` : ''}
@@ -1635,6 +1677,21 @@ function _srcBadgeClass(dataSource) {
     return '';
 }
 
+function _tierBadgeClass(tier) {
+    if (!tier) return '';
+    const s = String(tier).toLowerCase().split(' ')[0];
+    if (s === 'free')                                     return ' tier-free';
+    if (s === 'max')                                      return ' tier-max';
+    if (s === 'pro' || s === 'plus' || s === 'premium' || s === 'individual' || s === 'go') return ' tier-pro';
+    return '';
+}
+
+function _windowSubtitle(card) {
+    const text = cardSubtitleText(card);
+    if (!text) return '';
+    return `<div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;line-height:1;" class="truncate">${escapeHTML(text)}</div>`;
+}
+
 function _forecastPaceBucket(forecastEntry) {
     if (!forecastEntry) return null;
     const s = forecastEntry.status;
@@ -1678,17 +1735,19 @@ export function buildHorizonCard(card, forecastEntry) {
     const cKey = cardKey(card);
 
     const tierBadge = card.tier
-        ? `<span class="badge">${escapeHTML(String(card.tier))}</span>`
+        ? `<span class="badge${_tierBadgeClass(card.tier)}">${escapeHTML(String(card.tier))}</span>`
         : '';
     const srcBadge = card.data_source
         ? `<span class="badge${_srcBadgeClass(card.data_source)}">${escapeHTML(card.data_source.slice(0, 7))}</span>`
         : '';
 
+    const subParts = cardSubtitleParts(card).map(escapeHTML);
+    if (card.account_label) subParts.push(escapeHTML(card.account_label));
     const head = `<div class="row">
         <div class="plogo c-${prov.key}">${escapeHTML(prov.init)}</div>
         <div class="stack-xs">
             <span class="title">${escapeHTML(card.service_name)}</span>
-            <span class="sub">${escapeHTML(card.account_label || '')}</span>
+            <span class="sub">${subParts.join(' · ')}</span>
         </div>
         <div class="health"></div>
         <div class="badges">${tierBadge}${srcBadge}</div>
@@ -1788,16 +1847,11 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
         card.used_value, card.limit_value, card.unit_type, card.currency
     );
 
-    const isCurrency = card.unit_type === 'currency';
-
     const paceRow = pace
         ? `<dt>Pace</dt><dd><span class="pace-dot ${pace}" style="display:inline-block;"></span>${pace}</dd>`
         : '';
     const projRow = forecastEntry?.projected_pct != null
         ? `<dt>Projected</dt><dd>${Math.round(forecastEntry.projected_pct)}% used</dd>`
-        : '';
-    const costRow = isCurrency
-        ? `<dt>Remaining</dt><dd>${escapeHTML(card.remaining || remainingPct + '%')}</dd>`
         : '';
     const tierRow = card.tier
         ? `<dt>Tier</dt><dd>${escapeHTML(String(card.tier))}</dd>`
@@ -1811,22 +1865,15 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
             <div class="plogo c-${prov.key}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:10px;font-weight:700;flex-shrink:0;">${escapeHTML(prov.init)}</div>
             <div class="stack-xs">
                 <span class="title">${escapeHTML(card.service_name)}</span>
+                ${_windowSubtitle(card)}
                 <span style="font-size:10px;color:var(--text-dim);letter-spacing:0.06em;text-transform:uppercase;">${escapeHTML(card.account_label || '')} · ${escapeHTML(card.data_source || '')} · ${escapeHTML(formatRelativeTime(card.updated_at))}</span>
             </div>
-            <button class="icon-btn" onclick="openProviderInHistory('${escapeHTMLAttr(card.provider_id || '')}')" title="Open in History" style="margin-left:auto;">↗</button>
-            <button class="x" id="close-modal" style="cursor:pointer;color:var(--text-dim);font-size:20px;background:none;border:none;padding:0 4px;line-height:1;">✕</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:4px;">
+                <button class="icon-btn" onclick="openProviderInHistory('${escapeHTMLAttr(card.provider_id || '')}')" title="Open in History">↗</button>
+                <button class="x" id="close-modal" style="margin-left:0;cursor:pointer;color:var(--text-dim);font-size:20px;background:none;border:none;padding:0 4px;line-height:1;">✕</button>
+            </div>
         </div>
         <div class="modal-v2-body">
-            <div>
-                <h4>Current Window</h4>
-                <dl class="kv">
-                    <dt>Remaining</dt><dd>${escapeHTML(card.remaining || remainingPct + '%')}</dd>
-                    <dt>Used</dt><dd>${escapeHTML(usedFmt)} / ${escapeHTML(limitFmt)}${unit ? ' ' + unit : ''}</dd>
-                    <dt>Window</dt><dd>${escapeHTML(_windowLabel(card.window_type))}</dd>
-                    <dt>Reset</dt><dd>${escapeHTML(card.reset || formatResetDisplay(card.reset_at))}</dd>
-                    ${paceRow}${projRow}${costRow}
-                </dl>
-            </div>
             <div>
                 <h4>Metadata</h4>
                 <dl class="kv">
@@ -1836,6 +1883,38 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
                     <dt>Updated</dt><dd>${escapeHTML(formatRelativeTime(card.updated_at))}</dd>
                 </dl>
             </div>
+            <div>
+                <h4>Current Window</h4>
+                <dl class="kv">
+                    <dt>Remaining</dt><dd>${remainingPct}%</dd>
+                    <dt>Used</dt><dd>${escapeHTML(usedFmt)} / ${escapeHTML(limitFmt)}${unit ? ' ' + unit : ''}</dd>
+                    <dt>Window</dt><dd>${escapeHTML(_windowLabel(card.window_type))}</dd>
+                    <dt>Reset</dt><dd>${escapeHTML(card.reset || formatResetDisplay(card.reset_at))}</dd>
+                    ${paceRow}${projRow}
+                </dl>
+            </div>
+            ${card.token_usage ? `
+            <div>
+                <h4>Token Usage (Session)</h4>
+                <dl class="kv">
+                    <dt>Input</dt><dd>${card.token_usage.input?.toLocaleString() || '—'}</dd>
+                    <dt>Output</dt><dd>${card.token_usage.output?.toLocaleString() || '—'}</dd>
+                    ${card.token_usage.cache_read ? `<dt>Cached</dt><dd>${card.token_usage.cache_read.toLocaleString()}</dd>` : ''}
+                    ${card.token_usage.reasoning ? `<dt>Reasoning</dt><dd>${card.token_usage.reasoning.toLocaleString()}</dd>` : ''}
+                    <dt>Total</dt><dd>${card.token_usage.total?.toLocaleString() || '—'}</dd>
+                </dl>
+            </div>
+            ` : ''}
+            ${card.by_model && Object.keys(card.by_model).length > 0 ? `
+            <div>
+                <h4>By Model</h4>
+                <dl class="kv">
+                    ${Object.entries(card.by_model).map(([model, data]) =>
+                        `<dt>${escapeHTML(model)}</dt><dd>${data.msgs ?? 0} msgs</dd>`
+                    ).join('')}
+                </dl>
+            </div>
+            ` : ''}
             <div class="historyline">
                 <div style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:6px;">Last 24 hours</div>
                 ${_buildSparklineSVG(history24h)}
