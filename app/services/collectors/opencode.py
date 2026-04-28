@@ -39,12 +39,13 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 # Matches each inline JS record from the /usage page's embedded $R[N]={...} objects.
+# Supports both OLD format (direct) and NEW format (React Suspense wrapped with $R[N]= prefix).
 # Fields are in a fixed order so we can match them positionally.
 _USAGE_RECORD_RE = re.compile(
-    r'\{id:"usg_[^"]*"'
-    r',workspaceID:"[^"]*"'
-    r',timeCreated:(?:\$R\[\d+\]=)?new Date\("([^"]+)"\)'  # G1: ISO timestamp
-    r',timeUpdated:(?:\$R\[\d+\]=)?new Date\("[^"]+"\)'
+    r"\{id:\"usg_[^\"]*\""
+    r",workspaceID:\"[^\"]*\""
+    r",timeCreated:(?:\$R\[\d+\]=)?new Date\(\"([^\"]+)\"\)"  # G1: ISO timestamp
+    r",timeUpdated:(?:\$R\[\d+\]=)?new Date\(\"[^\"]+\"\)"
     r",timeDeleted:[^,]+"
     r',model:"([^"]+)"'  # G2: model name
     r',provider:"([^"]+)"'  # G3: provider
@@ -52,8 +53,8 @@ _USAGE_RECORD_RE = re.compile(
     r",outputTokens:(-?\d+)"  # G5
     r",reasoningTokens:(-?\d+|null)"  # G6
     r",cacheReadTokens:(-?\d+)"  # G7
-    r",cacheWrite5mTokens:(-?\d+)"  # G8
-    r",cacheWrite1hTokens:(-?\d+|null)"  # G9
+    r",cacheWrite5mTokens:(-?\d+|null)"  # G8: nullable
+    r",cacheWrite1hTokens:(-?\d+|null)"  # G9: nullable
     r",cost:(-?\d+)"  # G10: cost raw int (÷1e8 = USD)
     r',keyID:"[^"]*"'
     r',sessionID:"[^"]*"'
@@ -435,9 +436,8 @@ class OpenCodeCollector(BaseCollector):
         if records:
             logger.info(f"OpenCode: Parsed {len(records)} usage records")
         else:
-            logger.warning(f"OpenCode: No usage records parsed, text length: {len(text)}")
-            sample = text[:800] if text else "(empty)"
-            logger.warning(f"OpenCode: /usage page sample:\n{sample}")
+            sample = text[:200] if text else "(empty)"
+            logger.debug(f"OpenCode: No usage records parsed (enrichment-only), sample: {sample}")
 
         return records
 
