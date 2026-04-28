@@ -8,6 +8,7 @@ must implement. Each collector follows a 3-tier fallback pattern:
 3. Tertiary Strategy: Error cards or graceful degradation
 """
 
+import hashlib
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -21,6 +22,34 @@ from pydantic import ValidationError
 from app.core.date_utils import normalize_iso_date
 
 logger = logging.getLogger(__name__)
+
+# Canonical reset cadences. Cards must use one of these for window_type.
+WINDOW_TYPES: frozenset[str] = frozenset(
+    {"session", "daily", "weekly", "monthly", "rolling", "unknown"}
+)
+
+
+def normalize_account_id(identity: str | None) -> str:
+    """
+    Derive a stable account_id from a discovered identity (email, subject, etc).
+
+    - Email-shaped identities: lowercase + strip whitespace.
+    - Other strings: lowercase + strip; opaque/long values get hashed to 12 hex chars.
+    - None / empty → "default" (single-account fallback).
+
+    The same identity always produces the same id. Used by collectors that have
+    real per-account discovery so multi-account installs don't collide on "default".
+    """
+    if not identity:
+        return "default"
+    s = identity.strip().lower()
+    if not s:
+        return "default"
+    if "@" in s and "." in s.split("@", 1)[1]:
+        return s
+    if len(s) <= 32 and re.fullmatch(r"[a-z0-9._\-]+", s):
+        return s
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 
 
 class BaseCollector(ABC):
@@ -354,6 +383,15 @@ class BaseCollector(ABC):
             if "window_type" not in card_data or card_data.get("window_type") == "unknown":
                 if self.DEFAULT_WINDOW_TYPE != "unknown":
                     card_data["window_type"] = self.DEFAULT_WINDOW_TYPE
+            # Enforce the canonical window_type enum: surface stale values loudly.
+            wt = card_data.get("window_type", "unknown")
+            if wt not in WINDOW_TYPES:
+                logger.warning(
+                    "%s emitted card with non-canonical window_type=%r; coercing to 'unknown'",
+                    self.PROVIDER_ID,
+                    wt,
+                )
+                card_data["window_type"] = "unknown"
 
             # Tag account identifiers
             if "account_id" not in card_data or not card_data.get("account_id"):

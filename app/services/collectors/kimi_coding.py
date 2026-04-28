@@ -247,13 +247,15 @@ class KimiCodingCollector(BaseCollector):
             tier = self._detect_tier(limit)
 
             return {
-                "service_name": "Kimi Coding (Weekly)",
+                "service_name": "Kimi Coding",
+                "window_type": "weekly",
                 "icon": "🌙",
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",
                 "reset": reset_delta,
                 "health": ("good" if pct_used < 50 else "warning" if pct_used < 80 else "critical"),
-                "pace": tier,
+                "pace": ("Stable" if pct_used < 50 else "High" if pct_used < 80 else "Critical"),
+                "tier": tier,
                 "detail": f"{used} used · {tier}",
                 "used_value": float(used),
                 "limit_value": float(limit),
@@ -292,12 +294,9 @@ class KimiCodingCollector(BaseCollector):
                 except (ValueError, TypeError):
                     pass
 
-            # Get window duration
-            duration = window.get("duration", 300)  # Default 5 hours in minutes
-            window_label = f"{duration // 60}h" if duration >= 60 else f"{duration}m"
-
             return {
-                "service_name": f"Kimi Coding ({window_label})",
+                "service_name": "Kimi Coding",
+                "window_type": "session",
                 "icon": "⏱️",
                 "remaining": f"{remaining}",
                 "unit": f"{limit} req",

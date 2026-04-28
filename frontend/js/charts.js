@@ -80,7 +80,7 @@ export function formatBucketLabel(bucketEpoch, bucketSeconds) {
 function extractSeriesKeys(snapshots) {
     const keys = new Set();
     for (const s of snapshots) {
-        const key = `${s.provider_id || 'unknown'}|${s.service_name || 'Usage'}|${s.window_type || 'unknown'}`;
+        const key = `${s.provider_id || 'unknown'}|${s.service_name || 'Usage'}|${s.window_type || 'unknown'}|${s.variant || ''}|${s.model_id || ''}`;
         keys.add(key);
     }
     return Array.from(keys).sort();
@@ -121,7 +121,7 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
         }
 
         const bucket = bucketKeyFor(snap.timestamp, bucketSeconds);
-        const key = `${snap.provider_id || 'unknown'}|${snap.service_name || 'Usage'}|${snap.window_type || 'unknown'}`;
+        const key = `${snap.provider_id || 'unknown'}|${snap.service_name || 'Usage'}|${snap.window_type || 'unknown'}|${snap.variant || ''}|${snap.model_id || ''}`;
 
         if (!buckets[bucket]) buckets[bucket] = {};
         if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0, max: -Infinity };
@@ -209,12 +209,17 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
     // First pass: averages (always shown)
     const avgSeries = seriesKeys.map(key => {
-        const [pid, name] = key.split('|');
+        const [pid, name, wtype, variant, modelId] = key.split('|');
+        const subParts = [];
+        if (variant) subParts.push(variant);
+        if (modelId) subParts.push(modelId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+        if (wtype && wtype !== 'unknown' && wtype !== 'rolling') subParts.push(wtype.charAt(0).toUpperCase() + wtype.slice(1));
+        const displayName = subParts.length ? `${name} · ${subParts.join(' · ')}` : name;
         if (providerCounts[pid] === undefined) providerCounts[pid] = 0;
         const style = getSeriesStyle(pid, providerCounts[pid]++);
 
         return {
-            name: `${pid.toUpperCase()}: ${name}`,
+            name: `${pid.toUpperCase()}: ${displayName}`,
             type: 'line',
             smooth: true,
             symbol: 'circle',
@@ -254,7 +259,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     if (showPeaks) {
         const bandCounts = {};
         const bandSeries = seriesKeys.flatMap(key => {
-            const [pid, name] = key.split('|');
+            const [pid] = key.split('|');
             if (bandCounts[pid] === undefined) bandCounts[pid] = 0;
             const style = getSeriesStyle(pid, bandCounts[pid]++);
             const alpha = '28'; // ~16% opacity for band fill

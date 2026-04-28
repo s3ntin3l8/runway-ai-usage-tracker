@@ -42,7 +42,10 @@ class LimitCard(BaseModel):
     account_label: str | None = None  # Human-readable: email, org name
     model_id: str | None = None  # None=aggregate snapshot; specific=per-model
     sidecar_id: str | None = None  # Originating host FQDN/tag; None=local
-    window_type: str = "unknown"  # "daily","weekly","monthly","session","rolling","unknown"
+    window_type: str = "unknown"  # "session","daily","weekly","monthly","rolling","unknown"
+    variant: str | None = (
+        None  # per-card disambiguator under same (provider, account, model_id, window_type)
+    )
     # Token usage breakdown from usage page scraping
     token_usage: dict[str, Any] | None = (
         None  # {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "total": 0}
@@ -53,7 +56,9 @@ class LimitCard(BaseModel):
     msgs: int | None = None  # Total message count
     pct_used: float | None = None  # Percentage used (based on cost vs limit)
 
-    @field_validator("service_name", "remaining", "unit", "reset", "pace", "detail", "tier")
+    @field_validator(
+        "service_name", "remaining", "unit", "reset", "pace", "detail", "tier", "variant"
+    )
     @classmethod
     def escape_html_fields(cls, v: str) -> str:
         if v:
@@ -88,6 +93,7 @@ class ForecastEntry(BaseModel):
     model_id: str | None
     service_name: str
     window_type: str
+    variant: str | None = None
     unit_type: str
     now_used: float | None
     now_pct: float | None

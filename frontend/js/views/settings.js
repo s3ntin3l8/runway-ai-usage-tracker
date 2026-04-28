@@ -264,7 +264,7 @@ function buildProviderDetailHTML(p) {
             <div id="api-key-input-row"${p.api_key_set ? ' style="display:none"' : ''}>
                 <input type="text" id="field-api-key" placeholder="${p.api_key_set ? 'Leave blank to keep current' : 'Enter API key'}" class="pd-inp">
             </div>
-            <button type="button" id="api-key-edit-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Edit</button>
+            ${p.api_key_set ? '<button type="button" id="api-key-edit-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Edit</button>' : ''}
         </div>
     </div>` : '';
 
@@ -281,7 +281,7 @@ function buildProviderDetailHTML(p) {
             <div id="session-cookie-input-row"${p.session_cookie_set ? ' style="display:none"' : ''}>
                 <input type="text" id="field-session-cookie" placeholder="${p.session_cookie_set ? 'Leave blank to keep current' : 'Paste session cookie value'}" class="pd-inp">
             </div>
-            <button type="button" id="session-cookie-edit-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Edit</button>
+            ${p.session_cookie_set ? '<button type="button" id="session-cookie-edit-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;">Edit</button>' : ''}
         </div>
     </div>` : '';
 
@@ -763,7 +763,7 @@ async function renderSystemSection(pane) {
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <select id="field-global-poll" class="inp" style="width:auto;">
-                            <option value="" ${!globalPollVal ? 'selected' : ''}>Per-collector default</option>
+                            <option value="" ${!globalPollVal ? 'selected' : ''}>Default</option>
                             ${pollSelectOpts}
                         </select>
                         <button id="save-global-poll-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>

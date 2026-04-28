@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 class GitHubCollector(BaseCollector):
     PROVIDER_ID = "github"
-    DEFAULT_WINDOW_TYPE = "biweekly"
+    DEFAULT_WINDOW_TYPE = "monthly"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
@@ -408,7 +408,8 @@ class GitHubCollector(BaseCollector):
                     identity_suffix = f" · {self._identity}"
                 results.append(
                     {
-                        "service_name": f"Copilot ({key.title()})",
+                        "service_name": "Copilot",
+                        "variant": key.title(),
                         "icon": "🐙",
                         "remaining": f"{val:,}",
                         "unit": (
@@ -459,7 +460,9 @@ class GitHubCollector(BaseCollector):
                 pace = PaceCalculator.estimate_longevity(pct_used, None)
                 results.append(
                     {
-                        "service_name": f"Copilot ({metric})",
+                        "service_name": "Copilot",
+                        "variant": metric,
+                        "window_type": "rolling",
                         "icon": "🐙",
                         "remaining": f"{rem:,}",
                         "unit": f"/ {ent:,}",

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -45,10 +46,12 @@ async def lifespan(app: FastAPI):
 
     # Pre-populate in-memory registry so the first /limits request is instant
     try:
-        logger.info("Pre-populating card registry on startup...")
-        initial_cards = await manager.collect_all()
+        logger.info("Pre-populating card registry on startup (timeout 15s)...")
+        initial_cards = await asyncio.wait_for(manager.collect_all(), timeout=15.0)
         # Registry updated inside _do_collect; just log the count here.
         logger.info(f"Registry pre-populated with {len(initial_cards)} cards")
+    except TimeoutError:
+        logger.warning("Startup collection timed out after 15s — registry empty until first poll")
     except Exception as e:
         logger.warning(f"Startup collection failed — registry empty until first poll: {e}")
 

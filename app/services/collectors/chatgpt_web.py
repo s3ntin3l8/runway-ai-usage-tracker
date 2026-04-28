@@ -73,7 +73,9 @@ class ChatGPTWebMixin:
 
                 return [
                     {
-                        "service_name": "ChatGPT Codex",
+                        "service_name": "ChatGPT",
+                        "variant": "Codex",
+                        "window_type": "weekly",
                         "icon": "💬",
                         "remaining": f"{(100 - pct):.1f}%",
                         "unit": "remaining",

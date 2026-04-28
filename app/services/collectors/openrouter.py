@@ -23,7 +23,7 @@ class OpenRouterCollector(BaseCollector):
     """
 
     PROVIDER_ID = "openrouter"
-    DEFAULT_WINDOW_TYPE = "monthly"
+    DEFAULT_WINDOW_TYPE = "rolling"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
@@ -108,7 +108,9 @@ class OpenRouterCollector(BaseCollector):
 
                 cards.append(
                     {
-                        "service_name": "OpenRouter Credits",
+                        "service_name": "OpenRouter",
+                        "variant": "Credits",
+                        "window_type": "rolling",
                         "icon": "🚀",
                         "remaining": f"${remaining:.2f}",
                         "unit": "USD",
@@ -141,7 +143,9 @@ class OpenRouterCollector(BaseCollector):
                     key_remaining = max(0, key_limit - key_usage)
                     cards.append(
                         {
-                            "service_name": "OpenRouter Key Limit",
+                            "service_name": "OpenRouter",
+                            "variant": "Key Limit",
+                            "window_type": "rolling",
                             "icon": "🔑",
                             "remaining": f"${key_remaining:.2f}",
                             "unit": "USD",

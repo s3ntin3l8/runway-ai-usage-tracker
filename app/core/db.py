@@ -51,7 +51,6 @@ def _run_migrations():
         # system_config gained local_collector / credential toggles
         "ALTER TABLE system_config ADD COLUMN local_collector_enabled INTEGER",
         "ALTER TABLE system_config ADD COLUMN local_credential_scraping_enabled INTEGER",
-        # provider_configs: browser_preference column removed from model but kept in DB for compatibility
         # provider_configs: separate session cookie storage (distinct from API key)
         "ALTER TABLE provider_configs ADD COLUMN session_cookie_encrypted TEXT",
         # SystemConfig gained dashboard_layout_json (user-reorder persistence)
@@ -62,6 +61,8 @@ def _run_migrations():
         "ALTER TABLE sidecar_registry ADD COLUMN recent_logs TEXT",
         # provider_configs: user-configurable data collection strategy ordering/toggles
         "ALTER TABLE provider_configs ADD COLUMN collection_strategies_json TEXT",
+        # usage_snapshots: per-card disambiguator under same (provider, account, model_id, window_type)
+        "ALTER TABLE usage_snapshots ADD COLUMN variant TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -70,6 +71,26 @@ def _run_migrations():
                 conn.commit()
             except Exception:
                 pass  # Column already exists or table doesn't exist yet — both are fine
+
+        # Pre-release: refuse to boot if the legacy `window_label` column is still present.
+        # The schema rework removed it; carrying both columns silently would split aggregation.
+        # Wipe `data/runway.db` to continue (no production users yet).
+        try:
+            row = conn.execute(
+                __import__("sqlalchemy").text(
+                    "SELECT 1 FROM pragma_table_info('usage_snapshots') WHERE name = 'window_label'"
+                )
+            ).first()
+            if row is not None:
+                raise RuntimeError(
+                    "usage_snapshots.window_label column found — schema was reworked to use "
+                    "`variant` instead. Pre-release: wipe `data/runway.db` and restart."
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            # pragma_table_info isn't available or the table doesn't exist yet — both are fine
+            pass
 
         # Performance indexes for history queries (safe to create multiple times)
         _create_performance_indexes(conn)

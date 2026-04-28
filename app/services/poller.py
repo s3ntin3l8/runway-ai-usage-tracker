@@ -86,9 +86,9 @@ class BackgroundPoller:
                 if card.data_source == "cache":
                     continue  # cached cards don't represent fresh activity
                 key = f"{card.provider_id}:{card.account_id}"
-                # Include service_name and window_type so two windows that happen to share
-                # the same (used, limit) pair don't collapse into one dormancy signal.
-                window_id = f"{card.service_name}:{card.window_type}"
+                # Include service_name, window_type, and variant so two windows that happen
+                # to share the same (used, limit) pair don't collapse into one dormancy signal.
+                window_id = f"{card.service_name}:{card.window_type}:{card.variant or ''}"
                 poll_states.setdefault(key, []).append(
                     f"{window_id}:{card.used_value}:{card.limit_value}"
                 )
@@ -167,6 +167,7 @@ class BackgroundPoller:
                             tier=card.tier,
                             model_id=card.model_id,
                             window_type=card.window_type,
+                            variant=card.variant,
                             health=card.health,
                             sidecar_id=card.sidecar_id,
                             is_unlimited=card.is_unlimited,

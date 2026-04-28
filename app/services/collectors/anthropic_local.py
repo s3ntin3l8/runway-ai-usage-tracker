@@ -132,20 +132,16 @@ class AnthropicLocalMixin:
             reset_str = match.group(3)
 
             label_map = {
-                "Current Session": "Session Window",
-                "Current Week": "Weekly Window",
-                "Current Window": "Session Window",
+                "Current Session": "Session",
+                "Current Week": "Weekly",
+                "Current Window": "Session",
             }
             u_type = label_map.get(label_raw, label_raw)
             remaining_pct = 100.0 - pct_used
 
             # Correct window type
             w_type = (
-                "session"
-                if "Session" in u_type or "Window" in u_type
-                else "weekly"
-                if "Week" in u_type
-                else "unknown"
+                "session" if "Session" in u_type else "weekly" if "Week" in u_type else "unknown"
             )
 
             # Parse reset duration string "2h 15m", "3d 4h", etc.
@@ -166,7 +162,7 @@ class AnthropicLocalMixin:
 
             results.append(
                 {
-                    "service_name": f"Claude ({u_type})",
+                    "service_name": "Claude",
                     "icon": "🟠",
                     "remaining": f"{remaining_pct:.1f}%",
                     "unit": "capacity",

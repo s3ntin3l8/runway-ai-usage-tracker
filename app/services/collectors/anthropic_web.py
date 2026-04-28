@@ -134,7 +134,6 @@ class AnthropicWebMixin:
         # 1. Rate Limits
         limits = data.get("rate_limits", {})
         for key, info in limits.items():
-            u_type = self._name_map.get(key, key.replace("_", " ").title())
             pct_used = float(info.get("used_percentage", 0.0))
             reset_ts = info.get("resets_at")
             reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
@@ -143,7 +142,7 @@ class AnthropicWebMixin:
 
             results.append(
                 {
-                    "service_name": f"Claude ({u_type})",
+                    "service_name": "Claude",
                     "icon": "🟠",
                     "remaining": f"{(100 - pct_used):.1f}%",
                     "unit": "capacity",
@@ -175,7 +174,8 @@ class AnthropicWebMixin:
 
             results.append(
                 {
-                    "service_name": "Claude (Session Tokens)",
+                    "service_name": "Claude",
+                    "variant": "Tokens",
                     "icon": "🪙",
                     "remaining": f"{total:,}",
                     "unit": f"/ {max_tokens:,}",
@@ -200,7 +200,8 @@ class AnthropicWebMixin:
             total_cost = cost.get("total_cost_usd")
             results.append(
                 {
-                    "service_name": "Claude (Session Cost)",
+                    "service_name": "Claude",
+                    "variant": "Cost",
                     "icon": "💰",
                     "remaining": f"${total_cost:.2f}",
                     "unit": "USD",
@@ -458,7 +459,6 @@ class AnthropicWebMixin:
         tier_label = f" [{tier}]" if tier else ""
 
         for api_key in all_keys:
-            display_name = window_map.get(api_key, api_key.replace("_", " ").title())
             window_data = data.get(api_key)
 
             # Skip null results per user request (not active usage limits)
@@ -490,7 +490,7 @@ class AnthropicWebMixin:
 
             results.append(
                 {
-                    "service_name": f"Claude ({display_name})",
+                    "service_name": "Claude",
                     "icon": "🟠",
                     "remaining": f"{remaining_pct:.1f}%",
                     "unit": "capacity",
@@ -523,7 +523,8 @@ class AnthropicWebMixin:
                     bal = float(bal_val)
                     results.append(
                         {
-                            "service_name": "Claude (Current Balance)",
+                            "service_name": "Claude",
+                            "variant": "Balance",
                             "icon": "💰",
                             "remaining": f"${bal:.2f}",
                             "unit": "USD",
@@ -534,7 +535,7 @@ class AnthropicWebMixin:
                             "used_value": 0.0,
                             "limit_value": bal,
                             "unit_type": "currency",
-                            "window_type": "prepaid",
+                            "window_type": "rolling",
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
@@ -575,7 +576,8 @@ class AnthropicWebMixin:
 
                     results.append(
                         {
-                            "service_name": "Claude (Extra Usage)",
+                            "service_name": "Claude",
+                            "variant": "Extra Usage",
                             "icon": "💰",
                             "remaining": f"{c_symbol}{remaining:.2f}",
                             "unit": currency_code,
@@ -607,7 +609,8 @@ class AnthropicWebMixin:
                         remaining = max(0.0, limit - spend)
                         results.append(
                             {
-                                "service_name": "Claude (Extra Usage)",
+                                "service_name": "Claude",
+                                "variant": "Extra Usage",
                                 "icon": "💰",
                                 "remaining": f"{c_symbol}{remaining:.2f}",
                                 "unit": currency_code,

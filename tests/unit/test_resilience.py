@@ -107,7 +107,8 @@ class TestCollectorResilience:
         # Should catch OSError/OverflowError and return "Unknown"
         card = collector._parse_limit(limit_data, "Test Plan")
         assert card["reset"] == "Unknown"
-        assert card["service_name"] == "zAI Plan (Tokens)"
+        assert card["service_name"] == "zAI"
+        assert card.get("variant") == "Tokens"
 
         # Negative timestamp
         limit_data["nextResetTime"] = -1

@@ -105,6 +105,7 @@ def _compact_range(
                 tier=template.tier,
                 model_id=template.model_id,
                 window_type=template.window_type,
+                variant=template.variant,
                 health=template.health,
                 sidecar_id=template.sidecar_id,
                 is_unlimited=template.is_unlimited,

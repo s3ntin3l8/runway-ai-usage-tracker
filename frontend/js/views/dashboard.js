@@ -18,6 +18,7 @@ function _forecastSeriesKey(entry) {
         entry.provider_id || '',
         entry.account_id || '',
         entry.service_name || '',
+        entry.variant || '',
         entry.model_id || '',
         entry.window_type || '',
         entry.unit_type || '',

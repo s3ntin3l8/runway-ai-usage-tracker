@@ -71,6 +71,13 @@ function cardSubtitleText(card) {
     return cardSubtitleParts(card).join(' · ');
 }
 
+function _formatTokenShort(val) {
+    if (!val) return '0';
+    if (val >= 1000000) return (val/1000000).toFixed(2) + 'M';
+    if (val >= 1000) return (val/1000).toFixed(0) + 'K';
+    return val.toString();
+}
+
 const PROVIDER_ICONS = {
     anthropic: '🟠', gemini: '✨', github: '🐙', chatgpt: '🤖',
     openrouter: '🚀', opencode: '⚡', ollama: '🦙', minimax: '💎',
@@ -582,6 +589,9 @@ export function buildCard(item) {
                 </div>
 
                 ${progressBar}
+                ${item.token_usage?.total 
+                    ? `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-top:4px;">Total Tokens: ${_formatTokenShort(item.token_usage.total)}</div>`
+                    : `<div style="height:18px;"></div>`}
             </div>
         `;
     }
@@ -1783,7 +1793,7 @@ export function buildHorizonCard(card, forecastEntry) {
     const subParts = cardSubtitleParts(card).map(escapeHTML);
     if (card.account_label) subParts.push(escapeHTML(card.account_label));
     const head = `<div class="row">
-        <div class="plogo c-${prov.key}">${escapeHTML(prov.init)}</div>
+        <div class="plogo c-${prov.key}" style="font-size:${card.icon ? '14px' : '10px'};">${escapeHTML(card.icon || prov.init)}</div>
         <div class="stack-xs">
             <span class="title">${escapeHTML(card.service_name)}</span>
             <span class="sub">${subParts.join(' · ')}</span>
@@ -1822,7 +1832,7 @@ export function buildHorizonCard(card, forecastEntry) {
             ? `<div class="pct" style="color:var(--unlm);">${(card.used_value / 1000000).toFixed(1)}<em>M</em></div><span class="sub">tokens</span>`
             : `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`)
         : pctRemaining != null
-            ? `<div class="pct">${pctRemaining}<em>%</em></div><span class="sub">${card.unit_type === 'currency' ? 'budget left' : 'remaining'}</span>`
+            ? `<div class="pct">${pctRemaining}<em>%</em></div><span class="sub">remaining</span>`
             : `<div class="pct" style="color:var(--unk);">—</div>`;
 
     const hzBar = card.is_unlimited ? '' : `<div class="horizon">
@@ -1833,9 +1843,14 @@ export function buildHorizonCard(card, forecastEntry) {
         <div class="axis"><span>NOW</span><span>+1h</span><span>+2h</span><span>RESET</span></div>
     </div>`;
 
+    const tokenDetails = card.token_usage?.total 
+        ? `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-top:4px;">Total Tokens: ${_formatTokenShort(card.token_usage.total)}</div>`
+        : `<div style="height:18px;"></div>`;
+
     return `<article class="glass card v-horizon ${hCls}" data-prov="${escapeHTMLAttr(card.provider_id || '')}" data-card-key="${escapeHTMLAttr(cKey)}">
         ${head}
         <div class="hz-head">${hzHeadContent}<div class="reset">resets <b>${escapeHTML(resetStr)}</b></div></div>
+        ${tokenDetails}
         ${hzBar}
         ${_buildHzFoot(card, forecastEntry, pace, projPct, usedPct)}
     </article>`;
@@ -1903,7 +1918,7 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
 
     return `
         <div class="modal-v2-hd">
-            <div class="plogo c-${prov.key}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:10px;font-weight:700;flex-shrink:0;">${escapeHTML(prov.init)}</div>
+            <div class="plogo c-${prov.key}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:${card.icon ? '14px' : '10px'};font-weight:700;flex-shrink:0;">${escapeHTML(card.icon || prov.init)}</div>
             <div class="stack-xs">
                 <span class="title">${escapeHTML(card.service_name)}</span>
                 ${_windowSubtitle(card)}

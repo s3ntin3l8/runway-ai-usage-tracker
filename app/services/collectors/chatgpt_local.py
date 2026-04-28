@@ -89,7 +89,7 @@ class ChatGPTLocalMixin:
 
                 cards.append(
                     {
-                        "service_name": "ChatGPT Account",
+                        "service_name": "ChatGPT",
                         "icon": "💬",
                         "remaining": tier.upper(),
                         "unit": "tier",
@@ -111,7 +111,9 @@ class ChatGPTLocalMixin:
 
                 cards.append(
                     {
-                        "service_name": "ChatGPT Codex",
+                        "service_name": "ChatGPT",
+                        "variant": "Codex",
+                        "window_type": "weekly",
                         "icon": "💬",
                         "remaining": f"{(100 - pct):.1f}%",
                         "unit": "remaining",
@@ -134,7 +136,9 @@ class ChatGPTLocalMixin:
                 balance = credits.get("balance", 0.0)
                 cards.append(
                     {
-                        "service_name": "ChatGPT Credits",
+                        "service_name": "ChatGPT",
+                        "variant": "Credits",
+                        "window_type": "rolling",
                         "icon": "💰",
                         "remaining": f"${balance:.2f}",
                         "unit": "USD",
@@ -185,7 +189,9 @@ class ChatGPTLocalMixin:
 
             return [
                 {
-                    "service_name": "ChatGPT Codex",
+                    "service_name": "ChatGPT",
+                    "variant": "Codex",
+                    "window_type": "weekly",
                     "icon": "💬",
                     "remaining": f"{(100 - pct):.1f}%",
                     "unit": "remaining",

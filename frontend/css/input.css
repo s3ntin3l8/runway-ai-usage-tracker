@@ -1150,8 +1150,8 @@ header.top .icon-btn[aria-pressed="true"] {
 .card .plogo.c-kimi       { color: var(--accent-cool); box-shadow: inset 0 0 0 1px var(--accent-cool); background: color-mix(in srgb, var(--accent-cool) 10%, transparent); }
 .card .plogo.c-minimax    { color: var(--unlm); box-shadow: inset 0 0 0 1px var(--unlm); background: color-mix(in srgb, var(--unlm) 10%, transparent); }
 .card .plogo.c-antigravity { color: var(--good); box-shadow: inset 0 0 0 1px var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); }
-.card .title { font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--text); display: block; min-height: 2.6em; }
-.card .sub   { font-size: 10px; font-weight: 400; color: var(--text-dim); letter-spacing: 0.06em; text-transform: uppercase; margin-top: 2px; }
+.card .title { font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--text); display: block; line-height: 1.2; }
+.card .sub   { font-size: 10px; font-weight: 400; color: var(--text-dim); letter-spacing: 0.06em; text-transform: uppercase; }
 .stack-xs    { display: flex; flex-direction: column; gap: 2px; }
 .row-between { display: flex; align-items: center; justify-content: space-between; }
 

@@ -1351,7 +1351,17 @@ class GenericCollector:
                             try:
                                 cursor = conn.cursor()
                                 now = datetime.datetime.now(datetime.UTC)
+                                # Discover identity
                                 hostname = get_hostname()
+                                acc_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
+                                if not acc_label:
+                                    try:
+                                        cursor.execute("SELECT email FROM account LIMIT 1")
+                                        row = cursor.fetchone()
+                                        if row and row[0]:
+                                            acc_label = row[0]
+                                    except Exception:
+                                        pass
 
                                 for q in rule.get("queries", []):
                                     query_str = q.get("query")
@@ -1385,11 +1395,13 @@ class GenericCollector:
                                                 "pace": "Stable" if pct < 50 else "High",
                                                 "detail": f"{used} used · {count} msgs · {hostname} [Sidecar]",
                                                 "data_source": "local",
+                                                "account_label": acc_label,
                                                 "metadata": {
                                                     "used": used,
                                                     "count": count,
                                                     "window": window_name,
                                                     "hostname": hostname,
+                                                    "account_label": acc_label,
                                                 },
                                             }
                                         )

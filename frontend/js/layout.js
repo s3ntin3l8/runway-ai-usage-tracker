@@ -5,15 +5,18 @@
 
 /**
  * Stable identity of a card within its provider.
+ * Tuple = (account_id, service_name, variant, model_id, window_type).
  * @param {object} card - LimitCard dict from /api/v1/usage/limits
- * @returns {string} e.g. "acc-xyz|Claude Pro|claude-sonnet|5hr_limit"
+ * @returns {string} e.g. "default|Claude||sonnet|weekly"
  */
 export function cardKey(card) {
-    const account = card.account_id ?? '';
-    const service = card.service_name ?? '';
-    const model = card.model_id ?? '';
-    const window = card.window_type ?? '';
-    return `${account}|${service}|${model}|${window}`;
+    return [
+        card.account_id ?? '',
+        card.service_name ?? '',
+        card.variant ?? '',
+        card.model_id ?? '',
+        card.window_type ?? '',
+    ].join('|');
 }
 
 /**

@@ -31,6 +31,7 @@ _CSV_COLUMNS = [
     "tier",
     "model_id",
     "window_type",
+    "variant",
     "health",
 ]
 
@@ -131,6 +132,7 @@ async def get_usage_history(
             UsageSnapshot.account_label,
             UsageSnapshot.service_name,
             UsageSnapshot.window_type,
+            UsageSnapshot.variant,
             UsageSnapshot.unit_type,
             UsageSnapshot.data_source,
             func.avg(UsageSnapshot.used_value).label("avg_used"),
@@ -152,6 +154,7 @@ async def get_usage_history(
         UsageSnapshot.account_id,
         UsageSnapshot.service_name,
         UsageSnapshot.window_type,
+        UsageSnapshot.variant,
         UsageSnapshot.unit_type,
     )
 
@@ -173,6 +176,7 @@ async def get_usage_history(
             ),
             "service_name": r.service_name,
             "window_type": r.window_type,
+            "variant": r.variant,
             "unit_type": r.unit_type,
             "data_source": r.data_source,
         }
@@ -242,6 +246,7 @@ async def get_usage_history_raw(
             UsageSnapshot.account_label,
             UsageSnapshot.service_name,
             UsageSnapshot.window_type,
+            UsageSnapshot.variant,
             UsageSnapshot.unit_type,
             UsageSnapshot.data_source,
             func.avg(UsageSnapshot.used_value).label("avg_used"),
@@ -264,6 +269,7 @@ async def get_usage_history_raw(
         UsageSnapshot.account_id,
         UsageSnapshot.service_name,
         UsageSnapshot.window_type,
+        UsageSnapshot.variant,
         UsageSnapshot.unit_type,
     )
 
@@ -287,6 +293,7 @@ async def get_usage_history_raw(
             "max_used_value": round(r.max_used, 4) if r.max_used is not None else None,
             "unit_type": r.unit_type,
             "window_type": r.window_type,
+            "variant": r.variant,
             "data_source": r.data_source,
         }
         for r in raw
@@ -485,6 +492,7 @@ def _history_as_csv(results: Sequence[UsageSnapshot]) -> StreamingResponse:
                 "tier": s.tier or "",
                 "model_id": s.model_id or "",
                 "window_type": s.window_type,
+                "variant": s.variant or "",
                 "health": s.health,
             }
         )
