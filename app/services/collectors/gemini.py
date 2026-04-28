@@ -78,7 +78,6 @@ class GeminiCollector(
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card context when both API and logs fail."""
-        # Check if we have credentials to determine the most helpful error
         creds = await self._get_credentials()
         if not creds:
             return [
@@ -93,3 +92,101 @@ class GeminiCollector(
         return [
             error_card("Gemini", "🔵", "All collection strategies failed", error_type="api_error")
         ]
+
+    def _enrich_results(
+        self,
+        primary: list[dict[str, Any]] | None,
+        enrichment: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Merge local enrichment into API primary cards by model class."""
+        if not enrichment or self._is_error_result(enrichment):
+            return primary or []
+
+        if not primary or self._is_error_result(primary):
+            return primary or []
+
+        e_data = enrichment[0]
+        messages = e_data.get("_messages", [])
+        all_by_model = e_data.get("by_model", {})
+        detail_suffix = e_data.get("_enrichment_detail", "")
+
+        for card in primary:
+            if card.get("data_source") == self.DATA_SOURCE_API:
+                model_id = card.get("model_id", "unknown")
+                reset_at = card.get("reset_at")
+
+                model_messages = [
+                    m for m in messages if m["model_class"] == model_id and m["timestamp"]
+                ]
+
+                if reset_at:
+                    window_messages = [m for m in model_messages if m["timestamp"] < reset_at]
+                else:
+                    window_messages = model_messages
+
+                if window_messages:
+                    class_data = self._aggregate_window_messages(window_messages)
+                    token_usage = {
+                        "input": class_data.get("input", 0),
+                        "output": class_data.get("output", 0),
+                        "reasoning": class_data.get("reasoning", 0),
+                        "cache_read": class_data.get("cache_read", 0),
+                        "total": class_data.get("total", 0),
+                    }
+                    card["token_usage"] = token_usage
+                    card["msgs"] = class_data.get("session_count", 0)
+                    card["pct_used"] = 0
+
+                    used = card.get("used_value", 0)
+                    limit = card.get("limit_value", 1)
+                    if limit and limit > 0:
+                        card["pct_used"] = (used / limit) * 100
+
+                if all_by_model:
+                    filtered_by_model = {}
+                    for model_name, model_info in all_by_model.items():
+                        model_class = self._map_model_to_class(model_name)
+                        if model_class == model_id:
+                            filtered_by_model[model_name] = model_info
+                    if filtered_by_model:
+                        card["by_model"] = filtered_by_model
+
+                if detail_suffix:
+                    card["detail"] = f"{card.get('detail', '')} | {detail_suffix}"
+
+        return primary
+
+    def _map_model_to_class(self, model_name: str) -> str:
+        """Map raw model name to card category (pro, flash, flash-lite)."""
+        if not model_name:
+            return "unknown"
+        lower = model_name.lower()
+        if "flash-lite" in lower:
+            return "flash-lite"
+        if "flash" in lower:
+            return "flash"
+        if "pro" in lower:
+            return "pro"
+        if "ultra" in lower:
+            return "ultra"
+        return model_name
+
+    def _aggregate_window_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Aggregate tokens from filtered messages."""
+        totals = {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache_read": 0,
+            "total": 0,
+            "session_count": 0,
+        }
+        for msg in messages:
+            tokens = msg.get("tokens", {})
+            totals["input"] += tokens.get("input", 0)
+            totals["output"] += tokens.get("output", 0)
+            totals["reasoning"] += tokens.get("thoughts", 0)
+            totals["cache_read"] += tokens.get("cached", 0)
+            totals["total"] += tokens.get("total", 0)
+            totals["session_count"] += 1
+        return totals
