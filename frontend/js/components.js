@@ -1801,7 +1801,7 @@ export function buildHorizonCard(card, forecastEntry) {
     const pace = _forecastPaceBucket(forecastEntry);
 
     // Reset display
-    const resetStr = card.reset_at ? formatResetDisplay(card.reset_at) : (card.reset || '—');
+    const resetStr = card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : (card.reset || '—');
 
     const hzHeadContent = card.is_unlimited
         ? `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`
