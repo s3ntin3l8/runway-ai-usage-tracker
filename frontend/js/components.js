@@ -1802,7 +1802,7 @@ export function buildHorizonCard(card, forecastEntry) {
     const pace = _forecastPaceBucket(forecastEntry);
 
     // Reset display
-    const resetStr = card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : (card.reset || '—');
+    const resetStr = card.reset_at ? formatResetDisplay(card.reset_at) : (card.reset || '—');
 
     const hzHeadContent = card.is_unlimited
         ? `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`
@@ -1915,7 +1915,7 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
                     <dt>Remaining</dt><dd>${remainingPct}%</dd>
                     <dt>Used</dt><dd>${escapeHTML(usedFmt)} / ${escapeHTML(limitFmt)}${unit ? ' ' + unit : ''}</dd>
                     <dt>Window</dt><dd>${escapeHTML(_windowLabel(card.window_type))}</dd>
-                    <dt>Reset</dt><dd>${escapeHTML(card.reset || formatResetDisplay(card.reset_at))}</dd>
+                    <dt>Reset</dt><dd>${escapeHTML(card.reset_at ? formatResetDisplay(card.reset_at) : (card.reset || '—'))}</dd>
                     ${paceRow}${projRow}
                 </dl>
             </div>
