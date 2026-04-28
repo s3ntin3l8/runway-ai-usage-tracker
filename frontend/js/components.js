@@ -309,18 +309,44 @@ function formatResetDisplay(resetAt) {
         const now = new Date();
         const diffHours = (date - now) / (1000 * 60 * 60);
 
-        // If > 24h away, show relative time (like "12d 4h")
-        if (diffHours >= 24) {
-            return formatHumanDelta(date);
-        }
+        // Get day labels (today/tomorrow) and time
+        const isSameDay = date.toDateString() === now.toDateString();
+        const isTomorrow = !isSameDay && diffHours > 0 && diffHours < 48;
 
-        // If <= 24h, show local time (e.g., "Resets at 10:43 PM")
+        // Get time in 24h format
         const timeStr = date.toLocaleTimeString(undefined, {
             hour: '2-digit',
             minute: '2-digit',
-            hour12: undefined,
+            hour12: false,
             timeZoneName: 'short'
         });
+
+        // If < 24h away, show local time
+        if (diffHours >= 0 && diffHours < 24) {
+            if (isSameDay) {
+                return `Today ${timeStr}`;
+            }
+            if (isTomorrow) {
+                return `Tomorrow ${timeStr}`;
+            }
+        }
+
+        // If > 24h away, show "tomorrow" or date + time
+        if (diffHours >= 24) {
+            if (isTomorrow) {
+                return `Tomorrow ${timeStr}`;
+            }
+            // Show date + time for future resets
+            const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            return `${dateStr} ${timeStr}`;
+        }
+
+        // Past resets
+        if (diffHours < 0) {
+            return formatHumanDelta(date);
+        }
+
+        // Fallback
         return `Resets at ${timeStr}`;
     } catch (e) {
         return resetAt;
