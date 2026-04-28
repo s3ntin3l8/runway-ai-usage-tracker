@@ -18,6 +18,25 @@ let _forecastChart = null;
 let _filterWindow = '';
 let _filterProvider = '';
 
+const _MODEL_DISPLAY = {
+    'sonnet': 'Sonnet', 'opus': 'Opus', 'haiku': 'Haiku',
+    'design': 'Design', 'flash': 'Flash', 'pro': 'Pro', 'flash-lite': 'Flash Lite',
+};
+const _WINDOW_DISPLAY = {
+    'session': 'Session', 'daily': 'Daily', 'weekly': 'Weekly', 'monthly': 'Monthly',
+};
+
+function _forecastSubtitle(entry) {
+    const parts = [];
+    if (entry.variant) parts.push(String(entry.variant));
+    if (entry.model_id) {
+        parts.push(_MODEL_DISPLAY[entry.model_id] || String(entry.model_id).replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+    }
+    const w = _WINDOW_DISPLAY[entry.window_type];
+    if (w) parts.push(w);
+    return parts.join(' · ');
+}
+
 async function fetchForecastCached() {
     const now = Date.now();
     if (_forecastCache && (now - _forecastCacheAt) < FORECAST_CACHE_TTL_MS) {
@@ -86,7 +105,9 @@ function _renderTable(forecasts) {
 
         const conf = _confidenceLabel(f.confidence);
         const resetDate = f.reset_at ? new Date(f.reset_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
-        const label = f.service_name || f.provider_id;
+        const baseLabel = f.service_name || f.provider_id;
+        const sub = _forecastSubtitle(f);
+        const label = sub ? `${baseLabel} · ${sub}` : baseLabel;
         return `<tr style="border-bottom:1px solid var(--hairline);color:var(--text);">
             <td style="padding:6px 8px;">${label}</td>
             <td style="padding:6px 8px;color:var(--text-dim);">${f.provider_id}</td>
@@ -131,7 +152,11 @@ async function _renderChart(forecasts) {
     const cGood = css.getPropertyValue('--good').trim() || '#00cc88';
 
     // Build bar chart: now_pct (solid) + delta to projected_pct (dashed stack)
-    const labels = chartable.map(f => f.service_name || f.provider_id);
+    const labels = chartable.map(f => {
+        const base = f.service_name || f.provider_id;
+        const sub = _forecastSubtitle(f);
+        return sub ? `${base} · ${sub}` : base;
+    });
     const nowData = chartable.map(f => parseFloat((f.now_pct ?? 0).toFixed(1)));
     const projData = chartable.map(f => parseFloat((f.projected_pct ?? 0).toFixed(1)));
 

@@ -283,10 +283,10 @@ class OllamaCollector(BaseCollector):
         # 3. Build cards using already-parsed blocks
         cards = []
         if session_block:
-            cards.append(self._make_card("Ollama Session", session_block, plan_name, email, now))
+            cards.append(self._make_card("Ollama", "session", session_block, plan_name, email, now))
 
         if weekly_block:
-            cards.append(self._make_card("Ollama Weekly", weekly_block, plan_name, email, now))
+            cards.append(self._make_card("Ollama", "weekly", weekly_block, plan_name, email, now))
 
         return cards
 
@@ -390,6 +390,7 @@ class OllamaCollector(BaseCollector):
     def _make_card(
         self,
         service_name: str,
+        window_type: str,
         block: dict[str, Any],
         plan: str | None,
         email: str | None,
@@ -406,6 +407,7 @@ class OllamaCollector(BaseCollector):
 
         return {
             "service_name": service_name,
+            "window_type": window_type,
             "icon": "🦙",
             "remaining": f"{(100 - pct):.1f}%",
             "unit": "remaining",
@@ -417,7 +419,6 @@ class OllamaCollector(BaseCollector):
             "limit_value": 100.0,
             "unit_type": "percent",
             "reset_at": resets_at.isoformat() if resets_at else None,
-            "window_type": block.get("window_type", "unknown"),
             "account_label": email,
             "data_source": self.DATA_SOURCE_WEB,
             "input_source": getattr(self, "_current_input_source", "unknown"),

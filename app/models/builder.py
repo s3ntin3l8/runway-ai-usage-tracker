@@ -60,9 +60,20 @@ class LimitCardBuilder:
 
     # ─── Provider / schema fields ──────────────────────────────────────────────
 
-    def set_provider(self, provider_id: str, window_type: str = "unknown") -> "LimitCardBuilder":
+    def set_provider(
+        self,
+        provider_id: str,
+        window_type: str = "unknown",
+        variant: str | None = None,
+    ) -> "LimitCardBuilder":
         self._data["provider_id"] = provider_id
         self._data["window_type"] = window_type
+        if variant is not None:
+            self._data["variant"] = variant
+        return self
+
+    def set_variant(self, variant: str) -> "LimitCardBuilder":
+        self._data["variant"] = variant
         return self
 
     def set_account(

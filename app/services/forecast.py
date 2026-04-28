@@ -60,6 +60,7 @@ def _make_entry(
         model_id=card.model_id,
         service_name=card.service_name,
         window_type=card.window_type,
+        variant=card.variant,
         unit_type=card.unit_type,
         now_used=now_used,
         now_pct=now_pct,

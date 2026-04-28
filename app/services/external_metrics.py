@@ -132,30 +132,38 @@ class ExternalMetricService:
         def get_default_window_data():
             return {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""}
 
-        # Window name mappings
-        window_map = {
-            "5 Hours": "5h",
-            "7 Days": "week",
-            "30 Days": "month",
+        # Map canonical window_type to aggregation keys.
+        window_key_map = {
+            "session": "5h",
+            "weekly": "week",
+            "monthly": "month",
         }
 
+        # Two-pass aggregation:
+        # 1. Identify best account_label for each host
+        host_to_label: dict[str, str] = {}
         for card in opencode_cards:
-            service = card.get("service_name", "")
-            # Extract window type from service name
-            window_key = None
-            for window_name, key in window_map.items():
-                if window_name in service:
-                    window_key = key
-                    break
+            metadata = card.get("metadata", {})
+            host = metadata.get("hostname") or card.get("_provider", "unknown")
+            acc_label = card.get("account_label") or metadata.get("account_label")
+            if acc_label and acc_label.lower() != "default":
+                host_to_label[host] = acc_label
+
+        # 2. Group data by canonical label
+        for card in opencode_cards:
+            window_key = window_key_map.get(card.get("window_type") or "")
 
             if window_key:
                 # Parse cost and msgs from metadata (Primary) or detail (Fallback)
                 metadata = card.get("metadata", {})
                 used = metadata.get("used", 0.0)
                 msgs = metadata.get("count", 0)
+                host = metadata.get("hostname") or card.get("_provider", "unknown")
 
-                # Capture account label if available
-                acc_label = card.get("account_label") or metadata.get("account_label") or "Default"
+                # Resolve account label
+                acc_label = card.get("account_label") or metadata.get("account_label")
+                if not acc_label or acc_label.lower() == "default":
+                    acc_label = host_to_label.get(host, "Default")
 
                 if acc_label not in aggregated:
                     aggregated[acc_label] = {
@@ -196,11 +204,7 @@ class ExternalMetricService:
                 aggregated[acc_label][window_key]["time_str"] = card.get("_time_str", "")
 
         # Create aggregated cards for each window and account
-        window_labels = {
-            "5h": "5h Combined",
-            "week": "7d Combined",
-            "month": "30d Combined",
-        }
+        window_type_map = {"5h": "session", "week": "weekly", "month": "monthly"}
 
         result = []
         for acc_label, windows_data in aggregated.items():
@@ -215,7 +219,9 @@ class ExternalMetricService:
 
                     result.append(
                         {
-                            "service_name": f"OpenCode ({window_labels[window]})",
+                            "service_name": "OpenCode",
+                            "variant": "Combined",
+                            "window_type": window_type_map[window],
                             "icon": "⚡",
                             "remaining": f"${remaining:.2f}",
                             "unit": f"${limit:.0f} limit",

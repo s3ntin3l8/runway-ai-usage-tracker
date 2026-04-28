@@ -112,7 +112,7 @@ class ZaiCollector(BaseCollector):
     def _info_card(self, remaining: str, detail: str) -> dict[str, Any]:
         """Build an info card when no quota data is available."""
         return {
-            "service_name": "zAI Plan",
+            "service_name": "zAI",
             "icon": "🌐",
             "remaining": remaining,
             "unit": "quota",
@@ -205,19 +205,19 @@ class ZaiCollector(BaseCollector):
         window_str = self._format_window(unit_type, unit_val)
 
         if limit_type == "TOKENS_LIMIT":
-            service = "zAI Plan (Tokens)"
+            variant = "Tokens"
             remaining_str = f"{remaining:,}" if remaining else "0"
             unit = f"{limit_val:,}" if limit_val else "0"
             detail = f"{used_val:,} used · {plan_name}"
             unit_type_str = "tokens"
         elif limit_type == "TIME_LIMIT":
-            service = "zAI Plan (Time)"
+            variant = "Time"
             remaining_str = f"{remaining}" if remaining is not None else "0"
             unit = f"{limit_val} min" if limit_val else "0 min"
             detail = f"{used_val} min used · {plan_name}"
             unit_type_str = "minutes"
         else:
-            service = f"zAI Plan ({limit_type})"
+            variant = limit_type
             remaining_str = f"{remaining}" if remaining is not None else "0"
             unit = f"{limit_val}" if limit_val else "0"
             detail = f"{used_val} used · {plan_name}"
@@ -239,7 +239,8 @@ class ZaiCollector(BaseCollector):
         pace = "Stable" if health == "good" else "High" if health == "warning" else "Critical"
 
         return {
-            "service_name": service,
+            "service_name": "zAI",
+            "variant": variant,
             "icon": "🌐",
             "remaining": remaining_str,
             "unit": unit,

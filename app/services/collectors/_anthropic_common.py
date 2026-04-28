@@ -1,8 +1,8 @@
 """Shared constants and helpers used across all Anthropic collector mixins."""
 
 ANTHROPIC_WINDOW_NAME_MAP: dict[str, str] = {
-    "five_hour": "Session Window",
-    "seven_day": "Weekly Window",
+    "five_hour": "Session",
+    "seven_day": "Weekly",
     "seven_day_sonnet": "Sonnet Weekly",
     "seven_day_opus": "Opus Weekly",
     "seven_day_omelette": "Claude Design",

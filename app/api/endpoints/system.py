@@ -47,7 +47,11 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
 
     # Admin key bypass for local development matches core/security.py
     # Only trust if client IS localhost AND server is also only listening on localhost
-    is_local_trust = bool(request.client and request.client.host in ("127.0.0.1", "::1"))
+    is_local_trust = bool(
+        request.client
+        and request.client.host in ("127.0.0.1", "::1")
+        and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
+    )
 
     auth_methods = []
     if settings.ADMIN_API_KEY:

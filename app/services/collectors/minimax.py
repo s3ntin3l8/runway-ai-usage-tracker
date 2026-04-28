@@ -158,7 +158,8 @@ class MiniMaxCollector(BaseCollector):
 
             results.append(
                 {
-                    "service_name": f"MiniMax: {name}",
+                    "service_name": "MiniMax",
+                    "model_id": name,
                     "icon": "🤖",
                     "remaining": f"{remains:,}",
                     "unit": "requests",

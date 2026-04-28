@@ -28,6 +28,7 @@ class UsageSnapshot(SQLModel, table=True):
     tier: str | None = None
     model_id: str | None = None
     window_type: str = Field(default="unknown")
+    variant: str | None = Field(default=None)
     health: str
     sidecar_id: str | None = Field(default=None, index=True)
     is_unlimited: bool = Field(default=False)

@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     KIMI_AUTH_TOKEN: str = ""
     KIMI_K2_API_KEY: str = ""
 
-    INGEST_API_KEY: str = DEFAULT_INGEST_API_KEY
+    INGEST_API_KEY: str = ""  # Default empty = disabled; set to non-empty to enable ingestion
     ADMIN_API_KEY: str | None = None
 
     # OAuth credentials
@@ -122,6 +122,17 @@ class Settings(BaseSettings):
             get_platform_data_dir("antigravity"), "state", "quota.json"
         )
     )
+
+    @computed_field
+    @property
+    def data_dir(self) -> str:
+        return get_platform_data_dir("runway")
+
+    @computed_field
+    @property
+    def config_dir(self) -> str:
+        return get_platform_config_dir("runway")
+
     OPENCODE_DB_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_data_dir("opencode"), "opencode.db")
     )
@@ -173,6 +184,18 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Security enforcement: require DB_ENCRYPTION_KEY when ADMIN_API_KEY is set or when binding to non-localhost
+if settings.ADMIN_API_KEY and not settings.DB_ENCRYPTION_KEY:
+    logger.error(
+        "SECURITY ERROR: ADMIN_API_KEY is set while DB_ENCRYPTION_KEY is not configured. Refusing to start."
+    )
+    raise RuntimeError("DB_ENCRYPTION_KEY must be set when ADMIN_API_KEY is configured")
+if settings.APP_HOST not in ("127.0.0.1", "localhost") and not settings.DB_ENCRYPTION_KEY:
+    logger.error(
+        "SECURITY ERROR: Server bound to non-localhost without DB_ENCRYPTION_KEY. Refusing to start."
+    )
+    raise RuntimeError("DB_ENCRYPTION_KEY must be set when binding to non-localhost interfaces")
+
 
 def _get_system_config_flag(field: str, default: bool) -> bool:
     """Read a bool flag from SystemConfig DB, falling back to the env-var default."""
@@ -206,8 +229,17 @@ def is_local_credential_scraping_enabled() -> bool:
     )
 
 
-# Security check: Warn if using default ingest secret
-if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
+# Security check: Warn if using a missing or default ingest secret
+if not settings.INGEST_API_KEY:
+    logger.warning("=" * 60)
+    logger.warning(
+        "INGEST_API_KEY is not configured. The ingest endpoint is DISABLED until a non-empty key is provided."
+    )
+    logger.warning(
+        "Set INGEST_API_KEY environment variable to a strong secret to enable sidecar ingestion."
+    )
+    logger.warning("=" * 60)
+elif settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
     logger.warning("=" * 60)
     logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
     logger.warning("The ingest endpoint is DISABLED until a custom key is set.")
