@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import is_local_collector_enabled
+from app.core.config import is_local_collector_enabled, settings
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,7 @@ class GeminiLocalMixin:
             return []
 
         potential_dirs = [
+            settings.GEMINI_SESSIONS_DIR,
             os.path.expanduser("~/.gemini/tmp/ai-usage-tracker/chats"),
             os.path.expanduser("~/.gemini/tmp/gemini/chats"),
             os.path.expanduser("~/.gemini/tmp/sessions"),
