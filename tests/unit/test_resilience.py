@@ -23,6 +23,65 @@ class MockCollector(BaseCollector):
         return []
 
 
+class TestTagResultsDedup:
+    @pytest.mark.asyncio
+    async def test_tag_results_drops_duplicate_cards(self):
+        """Duplicate cards by (service_name, window_type, variant) should be deduplicated."""
+        inner = MockCollector()
+
+        # Simulate results with duplicate cards
+        results = [
+            {
+                "service_name": "Claude",
+                "variant": "5-Hour Limit",
+                "window_type": "session",
+                "remaining": "80.0%",
+            },
+            {
+                "service_name": "Claude",
+                "variant": "5-Hour Limit",
+                "window_type": "session",
+                "remaining": "80.0%",
+            },
+            {
+                "service_name": "Claude",
+                "variant": "Balance",
+                "window_type": "rolling",
+                "remaining": "$15.00",
+            },
+        ]
+
+        tagged = inner._tag_results(results)
+        assert len(tagged) == 2
+        variants = {c.get("variant") for c in tagged}
+        assert "5-Hour Limit" in variants
+        assert "Balance" in variants
+
+    @pytest.mark.asyncio
+    async def test_tag_results_keeps_first_duplicate(self):
+        """When duplicates exist, the first card should be kept."""
+        inner = MockCollector()
+
+        results = [
+            {
+                "service_name": "Claude",
+                "variant": "Weekly",
+                "window_type": "weekly",
+                "remaining": "FIRST",
+            },
+            {
+                "service_name": "Claude",
+                "variant": "Weekly",
+                "window_type": "weekly",
+                "remaining": "SECOND",
+            },
+        ]
+
+        tagged = inner._tag_results(results)
+        assert len(tagged) == 1
+        assert tagged[0]["remaining"] == "FIRST"
+
+
 class TestCacheResilience:
     @pytest.mark.asyncio
     async def test_smart_collector_deep_copy_integrity(self):

@@ -171,34 +171,14 @@ class AnthropicCollector(
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Hybrid primary strategy: Statusline merged with Web/OAuth."""
-        results = []
+        """Legacy fallback — not used when STRATEGIES is declared.
 
-        # 1. Fetch from Statusline (Fast Local)
-        statusline_results = await self._strategy_statusline()
-        if statusline_results:
-            results.extend(statusline_results)
-
-        # 2. Check if we have a Session Key (yields to Web API strategy)
-        token = await self._get_current_token()
-        if token and (token.startswith("sk-ant-sid") or "sessionKey=" in token):
-            web_results = await self._get_claude_via_web_api(client)
-            if web_results:
-                seen_services = {r["service_name"] for r in web_results}
-                results = [r for r in results if r["service_name"] not in seen_services]
-                results.extend(web_results)
-                return results
-
-        # 3. Fallback to OAuth (Full API) if no session key or web strategy failed
-        token = await self._get_valid_token(client)
-        if token:
-            oauth_results = await self._get_claude_oauth(client, token)
-            if oauth_results:
-                seen_services = {r["service_name"] for r in oauth_results}
-                results = [r for r in results if r["service_name"] not in seen_services]
-                results.extend(oauth_results)
-
-        return results
+        The Anthropic collector declares STRATEGIES, so BaseCollector.collect()
+        uses the dynamic strategy dispatch path. This method only runs if a user
+        disables all strategies via ProviderConfig, in which case returning an
+        empty list lets the fallback chain / error handler take over.
+        """
+        return []
 
     # ── Individual strategy wrappers (used by dynamic STRATEGIES dispatch) ────
 

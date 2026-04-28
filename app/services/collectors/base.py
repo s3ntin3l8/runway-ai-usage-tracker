@@ -428,7 +428,32 @@ class BaseCollector(ABC):
                 # Fallback: still include the card but mark it with an error badge in logs
                 # In production, we might want to skip these, but for now we log as error.
 
-        return tagged_results
+        # Deduplicate by composite key (service_name, window_type, variant, model_id).
+        # Keep the first occurrence and log any duplicates as a safety net
+        # against parser bugs across all collectors.
+        seen_keys: set[tuple[str, str, str | None, str | None]] = set()
+        deduped: list[dict[str, Any]] = []
+        for card in tagged_results:
+            key = (
+                card.get("service_name", ""),
+                card.get("window_type", "unknown"),
+                card.get("variant"),
+                card.get("model_id"),
+            )
+            if key in seen_keys:
+                logger.warning(
+                    "Dropping duplicate card from %s: %s (window_type=%s, variant=%s, model_id=%s)",
+                    self.PROVIDER_ID,
+                    key[0],
+                    key[1],
+                    key[2],
+                    key[3],
+                )
+                continue
+            seen_keys.add(key)
+            deduped.append(card)
+
+        return deduped
 
     @abstractmethod
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
