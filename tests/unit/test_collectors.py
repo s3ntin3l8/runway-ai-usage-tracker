@@ -155,10 +155,10 @@ class TestAnthropicCollector:
 
     @pytest.mark.asyncio
     @patch("asyncio.sleep")
-    async def test_collect_oauth_proactive_429_backoff(
+    async def test_collect_oauth_429_returns_error_card(
         self, mock_sleep, mock_http_client, mock_anthropic_oauth_response
     ):
-        """Test that 429 rate limit triggers proactive backoff for subsequent calls."""
+        """Test that 429 rate limit returns error card with rate_limited type."""
         collector = AnthropicCollector()
 
         # Mock 429 rate limit response with a Retry-After header
@@ -166,42 +166,19 @@ class TestAnthropicCollector:
         mock_429_response.status_code = 429
         mock_429_response.headers = {"Retry-After": "60"}  # 60 seconds
 
-        # After 3 retries (first call), it returns the 429
         mock_http_client.request.return_value = mock_429_response
 
         with (
-            patch(
-                "app.services.credential_provider.CredentialProvider.get_claude_token",
-                return_value="test_token",
-            ),
-            patch("app.services.collectors.anthropic.settings") as mock_settings,
+            patch.object(collector, "_get_valid_token", return_value="test_token"),
         ):
-            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-            mock_settings.LOCAL_COLLECTOR_ENABLED = False
+            # Call the OAuth strategy directly to verify 429 handling
+            result = await collector._get_claude_oauth(mock_http_client, "test_token")
+            assert result[0].get("error_type") == "rate_limited"
+            assert collector._last_retry_after == 300.0
 
-            with (
-                patch(
-                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
-                    return_value="fake_session",
-                ),
-                patch.object(collector, "_get_valid_token", return_value="test_token"),
-                patch.object(
-                    collector,
-                    "_get_claude_via_web_api",
-                    return_value=[{"service_name": "Fallback", "data_source": "web"}],
-                ),
-            ):
-                # First call - OAuth gets 429 with 60s Retry-After.
-                # http_request_with_retry will abort retries because 60s > 10s cap.
-                await collector.collect(mock_http_client)
-                assert mock_http_client.request.call_count == 1
-
-                # Second call - should skip OAuth entirely due to proactive backoff
-                await collector.collect(mock_http_client)
-
-                # Still 1 call, not 2 (OAuth was skipped proactively)
-                assert mock_http_client.request.call_count == 1
+            # Second direct call - still returns 429 (no proactive backoff)
+            result2 = await collector._get_claude_oauth(mock_http_client, "test_token")
+            assert result2[0].get("error_type") == "rate_limited"
 
     @pytest.mark.asyncio
     async def test_collect_anthropic_with_paid_usage(self, mock_http_client):
@@ -248,10 +225,10 @@ class TestAnthropicCollector:
         assert "Spent: $2.50" in extra_card["detail"]
 
     @pytest.mark.asyncio
-    async def test_collect_oauth_success_clears_backoff(
+    async def test_collect_oauth_success_after_429(
         self, mock_http_client, mock_anthropic_oauth_response
     ):
-        """Test that a successful call clears any previous 429 backoff."""
+        """Test that a successful call works after a previous 429."""
         collector = AnthropicCollector()
 
         # Mock success response
@@ -261,14 +238,12 @@ class TestAnthropicCollector:
         mock_response.headers = {}
         mock_http_client.request.return_value = mock_response
 
-        # Manually set a backoff from the past
-        collector._last_429_backoff_until = datetime.now(UTC) - timedelta(minutes=1)
-
         with patch.object(collector, "_get_valid_token", return_value="test_token"):
-            await collector.collect(mock_http_client)
+            result = await collector.collect(mock_http_client)
 
-            # Backoff should be cleared on success
-            assert collector._last_429_backoff_until is None
+            # Should return successful results
+            assert len(result) > 0
+            assert result[0].get("error_type") is None
 
     @pytest.mark.asyncio
     async def test_collect_oauth_token_refresh_success(
@@ -1318,7 +1293,7 @@ class TestGitHubCollector:
 
     @pytest.mark.asyncio
     async def test_collect_429_backoff_does_not_crash(self, mock_http_client):
-        """Test that GitHub 429 responses create backoff instead of crashing."""
+        """Test that GitHub 429 responses set retry-after for SmartCollector."""
         collector = GitHubCollector(account_id="acc_a")
 
         rate_limited = MagicMock(spec=httpx.Response)
@@ -1336,7 +1311,7 @@ class TestGitHubCollector:
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
         assert result[0]["error_type"] == "rate_limited"
-        assert collector._last_429_backoff_until is not None
+        assert collector._last_retry_after == 60.0
 
     @pytest.mark.asyncio
     async def test_github_token_lookup_uses_account_scope(self, mock_http_client):
