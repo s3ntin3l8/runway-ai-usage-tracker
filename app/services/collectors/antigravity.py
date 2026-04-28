@@ -50,8 +50,14 @@ class AntigravityCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
 
     async def is_configured(self) -> bool:
-        """Check if local collector is enabled for Antigravity."""
-        return is_local_collector_enabled()
+        """Check if Antigravity IDE is installed/running with quota data."""
+        if not is_local_collector_enabled():
+            return False
+        if await self._detect_lsp_proc_info():
+            return True
+        import os
+
+        return os.path.exists(settings.ANTIGRAVITY_QUOTA_PATH)
 
     def _fallback_strategies(self) -> list[Any]:
         """Return the strategy list for Antigravity."""
@@ -98,7 +104,12 @@ class AntigravityCollector(BaseCollector):
                     for cards in probe_results:
                         if isinstance(cards, list):
                             for card in cards:
-                                svc_key = f"{card['service_name']}_{card['remaining']}"
+                                svc_key = (
+                                    card["service_name"],
+                                    card.get("variant"),
+                                    card.get("model_id"),
+                                    card["remaining"],
+                                )
                                 if svc_key not in seen_services:
                                     results.append(card)
                                     seen_services.add(svc_key)
@@ -218,7 +229,7 @@ class AntigravityCollector(BaseCollector):
 
             results.append(
                 {
-                    "service_name": label,
+                    "service_name": "Antigravity",
                     "icon": "🛸",
                     "remaining": f"{rem_pct:.1f}%",
                     "unit": "capacity",
@@ -262,7 +273,8 @@ class AntigravityCollector(BaseCollector):
 
             results.append(
                 {
-                    "service_name": display_name,
+                    "service_name": "Antigravity",
+                    "variant": display_name,
                     "icon": "💰",
                     "remaining": amount,
                     "unit": "credits",
@@ -297,7 +309,7 @@ class AntigravityCollector(BaseCollector):
                 reset_display, reset_at = _format_reset(usage.get("resets_at"))
                 res.append(
                     {
-                        "service_name": name,
+                        "service_name": "Antigravity",
                         "icon": "🛸",
                         "remaining": f"{rem:.1f}%",
                         "unit": "remaining",
