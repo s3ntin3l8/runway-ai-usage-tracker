@@ -470,8 +470,15 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
                     )
+                    # Only emit one balance card even if multiple keys exist
+                    break
                 except (ValueError, TypeError):
                     pass
+                continue
+
+            # Skip overage when extra_usage is also present to avoid duplicate
+            # spend/limit cards (Web API parser uses the same merge logic).
+            if key == "overage" and data.get("extra_usage") is not None:
                 continue
 
             if not isinstance(usage, dict):
