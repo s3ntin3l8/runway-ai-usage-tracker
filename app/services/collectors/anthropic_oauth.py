@@ -417,6 +417,8 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
             usage = data.get(key)
             if usage is None:
+                if key == "seven_day_opus":
+                    continue
                 usage = {"utilization": 0.0, "resets_at": None}
 
             u_type = name_map.get(key, key.replace("_", " ").title())

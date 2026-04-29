@@ -203,8 +203,8 @@ class TestAnthropicCollector:
             with patch.object(collector, "_get_valid_token", return_value="test_token"):
                 result = await collector.collect(mock_http_client)
 
-        # Should return 7 cards: 5 standard quota windows + Balance + Extra Usage
-        assert len(result) == 7
+        # Should return 6 cards: 4 standard quota windows (opus skipped when null) + Balance + Extra Usage
+        assert len(result) == 6
 
         variants = {c.get("variant"): c for c in result if c.get("variant")}
         assert "Current Balance" in variants
@@ -823,9 +823,9 @@ class TestAnthropicCollector:
         result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
 
         # Should not crash, should return card with reset as "—"
-        # Now returns 5 items because core windows are guaranteed (including seven_day_omelette)
+        # Returns 4 items: session + weekly + sonnet + omelette (opus skipped when null)
         assert isinstance(result, list)
-        assert len(result) == 5
+        assert len(result) == 4
         assert result[0]["reset"] == "—"
 
     def test_parse_oauth_response_empty_windows(self):
@@ -983,34 +983,46 @@ class TestAnthropicCollector:
         ):
             result = collector._get_claude_local_enhanced_sync()
 
-        assert len(result) == 2
-        by_window = {r["window_type"]: r for r in result}
+        # 4 dicts: session aggregate + weekly aggregate + sonnet weekly + opus weekly
+        assert len(result) == 4
+        by_key = {(r["window_type"], r.get("model_id")): r for r in result}
 
-        assert "session" in by_window
-        assert "weekly" in by_window
-
-        sess = by_window["session"]
+        # Session aggregate
+        assert ("session", None) in by_key
+        sess = by_key[("session", None)]
         assert "_enrichment_detail" in sess
         assert "token_usage" in sess
         assert "by_model" in sess
         assert "msgs" in sess
         assert "opus" in sess["_enrichment_detail"]
-        assert sess["totals"]["cache_read"] == 3000
-        assert sess["totals"]["sessions"] == 1
-        assert "web:3" in sess["_enrichment_detail"]
         assert sess["token_usage"]["input"] == 1000
         assert sess["token_usage"]["output"] == 500
         assert sess["msgs"] == 1
 
-        week = by_window["weekly"]
+        # Weekly aggregate
+        assert ("weekly", None) in by_key
+        week = by_key[("weekly", None)]
         assert "_enrichment_detail" in week
-        assert week["totals"]["input"] == 1500
-        assert week["totals"]["cache_read"] == 4000
-        assert week["totals"]["sessions"] == 2
         assert "opus" in week["_enrichment_detail"]
         assert "sonnet" in week["_enrichment_detail"]
         assert week["token_usage"]["input"] == 1500
         assert week["msgs"] == 2
+
+        # Weekly Sonnet-specific
+        assert ("weekly", "sonnet") in by_key
+        week_sonnet = by_key[("weekly", "sonnet")]
+        assert week_sonnet["token_usage"]["input"] == 500
+        assert week_sonnet["msgs"] == 1
+        assert "sonnet" in week_sonnet["_enrichment_detail"]
+        assert "opus" not in week_sonnet["_enrichment_detail"]
+
+        # Weekly Opus-specific
+        assert ("weekly", "opus") in by_key
+        week_opus = by_key[("weekly", "opus")]
+        assert week_opus["token_usage"]["input"] == 1000
+        assert week_opus["msgs"] == 1
+        assert "opus" in week_opus["_enrichment_detail"]
+        assert "sonnet" not in week_opus["_enrichment_detail"]
 
     def test_enrich_results_matches_by_window(self):
         """_enrich_results appends the right suffix to the right primary card."""

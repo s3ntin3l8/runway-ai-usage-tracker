@@ -213,11 +213,10 @@ class AnthropicLocalMixin:
         Scans multiple config directories for .jsonl files and tracks all
         token types including cache reads and cache creation.
 
-        Features:
-        - Multiple config roots (CLAUDE_CONFIG_DIR comma-separated)
-        - All token types: input, cache_read, cache_creation, output
-        - Deduplication by message.id + requestId
-        - 5-hour sliding window to match OAuth session window behavior
+        Emits one aggregate enrichment dict per window (session, weekly) plus
+        one per-model dict for each model with usage in the weekly window.
+        The base class matcher uses model_id to route the right data to the
+        right primary card.
         """
         config_dirs = self._get_config_dirs()
 
@@ -231,94 +230,31 @@ class AnthropicLocalMixin:
             return []
 
         # Read credentials file for identity and tier info
-        tier = None
         email = ""
         try:
-            # 1. Check primary credentials file (.credentials.json usually)
             if os.path.exists(self._credentials_path):
                 with open(self._credentials_path) as f:
                     data = json.load(f)
-                    # Try claudeAiOauth subscriptionType or rateLimitTier
-                    oauth = data.get("claudeAiOauth", {})
-                    raw_sub = oauth.get("subscriptionType")
-                    raw_tier = oauth.get("rateLimitTier")
-
-                    if raw_sub:
-                        tier = str(raw_sub).capitalize()
-                    elif raw_tier:
-                        tier_map = {
-                            "tier_0": "Free",
-                            "tier_1": "Pro",
-                            "tier_2": "Max",
-                            "tier_3": "Team",
-                            "tier_4": "Enterprise",
-                            "tier_5": "Enterprise",
-                            "default_claude_ai": "Pro",
-                        }
-                        tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
-
-                    if not tier:
-                        plan = data.get("account", {}).get("plan", "").lower()
-                        if plan:
-                            tier = plan.capitalize()
-
                     oauth_acc = data.get("oauthAccount", {})
                     email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
 
-            # 2. Fallback to ~/.claude.json for identity/billing hints
-            if not email or not tier:
+            if not email:
                 path = os.path.expanduser("~/.claude.json")
                 if os.path.exists(path):
                     with open(path) as f:
                         data = json.load(f)
-                        if not email:
-                            oauth_acc = data.get("oauthAccount", {})
-                            email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
-                        if not tier:
-                            oa = data.get("oauthAccount", {})
-                            bt = oa.get("billingType")
-                            if bt:
-                                if "pro" in bt.lower():
-                                    tier = "Pro"
-                                elif "free" in bt.lower():
-                                    tier = "Free"
-                                elif bt == "default_claude_ai":
-                                    tier = "Pro"  # Most likely Pro if using Claude Code
-                                else:
-                                    tier = str(bt).capitalize()
-
-                            if not tier:
-                                local_tier = data.get("billing_tier") or data.get("tier")
-                                if local_tier:
-                                    tier = str(local_tier).capitalize()
+                        oauth_acc = data.get("oauthAccount", {})
+                        email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
         except Exception as e:
-            logger.debug(f"Could not read tier/email from credentials: {e}")
+            logger.debug(f"Could not read email from credentials: {e}")
 
-        cutoff_5h = datetime.now(UTC) - timedelta(hours=5)
-        cutoff_7d = datetime.now(UTC) - timedelta(days=7)
-
-        # Persist identity if found
         if email:
             self.account_label = email
 
-        def _empty_bucket() -> dict:
-            return {
-                "input": 0,
-                "output": 0,
-                "cache_read": 0,
-                "cache_creation": 0,
-                "web_search": 0,
-                "web_fetch": 0,
-                "sessions": set(),
-                "models": {},
-                "model_msgs": {},
-                "msg_count": 0,
-                "oldest": None,
-            }
-
-        session_bucket = _empty_bucket()
-        weekly_bucket = _empty_bucket()
+        # Parse all assistant messages into a flat list
+        messages: list[dict[str, Any]] = []
         seen_messages: set = set()
+        cutoff_7d = datetime.now(UTC) - timedelta(days=7)
 
         for fpath in all_files:
             try:
@@ -354,84 +290,79 @@ class AnthropicLocalMixin:
                         seen_messages.add(dedup_key)
 
                         usage = msg_data.get("usage", {})
-                        inp = usage.get("input_tokens", 0)
-                        out = usage.get("output_tokens", 0)
-                        cache_r = usage.get("cache_read_input_tokens", 0)
-                        cache_w = usage.get("cache_creation_input_tokens", 0)
-                        server_tools = usage.get("server_tool_use") or {}
-                        web_search = server_tools.get("web_search_requests", 0) or 0
-                        web_fetch = server_tools.get("web_fetch_requests", 0) or 0
-
                         model = msg_data.get("model", "")
                         short_model = self._short_model_id(model) if model else ""
-                        session_id = entry.get("sessionId", "")
-                        token_sum = inp + out + cache_r + cache_w
 
-                        # Accumulate into weekly bucket (all messages within 7d)
-                        weekly_bucket["input"] += inp
-                        weekly_bucket["output"] += out
-                        weekly_bucket["cache_read"] += cache_r
-                        weekly_bucket["cache_creation"] += cache_w
-                        weekly_bucket["web_search"] += web_search
-                        weekly_bucket["web_fetch"] += web_fetch
-                        if session_id:
-                            weekly_bucket["sessions"].add(session_id)
-                        if short_model:
-                            weekly_bucket["models"][short_model] = (
-                                weekly_bucket["models"].get(short_model, 0) + token_sum
-                            )
-                            weekly_bucket["model_msgs"][short_model] = (
-                                weekly_bucket["model_msgs"].get(short_model, 0) + 1
-                            )
-                        weekly_bucket["msg_count"] += 1
-                        if not weekly_bucket["oldest"] or ts < weekly_bucket["oldest"]:
-                            weekly_bucket["oldest"] = ts
-
-                        # Also accumulate into the 5h session bucket
-                        if ts >= cutoff_5h:
-                            session_bucket["input"] += inp
-                            session_bucket["output"] += out
-                            session_bucket["cache_read"] += cache_r
-                            session_bucket["cache_creation"] += cache_w
-                            session_bucket["web_search"] += web_search
-                            session_bucket["web_fetch"] += web_fetch
-                            if session_id:
-                                session_bucket["sessions"].add(session_id)
-                            if short_model:
-                                session_bucket["models"][short_model] = (
-                                    session_bucket["models"].get(short_model, 0) + token_sum
-                                )
-                                session_bucket["model_msgs"][short_model] = (
-                                    session_bucket["model_msgs"].get(short_model, 0) + 1
-                                )
-                            session_bucket["msg_count"] += 1
-                            if not session_bucket["oldest"] or ts < session_bucket["oldest"]:
-                                session_bucket["oldest"] = ts
-
+                        messages.append(
+                            {
+                                "ts": ts,
+                                "model_id": short_model,
+                                "tokens": {
+                                    "input": usage.get("input_tokens", 0),
+                                    "output": usage.get("output_tokens", 0),
+                                    "cache_read": usage.get("cache_read_input_tokens", 0),
+                                    "cache_creation": usage.get("cache_creation_input_tokens", 0),
+                                },
+                                "session_id": entry.get("sessionId", ""),
+                            }
+                        )
             except FileNotFoundError:
                 continue
             except Exception as e:
                 logger.warning(f"Error reading Claude log file {fpath}: {e}")
                 continue
 
-        session_total = (
-            session_bucket["input"]
-            + session_bucket["output"]
-            + session_bucket["cache_read"]
-            + session_bucket["cache_creation"]
-        )
-        weekly_total = (
-            weekly_bucket["input"]
-            + weekly_bucket["output"]
-            + weekly_bucket["cache_read"]
-            + weekly_bucket["cache_creation"]
-        )
+        if not messages:
+            return []
 
-        def _build_enrichment(bucket: dict, total: int, wt: str) -> dict[str, Any]:
+        messages.sort(key=lambda m: m["ts"])
+        cutoff_5h = datetime.now(UTC) - timedelta(hours=5)
+        session_msgs = [m for m in messages if m["ts"] >= cutoff_5h]
+        weekly_msgs = messages  # already filtered to 7d during parsing
+
+        def _aggregate(msgs: list[dict], model_filter: str | None = None) -> dict[str, Any]:
+            bucket = {
+                "input": 0,
+                "output": 0,
+                "cache_read": 0,
+                "cache_creation": 0,
+                "sessions": set(),
+                "models": {},
+                "model_msgs": {},
+                "msg_count": 0,
+            }
+            for m in msgs:
+                if model_filter and m["model_id"] != model_filter:
+                    continue
+                t = m["tokens"]
+                bucket["input"] += t["input"]
+                bucket["output"] += t["output"]
+                bucket["cache_read"] += t["cache_read"]
+                bucket["cache_creation"] += t["cache_creation"]
+                if m["session_id"]:
+                    bucket["sessions"].add(m["session_id"])
+                mid = m["model_id"]
+                if mid:
+                    token_sum = t["input"] + t["output"] + t["cache_read"] + t["cache_creation"]
+                    bucket["models"][mid] = bucket["models"].get(mid, 0) + token_sum
+                    bucket["model_msgs"][mid] = bucket["model_msgs"].get(mid, 0) + 1
+                bucket["msg_count"] += 1
+            return bucket
+
+        def _build_enrichment(bucket: dict, wt: str, mid: str | None) -> dict[str, Any] | None:
+            if bucket["msg_count"] == 0:
+                return None
+            total = (
+                bucket["input"] + bucket["output"] + bucket["cache_read"] + bucket["cache_creation"]
+            )
+            by_model = {
+                m: {"cost": 0.0, "msgs": c} for m, c in bucket["model_msgs"].items() if c > 0
+            }
             return {
                 "service_name": "Claude",
                 "window_type": wt,
-                "_enrichment_detail": self._build_enrichment_detail(bucket),
+                "model_id": mid,
+                "_enrichment_detail": self._build_enrichment_detail(bucket, mid),
                 "token_usage": {
                     "input": bucket["input"],
                     "output": bucket["output"],
@@ -439,26 +370,31 @@ class AnthropicLocalMixin:
                     "cache_read": bucket["cache_read"],
                     "total": total,
                 },
-                "by_model": {
-                    mid: {"cost": 0.0, "msgs": cnt} for mid, cnt in bucket["model_msgs"].items()
-                },
+                "by_model": by_model,
                 "msgs": bucket["msg_count"],
-                "totals": {
-                    "input": bucket["input"],
-                    "output": bucket["output"],
-                    "cache_read": bucket["cache_read"],
-                    "cache_creation": bucket["cache_creation"],
-                    "total": total,
-                    "sessions": len(bucket["sessions"]),
-                },
             }
 
-        results: list[dict[str, Any]] = [
-            _build_enrichment(session_bucket, session_total, "session")
-        ]
+        results: list[dict[str, Any]] = []
 
-        if weekly_total > 0:
-            results.append(_build_enrichment(weekly_bucket, weekly_total, "weekly"))
+        # Aggregate session enrichment
+        session_agg = _aggregate(session_msgs)
+        sess_enrich = _build_enrichment(session_agg, "session", None)
+        if sess_enrich:
+            results.append(sess_enrich)
+
+        # Aggregate weekly enrichment
+        weekly_agg = _aggregate(weekly_msgs)
+        weekly_enrich = _build_enrichment(weekly_agg, "weekly", None)
+        if weekly_enrich:
+            results.append(weekly_enrich)
+
+        # Per-model weekly enrichment for cards that exist
+        model_ids = {"sonnet", "opus", "design", "haiku"}
+        for mid in model_ids:
+            model_bucket = _aggregate(weekly_msgs, mid)
+            model_enrich = _build_enrichment(model_bucket, "weekly", mid)
+            if model_enrich:
+                results.append(model_enrich)
 
         return results
 
@@ -485,8 +421,11 @@ class AnthropicLocalMixin:
             return f"{n // 1000}k"
         return str(n)
 
-    def _build_enrichment_detail(self, bucket: dict) -> str:
-        """Build a compact detail fragment from a token-accumulation bucket."""
+    def _build_enrichment_detail(self, bucket: dict, model_id: str | None = None) -> str:
+        """Build a compact detail fragment from a token-accumulation bucket.
+
+        When model_id is provided, only include stats for that model.
+        """
         sections: list[str] = []
 
         token_parts = []
@@ -501,20 +440,24 @@ class AnthropicLocalMixin:
         if token_parts:
             sections.append(" ".join(token_parts))
 
-        model_parts = [
-            f"{mid}:{self._fmt_tokens(cnt)}"
-            for mid, cnt in sorted(bucket["models"].items(), key=lambda x: -x[1])
-        ]
-        if model_parts:
-            sections.append(" ".join(model_parts))
+        if model_id:
+            # Model-specific card: show only this model
+            cnt = bucket["model_msgs"].get(model_id, 0)
+            if cnt > 0:
+                tok = bucket["models"].get(model_id, 0)
+                sections.append(f"{model_id}:{self._fmt_tokens(tok)}")
+        else:
+            # Aggregate card: show all models
+            model_parts = [
+                f"{mid}:{self._fmt_tokens(cnt)}"
+                for mid, cnt in sorted(bucket["models"].items(), key=lambda x: -x[1])
+            ]
+            if model_parts:
+                sections.append(" ".join(model_parts))
 
         if bucket["sessions"]:
             sc = len(bucket["sessions"])
             sections.append(f"{sc} session{'s' if sc != 1 else ''}")
-
-        web_total = bucket["web_search"] + bucket["web_fetch"]
-        if web_total:
-            sections.append(f"web:{web_total}")
 
         return " | ".join(sections)
 

@@ -302,10 +302,11 @@ class BaseCollector(ABC):
         detail suffixes only. They never act as fallback for missing primary
         quota data.
 
-        Matching is performed by (service_name, variant, window_type) with
-        graceful fallback to less specific keys. Canonical fields injected:
-        token_usage, by_model, msgs. pct_used is derived from the primary
-        card's own used_value / limit_value.
+        Matching is performed by (service_name, variant, window_type, model_id)
+        with graceful fallback to less specific keys. Enrichment dicts with
+        model_id=None act as aggregate fallbacks for any primary card.
+        Canonical fields injected: token_usage, by_model, msgs.
+        pct_used is derived from the primary card's own used_value / limit_value.
         """
         if not primary or self._is_error_result(primary):
             return primary or []
@@ -315,21 +316,31 @@ class BaseCollector(ABC):
 
         # Index enrichment by multiple specificity levels so lookups succeed
         # even when enrichment dicts omit service_name or variant.
-        by_key: dict[tuple[str | None, str | None, str | None], dict[str, Any]] = {}
+        # model_id is included as a 4th dimension; None means "aggregate".
+        by_key: dict[tuple[str | None, str | None, str | None, str | None], dict[str, Any]] = {}
         for e in enrichment:
             if not e.get("_enrichment_detail"):
                 continue
             sn = e.get("service_name")
             va = e.get("variant")
             wt = e.get("window_type")
+            mid = e.get("model_id")
             keys = [
-                (sn, va, wt),
-                (sn, va, None),
-                (sn, None, wt),
-                (None, va, wt),
-                (sn, None, None),
-                (None, va, None),
-                (None, None, wt),
+                (sn, va, wt, mid),
+                (sn, va, wt, None),
+                (sn, va, None, mid),
+                (sn, None, wt, mid),
+                (None, va, wt, mid),
+                (sn, va, None, None),
+                (sn, None, wt, None),
+                (None, va, wt, None),
+                (sn, None, None, mid),
+                (None, va, None, mid),
+                (None, None, wt, mid),
+                (sn, None, None, None),
+                (None, va, None, None),
+                (None, None, wt, None),
+                (None, None, None, mid),
             ]
             for key in keys:
                 if key not in by_key:
@@ -339,15 +350,24 @@ class BaseCollector(ABC):
             card_sn = card.get("service_name")
             card_va = card.get("variant")
             card_wt = card.get("window_type")
+            card_mid = card.get("model_id")
             match = None
             for key in [
-                (card_sn, card_va, card_wt),
-                (card_sn, card_va, None),
-                (card_sn, None, card_wt),
-                (None, card_va, card_wt),
-                (card_sn, None, None),
-                (None, card_va, None),
-                (None, None, card_wt),
+                (card_sn, card_va, card_wt, card_mid),
+                (card_sn, card_va, card_wt, None),
+                (card_sn, card_va, None, card_mid),
+                (card_sn, None, card_wt, card_mid),
+                (None, card_va, card_wt, card_mid),
+                (card_sn, card_va, None, None),
+                (card_sn, None, card_wt, None),
+                (None, card_va, card_wt, None),
+                (card_sn, None, None, card_mid),
+                (None, card_va, None, card_mid),
+                (None, None, card_wt, card_mid),
+                (card_sn, None, None, None),
+                (None, card_va, None, None),
+                (None, None, card_wt, None),
+                (None, None, None, card_mid),
             ]:
                 match = by_key.get(key)
                 if match:
