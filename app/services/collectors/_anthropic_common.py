@@ -6,6 +6,8 @@ ANTHROPIC_WINDOW_NAME_MAP: dict[str, str] = {
     "seven_day_sonnet": "Sonnet Weekly",
     "seven_day_opus": "Opus Weekly",
     "seven_day_omelette": "Claude Design",
+    "seven_day_cowork": "Cowork",
+    "seven_day_oauth_apps": "OAuth Apps",
     "extra_usage": "Extra Usage",
 }
 
@@ -14,6 +16,8 @@ ANTHROPIC_MODEL_ID_MAP: dict[str, str] = {
     "seven_day_sonnet": "sonnet",
     "seven_day_opus": "opus",
     "seven_day_omelette": "design",
+    "seven_day_cowork": "cowork",
+    "seven_day_oauth_apps": "oauth_apps",
 }
 
 
