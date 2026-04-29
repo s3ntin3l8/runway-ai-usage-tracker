@@ -244,6 +244,11 @@ class BaseCollector(ABC):
                     if self._is_error_result(results):
                         results = await self._error_handler()
 
+                # Capture metadata from primary results so enrichment can align
+                # its window boundaries (e.g. actual reset_at vs fixed cutoffs).
+                if results and not self._is_error_result(results):
+                    self._capture_primary_metadata(results)
+
                 # Run enrichment strategies and merge
                 for strategy, s_id in enrich_strategies:
                     try:
@@ -523,6 +528,14 @@ class BaseCollector(ABC):
             deduped.append(card)
 
         return deduped
+
+    def _capture_primary_metadata(self, primary: list[dict[str, Any]]) -> None:
+        """
+        Hook called after primary strategies succeed and before enrichment runs.
+        Subclasses override to extract metadata (e.g. reset_at, tier) from
+        primary cards so enrichment strategies can align window boundaries.
+        """
+        pass
 
     @abstractmethod
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:

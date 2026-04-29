@@ -1024,6 +1024,69 @@ class TestAnthropicCollector:
         assert "opus" in week_opus["_enrichment_detail"]
         assert "sonnet" not in week_opus["_enrichment_detail"]
 
+    def test_enrichment_respects_primary_reset_at(self, tmp_path):
+        """Enrichment should only count tokens since the primary card's reset_at."""
+        import json
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        # Two messages: one before reset, one after
+        ts_before = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        ts_after = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        reset_at = (now - timedelta(days=1)).isoformat()
+
+        entries = [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": ts_before,
+                    "sessionId": "sess-old",
+                    "message": {
+                        "id": "msg-old",
+                        "requestId": "req-old",
+                        "model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 5000, "output_tokens": 2000},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": ts_after,
+                    "sessionId": "sess-new",
+                    "message": {
+                        "id": "msg-new",
+                        "requestId": "req-new",
+                        "model": "claude-sonnet-4-6",
+                        "usage": {"input_tokens": 100, "output_tokens": 50},
+                    },
+                }
+            ),
+        ]
+
+        proj_dir = tmp_path / "projects" / "my-proj"
+        proj_dir.mkdir(parents=True)
+        (proj_dir / "session.jsonl").write_text("\n".join(entries) + "\n")
+
+        collector = AnthropicCollector()
+        # Simulate primary metadata discovery
+        collector._capture_primary_metadata([{"window_type": "weekly", "reset_at": reset_at}])
+
+        with (
+            patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
+            patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
+        ):
+            result = collector._get_claude_local_enhanced_sync()
+
+        weekly = next(
+            (r for r in result if r["window_type"] == "weekly" and r.get("model_id") is None), None
+        )
+        assert weekly is not None
+        # Should only count the post-reset message (100 input + 50 output)
+        assert weekly["token_usage"]["input"] == 100
+        assert weekly["token_usage"]["output"] == 50
+        assert weekly["msgs"] == 1
+
     def test_enrich_results_matches_by_window(self):
         """_enrich_results appends the right suffix to the right primary card."""
         collector = AnthropicCollector()

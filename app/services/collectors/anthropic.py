@@ -200,6 +200,28 @@ class AnthropicCollector(
             return []
         return await self._get_claude_oauth(client, token)
 
+    def _capture_primary_metadata(self, primary: list[dict[str, Any]]) -> None:
+        """
+        Extract reset_at per window_type from primary cards so enrichment
+        can align its window boundaries to the actual reset times.
+        Model-specific reset_at takes priority over aggregate.
+        """
+        from datetime import datetime
+
+        resets: dict[str, datetime] = {}
+        for card in primary:
+            reset_at = card.get("reset_at")
+            if not reset_at:
+                continue
+            try:
+                dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                wt = card.get("window_type", "unknown")
+                if wt not in resets or card.get("model_id") is not None:
+                    resets[wt] = dt
+            except (ValueError, TypeError):
+                continue
+        self._window_resets = resets
+
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""
         from app.core.utils import error_card

@@ -251,10 +251,11 @@ class AnthropicLocalMixin:
         if email:
             self.account_label = email
 
-        # Parse all assistant messages into a flat list
+        # Parse all assistant messages into a flat list.
+        # We keep all messages (no fixed cutoff here) and filter by the actual
+        # reset_at discovered from primary cards during aggregation.
         messages: list[dict[str, Any]] = []
         seen_messages: set = set()
-        cutoff_7d = datetime.now(UTC) - timedelta(days=7)
 
         for fpath in all_files:
             try:
@@ -275,9 +276,6 @@ class AnthropicLocalMixin:
                         try:
                             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                         except ValueError:
-                            continue
-
-                        if ts < cutoff_7d:
                             continue
 
                         msg_data = entry.get("message", {})
@@ -316,9 +314,15 @@ class AnthropicLocalMixin:
             return []
 
         messages.sort(key=lambda m: m["ts"])
-        cutoff_5h = datetime.now(UTC) - timedelta(hours=5)
-        session_msgs = [m for m in messages if m["ts"] >= cutoff_5h]
-        weekly_msgs = messages  # already filtered to 7d during parsing
+
+        # Use primary-discovered reset_at when available, else fixed cutoffs
+        now = datetime.now(UTC)
+        window_resets = getattr(self, "_window_resets", {})
+        session_cutoff = window_resets.get("session") or (now - timedelta(hours=5))
+        weekly_cutoff = window_resets.get("weekly") or (now - timedelta(days=7))
+
+        session_msgs = [m for m in messages if m["ts"] >= session_cutoff]
+        weekly_msgs = [m for m in messages if m["ts"] >= weekly_cutoff]
 
         def _aggregate(msgs: list[dict], model_filter: str | None = None) -> dict[str, Any]:
             bucket = {
