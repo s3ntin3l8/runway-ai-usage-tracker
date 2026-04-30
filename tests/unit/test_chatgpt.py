@@ -314,18 +314,19 @@ class TestChatGPTCollectorDetailed:
             codex_card = next((r for r in results if r.get("variant") == "Codex"), None)
             assert codex_card is not None
             assert "token_usage" in codex_card
-            # Net-new tokens (conversation growth, not billed totals)
-            assert codex_card["token_usage"]["input"] == 1000  # 2000 - 1000
-            assert codex_card["token_usage"]["output"] == 600  # 100+200+300
-            assert codex_card["token_usage"]["reasoning"] == 120  # 20+40+60
-            assert codex_card["token_usage"]["cache_read"] == 900  # 200+300+400
-            assert codex_card["token_usage"]["total"] == 1600  # net_input + output
+            # Total Consumption (sum of interactions, not context growth)
+            assert codex_card["token_usage"]["input"] == 4500  # 1000 + 1500 + 2000
+            assert codex_card["token_usage"]["output"] == 600  # 100 + 200 + 300
+            assert codex_card["token_usage"]["reasoning"] == 120  # 20 + 40 + 60
+            assert codex_card["token_usage"]["cache_read"] == 900  # 200 + 300 + 400
+            assert codex_card["token_usage"]["total"] == 5100  # input + output
             assert codex_card["msgs"] == 3
             assert "by_model" in codex_card
             assert codex_card["by_model"]["gpt-5.4"]["msgs"] == 3
             assert "pct_used" in codex_card
-            # Detail should show billed amount too
-            assert "billed:" in codex_card["detail"]
+            # Detail should show in: and out: totals
+            assert "in:4.5k" in codex_card["detail"]
+            assert "out:600" in codex_card["detail"]
 
     @pytest.mark.asyncio
     async def test_local_enrichment_does_not_fallback(self, mock_http_client):

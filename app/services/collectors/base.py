@@ -330,23 +330,30 @@ class BaseCollector(ABC):
             va = e.get("variant")
             wt = e.get("window_type")
             mid = e.get("model_id")
-            keys = [
-                (sn, va, wt, mid),
-                (sn, va, wt, None),
-                (sn, va, None, mid),
-                (sn, None, wt, mid),
-                (None, va, wt, mid),
-                (sn, va, None, None),
-                (sn, None, wt, None),
-                (None, va, wt, None),
-                (sn, None, None, mid),
-                (None, va, None, mid),
-                (None, None, wt, mid),
-                (sn, None, None, None),
-                (None, va, None, None),
-                (None, None, wt, None),
-                (None, None, None, mid),
-            ]
+            # If model_id is set, it MUST be part of every key to prevent
+            # specific model enrichment from polluting the generic fallback.
+            if mid is not None:
+                keys = [
+                    (sn, va, wt, mid),
+                    (sn, va, None, mid),
+                    (sn, None, wt, mid),
+                    (None, va, wt, mid),
+                    (sn, None, None, mid),
+                    (None, va, None, mid),
+                    (None, None, wt, mid),
+                    (None, None, None, mid),
+                ]
+            else:
+                keys = [
+                    (sn, va, wt, None),
+                    (sn, va, None, None),
+                    (sn, None, wt, None),
+                    (None, va, wt, None),
+                    (sn, None, None, None),
+                    (None, va, None, None),
+                    (None, None, wt, None),
+                    (None, None, None, None),
+                ]
             for key in keys:
                 if key not in by_key:
                     by_key[key] = e
