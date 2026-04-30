@@ -3,6 +3,7 @@ import glob
 import json
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -20,18 +21,18 @@ class GeminiLocalMixin:
         if not model_name:
             return "unknown"
         lower = model_name.lower()
-        if "flash-lite" in lower:
+        if "flash-lite" in lower or "gemini-1.5-flash-lite" in lower:
             return "flash-lite"
-        if "flash" in lower:
+        if "flash" in lower or "gemini-1.5-flash" in lower:
             return "flash"
-        if "pro" in lower:
+        if "pro" in lower or "gemini-1.5-pro" in lower:
             return "pro"
         if "ultra" in lower:
             return "ultra"
         return model_name
 
     def _process_sessions(self, fpaths: list[str]) -> dict[str, Any]:
-        """Process session files and aggregate tokens by model."""
+        """Process session files and aggregate tokens by model using message deltas."""
         totals = {
             "input": 0,
             "output": 0,
@@ -54,84 +55,192 @@ class GeminiLocalMixin:
                 if fpath.endswith(".jsonl"):
                     for line in content.strip().split("\n"):
                         if line:
-                            msg = json.loads(line)
-                            if msg.get("tokens"):
-                                session_messages.append(msg)
+                            try:
+                                msg = json.loads(line)
+                                # Only keep gemini responses with tokens
+                                if msg.get("type") == "gemini" and msg.get("tokens"):
+                                    session_messages.append(msg)
+                            except json.JSONDecodeError:
+                                continue
                 else:
-                    data = json.loads(content)
-                    session_messages = data.get("messages", [])
+                    try:
+                        data = json.loads(content)
+                        raw_msgs = data.get("messages", [])
+                        session_messages = [
+                            m for m in raw_msgs if m.get("type") == "gemini" and m.get("tokens")
+                        ]
+                    except json.JSONDecodeError:
+                        continue
 
-                # Track message counts per model for by_model stats
-                msg_counts_by_model: dict[str, int] = {}
-                for msg in session_messages:
-                    if msg.get("tokens"):
-                        model = msg.get("model") or "unknown"
-                        msg_counts_by_model[model] = msg_counts_by_model.get(model, 0) + 1
-
-                last_msg = None
-                for msg in reversed(session_messages):
-                    if msg.get("tokens"):
-                        last_msg = msg
-                        break
-
-                if not last_msg:
+                if not session_messages:
                     continue
 
-                last_tokens = last_msg.get("tokens", {})
-                msg_timestamp = last_msg.get("timestamp")
-                raw_model = last_msg.get("model") or "unknown"
-                model_class = self._map_model_to_class(raw_model)
-
-                totals["messages"].append(
-                    {
-                        "timestamp": msg_timestamp,
-                        "tokens": last_tokens,
-                        "model": raw_model,
-                        "model_class": model_class,
-                    }
-                )
-
-                totals["input"] += last_tokens.get("input", 0)
-                totals["output"] += last_tokens.get("output", 0)
-                totals["cached"] += last_tokens.get("cached", 0)
-                totals["thoughts"] += last_tokens.get("thoughts", 0)
-                totals["tool"] += last_tokens.get("tool", 0)
-                totals["total"] += last_tokens.get("total", 0)
+                # Track unique session files
                 totals["session_count"] += 1
 
-                # Update by_model with actual message count (not session count)
-                if raw_model not in totals["by_model"]:
-                    totals["by_model"][raw_model] = {
-                        "msgs": 0,
-                        "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
-                    }
-                bm = totals["by_model"][raw_model]
-                bm["msgs"] += msg_counts_by_model.get(raw_model, 0)
-                bm["tokens"]["input"] += last_tokens.get("input", 0)
-                bm["tokens"]["output"] += last_tokens.get("output", 0)
-                bm["tokens"]["reasoning"] += last_tokens.get("thoughts", 0)
-                bm["tokens"]["cache_read"] += last_tokens.get("cached", 0)
+                # Gemini CLI tokens logic:
+                # - input: Total tokens in this prompt (including cached)
+                # - output: Response tokens for this turn
+                # - thoughts: Reasoning for this turn
+                # - cached: Subset of input found in cache
+                # - total: Sum of (input + output + thoughts) for this turn
+                #
+                # To track actual Quota Consumption (consistent with Claude), we sum
+                # EVERY interaction's raw values rather than calculating deltas.
+                for msg in session_messages:
+                    raw_tokens = msg.get("tokens", {})
+                    raw_model = msg.get("model") or "unknown"
+                    model_class = self._map_model_to_class(raw_model)
 
-                if model_class not in totals["model_classes"]:
-                    totals["model_classes"][model_class] = {
-                        "input": 0,
-                        "output": 0,
-                        "reasoning": 0,
-                        "cache_read": 0,
-                        "total": 0,
-                        "session_count": 0,
-                    }
-                mc = totals["model_classes"][model_class]
-                mc["input"] += last_tokens.get("input", 0)
-                mc["output"] += last_tokens.get("output", 0)
-                mc["reasoning"] += last_tokens.get("thoughts", 0)
-                mc["cache_read"] += last_tokens.get("cached", 0)
-                mc["total"] += last_tokens.get("total", 0)
-                mc["session_count"] += 1
-            except (json.JSONDecodeError, OSError) as e:
-                logger.debug(f"Failed to parse session file {fpath}: {e}")
+                    # Raw turn values
+                    msg_input = raw_tokens.get("input", 0)
+                    msg_output = raw_tokens.get("output", 0)
+                    msg_cached = raw_tokens.get("cached", 0)
+                    msg_thoughts = raw_tokens.get("thoughts", 0)
+                    msg_tool = raw_tokens.get("tool", 0)
+                    msg_total = raw_tokens.get("total", 0)
+
+                    # Update overall totals (Additive Consumption)
+                    totals["input"] += msg_input
+                    totals["output"] += msg_output
+                    totals["cached"] += msg_cached
+                    totals["thoughts"] += msg_thoughts
+                    totals["tool"] += msg_tool
+                    totals["total"] += msg_total
+
+                    # Update model_id totals (primary keys for card merging)
+                    if model_class not in totals["model_classes"]:
+                        totals["model_classes"][model_class] = {
+                            "input": 0,
+                            "output": 0,
+                            "reasoning": 0,
+                            "cache_read": 0,
+                            "total": 0,
+                            "msgs": 0,
+                        }
+                    mc = totals["model_classes"][model_class]
+                    mc["input"] += msg_input
+                    mc["output"] += msg_output
+                    mc["reasoning"] += msg_thoughts
+                    mc["cache_read"] += msg_cached
+                    mc["total"] += msg_total
+                    mc["msgs"] += 1
+
+                    # Update per-raw-model stats for by_model breakdown
+                    if raw_model not in totals["by_model"]:
+                        totals["by_model"][raw_model] = {
+                            "msgs": 0,
+                            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                        }
+                    bm = totals["by_model"][raw_model]
+                    bm["msgs"] += 1
+                    bm["tokens"]["input"] += msg_input
+                    bm["tokens"]["output"] += msg_output
+                    bm["tokens"]["reasoning"] += msg_thoughts
+                    bm["tokens"]["cache_read"] += msg_cached
+
+                    # Add message to list for later window filtering in _collect_via_logs
+                    # We store the *raw turn usage* so it can be re-aggregated correctly.
+                    totals["messages"].append(
+                        {
+                            "timestamp": msg.get("timestamp"),
+                            "tokens": {
+                                "input": msg_input,
+                                "output": msg_output,
+                                "cached": msg_cached,
+                                "thoughts": msg_thoughts,
+                                "tool": msg_tool,
+                                "total": msg_total,
+                            },
+                            "model": raw_model,
+                            "model_class": model_class,
+                        }
+                    )
+
+            except OSError as e:
+                logger.debug(f"Failed to read session file {fpath}: {e}")
 
         return totals
+
+    def _aggregate_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Aggregate a list of messages into token totals and by_model stats."""
+        agg = {
+            "input": 0,
+            "output": 0,
+            "cached": 0,
+            "thoughts": 0,
+            "tool": 0,
+            "total": 0,
+            "session_count": 0,
+            "by_model": {},
+        }
+        seen_sessions: set[str] = set()
+
+        for m in messages:
+            t = m["tokens"]
+            agg["input"] += t.get("input", 0)
+            agg["output"] += t.get("output", 0)
+            agg["cached"] += t.get("cached", 0)
+            agg["thoughts"] += t.get("thoughts", 0)
+            agg["tool"] += t.get("tool", 0)
+            agg["total"] += t.get("total", 0)
+
+            # Extract sessionId if available, otherwise fallback to timestamp
+            sess_id = m.get("sessionId") or m.get("timestamp")
+            if sess_id and sess_id not in seen_sessions:
+                seen_sessions.add(sess_id)
+                agg["session_count"] += 1
+
+            raw_model = m["model"]
+            if raw_model not in agg["by_model"]:
+                agg["by_model"][raw_model] = {
+                    "msgs": 0,
+                    "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                }
+            bm = agg["by_model"][raw_model]
+            bm["msgs"] += 1
+            bm["tokens"]["input"] += t.get("input", 0)
+            bm["tokens"]["output"] += t.get("output", 0)
+            bm["tokens"]["reasoning"] += t.get("thoughts", 0)
+            bm["tokens"]["cache_read"] += t.get("cached", 0)
+
+        return agg
+
+    def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
+        """Build a canonical enrichment dict from aggregated message data."""
+        detail_parts = []
+        if agg["input"]:
+            detail_parts.append(f"in: {agg['input']:,}")
+        if agg["output"]:
+            detail_parts.append(f"out: {agg['output']:,}")
+        if agg["cached"]:
+            detail_parts.append(f"cached: {agg['cached']:,}")
+        if agg["thoughts"]:
+            detail_parts.append(f"thoughts: {agg['thoughts']:,}")
+
+        detail_str = ", ".join(detail_parts) if detail_parts else f"{agg['total']:,} tokens"
+
+        by_model_formatted = {}
+        for model_name, model_data in agg["by_model"].items():
+            by_model_formatted[model_name] = {
+                "cost": 0.0,
+                "msgs": model_data["msgs"],
+            }
+
+        return {
+            "service_name": "Gemini",
+            "model_id": model_id,
+            "_enrichment_detail": f"{detail_str} | {agg['session_count']} sessions",
+            "token_usage": {
+                "input": agg["input"],
+                "output": agg["output"],
+                "reasoning": agg["thoughts"],
+                "cache_read": agg["cached"],
+                "total": agg["total"],
+            },
+            "msgs": agg["session_count"],
+            "by_model": by_model_formatted,
+        }
 
     async def _collect_via_logs(
         self, client: httpx.AsyncClient | None = None
@@ -167,43 +276,376 @@ class GeminiLocalMixin:
             if totals["total"] == 0:
                 return []
 
-            detail_parts = []
-            if totals["input"]:
-                detail_parts.append(f"in: {totals['input']:,}")
-            if totals["output"]:
-                detail_parts.append(f"out: {totals['output']:,}")
-            if totals["cached"]:
-                detail_parts.append(f"cached: {totals['cached']:,}")
-            if totals["thoughts"]:
-                detail_parts.append(f"thoughts: {totals['thoughts']:,}")
+            messages = totals["messages"]
+            window_resets = getattr(self, "_window_resets", {})
 
-            detail_str = ", ".join(detail_parts) if detail_parts else f"{totals['total']:,} tokens"
+            # Build per-model-class aggregates, filtered by reset_at
+            results: list[dict[str, Any]] = []
+            all_model_classes = {m["model_class"] for m in messages}
 
-            by_model_formatted = {}
-            for model_name, model_data in totals["by_model"].items():
-                by_model_formatted[model_name] = {
-                    "cost": 0.0,
-                    "msgs": model_data["msgs"],
+            for model_class in sorted(all_model_classes):
+                model_messages = [m for m in messages if m["model_class"] == model_class]
+
+                reset_dt = window_resets.get(model_class)
+                if reset_dt:
+                    # reset_at is when the daily quota resets (future).
+                    # The daily window started 24h before that.
+                    window_start = reset_dt - timedelta(hours=24)
+                    # Cap at "now" so we don't exclude messages when reset_at
+                    # is far in the future (e.g. daily reset at midnight).
+                    from datetime import UTC
+
+                    if window_start > datetime.now(UTC):
+                        window_start = datetime.now(UTC) - timedelta(hours=24)
+                    filtered = []
+                    for m in model_messages:
+                        ts = m.get("timestamp")
+                        if not ts:
+                            continue
+                        try:
+                            msg_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if msg_dt >= window_start:
+                                filtered.append(m)
+                        except (ValueError, TypeError):
+                            continue
+                    model_messages = filtered
+
+                if not model_messages:
+                    continue
+
+                agg = self._aggregate_messages(model_messages)
+                results.append(self._build_enrichment_dict(model_class, agg))
+
+            logger.debug(
+                f"Gemini enrichment emitted {len(results)} dicts for "
+                f"models={sorted(all_model_classes)}, resets={list(window_resets.keys())}"
+            )
+            return results
+        except Exception as e:
+            logger.debug(f"Gemini local session parsing failed: {e}")
+            return []
+
+    def _aggregate_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Aggregate a list of messages into token totals and by_model stats."""
+        agg = {
+            "input": 0,
+            "output": 0,
+            "cached": 0,
+            "thoughts": 0,
+            "tool": 0,
+            "total": 0,
+            "session_count": 0,
+            "by_model": {},
+        }
+        seen_sessions: set[str] = set()
+
+        for m in messages:
+            t = m["tokens"]
+            agg["input"] += t.get("input", 0)
+            agg["output"] += t.get("output", 0)
+            agg["cached"] += t.get("cached", 0)
+            agg["thoughts"] += t.get("thoughts", 0)
+            agg["tool"] += t.get("tool", 0)
+            agg["total"] += t.get("total", 0)
+
+            # Extract sessionId if available, otherwise fallback to timestamp
+            sess_id = m.get("sessionId") or m.get("timestamp")
+            if sess_id and sess_id not in seen_sessions:
+                seen_sessions.add(sess_id)
+                agg["session_count"] += 1
+
+            raw_model = m["model"]
+            if raw_model not in agg["by_model"]:
+                agg["by_model"][raw_model] = {
+                    "msgs": 0,
+                    "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
                 }
+            bm = agg["by_model"][raw_model]
+            bm["msgs"] += 1
+            bm["tokens"]["input"] += t.get("input", 0)
+            bm["tokens"]["output"] += t.get("output", 0)
+            bm["tokens"]["reasoning"] += t.get("thoughts", 0)
+            bm["tokens"]["cache_read"] += t.get("cached", 0)
 
-            return [
-                {
-                    "service_name": "Gemini",
-                    "window_type": "session",
-                    "_enrichment_detail": f"{detail_str} | {totals['session_count']} sessions",
-                    "token_usage": {
-                        "input": totals["input"],
-                        "output": totals["output"],
-                        "reasoning": totals["thoughts"],
-                        "cache_read": totals["cached"],
-                        "total": totals["total"],
-                    },
-                    "msgs": totals["session_count"],
-                    "by_model": by_model_formatted,
-                    "_model_classes": totals["model_classes"],
-                    "_messages": totals["messages"],
+        return agg
+
+    def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
+        """Build a canonical enrichment dict from aggregated message data."""
+        detail_parts = []
+        if agg["input"]:
+            detail_parts.append(f"in: {agg['input']:,}")
+        if agg["output"]:
+            detail_parts.append(f"out: {agg['output']:,}")
+        if agg["cached"]:
+            detail_parts.append(f"cached: {agg['cached']:,}")
+        if agg["thoughts"]:
+            detail_parts.append(f"thoughts: {agg['thoughts']:,}")
+
+        detail_str = ", ".join(detail_parts) if detail_parts else f"{agg['total']:,} tokens"
+
+        by_model_formatted = {}
+        for model_name, model_data in agg["by_model"].items():
+            by_model_formatted[model_name] = {
+                "cost": 0.0,
+                "msgs": model_data["msgs"],
+            }
+
+        return {
+            "service_name": "Gemini",
+            "model_id": model_id,
+            "_enrichment_detail": f"{detail_str} | {agg['session_count']} sessions",
+            "token_usage": {
+                "input": agg["input"],
+                "output": agg["output"],
+                "reasoning": agg["thoughts"],
+                "cache_read": agg["cached"],
+                "total": agg["total"],
+            },
+            "msgs": agg["session_count"],
+            "by_model": by_model_formatted,
+        }
+
+    async def _collect_via_logs(
+        self, client: httpx.AsyncClient | None = None
+    ) -> list[dict[str, Any]]:
+        """Parse Gemini usage from local session JSON files."""
+        if not is_local_collector_enabled():
+            return []
+
+        potential_dirs = [
+            settings.GEMINI_SESSIONS_DIR,
+            os.path.expanduser("~/.gemini/tmp/ai-usage-tracker/chats"),
+            os.path.expanduser("~/.gemini/tmp/gemini/chats"),
+            os.path.expanduser("~/.gemini/tmp/sessions"),
+            os.path.expanduser("~/.gemini/sessions"),
+        ]
+
+        session_files = []
+        try:
+            existing_dirs = [d for d in potential_dirs if os.path.isdir(d)]
+            if existing_dirs:
+                results = await asyncio.gather(
+                    *[asyncio.to_thread(glob.glob, f"{d}/session-*.json") for d in existing_dirs],
+                    *[asyncio.to_thread(glob.glob, f"{d}/session-*.jsonl") for d in existing_dirs],
+                )
+                for found in results:
+                    session_files.extend(found)
+
+            if not session_files:
+                return []
+
+            totals = await asyncio.to_thread(self._process_sessions, session_files)
+
+            if totals["total"] == 0:
+                return []
+
+            messages = totals["messages"]
+            window_resets = getattr(self, "_window_resets", {})
+
+            # Build per-model-class aggregates, filtered by reset_at
+            results: list[dict[str, Any]] = []
+            all_model_classes = {m["model_class"] for m in messages}
+
+            for model_class in sorted(all_model_classes):
+                model_messages = [m for m in messages if m["model_class"] == model_class]
+
+                reset_dt = window_resets.get(model_class)
+                if reset_dt:
+                    # reset_at is when the daily quota resets (future).
+                    # The daily window started 24h before that.
+                    window_start = reset_dt - timedelta(hours=24)
+                    # Cap at "now" so we don't exclude messages when reset_at
+                    # is far in the future (e.g. daily reset at midnight).
+                    from datetime import UTC
+
+                    if window_start > datetime.now(UTC):
+                        window_start = datetime.now(UTC) - timedelta(hours=24)
+                    filtered = []
+                    for m in model_messages:
+                        ts = m.get("timestamp")
+                        if not ts:
+                            continue
+                        try:
+                            msg_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if msg_dt >= window_start:
+                                filtered.append(m)
+                        except (ValueError, TypeError):
+                            continue
+                    model_messages = filtered
+
+                if not model_messages:
+                    continue
+
+                agg = self._aggregate_messages(model_messages)
+                results.append(self._build_enrichment_dict(model_class, agg))
+
+            logger.debug(
+                f"Gemini enrichment emitted {len(results)} dicts for "
+                f"models={sorted(all_model_classes)}, resets={list(window_resets.keys())}"
+            )
+            return results
+        except Exception as e:
+            logger.debug(f"Gemini local session parsing failed: {e}")
+            return []
+
+    def _aggregate_messages(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Aggregate a list of messages into token totals and by_model stats."""
+        agg = {
+            "input": 0,
+            "output": 0,
+            "cached": 0,
+            "thoughts": 0,
+            "tool": 0,
+            "total": 0,
+            "session_count": 0,
+            "by_model": {},
+        }
+        seen_sessions: set[str] = set()
+
+        for m in messages:
+            t = m["tokens"]
+            agg["input"] += t.get("input", 0)
+            agg["output"] += t.get("output", 0)
+            agg["cached"] += t.get("cached", 0)
+            agg["thoughts"] += t.get("thoughts", 0)
+            agg["tool"] += t.get("tool", 0)
+            agg["total"] += t.get("total", 0)
+
+            ts = m.get("timestamp")
+            if ts and ts not in seen_sessions:
+                seen_sessions.add(ts)
+                agg["session_count"] += 1
+
+            raw_model = m["model"]
+            if raw_model not in agg["by_model"]:
+                agg["by_model"][raw_model] = {
+                    "msgs": 0,
+                    "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
                 }
-            ]
+            bm = agg["by_model"][raw_model]
+            bm["msgs"] += 1
+            bm["tokens"]["input"] += t.get("input", 0)
+            bm["tokens"]["output"] += t.get("output", 0)
+            bm["tokens"]["reasoning"] += t.get("thoughts", 0)
+            bm["tokens"]["cache_read"] += t.get("cached", 0)
+
+        return agg
+
+    def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
+        """Build a canonical enrichment dict from aggregated message data."""
+        detail_parts = []
+        if agg["input"]:
+            detail_parts.append(f"in: {agg['input']:,}")
+        if agg["output"]:
+            detail_parts.append(f"out: {agg['output']:,}")
+        if agg["cached"]:
+            detail_parts.append(f"cached: {agg['cached']:,}")
+        if agg["thoughts"]:
+            detail_parts.append(f"thoughts: {agg['thoughts']:,}")
+
+        detail_str = ", ".join(detail_parts) if detail_parts else f"{agg['total']:,} tokens"
+
+        by_model_formatted = {}
+        for model_name, model_data in agg["by_model"].items():
+            by_model_formatted[model_name] = {
+                "cost": 0.0,
+                "msgs": model_data["msgs"],
+            }
+
+        return {
+            "service_name": "Gemini",
+            "model_id": model_id,
+            "_enrichment_detail": f"{detail_str} | {agg['session_count']} sessions",
+            "token_usage": {
+                "input": agg["input"],
+                "output": agg["output"],
+                "reasoning": agg["thoughts"],
+                "cache_read": agg["cached"],
+                "total": agg["total"],
+            },
+            "msgs": agg["session_count"],
+            "by_model": by_model_formatted,
+        }
+
+    async def _collect_via_logs(
+        self, client: httpx.AsyncClient | None = None
+    ) -> list[dict[str, Any]]:
+        """Parse Gemini usage from local session JSON files."""
+        if not is_local_collector_enabled():
+            return []
+
+        potential_dirs = [
+            settings.GEMINI_SESSIONS_DIR,
+            os.path.expanduser("~/.gemini/tmp/ai-usage-tracker/chats"),
+            os.path.expanduser("~/.gemini/tmp/gemini/chats"),
+            os.path.expanduser("~/.gemini/tmp/sessions"),
+            os.path.expanduser("~/.gemini/sessions"),
+        ]
+
+        session_files = []
+        try:
+            existing_dirs = [d for d in potential_dirs if os.path.isdir(d)]
+            if existing_dirs:
+                results = await asyncio.gather(
+                    *[asyncio.to_thread(glob.glob, f"{d}/session-*.json") for d in existing_dirs],
+                    *[asyncio.to_thread(glob.glob, f"{d}/session-*.jsonl") for d in existing_dirs],
+                )
+                for found in results:
+                    session_files.extend(found)
+
+            if not session_files:
+                return []
+
+            totals = await asyncio.to_thread(self._process_sessions, session_files)
+
+            if totals["total"] == 0:
+                return []
+
+            messages = totals["messages"]
+            window_resets = getattr(self, "_window_resets", {})
+
+            # Build per-model-class aggregates, filtered by reset_at
+            results: list[dict[str, Any]] = []
+            all_model_classes = {m["model_class"] for m in messages}
+
+            for model_class in sorted(all_model_classes):
+                model_messages = [m for m in messages if m["model_class"] == model_class]
+
+                reset_dt = window_resets.get(model_class)
+                if reset_dt:
+                    # reset_at is when the daily quota resets (future).
+                    # The daily window started 24h before that.
+                    window_start = reset_dt - timedelta(hours=24)
+                    # Cap at "now" so we don't exclude messages when reset_at
+                    # is far in the future (e.g. daily reset at midnight).
+                    from datetime import UTC
+
+                    if window_start > datetime.now(UTC):
+                        window_start = datetime.now(UTC) - timedelta(hours=24)
+                    filtered = []
+                    for m in model_messages:
+                        ts = m.get("timestamp")
+                        if not ts:
+                            continue
+                        try:
+                            msg_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if msg_dt >= window_start:
+                                filtered.append(m)
+                        except (ValueError, TypeError):
+                            continue
+                    model_messages = filtered
+
+                if not model_messages:
+                    continue
+
+                agg = self._aggregate_messages(model_messages)
+                results.append(self._build_enrichment_dict(model_class, agg))
+
+            logger.debug(
+                f"Gemini enrichment emitted {len(results)} dicts for "
+                f"models={sorted(all_model_classes)}, resets={list(window_resets.keys())}"
+            )
+            return results
         except Exception as e:
             logger.debug(f"Gemini local session parsing failed: {e}")
             return []

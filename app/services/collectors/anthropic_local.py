@@ -315,14 +315,23 @@ class AnthropicLocalMixin:
 
         messages.sort(key=lambda m: m["ts"])
 
-        # Use primary-discovered reset_at when available, else fixed cutoffs
+        # Use primary-discovered reset_at when available.
         now = datetime.now(UTC)
         window_resets = getattr(self, "_window_resets", {})
-        session_cutoff = window_resets.get("session") or (now - timedelta(hours=5))
-        weekly_cutoff = window_resets.get("weekly") or (now - timedelta(days=7))
 
-        session_msgs = [m for m in messages if m["ts"] >= session_cutoff]
-        weekly_msgs = [m for m in messages if m["ts"] >= weekly_cutoff]
+        def _window_start(reset_dt: datetime | None, duration: timedelta) -> datetime:
+            if reset_dt is None:
+                return now - duration
+            if reset_dt < now:
+                # If reset time is in the past, it was the START of the current window.
+                return reset_dt
+            # If reset time is in the future, the window started duration ago from then.
+            start = reset_dt - duration
+            # Cap at "now" so we don't exclude messages when reset_at is far
+            # in the future (e.g. daily reset at midnight = 15h away).
+            if start > now:
+                return now - duration
+            return start
 
         def _aggregate(msgs: list[dict], model_filter: str | None = None) -> dict[str, Any]:
             bucket = {
@@ -356,9 +365,8 @@ class AnthropicLocalMixin:
         def _build_enrichment(bucket: dict, wt: str, mid: str | None) -> dict[str, Any] | None:
             if bucket["msg_count"] == 0:
                 return None
-            total = (
-                bucket["input"] + bucket["output"] + bucket["cache_read"] + bucket["cache_creation"]
-            )
+            # Input already includes cache_read and cache_creation tokens in Anthropic logs.
+            total = bucket["input"] + bucket["output"]
             by_model = {
                 m: {"cost": 0.0, "msgs": c} for m, c in bucket["model_msgs"].items() if c > 0
             }
@@ -380,22 +388,34 @@ class AnthropicLocalMixin:
 
         results: list[dict[str, Any]] = []
 
-        # Aggregate session enrichment
+        # 1. Aggregate session enrichment (aggregate only)
+        session_reset = window_resets.get(("session", None))
+        session_cutoff = _window_start(session_reset, timedelta(hours=5))
+        session_msgs = [m for m in messages if m["ts"] >= session_cutoff]
         session_agg = _aggregate(session_msgs)
         sess_enrich = _build_enrichment(session_agg, "session", None)
         if sess_enrich:
             results.append(sess_enrich)
 
-        # Aggregate weekly enrichment
+        # 2. Aggregate weekly enrichment (aggregate only)
+        weekly_reset = window_resets.get(("weekly", None))
+        weekly_cutoff = _window_start(weekly_reset, timedelta(days=7))
+        weekly_msgs = [m for m in messages if m["ts"] >= weekly_cutoff]
         weekly_agg = _aggregate(weekly_msgs)
         weekly_enrich = _build_enrichment(weekly_agg, "weekly", None)
         if weekly_enrich:
             results.append(weekly_enrich)
 
-        # Per-model weekly enrichment for cards that exist
-        model_ids = {"sonnet", "opus", "design", "haiku"}
-        for mid in model_ids:
-            model_bucket = _aggregate(weekly_msgs, mid)
+        # 3. Per-model weekly enrichment for cards that exist
+        # Discover all models seen in the weekly window (using aggregate reset as baseline discovery)
+        weekly_model_ids = {m["model_id"] for m in weekly_msgs if m["model_id"]}
+        for mid in sorted(weekly_model_ids):
+            # Use model-specific reset if available, fallback to aggregate weekly reset.
+            m_reset = window_resets.get(("weekly", mid)) or weekly_reset
+            m_cutoff = _window_start(m_reset, timedelta(days=7))
+            m_msgs = [m for m in messages if m["ts"] >= m_cutoff]
+
+            model_bucket = _aggregate(m_msgs, mid)
             model_enrich = _build_enrichment(model_bucket, "weekly", mid)
             if model_enrich:
                 results.append(model_enrich)

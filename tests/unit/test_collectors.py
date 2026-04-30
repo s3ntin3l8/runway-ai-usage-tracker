@@ -203,8 +203,8 @@ class TestAnthropicCollector:
             with patch.object(collector, "_get_valid_token", return_value="test_token"):
                 result = await collector.collect(mock_http_client)
 
-        # Should return 7 cards: 5 standard quota windows + Balance + Extra Usage
-        assert len(result) == 7
+        # Should return 5 cards: 3 standard quota windows (Session, Weekly, Sonnet) + Balance + Extra Usage
+        assert len(result) == 5
 
         variants = {c.get("variant"): c for c in result if c.get("variant")}
         assert "Current Balance" in variants
@@ -823,9 +823,9 @@ class TestAnthropicCollector:
         result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
 
         # Should not crash, should return card with reset as "—"
-        # Returns 5 items: all core keys get default cards when null
+        # Returns 3 items: all core keys (Session, Weekly, Sonnet) get default cards when null
         assert isinstance(result, list)
-        assert len(result) == 5
+        assert len(result) == 3
         assert result[0]["reset"] == "—"
 
     def test_parse_oauth_response_empty_windows(self):
@@ -1024,6 +1024,83 @@ class TestAnthropicCollector:
         assert "opus" in week_opus["_enrichment_detail"]
         assert "sonnet" not in week_opus["_enrichment_detail"]
 
+    def test_enrichment_isolation_composite_keys(self, tmp_path):
+        """Enrichment should isolate usage by (window_type, model_id) using composite reset keys."""
+        now = datetime.now(UTC)
+
+        # Message timestamps
+        ts_sonnet = (now - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")  # 3h ago
+        ts_haiku = (now - timedelta(hours=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")  # 10h ago
+
+        # Scenario:
+        # - Aggregate weekly reset was 12h ago.
+        # - Sonnet specific weekly reset was 2h ago.
+        # Result:
+        # - Sonnet card should be EMPTY (message is 3h ago, reset was 2h ago).
+        # - Aggregate card should include BOTH (resets 12h ago).
+
+        sonnet_msg = json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": ts_sonnet,
+                "sessionId": "s1",
+                "message": {
+                    "id": "m1",
+                    "model": "claude-3-5-sonnet-latest",
+                    "usage": {"input_tokens": 100, "output_tokens": 50},
+                },
+            }
+        )
+        haiku_msg = json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": ts_haiku,
+                "sessionId": "s2",
+                "message": {
+                    "id": "m2",
+                    "model": "claude-3-haiku-20240307",
+                    "usage": {"input_tokens": 200, "output_tokens": 100},
+                },
+            }
+        )
+
+        proj_dir = tmp_path / "projects" / "test-proj"
+        proj_dir.mkdir(parents=True)
+        (proj_dir / "logs.jsonl").write_text(sonnet_msg + "\n" + haiku_msg + "\n")
+
+        collector = AnthropicCollector()
+
+        # Configure reset times (future reset at now + duration)
+        # Window is 7 days. If reset is in 166h, window started now - 2h.
+        sonnet_reset = now + timedelta(hours=166)  # Window started 2h ago
+        aggregate_reset = now + timedelta(hours=156)  # Window started 12h ago
+
+        collector._window_resets = {
+            ("weekly", "sonnet"): sonnet_reset,
+            ("weekly", None): aggregate_reset,
+        }
+
+        with (
+            patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
+            patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
+        ):
+            result = collector._get_claude_local_enhanced_sync()
+
+        by_key = {(r["window_type"], r.get("model_id")): r for r in result}
+
+        # 1. Aggregate Weekly should have both (3h ago and 10h ago are > 12h ago)
+        assert ("weekly", None) in by_key
+        agg = by_key[("weekly", None)]
+        assert agg["token_usage"]["input"] == 300  # 100 + 200
+
+        # 2. Sonnet Weekly should be missing (3h ago is < 2h before reset)
+        assert ("weekly", "sonnet") not in by_key
+
+        # 3. Haiku Weekly should have its message (uses aggregate reset since no specific one set)
+        assert ("weekly", "haiku") in by_key
+        haiku = by_key[("weekly", "haiku")]
+        assert haiku["token_usage"]["input"] == 200
+
     def test_enrichment_respects_primary_reset_at(self, tmp_path):
         """Enrichment should only count tokens since the primary card's reset_at."""
         import json
@@ -1069,8 +1146,8 @@ class TestAnthropicCollector:
         (proj_dir / "session.jsonl").write_text("\n".join(entries) + "\n")
 
         collector = AnthropicCollector()
-        # Simulate primary metadata discovery
-        collector._capture_primary_metadata([{"window_type": "weekly", "reset_at": reset_at}])
+        # Simulate primary metadata discovery using composite keys (window_type, model_id)
+        collector._window_resets = {("weekly", None): datetime.fromisoformat(reset_at)}
 
         with (
             patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
@@ -1454,6 +1531,63 @@ class TestChatGPTCollector:
 
         # Should return error card if both API and logs fail
         assert isinstance(result, list)
+
+    def test_chatgpt_codex_sums_all_messages(self, tmp_path):
+        """_process_codex_sessions should sum usage from ALL interactions (Total Consumption)."""
+        from app.services.collectors.chatgpt import ChatGPTCollector
+
+        collector = ChatGPTCollector()
+
+        # Two turns in one session.
+        # msg1: input 100, output 50
+        # msg2: input 120 (billed 120, not 20), output 60
+        # Total Consumption should be: Input 220, Output 110, Total 330.
+        ts_1 = "2026-04-30T10:00:00Z"
+        ts_2 = "2026-04-30T10:05:00Z"
+
+        entries = [
+            # Turn 1
+            json.dumps({"type": "turn_context", "payload": {"model": "gpt-4o"}, "timestamp": ts_1}),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": ts_1,
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50}},
+                        "rate_limits": {
+                            "primary": {"resets_at": 1777550000, "window_minutes": 10080}
+                        },
+                    },
+                }
+            ),
+            # Turn 2
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": ts_2,
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"last_token_usage": {"input_tokens": 120, "output_tokens": 60}},
+                        "rate_limits": {
+                            "primary": {"resets_at": 1777550000, "window_minutes": 10080}
+                        },
+                    },
+                }
+            ),
+        ]
+
+        fpath = tmp_path / "codex-test.jsonl"
+        fpath.write_text("\n".join(entries) + "\n")
+
+        result = collector._process_codex_sessions([str(fpath)])
+        assert len(result) == 1
+        enriched = result[0]
+
+        assert enriched["token_usage"]["input"] == 220
+        assert enriched["token_usage"]["output"] == 110
+        assert enriched["token_usage"]["total"] == 330
+        assert "in:220 out:110" in enriched["_enrichment_detail"]
 
 
 class TestAntigravityCollector:

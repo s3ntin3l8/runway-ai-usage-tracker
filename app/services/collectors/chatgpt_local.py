@@ -287,59 +287,35 @@ class ChatGPTLocalMixin:
             else datetime.now(UTC) - timedelta(minutes=window_minutes)
         )
 
-        # Group events into conversations (boundary = input_tokens decreases)
-        # Then compute net-new tokens per conversation to avoid double-counting
-        # cumulative context.
+        # Filter messages for the current window
         window_events = [e for e in events if e["ts"] >= cutoff]
         if not window_events:
             logger.debug("No Codex session events inside current window")
             return []
 
-        conversations: list[list[dict[str, Any]]] = []
-        current_conv: list[dict[str, Any]] = [window_events[0]]
-        for e in window_events[1:]:
-            if e["input"] < current_conv[-1]["input"]:
-                conversations.append(current_conv)
-                current_conv = []
-            current_conv.append(e)
-        conversations.append(current_conv)
-
-        # Aggregate net-new tokens per conversation
+        # Aggregate ALL tokens from ALL interactions in the window (Consumption Strategy)
         total_in = total_out = total_reason = total_cache = total_tok = 0
-        total_billed = 0
         msgs = 0
         by_model: dict[str, dict[str, Any]] = {}
 
-        for conv in conversations:
-            if not conv:
-                continue
-            first = conv[0]
-            last = conv[-1]
-            conv_model = last["model"] or "unknown"
+        for e in window_events:
+            conv_model = e["model"] or "unknown"
 
-            # Net new input = growth in context window
-            net_input = last["input"] - first["input"]
-            # Sum outputs across all calls in conversation
-            net_output = sum(e["output"] for e in conv)
-            net_reason = sum(e["reasoning"] for e in conv)
-            net_cache = sum(e["cache_read"] for e in conv)
-            net_total = net_input + net_output
-            billed = sum(e["total"] for e in conv)
-
-            total_in += max(0, net_input)
-            total_out += net_output
-            total_reason += net_reason
-            total_cache += net_cache
-            total_tok += net_total
-            total_billed += billed
-            msgs += len(conv)
+            # Sum all turn values
+            total_in += e["input"]
+            total_out += e["output"]
+            total_reason += e["reasoning"]
+            total_cache += e["cache_read"]
+            # Input already includes cache_read in OpenAI logs
+            total_tok += e["input"] + e["output"]
+            msgs += 1
 
             entry = by_model.setdefault(
                 conv_model, {"cost": 0.0, "msgs": 0, "tokens": {"input": 0, "output": 0}}
             )
-            entry["msgs"] += len(conv)
-            entry["tokens"]["input"] += max(0, net_input)
-            entry["tokens"]["output"] += net_output
+            entry["msgs"] += 1
+            entry["tokens"]["input"] += e["input"]
+            entry["tokens"]["output"] += e["output"]
 
         token_usage = {
             "input": total_in,
@@ -351,10 +327,10 @@ class ChatGPTLocalMixin:
 
         # Build compact detail string
         detail_parts: list[str] = []
-        if total_tok:
-            detail_parts.append(f"net:{self._fmt_tokens(total_tok)}")
-        if total_billed:
-            detail_parts.append(f"billed:{self._fmt_tokens(total_billed)}")
+        if total_in:
+            detail_parts.append(f"in:{self._fmt_tokens(total_in)}")
+        if total_out:
+            detail_parts.append(f"out:{self._fmt_tokens(total_out)}")
         if total_reason:
             detail_parts.append(f"reason:{self._fmt_tokens(total_reason)}")
         if total_cache:
@@ -391,5 +367,5 @@ class ChatGPTLocalMixin:
         if n >= 1_000_000:
             return f"{n / 1_000_000:.1f}M"
         if n >= 1000:
-            return f"{n // 1000}k"
+            return f"{n / 1000:.1f}k"
         return str(n)

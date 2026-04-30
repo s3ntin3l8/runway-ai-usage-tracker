@@ -3,6 +3,7 @@ Google Gemini quota collector orchestrating API and log fallback strategies.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -52,6 +53,24 @@ class GeminiCollector(
             account_id=account_id,
             account_label=account_label,
         )
+
+    def _capture_primary_metadata(self, primary: list[dict[str, Any]]) -> None:
+        """
+        Extract reset_at per model_id from primary API cards so enrichment
+        can align window boundaries instead of using fixed cutoffs.
+        """
+        resets: dict[str, datetime] = {}
+        for card in primary:
+            reset_at = card.get("reset_at")
+            if not reset_at:
+                continue
+            try:
+                dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                mid = card.get("model_id", "unknown")
+                resets[mid] = dt
+            except (ValueError, TypeError):
+                continue
+        self._window_resets = resets
 
     async def is_configured(self) -> bool:
         """Check if Gemini credentials or logs are present."""
