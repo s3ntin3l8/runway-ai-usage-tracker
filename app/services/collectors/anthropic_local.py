@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -40,36 +41,60 @@ class AnthropicLocalMixin:
 
     async def _collect_via_cli_pty(self) -> list[dict[str, Any]]:
         """
-        Fetch Claude usage by running the 'claude' CLI and parsing '/usage' output.
-        Uses subprocess communicate() to send /usage and capture the result.
+        Fetch Claude usage by running the 'claude' CLI and parsing output.
+        Uses subprocess to capture startup status line or /usage output.
         """
         try:
-            # Check if claude CLI is available
-            proc = await asyncio.create_subprocess_exec(
-                "which",
-                "claude",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
-            if proc.returncode != 0:
-                logger.debug("Claude CLI not found in path, skipping PTY fallback")
+            # 1. Robust binary discovery
+            binary = shutil.which("claude") or shutil.which("claude-code")
+            if not binary:
+                # Check common local paths that might not be in PATH
+                home = os.path.expanduser("~")
+                local_paths = [
+                    os.path.join(home, ".local", "bin", "claude"),
+                    os.path.join(home, ".local", "bin", "claude-code"),
+                    os.path.join(home, "node_modules", ".bin", "claude"),
+                    "/usr/local/bin/claude",
+                    "/usr/bin/claude",
+                ]
+                for p in local_paths:
+                    if os.path.isfile(p) and os.access(p, os.X_OK):
+                        binary = p
+                        break
+
+            if not binary:
+                logger.debug("Claude CLI not found, skipping fallback")
                 return []
 
+            # 2. Run CLI with timeout
+            # We send /usage just in case it's an older version,
+            # but we'll also parse the startup status line if that fails.
             process = await asyncio.create_subprocess_exec(
-                "claude",
+                binary,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await process.communicate(input=b"/usage\nexit\n")
-            output = self._strip_ansi(stdout.decode(errors="ignore"))
-
-            if not output or not any(x in output.lower() for x in ["usage", "used", "current"]):
+            try:
+                # Give it enough time to render startup status line
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(input=b"/usage\nexit\n"), timeout=15.0
+                )
+            except TimeoutError:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                logger.debug("Claude CLI timed out")
                 return []
 
-            # Load credentials for identity and tier
+            output = self._strip_ansi(stdout.decode(errors="ignore"))
+
+            if not output:
+                return []
+
+            # 3. Load credentials for identity and tier
             creds = None
             identity_str = ""
             tier = None
@@ -101,7 +126,7 @@ class AnthropicLocalMixin:
             return self._parse_cli_usage_output(output, identity_suffix, tier, identity_str)
 
         except Exception as e:
-            logger.debug(f"Claude CLI PTY fallback failed: {e}")
+            logger.debug(f"Claude CLI fallback failed: {e}")
             return []
 
     def _strip_ansi(self, text: str) -> str:
@@ -120,6 +145,7 @@ class AnthropicLocalMixin:
         results = []
         now = datetime.now(UTC)
 
+        # 1. Standard '/usage' format
         # Matches: "Current session: 42% used (resets in 2h 15m)"
         usage_re = re.compile(
             r"(Current\s+(?:session|week|window))\s*[:\s-]*\s*(\d+(?:\.\d+)?)\s*%\s*used"
@@ -138,58 +164,97 @@ class AnthropicLocalMixin:
                 "Current Window": "Session",
             }
             u_type = label_map.get(label_raw, label_raw)
-            remaining_pct = 100.0 - pct_used
-
-            # Correct window type
             w_type = (
                 "session" if "Session" in u_type else "weekly" if "Week" in u_type else "unknown"
             )
-
-            # Parse reset duration string "2h 15m", "3d 4h", etc.
-            reset_at = None
-            if reset_str:
-                delta = timedelta()
-                d_match = re.search(r"(\d+)\s*d", reset_str)
-                h_match = re.search(r"(\d+)\s*h", reset_str)
-                m_match = re.search(r"(\d+)\s*m", reset_str)
-                if d_match:
-                    delta += timedelta(days=int(d_match.group(1)))
-                if h_match:
-                    delta += timedelta(hours=int(h_match.group(1)))
-                if m_match:
-                    delta += timedelta(minutes=int(m_match.group(1)))
-                if delta.total_seconds() > 0:
-                    reset_at = now + delta
-
             results.append(
-                {
-                    "service_name": "Claude",
-                    "icon": "🟠",
-                    "remaining": f"{remaining_pct:.1f}%",
-                    "unit": "capacity",
-                    "reset": human_delta(reset_at) if reset_at else "Unknown",
-                    "health": "good"
-                    if pct_used < 70
-                    else "warning"
-                    if pct_used < 90
-                    else "critical",
-                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [CLI PTY]{identity_suffix}",
-                    "used_value": pct_used,
-                    "limit_value": 100.0,
-                    "unit_type": "percent",
-                    "window_type": w_type,
-                    "model_id": None,
-                    "tier": tier,
-                    "account_label": account_label,
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": self.DATA_SOURCE_LOCAL,
-                    "input_source": "server",
-                    "updated_at": now.isoformat(),
-                }
+                self._build_cli_card(
+                    pct_used, reset_str, w_type, u_type, now, identity_suffix, tier, account_label
+                )
             )
 
+        # 2. Status line format (New in v2.1+)
+        # Matches: "60m:5%" or "99h:32%"
+        if not results:
+            status_re = re.compile(r"(\d+[smh]):(\d+(?:\.\d+)?)%")
+            matches = list(status_re.finditer(output))
+            for i, match in enumerate(matches):
+                reset_str = match.group(1)
+                pct_used = float(match.group(2))
+
+                # Order-based mapping: 1st is usually session, 2nd is usually weekly
+                if i == 0:
+                    w_type, u_type = "session", "Session"
+                elif i == 1:
+                    w_type, u_type = "weekly", "Weekly"
+                else:
+                    w_type, u_type = "unknown", f"Window {i + 1}"
+
+                results.append(
+                    self._build_cli_card(
+                        pct_used,
+                        reset_str,
+                        w_type,
+                        u_type,
+                        now,
+                        identity_suffix,
+                        tier,
+                        account_label,
+                    )
+                )
+
         return results
+
+    def _build_cli_card(
+        self,
+        pct_used: float,
+        reset_str: str | None,
+        w_type: str,
+        u_type: str,
+        now: datetime,
+        identity_suffix: str,
+        tier: str | None,
+        account_label: str | None,
+    ) -> dict[str, Any]:
+        """Helper to construct a standard card from CLI data."""
+        remaining_pct = 100.0 - pct_used
+        reset_at = None
+
+        if reset_str:
+            delta = timedelta()
+            d_match = re.search(r"(\d+)\s*d", reset_str)
+            h_match = re.search(r"(\d+)\s*h", reset_str)
+            m_match = re.search(r"(\d+)\s*m", reset_str)
+            if d_match:
+                delta += timedelta(days=int(d_match.group(1)))
+            if h_match:
+                delta += timedelta(hours=int(h_match.group(1)))
+            if m_match:
+                delta += timedelta(minutes=int(m_match.group(1)))
+            if delta.total_seconds() > 0:
+                reset_at = now + delta
+
+        return {
+            "service_name": "Claude",
+            "icon": "🟠",
+            "remaining": f"{remaining_pct:.1f}%",
+            "unit": "capacity",
+            "reset": human_delta(reset_at) if reset_at else "Unknown",
+            "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+            "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+            "detail": f"{pct_used:.1f}% used [CLI PTY]{identity_suffix}",
+            "used_value": pct_used,
+            "limit_value": 100.0,
+            "unit_type": "percent",
+            "window_type": w_type,
+            "model_id": None,
+            "tier": tier,
+            "account_label": account_label,
+            "reset_at": reset_at.isoformat() if reset_at else None,
+            "data_source": self.DATA_SOURCE_LOCAL,
+            "input_source": "server",
+            "updated_at": now.isoformat(),
+        }
 
     # ──────────────────────────────── Local log strategy ─────────────────────
 
