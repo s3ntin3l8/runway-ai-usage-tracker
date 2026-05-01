@@ -1243,7 +1243,7 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
 
         const sparkSVG = buildSparklineSVG(points, color, 56, 24);
         const trendArrow = getTrendArrow(points);
-        const latestValue = points.length > 0 ? points[points.length - 1].value.toFixed(0) : '—';
+        const latestValue = points.length > 0 ? Math.round(points[points.length - 1].value).toLocaleString() : '—';
         const trendStyle = trendArrow === '↑' ? 'color:var(--crit);' : trendArrow === '↓' ? 'color:var(--good);' : 'color:var(--text-dim);';
         const activeOpacity = isActive ? '' : 'opacity-40';
 
