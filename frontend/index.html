@@ -232,11 +232,13 @@
 
             <!-- Forecast View -->
             <section id="view-forecast" class="view hidden">
-                <div style="padding: 24px 32px;">
+                
+                <!-- Controls panel -->
+                <div class="hud-panel forecast-controls mb-4">
                     <!-- KPI strip -->
-                    <div id="forecast-kpi" style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;"></div>
+                    <div id="forecast-kpi" style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;"></div>
                     <!-- Filters -->
-                    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
+                    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
                         <select id="forecast-filter-window" class="select-sm">
                             <option value="">All windows</option>
                             <option value="daily">Daily</option>
@@ -249,25 +251,40 @@
                         </select>
                         <span id="forecast-generated-at" style="font-size:10px;color:var(--text-dim);margin-left:auto;"></span>
                     </div>
-                    <!-- Projection chart -->
-                    <div id="forecast-chart" style="width:100%;height:300px;margin-bottom:20px;"></div>
-                    <!-- Risk table -->
-                    <table id="forecast-table" style="width:100%;border-collapse:collapse;font-size:11px;font-family:'B612 Mono',monospace;">
-                        <thead>
-                            <tr style="color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid var(--hairline);">
-                                <th style="text-align:left;padding:6px 8px;">Service</th>
-                                <th style="text-align:left;padding:6px 8px;">Provider</th>
-                                <th style="text-align:right;padding:6px 8px;">Now %</th>
-                                <th style="text-align:right;padding:6px 8px;">Projected %</th>
-                                <th style="text-align:right;padding:6px 8px;">Confidence</th>
-                                <th style="text-align:left;padding:6px 8px;">Resets</th>
-                                <th style="text-align:left;padding:6px 8px;">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="forecast-table-body"></tbody>
-                    </table>
-                    <div id="forecast-empty" class="hidden" style="text-align:center;padding:40px;color:var(--text-dim);font-size:12px;">No forecastable limits found.</div>
                 </div>
+
+                <!-- Chart panel -->
+                <div class="hud-panel forecast-chart mb-4">
+                    <div class="hc-head" style="margin-bottom:16px;">
+                        <div class="hc-kicker">Projection</div>
+                    </div>
+                    <div id="forecast-chart" style="width:100%;height:300px;"></div>
+                </div>
+
+                <!-- Table panel -->
+                <div class="hud-panel forecast-table">
+                    <div class="ht-head" style="margin-bottom:16px;">
+                        <h3>Forecast Details</h3>
+                    </div>
+                    <div class="ht-scroll">
+                        <table id="forecast-table" style="width:100%;border-collapse:collapse;font-size:11px;font-family:'B612 Mono',monospace;">
+                            <thead>
+                                <tr style="color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid var(--hairline);">
+                                    <th style="text-align:left;padding:6px 8px;">Service</th>
+                                    <th style="text-align:left;padding:6px 8px;">Provider</th>
+                                    <th style="text-align:right;padding:6px 8px;">Now %</th>
+                                    <th style="text-align:right;padding:6px 8px;">Projected %</th>
+                                    <th style="text-align:right;padding:6px 8px;">Confidence</th>
+                                    <th style="text-align:left;padding:6px 8px;">Resets</th>
+                                    <th style="text-align:left;padding:6px 8px;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="forecast-table-body"></tbody>
+                        </table>
+                        <div id="forecast-empty" class="hidden" style="text-align:center;padding:40px;color:var(--text-dim);font-size:12px;">No forecastable limits found.</div>
+                    </div>
+                </div>
+
             </section>
 
             <!-- Auth View -->
