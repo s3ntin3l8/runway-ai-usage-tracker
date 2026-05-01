@@ -233,23 +233,34 @@
             <!-- Forecast View -->
             <section id="view-forecast" class="view hidden">
                 
-                <!-- Controls panel -->
-                <div class="hud-panel forecast-controls mb-4">
-                    <!-- KPI strip -->
-                    <div id="forecast-kpi" style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;"></div>
-                    <!-- Filters -->
-                    <div class="glass filterbar" id="forecast-filter-bar" style="margin-bottom:16px;">
-                        <div id="forecast-window-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
-                        <div class="sep"></div>
-                        <div id="forecast-provider-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
-                        <div class="sep"></div>
-                        <span id="forecast-generated-at" style="font-size:10px;color:var(--text-dim);margin-left:auto;align-self:center;"></span>
+                <!-- Hero: Status Summary -->
+                <div class="hero mb-4">
+                    <div class="glass">
+                        <div class="health-head">
+                            <h2>Critical Limits</h2>
+                        </div>
+                        <div id="forecast-kpi-crit" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;"></div>
+                    </div>
+                    <div class="glass">
+                        <div class="health-head">
+                            <h2>Healthy Limits</h2>
+                        </div>
+                        <div id="forecast-kpi-ok" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;"></div>
                     </div>
                 </div>
 
+                <!-- Filters panel -->
+                <div class="glass filterbar mb-4" id="forecast-filter-bar">
+                    <div id="forecast-window-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                    <div class="sep"></div>
+                    <div id="forecast-provider-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                    <div class="sep"></div>
+                    <span id="forecast-generated-at" style="font-size:10px;color:var(--text-dim);margin-left:auto;align-self:center;"></span>
+                </div>
+
                 <!-- Chart panel -->
-                <div class="hud-panel forecast-chart mb-4">
-                    <div class="hc-head" style="margin-bottom:16px;">
+                <div class="hud-panel history-chart forecast-chart mb-4">
+                    <div class="hc-head">
                         <div class="hc-kicker">Projection</div>
                     </div>
                     <div id="forecast-chart" style="width:100%;height:450px;"></div>
@@ -257,7 +268,7 @@
 
                 <!-- Table panel -->
                 <div class="hud-panel history-table forecast-table">
-                    <div class="ht-head" style="margin-bottom:16px;">
+                    <div class="ht-head">
                         <h3>Forecast Details</h3>
                     </div>
                     <div class="ht-scroll">
