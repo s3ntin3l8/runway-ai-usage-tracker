@@ -344,12 +344,15 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 textStyle: { color: cText, fontFamily: 'B612 Mono, monospace', fontSize: 11 },
                 formatter: (params) => {
                     const unit = metric === 'percent' ? '%' : (metric === 'cost' ? ' USD' : '');
+                    const val = metric === 'percent'
+                        ? params.value.toFixed(1)
+                        : Number(params.value).toLocaleString();
                     return `
                         <div style="margin-bottom: 4px; color: ${cTextDim}; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${params.name}</div>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="display: inline-block; width: 6px; height: 6px; background-color: ${params.color}"></span>
                             <span style="font-weight: 700; color: ${cText};">${params.seriesName}</span>
-                            <span style="margin-left: 12px; font-family: 'B612 Mono', monospace; color: ${cAccent};">${params.value}${unit}</span>
+                            <span style="margin-left: 12px; font-family: 'B612 Mono', monospace; color: ${cAccent};">${val}${unit}</span>
                         </div>
                     `;
                 }
@@ -366,7 +369,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 left: 60,
                 right: 30,
                 bottom: 110,
-                containLabel: false
+                containLabel: true
             },
             xAxis: {
                 type: 'category',
