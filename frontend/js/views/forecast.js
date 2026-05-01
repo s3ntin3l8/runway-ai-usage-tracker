@@ -108,14 +108,14 @@ function _renderTable(forecasts) {
         const baseLabel = f.service_name || f.provider_id;
         const sub = _forecastSubtitle(f);
         const label = sub ? `${baseLabel} · ${sub}` : baseLabel;
-        return `<tr style="border-bottom:1px solid var(--hairline);color:var(--text);">
-            <td style="padding:6px 8px;">${label}</td>
-            <td style="padding:6px 8px;color:var(--text-dim);">${f.provider_id}</td>
-            <td style="padding:6px 8px;text-align:right;">${nowPct}</td>
-            <td style="padding:6px 8px;text-align:right;color:${color};font-weight:700;">${projPct}</td>
-            <td style="padding:6px 8px;text-align:right;color:var(--text-dim);">${conf}</td>
-            <td style="padding:6px 8px;color:var(--text-dim);">${resetDate}</td>
-            <td style="padding:6px 8px;"><span style="color:${color};text-transform:uppercase;letter-spacing:0.08em;">${f.status}</span></td>
+        return `<tr>
+            <td>${label}</td>
+            <td>${f.provider_id}</td>
+            <td class="num">${nowPct}</td>
+            <td class="num ht-bold" style="color:${color};">${projPct}</td>
+            <td class="num ht-italic">${conf}</td>
+            <td>${resetDate}</td>
+            <td><span style="color:${color};text-transform:uppercase;letter-spacing:0.08em;">${f.status}</span></td>
         </tr>`;
     }).join('');
 }
@@ -264,7 +264,7 @@ export async function loadForecastView() {
     } catch (err) {
         console.error('Failed to load forecast view:', err);
         const tbody = document.getElementById('forecast-table-body');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="padding:20px;color:var(--crit);text-align:center;">Failed to load forecast data.</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="ht-empty">Failed to load forecast data.</td></tr>`;
     }
 }
 

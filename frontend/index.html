@@ -262,21 +262,21 @@
                 </div>
 
                 <!-- Table panel -->
-                <div class="hud-panel forecast-table">
+                <div class="hud-panel history-table forecast-table">
                     <div class="ht-head" style="margin-bottom:16px;">
                         <h3>Forecast Details</h3>
                     </div>
                     <div class="ht-scroll">
-                        <table id="forecast-table" style="width:100%;border-collapse:collapse;font-size:11px;font-family:'B612 Mono',monospace;">
+                        <table id="forecast-table">
                             <thead>
-                                <tr style="color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid var(--hairline);">
-                                    <th style="text-align:left;padding:6px 8px;">Service</th>
-                                    <th style="text-align:left;padding:6px 8px;">Provider</th>
-                                    <th style="text-align:right;padding:6px 8px;">Now %</th>
-                                    <th style="text-align:right;padding:6px 8px;">Projected %</th>
-                                    <th style="text-align:right;padding:6px 8px;">Confidence</th>
-                                    <th style="text-align:left;padding:6px 8px;">Resets</th>
-                                    <th style="text-align:left;padding:6px 8px;">Status</th>
+                                <tr>
+                                    <th>Service</th>
+                                    <th>Provider</th>
+                                    <th class="num">Now %</th>
+                                    <th class="num">Projected %</th>
+                                    <th class="num">Confidence</th>
+                                    <th>Resets</th>
+                                    <th>Status</th>
                                 </tr>
                             </thead>
                             <tbody id="forecast-table-body"></tbody>
