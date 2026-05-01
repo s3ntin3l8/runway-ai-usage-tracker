@@ -383,8 +383,10 @@ class AnthropicLocalMixin:
                 "total": total,
             }
 
+            s_name = "Claude Design" if mid == "design" else "Claude"
+
             return {
-                "service_name": "Claude",
+                "service_name": s_name,
                 "window_type": wt,
                 "model_id": mid,
                 "_enrichment_detail": self._build_enrichment_detail(bucket, mid, token_usage),

@@ -364,23 +364,21 @@ class BaseCollector(ABC):
             card_wt = card.get("window_type")
             card_mid = card.get("model_id")
             match = None
-            for key in [
+
+            # Build search order. If card has a model_id, we MUST match an enrichment with that same model_id.
+            # We never fall back from a specific model to an aggregate enrichment (model_id=None).
+            search_keys = [
                 (card_sn, card_va, card_wt, card_mid),
-                (card_sn, card_va, card_wt, None),
                 (card_sn, card_va, None, card_mid),
                 (card_sn, None, card_wt, card_mid),
                 (None, card_va, card_wt, card_mid),
-                (card_sn, card_va, None, None),
-                (card_sn, None, card_wt, None),
-                (None, card_va, card_wt, None),
                 (card_sn, None, None, card_mid),
                 (None, card_va, None, card_mid),
                 (None, None, card_wt, card_mid),
-                (card_sn, None, None, None),
-                (None, card_va, None, None),
-                (None, None, card_wt, None),
                 (None, None, None, card_mid),
-            ]:
+            ]
+
+            for key in search_keys:
                 match = by_key.get(key)
                 if match:
                     break

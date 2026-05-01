@@ -511,10 +511,11 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     pass
 
             w_type = classify_anthropic_window_type(key)
+            service_name = "Claude Design" if key == "seven_day_omelette" else "Claude"
 
             results.append(
                 {
-                    "service_name": "Claude",
+                    "service_name": service_name,
                     "icon": "🟠",
                     "remaining": f"{remaining_pct:.1f}%",
                     "unit": "capacity",
