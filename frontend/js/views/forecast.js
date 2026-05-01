@@ -58,22 +58,31 @@ function _confidenceLabel(confidence) {
 }
 
 function _renderKpi(summary) {
-    const kpi = document.getElementById('forecast-kpi');
-    if (!kpi) return;
-    const items = [
+    const kpiCrit = document.getElementById('forecast-kpi-crit');
+    const kpiOk = document.getElementById('forecast-kpi-ok');
+    if (!kpiCrit || !kpiOk) return;
+
+    const critItems = [
         { label: 'RISK', key: 'risk', color: 'var(--crit)' },
         { label: 'EXHAUSTED', key: 'exhausted', color: 'var(--crit)' },
         { label: 'WARN', key: 'warn', color: 'var(--warn)' },
+    ];
+    
+    const okItems = [
         { label: 'OK', key: 'ok', color: 'var(--good)' },
         { label: 'STABLE', key: 'stable', color: 'var(--accent)' },
         { label: 'NO DATA', key: 'insufficient_data', color: 'var(--text-dim)' },
     ];
-    kpi.innerHTML = items.map(({ label, key, color }) => `
-        <div style="background:var(--surface);border:1px solid var(--hairline);padding:10px 18px;min-width:80px;text-align:center;">
-            <div style="font-size:22px;font-weight:700;color:${color};font-family:'B612 Mono',monospace;">${summary[key] ?? 0}</div>
-            <div style="font-size:9px;color:var(--text-dim);letter-spacing:0.12em;margin-top:2px;">${label}</div>
+
+    const renderGroup = (items) => items.map(({ label, key, color }) => `
+        <div style="background:var(--surface);border:1px solid var(--hairline);padding:12px 10px;text-align:center;border-radius:4px;">
+            <div style="font-size:24px;font-weight:700;color:${color};font-family:'B612 Mono',monospace;line-height:1;">${summary[key] ?? 0}</div>
+            <div style="font-size:9px;color:var(--text-dim);letter-spacing:0.12em;margin-top:6px;text-transform:uppercase;">${label}</div>
         </div>
     `).join('');
+
+    kpiCrit.innerHTML = renderGroup(critItems);
+    kpiOk.innerHTML = renderGroup(okItems);
 }
 
 function _renderTable(forecasts) {
@@ -196,7 +205,7 @@ async function _renderChart(forecasts) {
                 return t;
             }
         },
-        grid: { top: 20, left: 60, right: 20, bottom: 40, containLabel: false },
+        grid: { top: 20, left: 60, right: 20, bottom: 120, containLabel: false },
         xAxis: {
             type: 'category',
             data: labels,
