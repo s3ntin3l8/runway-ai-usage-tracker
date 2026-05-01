@@ -19,6 +19,7 @@ import httpx
 
 from app.core.config import get_platform_config_dir, is_local_collector_enabled
 from app.core.utils import PaceCalculator, human_delta
+from app.services.collectors.base import format_token_details
 
 logger = logging.getLogger(__name__)
 
@@ -366,22 +367,28 @@ class AnthropicLocalMixin:
             if bucket["msg_count"] == 0:
                 return None
             # Input already includes cache_read and cache_creation tokens in Anthropic logs.
-            total = bucket["input"] + bucket["output"]
+            # UPDATE: Actually, input_tokens in logs EXCLUDES cached tokens.
+            # To align with the universal contract, we sum them back into input.
+            total_input = bucket["input"] + bucket["cache_read"] + bucket["cache_creation"]
+            total = total_input + bucket["output"]
             by_model = {
                 m: {"cost": 0.0, "msgs": c} for m, c in bucket["model_msgs"].items() if c > 0
             }
+
+            token_usage = {
+                "input": total_input,
+                "output": bucket["output"],
+                "reasoning": 0,
+                "cache_read": bucket["cache_read"],
+                "total": total,
+            }
+
             return {
                 "service_name": "Claude",
                 "window_type": wt,
                 "model_id": mid,
-                "_enrichment_detail": self._build_enrichment_detail(bucket, mid),
-                "token_usage": {
-                    "input": bucket["input"],
-                    "output": bucket["output"],
-                    "reasoning": 0,
-                    "cache_read": bucket["cache_read"],
-                    "total": total,
-                },
+                "_enrichment_detail": self._build_enrichment_detail(bucket, mid, token_usage),
+                "token_usage": token_usage,
                 "by_model": by_model,
                 "msgs": bucket["msg_count"],
             }
@@ -437,45 +444,37 @@ class AnthropicLocalMixin:
         base = m.replace("claude-", "")
         return base.split("-")[0] if base else m
 
-    @staticmethod
-    def _fmt_tokens(n: int) -> str:
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if n >= 1000:
-            return f"{n // 1000}k"
-        return str(n)
-
-    def _build_enrichment_detail(self, bucket: dict, model_id: str | None = None) -> str:
+    def _build_enrichment_detail(
+        self, bucket: dict, model_id: str | None, token_usage: dict
+    ) -> str:
         """Build a compact detail fragment from a token-accumulation bucket.
 
         When model_id is provided, only include stats for that model.
         """
         sections: list[str] = []
 
-        token_parts = []
-        if bucket["input"]:
-            token_parts.append(f"in:{self._fmt_tokens(bucket['input'])}")
-        if bucket["output"]:
-            token_parts.append(f"out:{self._fmt_tokens(bucket['output'])}")
-        if bucket["cache_read"]:
-            token_parts.append(f"cache_r:{self._fmt_tokens(bucket['cache_read'])}")
-        if bucket["cache_creation"]:
-            token_parts.append(f"cache_w:{self._fmt_tokens(bucket['cache_creation'])}")
-        if token_parts:
-            sections.append(" ".join(token_parts))
+        # Use shared formatter for token counts
+        tok_str = format_token_details(token_usage)
+        if tok_str:
+            sections.append(tok_str)
 
         if model_id:
-            # Model-specific card: show only this model
+            # Model-specific card: show only this model msg count
             cnt = bucket["model_msgs"].get(model_id, 0)
             if cnt > 0:
-                tok = bucket["models"].get(model_id, 0)
-                sections.append(f"{model_id}:{self._fmt_tokens(tok)}")
+                sections.append(f"{model_id}: {cnt} msgs")
         else:
-            # Aggregate card: show all models
-            model_parts = [
-                f"{mid}:{self._fmt_tokens(cnt)}"
-                for mid, cnt in sorted(bucket["models"].items(), key=lambda x: -x[1])
-            ]
+            # Aggregate card: show model breakdown
+            model_parts = []
+            for mid, tokens in sorted(bucket["models"].items(), key=lambda x: -x[1]):
+                val = tokens
+                if val >= 1_000_000:
+                    val_str = f"{val / 1_000_000:.1f}M"
+                elif val >= 1000:
+                    val_str = f"{val // 1000}k"
+                else:
+                    val_str = str(val)
+                model_parts.append(f"{mid}:{val_str}")
             if model_parts:
                 sections.append(" ".join(model_parts))
 

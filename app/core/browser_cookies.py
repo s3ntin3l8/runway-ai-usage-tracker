@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import struct
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,9 @@ from app.core.keychain import get_keychain_secret
 from app.core.registry import registry
 
 logger = logging.getLogger(__name__)
+
+# Global lock to serialize cookie scraping and avoid concurrent massive tmpfs copies
+_cookie_scrape_lock = threading.Lock()
 
 # Module-level flag to avoid spamming the ABE warning on every cookie attempt
 _abe_warning_logged: bool = False
@@ -510,117 +514,118 @@ def get_session_cookies(
     if not is_local_credential_scraping_enabled():
         return []
 
-    targets = get_all_browser_cookies_paths()
-    if not targets:
-        return []
+    with _cookie_scrape_lock:
+        targets = get_all_browser_cookies_paths()
+        if not targets:
+            return []
 
-    logger.info(f"🍪 Searching for {cookie_name} cookies in domain {domain_substring}...")
-    for target in targets:
-        path = target["path"]
-        b_type = target["type"]
-        browser_name = target["browser"]
+        logger.info(f"🍪 Searching for {cookie_name} cookies in domain {domain_substring}...")
+        for target in targets:
+            path = target["path"]
+            b_type = target["type"]
+            browser_name = target["browser"]
 
-        if not os.path.exists(path):
-            continue
+            if not os.path.exists(path):
+                continue
 
-        # Safari (Binary)
-        if b_type == "safari":
-            try:
-                cookies = SafariBinaryCookieParser.parse_file(path)
-                found = []
-                for c in cookies:
-                    if domain_substring in c["domain"]:
-                        if c["name"] == cookie_name or (
-                            allow_prefix and c["name"].startswith(f"{cookie_name}.")
-                        ):
-                            found.append(c)
-
-                if found:
-                    # Sort by name to handle .0, .1, .2 order
-                    found.sort(key=lambda x: x["name"])
-                    logger.info(f"✅ Found {len(found)} {cookie_name} cookies in Safari")
-                    return [c["value"] for c in found]
-            except Exception as e:
-                logger.info(f"❌ Safari parsing error: {e}")
-            continue
-
-        # SQLite browsers (Chromium and Firefox)
-        temp_path = None
-        try:
-            fd, temp_path = tempfile.mkstemp()
-            os.close(fd)
-            shutil.copy2(str(path), temp_path)
-
-            conn = sqlite3.connect(temp_path)
-            cursor = conn.cursor()
-
-            if b_type == "chromium":
-                query = "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE ?"
-                params = [f"%{domain_substring}%"]
-
-                if allow_prefix:
-                    query += " AND (name = ? OR name LIKE ?)"
-                    params.extend([cookie_name, f"{cookie_name}.%"])
-                else:
-                    query += " AND name = ?"
-                    params.append(cookie_name)
-
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
-                if rows:
-                    # Sort by name
-                    rows.sort(key=lambda x: x[0])
-                    results = []
-                    for _name, enc_val in rows:
-                        decrypted = decrypt_chromium_cookie(enc_val, path)
-                        if decrypted:
-                            results.append(decrypted)
-
-                    if results:
-                        logger.info(
-                            f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}"
-                        )
-                        conn.close()
-                        return results
-                    # Rows existed but none could be decrypted — almost certainly ABE.
-                    logger.warning(
-                        f"⚠️  Found {len(rows)} '{cookie_name}' cookie(s) in {browser_name} "
-                        f"but could not decrypt them. "
-                        f"App-Bound Encryption (ABE) is likely blocking access on Chrome/Edge 127+. "
-                        f"Try Safari instead, or set credentials via environment variables. "
-                        f"See: docs/troubleshooting.md"
-                    )
-
-            elif b_type == "firefox":
-                query = "SELECT name, value FROM moz_cookies WHERE host LIKE ?"
-                params = [f"%{domain_substring}%"]
-
-                if allow_prefix:
-                    query += " AND (name = ? OR name LIKE ?)"
-                    params.extend([cookie_name, f"{cookie_name}.%"])
-                else:
-                    query += " AND name = ?"
-                    params.append(cookie_name)
-
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
-                if rows:
-                    rows.sort(key=lambda x: x[0])
-                    logger.info(f"✅ Found {len(rows)} {cookie_name} cookies in Firefox")
-                    vals = [r[1] for r in rows]
-                    conn.close()
-                    return vals
-
-            conn.close()
-        except Exception as e:
-            logger.debug(f"Error checking {browser_name} database: {e}")
-            continue
-        finally:
-            if temp_path and os.path.exists(temp_path):
+            # Safari (Binary)
+            if b_type == "safari":
                 try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
+                    cookies = SafariBinaryCookieParser.parse_file(path)
+                    found = []
+                    for c in cookies:
+                        if domain_substring in c["domain"]:
+                            if c["name"] == cookie_name or (
+                                allow_prefix and c["name"].startswith(f"{cookie_name}.")
+                            ):
+                                found.append(c)
+
+                    if found:
+                        # Sort by name to handle .0, .1, .2 order
+                        found.sort(key=lambda x: x["name"])
+                        logger.info(f"✅ Found {len(found)} {cookie_name} cookies in Safari")
+                        return [c["value"] for c in found]
+                except Exception as e:
+                    logger.info(f"❌ Safari parsing error: {e}")
+                continue
+
+            # SQLite browsers (Chromium and Firefox)
+            temp_path = None
+            try:
+                fd, temp_path = tempfile.mkstemp()
+                os.close(fd)
+                shutil.copy2(str(path), temp_path)
+
+                conn = sqlite3.connect(temp_path)
+                cursor = conn.cursor()
+
+                if b_type == "chromium":
+                    query = "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE ?"
+                    params = [f"%{domain_substring}%"]
+
+                    if allow_prefix:
+                        query += " AND (name = ? OR name LIKE ?)"
+                        params.extend([cookie_name, f"{cookie_name}.%"])
+                    else:
+                        query += " AND name = ?"
+                        params.append(cookie_name)
+
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+                    if rows:
+                        # Sort by name
+                        rows.sort(key=lambda x: x[0])
+                        results = []
+                        for _name, enc_val in rows:
+                            decrypted = decrypt_chromium_cookie(enc_val, path)
+                            if decrypted:
+                                results.append(decrypted)
+
+                        if results:
+                            logger.info(
+                                f"✅ Found {len(results)} {cookie_name} cookies in {browser_name}"
+                            )
+                            conn.close()
+                            return results
+                        # Rows existed but none could be decrypted — almost certainly ABE.
+                        logger.warning(
+                            f"⚠️  Found {len(rows)} '{cookie_name}' cookie(s) in {browser_name} "
+                            f"but could not decrypt them. "
+                            f"App-Bound Encryption (ABE) is likely blocking access on Chrome/Edge 127+. "
+                            f"Try Safari instead, or set credentials via environment variables. "
+                            f"See: docs/troubleshooting.md"
+                        )
+
+                elif b_type == "firefox":
+                    query = "SELECT name, value FROM moz_cookies WHERE host LIKE ?"
+                    params = [f"%{domain_substring}%"]
+
+                    if allow_prefix:
+                        query += " AND (name = ? OR name LIKE ?)"
+                        params.extend([cookie_name, f"{cookie_name}.%"])
+                    else:
+                        query += " AND name = ?"
+                        params.append(cookie_name)
+
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+                    if rows:
+                        rows.sort(key=lambda x: x[0])
+                        logger.info(f"✅ Found {len(rows)} {cookie_name} cookies in Firefox")
+                        vals = [r[1] for r in rows]
+                        conn.close()
+                        return vals
+
+                conn.close()
+            except Exception as e:
+                logger.debug(f"Error checking {browser_name} database: {e}")
+                continue
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
 
     return []
 

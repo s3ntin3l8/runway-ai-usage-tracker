@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from app.core.config import is_local_collector_enabled, settings
+from app.services.collectors.base import format_token_details
 
 logger = logging.getLogger(__name__)
 
@@ -48,29 +49,29 @@ class GeminiLocalMixin:
 
         for fpath in fpaths:
             try:
-                with open(fpath) as f:
-                    content = f.read()
-
                 session_messages = []
                 if fpath.endswith(".jsonl"):
-                    for line in content.strip().split("\n"):
-                        if line:
-                            try:
-                                msg = json.loads(line)
-                                # Only keep gemini responses with tokens
-                                if msg.get("type") == "gemini" and msg.get("tokens"):
-                                    session_messages.append(msg)
-                            except json.JSONDecodeError:
-                                continue
+                    with open(fpath) as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    msg = json.loads(line)
+                                    # Only keep gemini responses with tokens
+                                    if msg.get("type") == "gemini" and msg.get("tokens"):
+                                        session_messages.append(msg)
+                                except json.JSONDecodeError:
+                                    continue
                 else:
-                    try:
-                        data = json.loads(content)
-                        raw_msgs = data.get("messages", [])
-                        session_messages = [
-                            m for m in raw_msgs if m.get("type") == "gemini" and m.get("tokens")
-                        ]
-                    except json.JSONDecodeError:
-                        continue
+                    with open(fpath) as f:
+                        try:
+                            data = json.load(f)
+                            raw_msgs = data.get("messages", [])
+                            session_messages = [
+                                m for m in raw_msgs if m.get("type") == "gemini" and m.get("tokens")
+                            ]
+                        except json.JSONDecodeError:
+                            continue
 
                 if not session_messages:
                     continue
@@ -208,17 +209,15 @@ class GeminiLocalMixin:
 
     def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
         """Build a canonical enrichment dict from aggregated message data."""
-        detail_parts = []
-        if agg["input"]:
-            detail_parts.append(f"in: {agg['input']:,}")
-        if agg["output"]:
-            detail_parts.append(f"out: {agg['output']:,}")
-        if agg["cached"]:
-            detail_parts.append(f"cached: {agg['cached']:,}")
-        if agg["thoughts"]:
-            detail_parts.append(f"thoughts: {agg['thoughts']:,}")
-
-        detail_str = ", ".join(detail_parts) if detail_parts else f"{agg['total']:,} tokens"
+        # Use shared formatter with mapped keys
+        token_usage = {
+            "input": agg.get("input", 0),
+            "output": agg.get("output", 0),
+            "cache_read": agg.get("cached", 0),
+            "reasoning": agg.get("thoughts", 0),
+            "total": agg.get("total", 0),
+        }
+        detail_str = format_token_details(token_usage) or f"{agg['total']:,} tokens"
 
         by_model_formatted = {}
         for model_name, model_data in agg["by_model"].items():
@@ -371,17 +370,15 @@ class GeminiLocalMixin:
 
     def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
         """Build a canonical enrichment dict from aggregated message data."""
-        detail_parts = []
-        if agg["input"]:
-            detail_parts.append(f"in: {agg['input']:,}")
-        if agg["output"]:
-            detail_parts.append(f"out: {agg['output']:,}")
-        if agg["cached"]:
-            detail_parts.append(f"cached: {agg['cached']:,}")
-        if agg["thoughts"]:
-            detail_parts.append(f"thoughts: {agg['thoughts']:,}")
-
-        detail_str = ", ".join(detail_parts) if detail_parts else f"{agg['total']:,} tokens"
+        # Use shared formatter with mapped keys
+        token_usage = {
+            "input": agg.get("input", 0),
+            "output": agg.get("output", 0),
+            "cache_read": agg.get("cached", 0),
+            "reasoning": agg.get("thoughts", 0),
+            "total": agg.get("total", 0),
+        }
+        detail_str = format_token_details(token_usage) or f"{agg['total']:,} tokens"
 
         by_model_formatted = {}
         for model_name, model_data in agg["by_model"].items():
@@ -533,17 +530,15 @@ class GeminiLocalMixin:
 
     def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
         """Build a canonical enrichment dict from aggregated message data."""
-        detail_parts = []
-        if agg["input"]:
-            detail_parts.append(f"in: {agg['input']:,}")
-        if agg["output"]:
-            detail_parts.append(f"out: {agg['output']:,}")
-        if agg["cached"]:
-            detail_parts.append(f"cached: {agg['cached']:,}")
-        if agg["thoughts"]:
-            detail_parts.append(f"thoughts: {agg['thoughts']:,}")
-
-        detail_str = ", ".join(detail_parts) if detail_parts else f"{agg['total']:,} tokens"
+        # Use shared formatter with mapped keys
+        token_usage = {
+            "input": agg.get("input", 0),
+            "output": agg.get("output", 0),
+            "cache_read": agg.get("cached", 0),
+            "reasoning": agg.get("thoughts", 0),
+            "total": agg.get("total", 0),
+        }
+        detail_str = format_token_details(token_usage) or f"{agg['total']:,} tokens"
 
         by_model_formatted = {}
         for model_name, model_data in agg["by_model"].items():
