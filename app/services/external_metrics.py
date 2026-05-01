@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -61,10 +62,16 @@ class ExternalMetricService:
                 asyncio.create_task(self._flush_after(remaining))
             return
 
-        def sync_save():
-            safe_write_json(self.path, self.metrics)
+        # Snapshot metrics for non-blocking persistence
+        metrics_copy = copy.deepcopy(self.metrics)
 
-        await asyncio.to_thread(sync_save)
+        def sync_save():
+            safe_write_json(self.path, metrics_copy)
+
+        # Fire and forget the disk write to avoid blocking callers or holding the lock.
+        # This prevents memory spikes when sidecars poll frequently.
+        asyncio.create_task(asyncio.to_thread(sync_save))
+
         self._last_save_time = now
         self._pending_save = False
 

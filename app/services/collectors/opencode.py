@@ -32,7 +32,7 @@ import httpx
 from app.core.browser_cookies import get_opencode_session_cookie
 from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, error_card, http_request_with_retry
-from app.services.collectors.base import BaseCollector
+from app.services.collectors.base import BaseCollector, format_token_details
 from app.services.external_metrics import external_metric_service
 from app.services.token_cache import token_cache
 
@@ -749,16 +749,15 @@ class OpenCodeCollector(BaseCollector):
 
                 # Build token_usage dict
                 tokens = go_data["tokens"]
+                # Enforce universal contract: output includes reasoning
                 token_usage = {
                     "input": tokens.get("input", 0),
-                    "output": tokens.get("output", 0),
+                    "output": tokens.get("output", 0) + tokens.get("reasoning", 0),
                     "reasoning": tokens.get("reasoning", 0),
                     "cache_read": tokens.get("cache_read", 0),
                 }
-                # Calculate total
-                token_usage["total"] = (
-                    token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
-                )
+                # Total is exactly input + output
+                token_usage["total"] = token_usage["input"] + token_usage["output"]
 
                 # Add structured token fields to card
                 card["token_usage"] = token_usage
@@ -901,14 +900,15 @@ class OpenCodeCollector(BaseCollector):
                         """,
                         (cutoff_ms,),
                     )
-                    rows = await cursor.fetchall()
 
                     total_cost = 0.0
                     total_in = total_out = total_reason = cache_r = cache_w = 0
                     by_model: dict[str, dict] = {}
                     convos: set[str] = set()
+                    msgs = 0
 
-                    for cost, t_in, t_out, t_reason, cr, cw, model_id, parent_id in rows:
+                    async for cost, t_in, t_out, t_reason, cr, cw, model_id, parent_id in cursor:
+                        msgs += 1
                         total_cost += float(cost or 0)
                         total_in += int(t_in or 0)
                         total_out += int(t_out or 0)
@@ -922,8 +922,6 @@ class OpenCodeCollector(BaseCollector):
                             entry = by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
                             entry["cost"] += float(cost or 0)
                             entry["msgs"] += 1
-
-                    msgs = len(rows)
 
                     totals = {
                         "cost": total_cost,
@@ -959,6 +957,42 @@ class OpenCodeCollector(BaseCollector):
                         }
                     )
 
+                async def sum_tokens_from_cursor(
+                    cur,
+                ) -> tuple[int, int, int, int, int, dict, int]:
+                    _total_in = _total_out = _total_reason = _cache_r = _cache_w = 0
+                    _by_model: dict[str, dict] = {}
+                    _msgs = 0
+                    async for (
+                        t_in,
+                        t_out,
+                        t_reason,
+                        cr,
+                        cw,
+                        m_id,
+                        _,
+                    ) in cur:
+                        _msgs += 1
+                        _total_in += int(t_in or 0)
+                        # Fold reasoning into output for universal contract
+                        _total_out += int(t_out or 0) + int(t_reason or 0)
+                        _total_reason += int(t_reason or 0)
+                        _cache_r += int(cr or 0)
+                        _cache_w += int(cw or 0)
+                        if m_id:
+                            short = self._short_model_id_oc(m_id)
+                            entry = _by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
+                            entry["msgs"] += 1
+                    return (
+                        _total_in,
+                        _total_out,
+                        _total_reason,
+                        _cache_r,
+                        _cache_w,
+                        _by_model,
+                        _msgs,
+                    )
+
                 free_cursor = await conn.execute(
                     """
                     SELECT
@@ -974,7 +1008,6 @@ class OpenCodeCollector(BaseCollector):
                       AND json_extract(data, '$.providerID') = 'opencode'
                     """,
                 )
-                free_rows = await free_cursor.fetchall()
 
                 session_cutoff_ms = int((now - timedelta(hours=5)).timestamp() * 1000)
                 session_cursor = await conn.execute(
@@ -994,37 +1027,30 @@ class OpenCodeCollector(BaseCollector):
                     """,
                     (session_cutoff_ms,),
                 )
-                session_rows = await session_cursor.fetchall()
 
-                def sum_free_tokens(rows: list) -> tuple[int, int, int, int, int, dict, int]:
-                    total_in = total_out = total_reason = cache_r = cache_w = 0
-                    by_model: dict[str, dict] = {}
-                    convos: set[str] = set()
-                    for t_in, t_out, t_reason, cr, cw, model_id, parent_id in rows:
-                        total_in += int(t_in or 0)
-                        total_out += int(t_out or 0)
-                        total_reason += int(t_reason or 0)
-                        cache_r += int(cr or 0)
-                        cache_w += int(cw or 0)
-                        if parent_id:
-                            convos.add(parent_id)
-                        if model_id:
-                            short = self._short_model_id_oc(model_id)
-                            entry = by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
-                            entry["msgs"] += 1
-                    msgs = len(rows)
-                    return total_in, total_out, total_reason, cache_r, cache_w, by_model, msgs
-
-                lt_in, lt_out, lt_reason, lt_cache_r, lt_cache_w, lt_by_model, lt_msgs = (
-                    sum_free_tokens(free_rows)
-                )
-                se_in, se_out, se_reason, se_cache_r, se_cache_w, se_by_model, se_msgs = (
-                    sum_free_tokens(session_rows)
-                )
+                (
+                    lt_in,
+                    lt_out,
+                    lt_reason,
+                    lt_cache_r,
+                    lt_cache_w,
+                    lt_by_model,
+                    lt_msgs,
+                ) = await sum_tokens_from_cursor(free_cursor)
+                (
+                    se_in,
+                    se_out,
+                    se_reason,
+                    se_cache_r,
+                    se_cache_w,
+                    se_by_model,
+                    se_msgs,
+                ) = await sum_tokens_from_cursor(session_cursor)
 
                 if lt_msgs > 0:
-                    lifetime_tokens = lt_in + lt_out + lt_reason
-                    session_tokens = se_in + se_out + se_reason
+                    # lt_out and se_out already include reasoning from sum_tokens_from_cursor
+                    lifetime_tokens = lt_in + lt_out
+                    session_tokens = se_in + se_out
 
                     free_totals = {
                         "lifetime": {
@@ -1060,15 +1086,7 @@ class OpenCodeCollector(BaseCollector):
                         "total": session_tokens,
                     }
 
-                    session_tok = free_totals["session"]["tokens"]
-                    free_detail_parts = []
-                    if session_tok.get("input"):
-                        free_detail_parts.append(f"in:{session_tok['input']:,}")
-                    if session_tok.get("output"):
-                        free_detail_parts.append(f"out:{session_tok['output']:,}")
-                    if session_tok.get("cache_read"):
-                        free_detail_parts.append(f"cache_r:{session_tok['cache_read']:,}")
-                    free_detail = " ".join(free_detail_parts) if free_detail_parts else "$0.00"
+                    free_detail = format_token_details(free_token_usage) or "$0.00"
                     free_detail += f" · Lifetime: {lifetime_tokens:,} tokens{identity_suffix}"
 
                     results.append(
@@ -1166,18 +1184,11 @@ class OpenCodeCollector(BaseCollector):
         cost = totals.get("cost", 0.0)
         parts.append(f"${cost:.2f}")
 
+        # Token summary
         tok = totals.get("tokens", {})
-        token_segs: list[str] = []
-        if tok.get("input"):
-            token_segs.append(f"in:{tok['input']:,}")
-        if tok.get("output"):
-            token_segs.append(f"out:{tok['output']:,}")
-        if tok.get("cache_read"):
-            token_segs.append(f"cache_r:{tok['cache_read']:,}")
-        if tok.get("cache_write"):
-            token_segs.append(f"cache_w:{tok['cache_write']:,}")
-        if token_segs:
-            parts.append(" ".join(token_segs))
+        tok_str = format_token_details(tok)
+        if tok_str:
+            parts.append(tok_str)
 
         by_model = totals.get("by_model", {})
         if by_model:

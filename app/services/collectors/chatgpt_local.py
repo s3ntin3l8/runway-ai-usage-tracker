@@ -11,6 +11,7 @@ import httpx
 
 from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import PaceCalculator, human_delta
+from app.services.collectors.base import format_token_details
 
 logger = logging.getLogger(__name__)
 
@@ -326,22 +327,13 @@ class ChatGPTLocalMixin:
         }
 
         # Build compact detail string
-        detail_parts: list[str] = []
-        if total_in:
-            detail_parts.append(f"in:{self._fmt_tokens(total_in)}")
-        if total_out:
-            detail_parts.append(f"out:{self._fmt_tokens(total_out)}")
-        if total_reason:
-            detail_parts.append(f"reason:{self._fmt_tokens(total_reason)}")
-        if total_cache:
-            detail_parts.append(f"cache_r:{self._fmt_tokens(total_cache)}")
-        token_detail = " ".join(detail_parts)
+        token_detail = format_token_details(token_usage)
 
         model_parts = [
-            f"{name}:{self._fmt_tokens(m['tokens']['input'] + m['tokens']['output'])}"
+            f"{name}:{m['msgs']} msgs"
             for name, m in sorted(
                 by_model.items(),
-                key=lambda x: -(x[1]["tokens"]["input"] + x[1]["tokens"]["output"]),
+                key=lambda x: -x[1]["msgs"],
             )
         ]
         model_detail = " ".join(model_parts)
@@ -361,11 +353,3 @@ class ChatGPTLocalMixin:
                 "by_model": by_model,
             }
         ]
-
-    @staticmethod
-    def _fmt_tokens(n: int) -> str:
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if n >= 1000:
-            return f"{n / 1000:.1f}k"
-        return str(n)

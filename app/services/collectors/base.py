@@ -583,3 +583,35 @@ class BaseCollector(ABC):
             An error card list, or empty list to let SmartCollector handle it.
         """
         return []
+
+
+def format_token_details(tokens: dict[str, int]) -> str:
+    """
+    Format token counts uniformly for display across all collectors.
+    Expected format: in:1.2k, out:500, cached:1M, reasoning:100
+    """
+
+    def _fmt(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1000:
+            return f"{n / 1000:.1f}k"
+        return str(n)
+
+    parts = []
+    if tokens.get("input"):
+        parts.append(f"in:{_fmt(tokens['input'])}")
+    if tokens.get("output"):
+        parts.append(f"out:{_fmt(tokens['output'])}")
+    if tokens.get("cache_read"):
+        parts.append(f"cached:{_fmt(tokens['cache_read'])}")
+    if tokens.get("reasoning"):
+        parts.append(f"reasoning:{_fmt(tokens['reasoning'])}")
+
+    total = tokens.get("total", 0)
+    if not total:
+        total = tokens.get("input", 0) + tokens.get("output", 0)
+
+    if parts:
+        return ", ".join(parts)
+    return f"{_fmt(total)} tokens"

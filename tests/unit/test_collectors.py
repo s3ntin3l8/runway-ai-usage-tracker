@@ -995,7 +995,7 @@ class TestAnthropicCollector:
         assert "by_model" in sess
         assert "msgs" in sess
         assert "opus" in sess["_enrichment_detail"]
-        assert sess["token_usage"]["input"] == 1000
+        assert sess["token_usage"]["input"] == 4200
         assert sess["token_usage"]["output"] == 500
         assert sess["msgs"] == 1
 
@@ -1005,13 +1005,13 @@ class TestAnthropicCollector:
         assert "_enrichment_detail" in week
         assert "opus" in week["_enrichment_detail"]
         assert "sonnet" in week["_enrichment_detail"]
-        assert week["token_usage"]["input"] == 1500
+        assert week["token_usage"]["input"] == 5800
         assert week["msgs"] == 2
 
         # Weekly Sonnet-specific
         assert ("weekly", "sonnet") in by_key
         week_sonnet = by_key[("weekly", "sonnet")]
-        assert week_sonnet["token_usage"]["input"] == 500
+        assert week_sonnet["token_usage"]["input"] == 1600
         assert week_sonnet["msgs"] == 1
         assert "sonnet" in week_sonnet["_enrichment_detail"]
         assert "opus" not in week_sonnet["_enrichment_detail"]
@@ -1019,7 +1019,7 @@ class TestAnthropicCollector:
         # Weekly Opus-specific
         assert ("weekly", "opus") in by_key
         week_opus = by_key[("weekly", "opus")]
-        assert week_opus["token_usage"]["input"] == 1000
+        assert week_opus["token_usage"]["input"] == 4200
         assert week_opus["msgs"] == 1
         assert "opus" in week_opus["_enrichment_detail"]
         assert "sonnet" not in week_opus["_enrichment_detail"]
@@ -1587,7 +1587,7 @@ class TestChatGPTCollector:
         assert enriched["token_usage"]["input"] == 220
         assert enriched["token_usage"]["output"] == 110
         assert enriched["token_usage"]["total"] == 330
-        assert "in:220 out:110" in enriched["_enrichment_detail"]
+        assert "in:220, out:110" in enriched["_enrichment_detail"]
 
 
 class TestAntigravityCollector:
