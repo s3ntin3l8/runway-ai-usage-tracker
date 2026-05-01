@@ -904,10 +904,12 @@ class TestAnthropicCollector:
         mock_cli = AsyncMock()
         mock_cli.communicate = AsyncMock(return_value=(raw_output, b""))
 
-        with patch("asyncio.create_subprocess_exec") as mock_exec:
-            # First call: which claude -> success
+        with (
+            patch("asyncio.create_subprocess_exec") as mock_exec,
+            patch("shutil.which", return_value="/mock/bin/claude"),
+        ):
             # Second call: claude -> returns output
-            mock_exec.side_effect = [mock_proc, mock_cli]
+            mock_exec.side_effect = [mock_cli]
 
             result = await collector._collect_via_cli_pty()
 

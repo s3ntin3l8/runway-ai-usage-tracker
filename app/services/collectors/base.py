@@ -79,6 +79,18 @@ class BaseCollector(ABC):
     INPUT_SOURCE_SIDECAR = "sidecar"  # Pushed from remote agent
     INPUT_SOURCE_SERVER = "server"  # Found in local .env or files
 
+    # Error type prioritization for surfacing the most informative error
+    # Higher value = higher priority.
+    ERROR_PRIORITY = {
+        "rate_limited": 100,
+        "auth_failed": 80,
+        "api_error": 60,
+        "timeout": 40,
+        "parse_error": 20,
+        "missing_config": 10,
+        "unknown": 0,
+    }
+
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """
         Initialize BaseCollector.
@@ -209,6 +221,22 @@ class BaseCollector(ABC):
         """
         try:
             dynamic_strategies = self._resolve_strategies()
+            best_error_card = None
+
+            def update_best_error(error_results):
+                nonlocal best_error_card
+                if not error_results:
+                    return
+                err_card = error_results[0]
+                err_type = err_card.get("error_type", "unknown")
+                prio = self.ERROR_PRIORITY.get(err_type, 0)
+                best_prio = (
+                    self.ERROR_PRIORITY.get(best_error_card.get("error_type", "unknown"), -1)
+                    if best_error_card
+                    else -1
+                )
+                if prio > best_prio:
+                    best_error_card = err_card
 
             if dynamic_strategies:
                 # Separate primary vs enrichment strategies
@@ -224,24 +252,21 @@ class BaseCollector(ABC):
 
                 # Run primary strategies (first success wins)
                 results = None
+
                 for strategy, s_id in primary_strategies:
                     try:
                         results = await strategy(client)
                         if not self._is_error_result(results):
                             break
+                        update_best_error(results)
                     except Exception as e:
                         logger.warning(f"Strategy {s_id} failed: {e}")
 
-                # If no primary success, run all as fallbacks (legacy behavior)
+                # If no strategy succeeded, try the error handler
                 if self._is_error_result(results):
-                    for strategy, s_id in primary_strategies:
-                        try:
-                            results = await strategy(client)
-                            if not self._is_error_result(results):
-                                break
-                        except Exception:
-                            pass
-                    if self._is_error_result(results):
+                    if best_error_card:
+                        results = [best_error_card]
+                    else:
                         results = await self._error_handler()
 
                 # Capture metadata from primary results so enrichment can align
@@ -261,10 +286,12 @@ class BaseCollector(ABC):
                 return self._tag_results(results)
 
             # Legacy path: primary + fallback list
+
             # 1. Try Primary Strategy
             results = await self._primary_strategy(client)
             if not self._is_error_result(results):
                 return self._tag_results(results)
+            update_best_error(results)
 
             # 2. Try Fallbacks
             for strategy in self._fallback_strategies():
@@ -272,10 +299,13 @@ class BaseCollector(ABC):
                     results = await strategy(client)
                     if not self._is_error_result(results):
                         return self._tag_results(results)
+                    update_best_error(results)
                 except Exception as e:
                     logger.warning(f"Fallback strategy failed: {e}")
 
             # 3. All failed
+            if best_error_card:
+                return self._tag_results([best_error_card])
             return self._tag_results(await self._error_handler())
 
         except Exception as e:
