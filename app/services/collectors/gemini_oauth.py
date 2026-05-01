@@ -44,12 +44,28 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             token = creds.get("access_token")
             if token:
                 self._current_input_source = "server"
+
+                # Extract identity (email) from id_token if present
+                id_token = creds.get("id_token")
+                email = None
+                if id_token:
+                    email = IdentityExtractor.get_email_from_jwt(id_token)
+                    if email and (not self.account_label or self.account_label == "Default"):
+                        self.account_label = email
+
                 # Mirror into token cache so the Tokens health tab can see it.
                 token_data: dict[str, str] = {"oauth_token": token}
                 if creds.get("refresh_token"):
                     token_data["refresh_token"] = creds["refresh_token"]
+                if id_token:
+                    token_data["id_token"] = id_token
+
                 await token_cache.store(
-                    "gemini", token_data, account_id=None, account_label=None, source="server"
+                    "gemini",
+                    token_data,
+                    account_id=None,
+                    account_label=email,
+                    source="server",
                 )
                 return token
 
