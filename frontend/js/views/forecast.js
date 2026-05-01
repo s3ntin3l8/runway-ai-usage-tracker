@@ -236,14 +236,36 @@ async function _renderChart(forecasts) {
     });
 }
 
+function _renderWindowChips() {
+    const el = document.getElementById('forecast-window-chips');
+    if (!el) return;
+    const windows = [
+        { val: '', label: 'All windows' },
+        { val: 'daily', label: 'Daily' },
+        { val: 'weekly', label: 'Weekly' },
+        { val: 'biweekly', label: 'Biweekly' },
+        { val: 'monthly', label: 'Monthly' }
+    ];
+    el.innerHTML = windows.map(w => {
+        const active = _filterWindow === w.val ? ' active' : '';
+        return `<button class="chip${active}" data-window="${w.val}">${w.label}</button>`;
+    }).join('');
+}
+
 function _populateProviderFilter(forecasts) {
-    if (_filterProvider) return;  // keep full list while a filter is active
-    const sel = document.getElementById('forecast-filter-provider');
-    if (!sel) return;
+    const el = document.getElementById('forecast-provider-chips');
+    if (!el) return;
+    
+    // Always recalculate unique providers from the current data
     const providers = [...new Set(forecasts.map(f => f.provider_id))].sort();
-    const current = sel.value;
-    sel.innerHTML = '<option value="">All providers</option>' +
-        providers.map(p => `<option value="${p}"${p === current ? ' selected' : ''}>${p}</option>`).join('');
+    
+    let html = `<button class="chip${_filterProvider === '' ? ' active' : ''}" data-prov="">All providers</button>`;
+    html += providers.map(p => {
+        const active = _filterProvider === p ? ' active' : '';
+        return `<button class="chip${active}" data-prov="${p}">${p}</button>`;
+    }).join('');
+    
+    el.innerHTML = html;
 }
 
 export async function loadForecastView() {
@@ -253,6 +275,7 @@ export async function loadForecastView() {
         const summary = data.summary ?? {};
 
         _renderKpi(summary);
+        _renderWindowChips();
         _populateProviderFilter(forecasts);
         _renderTable(forecasts);
         await _renderChart(forecasts);
@@ -269,19 +292,24 @@ export async function loadForecastView() {
 }
 
 export function initForecastView() {
-    const windowSel = document.getElementById('forecast-filter-window');
-    const providerSel = document.getElementById('forecast-filter-provider');
+    const windowChips = document.getElementById('forecast-window-chips');
+    const providerChips = document.getElementById('forecast-provider-chips');
 
-    if (windowSel) {
-        windowSel.addEventListener('change', () => {
-            _filterWindow = windowSel.value;
-            _forecastCache = null; // invalidate cache on filter change
+    if (windowChips) {
+        windowChips.addEventListener('click', (e) => {
+            const btn = e.target.closest('.chip');
+            if (!btn) return;
+            _filterWindow = btn.dataset.window || '';
+            _forecastCache = null;
             loadForecastView();
         });
     }
-    if (providerSel) {
-        providerSel.addEventListener('change', () => {
-            _filterProvider = providerSel.value;
+
+    if (providerChips) {
+        providerChips.addEventListener('click', (e) => {
+            const btn = e.target.closest('.chip');
+            if (!btn) return;
+            _filterProvider = btn.dataset.prov || '';
             _forecastCache = null;
             loadForecastView();
         });
