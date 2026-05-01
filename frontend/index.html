@@ -238,18 +238,12 @@
                     <!-- KPI strip -->
                     <div id="forecast-kpi" style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;"></div>
                     <!-- Filters -->
-                    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-                        <select id="forecast-filter-window" class="select-sm">
-                            <option value="">All windows</option>
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="biweekly">Biweekly</option>
-                            <option value="monthly">Monthly</option>
-                        </select>
-                        <select id="forecast-filter-provider" class="select-sm">
-                            <option value="">All providers</option>
-                        </select>
-                        <span id="forecast-generated-at" style="font-size:10px;color:var(--text-dim);margin-left:auto;"></span>
+                    <div class="glass filterbar" id="forecast-filter-bar" style="margin-bottom:16px;">
+                        <div id="forecast-window-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                        <div class="sep"></div>
+                        <div id="forecast-provider-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                        <div class="sep"></div>
+                        <span id="forecast-generated-at" style="font-size:10px;color:var(--text-dim);margin-left:auto;align-self:center;"></span>
                     </div>
                 </div>
 
