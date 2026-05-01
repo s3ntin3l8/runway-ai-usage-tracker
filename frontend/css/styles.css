@@ -2702,6 +2702,9 @@ header.top .icon-btn[aria-pressed="true"] {
   color: var(--text);
   display: block;
   line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .card .sub {
   font-size: 10px;
@@ -2709,6 +2712,14 @@ header.top .icon-btn[aria-pressed="true"] {
   color: var(--text-dim);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.card .row .stack-xs {
+  min-width: 0;
+  flex: 1;
 }
 .stack-xs {
   display: flex;
