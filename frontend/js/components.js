@@ -1383,7 +1383,10 @@ export function buildProviderSummaryCard(providerId, items, forecastMap = new Ma
                     <div style="font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.14em;">${icon} ${escapeHTML(providerId)}</div>
                     <div class="flex items-center gap-1.5 flex-wrap" style="margin-top:3px;">${tierBadgeHTML}${accountLine}</div>
                 </div>
-                <span class="lamp ${LAMP[worst.health] || 'lamp-unk'}" style="width:8px;height:8px;flex-shrink:0;margin-top:2px;"></span>
+                <div class="tooltip-container">
+                    <span class="lamp ${LAMP[worst.health] || 'lamp-unk'}" style="width:8px;height:8px;flex-shrink:0;margin-top:2px;"></span>
+                    <span class="tooltip" style="right: 0; bottom: 100%; margin-bottom: 8px;">${escapeHTML(providerId)}</span>
+                </div>
             </div>
             <div class="readout ${h.tag === 'tag-crit' ? 'readout-crit' : h.tag === 'tag-warn' ? 'readout-warn' : h.tag === 'tag-good' ? 'readout-good' : h.tag === 'tag-unlm' ? 'readout-unlm' : 'readout-unk'}">${worstDisplay}</div>
             <div style="font-size:9px;color:var(--text-dim);margin-top:5px;text-transform:uppercase;letter-spacing:0.08em;">${escapeHTML(worst.service_name)}${cardSubtitleText(worst) ? ' · ' + escapeHTML(cardSubtitleText(worst)) : ''} · WORST</div>
