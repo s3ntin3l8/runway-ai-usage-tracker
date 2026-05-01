@@ -1134,7 +1134,7 @@ header.top .icon-btn[aria-pressed="true"] {
 .card {
     padding: 16px; cursor: pointer;
     transition: transform 180ms ease, box-shadow 180ms ease;
-    overflow: hidden; display: block;
+    display: block;
 }
 .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
 .card .row { display: flex; align-items: flex-start; gap: 10px; }

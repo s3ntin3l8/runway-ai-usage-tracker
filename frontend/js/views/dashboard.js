@@ -56,7 +56,18 @@ function renderFleetHealth(cards) {
 
     // Dynamic column count: repeat(N, 1fr)
     lightsEl.style.gridTemplateColumns = `repeat(${Math.max(1, buckets.length)}, 1fr)`;
-    lightsEl.innerHTML = buckets.map(cls => `<i class="${cls}"></i>`).join('');
+    lightsEl.innerHTML = cards.map((c, i) => {
+        const cls = buckets[i];
+        const status = c.health.charAt(0).toUpperCase() + c.health.slice(1);
+        return `
+            <div class="tooltip-container" style="height:100%;">
+                <i class="${cls}" style="height:100%;width:100%;"></i>
+                <div class="tooltip" style="bottom:100%;margin-bottom:8px;z-index:300;transform:translateX(50%);right:50%;">
+                    <div style="font-weight:700;margin-bottom:2px;">${escapeHTML(c.provider_id.toUpperCase())}</div>
+                    <div style="font-size:10px;color:var(--text-dim);">${escapeHTML(c.service_name)} · ${escapeHTML(status)}</div>
+                </div>
+            </div>`;
+    }).join('');
 
     const nominal = cards.filter(c => c.health === 'good' || c.health === 'unlimited').length;
     if (nominalEl) nominalEl.textContent = nominal;
