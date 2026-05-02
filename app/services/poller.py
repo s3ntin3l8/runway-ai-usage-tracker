@@ -45,19 +45,27 @@ def _create_model_records(session, snapshot_id: int, card: LimitCard) -> None:
     if not card.by_model:
         return
     for model_id, model_data in card.by_model.items():
-        tokens = model_data.get("tokens") or {}
-        total = sum(tokens.get(k, 0) or 0 for k in ["input", "output", "reasoning"])
-        record = UsageSnapshotModel(
-            snapshot_id=snapshot_id,
-            model_id=model_id,
-            cost=model_data.get("cost"),
-            msgs=model_data.get("msgs"),
-            tokens_input=tokens.get("input"),
-            tokens_output=tokens.get("output"),
-            tokens_reasoning=tokens.get("reasoning"),
-            tokens_cache_read=tokens.get("cache_read"),
-            tokens_total=total,
-        )
+        tokens = model_data.get("tokens")
+        if tokens:
+            total = sum(tokens.get(k, 0) or 0 for k in ["input", "output", "reasoning"])
+            record = UsageSnapshotModel(
+                snapshot_id=snapshot_id,
+                model_id=model_id,
+                cost=model_data.get("cost"),
+                msgs=model_data.get("msgs"),
+                tokens_input=tokens.get("input"),
+                tokens_output=tokens.get("output"),
+                tokens_reasoning=tokens.get("reasoning"),
+                tokens_cache_read=tokens.get("cache_read"),
+                tokens_total=total,
+            )
+        else:
+            record = UsageSnapshotModel(
+                snapshot_id=snapshot_id,
+                model_id=model_id,
+                cost=model_data.get("cost"),
+                msgs=model_data.get("msgs"),
+            )
         session.add(record)
 
 

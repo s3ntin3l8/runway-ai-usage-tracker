@@ -110,6 +110,13 @@ export async function fetchHistoryRaw(params = {}) {
     return await resp.json();
 }
 
+export async function fetchHistoryDeltas(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/history/deltas?${query}`);
+    if (!resp.ok) throw new Error('Failed to fetch history deltas');
+    return await resp.json();
+}
+
 export async function fetchForecast(params = {}) {
     const query = new URLSearchParams(params).toString();
     const resp = await fetchWithAuth(`/api/v1/usage/forecast?${query}`);
