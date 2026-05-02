@@ -14,6 +14,59 @@ const historyState = {
 let _historyCache = [];
 let _historyRawCache = [];
 
+const _expandedRows = new Set(); // Set of row index strings
+
+function toggleExpandRow(rowIndex) {
+    const el = document.getElementById(`ht-detail-${rowIndex}`);
+    const btn = document.getElementById(`ht-expand-${rowIndex}`);
+    if (!el || !btn) return;
+    const isOpen = el.classList.contains('open');
+    if (isOpen) {
+        el.classList.remove('open');
+        btn.classList.remove('expanded');
+        _expandedRows.delete(rowIndex);
+    } else {
+        el.classList.add('open');
+        btn.classList.add('expanded');
+        _expandedRows.add(rowIndex);
+    }
+}
+
+function computePrimaryValue(row, metric) {
+    const windows = [row.session, row.weekly, ...(row.additional || [])].filter(Boolean);
+    if (windows.length === 0) return null;
+
+    if (metric === 'percent') {
+        const pcts = windows.map(w => {
+            if (w.unit === 'percent') return w.value;
+            if (w.limit && w.limit > 0) return (w.value / w.limit) * 100;
+            return null;
+        }).filter(v => v != null);
+        return pcts.length > 0 ? Math.max(...pcts) : null;
+    }
+
+    if (metric === 'tokens') {
+        const total = windows.reduce((sum, w) => sum + (w.token_usage?.total || 0), 0);
+        return total > 0 ? total : null;
+    }
+
+    if (metric === 'cost') {
+        const total = windows
+            .filter(w => w.unit === 'currency')
+            .reduce((sum, w) => sum + (w.value || 0), 0);
+        return total > 0 ? total : null;
+    }
+
+    return null;
+}
+
+function primaryColumnHeader(metric) {
+    if (metric === 'percent') return 'Used %';
+    if (metric === 'tokens') return 'Tokens';
+    if (metric === 'cost') return 'Cost';
+    return 'Value';
+}
+
 // History cache for stale-while-revalidate pattern
 const CACHE_TTL_MS = 30_000;
 const _historyCacheStore = new Map();
@@ -191,42 +244,6 @@ function formatValue(value, unit) {
     return `${value.toLocaleString()}${unitStr}`;
 }
 
-function formatWindowValue(entry, metric) {
-    if (!entry) return '—';
-    if (metric === 'tokens' && entry.token_usage?.total != null) {
-        return formatValue(entry.token_usage.total, 'tokens');
-    }
-    if (metric === 'cost') {
-        return formatValue(entry.value, 'currency');
-    }
-    return formatValue(entry.value, entry.unit);
-}
-
-// Convert an entry to match the active metric, or return null if incompatible.
-// Used both to display GitHub (requests) as % when metric=percent, and to filter
-// out rows that have no data in the active metric.
-function adaptEntryToMetric(entry, metric) {
-    if (!entry || entry.value == null) return null;
-    if (metric === 'percent') {
-        if (entry.unit === 'percent') return entry;
-        if (entry.limit && entry.limit > 0) {
-            return { ...entry, value: (entry.value / entry.limit) * 100, unit: 'percent' };
-        }
-        return null;
-    }
-    if (metric === 'tokens') {
-        // Check for token_usage object (new backend format)
-        if (entry.token_usage?.total != null) {
-            return { ...entry, value: entry.token_usage.total, unit: 'tokens' };
-        }
-        return entry.unit === 'tokens' ? entry : null;
-    }
-    if (metric === 'cost') {
-        return entry.unit === 'currency' ? entry : null;
-    }
-    return entry;
-}
-
 const MODEL_LABEL_OVERRIDES = {
     sonnet: 'sonnet',
     opus: 'opus',
@@ -242,20 +259,87 @@ function friendlyWindowLabel(entry) {
     return w.replace(/^seven_day_/, '').replace(/_/g, ' ');
 }
 
-function renderAdditional(list, metric) {
-    if (!list || list.length === 0) return '—';
-    return list.map(a => {
-        const label = escapeHTML(friendlyWindowLabel(a));
-        let val;
-        if (metric === 'tokens' && a.token_usage?.total != null) {
-            val = formatValue(a.token_usage.total, 'tokens');
-        } else if (metric === 'cost') {
-            val = formatValue(a.value, 'currency');
-        } else {
-            val = formatValue(a.value, a.unit);
+function renderWindowsTable(row, metric) {
+    const windows = [
+        row.session ? { ...row.session, window: 'session' } : null,
+        row.weekly ? { ...row.weekly, window: 'weekly' } : null,
+        ...(row.additional || []).map(a => ({ ...a, window: a.window || 'other' })),
+    ].filter(Boolean);
+
+    if (windows.length === 0) return '';
+
+    const hasCost = windows.some(w => w.unit === 'currency');
+    const hasTokens = windows.some(w => w.token_usage?.total != null);
+    const hasMsgs = windows.some(w => w.msgs != null);
+
+    let html = '<div class="ht-section-title">Windows</div>';
+    html += '<table class="ht-detail-table"><thead><tr>';
+    html += '<th>Window</th><th>Model</th>';
+    html += '<th class="num">Used %</th>';
+    if (hasTokens) html += '<th class="num">Tokens</th>';
+    if (hasCost) html += '<th class="num">Cost</th>';
+    if (hasMsgs) html += '<th class="num">Msgs</th>';
+    html += '</tr></thead><tbody>';
+
+    windows.forEach(w => {
+        const windowLabel = escapeHTML(w.window);
+        const modelLabel = w.model_id ? escapeHTML(friendlyWindowLabel({ model_id: w.model_id })) : '—';
+
+        let pct = '—';
+        if (w.unit === 'percent') {
+            pct = formatValue(w.value, 'percent');
+        } else if (w.limit && w.limit > 0) {
+            pct = formatValue((w.value / w.limit) * 100, 'percent');
         }
-        return `<span class="ht-extra">${label} ${val}</span>`;
-    }).join('');
+
+        const tokens = w.token_usage?.total != null ? formatValue(w.token_usage.total, 'tokens') : '—';
+        const cost = w.unit === 'currency' && w.value != null ? formatValue(w.value, 'currency') : '—';
+        const msgs = w.msgs != null ? w.msgs.toLocaleString() : '—';
+
+        html += `<tr>`;
+        html += `<td>${windowLabel}</td>`;
+        html += `<td>${modelLabel}</td>`;
+        html += `<td class="num">${pct}</td>`;
+        if (hasTokens) html += `<td class="num">${tokens}</td>`;
+        if (hasCost) html += `<td class="num">${cost}</td>`;
+        if (hasMsgs) html += `<td class="num">${msgs}</td>`;
+        html += `</tr>`;
+    });
+
+    html += '</tbody></table>';
+    return html;
+}
+
+function renderModelBreakdown(byModel) {
+    if (!byModel || byModel.length === 0) return '';
+
+    const hasCost = byModel.some(m => m.cost != null);
+    const hasMsgs = byModel.some(m => m.msgs != null);
+    const hasTokens = byModel.some(m => m.tokens_total != null);
+
+    let html = '<div class="ht-section-title">Model Breakdown</div>';
+    html += '<table class="ht-detail-table"><thead><tr>';
+    html += '<th>Model</th>';
+    if (hasCost) html += '<th class="num">Cost</th>';
+    if (hasMsgs) html += '<th class="num">Msgs</th>';
+    if (hasTokens) html += '<th class="num">Input</th><th class="num">Output</th><th class="num">Total</th>';
+    html += '</tr></thead><tbody>';
+
+    byModel.forEach(m => {
+        html += `<tr>`;
+        html += `<td>${escapeHTML(m.model_id)}</td>`;
+        if (hasCost) html += `<td class="num">${m.cost != null ? formatValue(m.cost, 'currency') : '—'}</td>`;
+        if (hasMsgs) html += `<td class="num">${m.msgs != null ? m.msgs.toLocaleString() : '—'}</td>`;
+        if (hasTokens) {
+            html += `<td class="num">${m.tokens_input != null ? formatValue(m.tokens_input, 'tokens') : '—'}</td>`;
+            html += `<td class="num">${m.tokens_output != null ? formatValue(m.tokens_output, 'tokens') : '—'}</td>`;
+            html += `<td class="num">${m.tokens_total != null ? formatValue(m.tokens_total, 'tokens') : '—'}</td>`;
+        }
+        html += `</tr>`;
+    });
+
+    html += '</tbody></table>';
+    return html;
 }
 
 export function renderHistoryFromCache(skipChartUpdate = false) {
@@ -336,19 +420,22 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
 
-    // Adapt each row to the active metric (converts GitHub requests → percent when applicable,
-    // drops entries whose unit can't match the metric). Rows with nothing left are hidden.
+    // Filter: keep rows that have at least one window with data for the active metric
     const metric = historyState.metric;
-    let tableData = filtered
-        .map(s => ({
-            ...s,
-            session: adaptEntryToMetric(s.session, metric),
-            weekly: adaptEntryToMetric(s.weekly, metric),
-            additional: (s.additional || [])
-                .map(a => adaptEntryToMetric(a, metric))
-                .filter(Boolean),
-        }))
-        .filter(s => s.session || s.weekly || s.additional.length > 0);
+    const tableData = filtered.filter(s => {
+        const windows = [s.session, s.weekly, ...(s.additional || [])].filter(Boolean);
+        if (windows.length === 0) return false;
+        if (metric === 'percent') {
+            return windows.some(w => w.unit === 'percent' || (w.limit && w.limit > 0));
+        }
+        if (metric === 'tokens') {
+            return windows.some(w => w.token_usage?.total != null || w.unit === 'tokens');
+        }
+        if (metric === 'cost') {
+            return windows.some(w => w.unit === 'currency');
+        }
+        return true;
+    });
 
     // Apply window filter (session/weekly)
     if (historyState.windowFilter !== 'all') {
@@ -369,56 +456,47 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     const metaEl = document.getElementById('history-table-meta');
     if (metaEl) metaEl.textContent = `${totalItems.toLocaleString()} rows · last ${daysLabel}`;
 
-    const showTokens = metric === 'tokens';
-    const showCost = metric === 'cost';
+    const metricLabel = primaryColumnHeader(metric);
 
     let html = `<table>
         <thead>
             <tr>
+                <th></th>
                 <th>Time</th>
                 <th>Provider</th>
                 <th>Account</th>
-                ${showTokens ? '<th class="num">Tokens</th>' : ''}
-                ${showCost ? '<th class="num">Cost</th>' : ''}
-                ${!showTokens && !showCost ? '<th class="num">Session</th><th class="num">Weekly</th>' : ''}
-                <th>Additional</th>
+                <th class="num">${escapeHTML(metricLabel)}</th>
             </tr>
         </thead>
         <tbody>`;
-    pageData.forEach(s => {
-        const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-        if (showTokens) {
-            const totalTokens = s.session?.token_usage?.total || s.weekly?.token_usage?.total || s.additional?.[0]?.token_usage?.total;
-            const tokenVal = totalTokens != null ? formatValue(totalTokens, 'tokens') : '—';
-            html += `<tr>
-                <td class="ht-time">${date}</td>
-                <td>${escapeHTML(s.provider_id || '—')}</td>
-                <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
-                <td class="num ht-bold">${tokenVal}</td>
-                <td>${renderAdditional(s.additional.length ? s.additional : null, metric)}</td>
-            </tr>`;
-        } else if (showCost) {
-            const costVal = formatWindowValue(s.session || s.weekly, metric);
-            html += `<tr>
-                <td class="ht-time">${date}</td>
-                <td>${escapeHTML(s.provider_id || '—')}</td>
-                <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
-                <td class="num ht-bold">${costVal}</td>
-                <td>${renderAdditional(s.additional.length ? s.additional : null, metric)}</td>
-            </tr>`;
-        } else {
-            const session = formatWindowValue(s.session, metric);
-            const weekly = formatWindowValue(s.weekly, metric);
-            html += `<tr>
-                <td class="ht-time">${date}</td>
-                <td>${escapeHTML(s.provider_id || '—')}</td>
-                <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
-                <td class="num ht-bold">${session}</td>
-                <td class="num ht-bold">${weekly}</td>
-                <td>${renderAdditional(s.additional.length ? s.additional : null, metric)}</td>
-            </tr>`;
-        }
+    pageData.forEach((s, idx) => {
+        const rowIndex = `${historyState.page}-${idx}`;
+        const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const primary = computePrimaryValue(s, metric);
+        const primaryVal = primary != null ? formatValue(primary, metric === 'percent' ? 'percent' : metric === 'tokens' ? 'tokens' : 'currency') : '—';
+        const isExpanded = _expandedRows.has(rowIndex);
+
+        // Collapsed row
+        html += `<tr>
+            <td style="width:24px;padding-right:0;">
+                <button id="ht-expand-${rowIndex}" class="ht-expand ${isExpanded ? 'expanded' : ''}" onclick="toggleExpandRow('${rowIndex}')">▶</button>
+            </td>
+            <td class="ht-time">${date}</td>
+            <td>${escapeHTML(s.provider_id || '—')}</td>
+            <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
+            <td class="num ht-bold">${primaryVal}</td>
+        </tr>`;
+
+        // Expanded detail row
+        html += `<tr id="ht-detail-${rowIndex}" class="ht-detail-row ${isExpanded ? 'open' : ''}">
+            <td colspan="5">
+                <div class="ht-detail-inner">
+                    ${renderWindowsTable(s, metric)}
+                    ${renderModelBreakdown(s.by_model)}
+                </div>
+            </td>
+        </tr>`;
     });
     html += '</tbody></table>';
 
@@ -505,4 +583,5 @@ export function initHistoryView() {
     window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.setHistoryPage = setHistoryPage;
     window.clearHistoryFilter = clearHistoryFilter;
+    window.toggleExpandRow = toggleExpandRow;
 }
