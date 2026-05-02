@@ -209,9 +209,21 @@ class GeminiLocalMixin:
 
         by_model_formatted = {}
         for model_name, model_data in agg["by_model"].items():
+            tokens = model_data.get("tokens", {})
             by_model_formatted[model_name] = {
                 "cost": 0.0,
                 "msgs": model_data["msgs"],
+                "tokens": {
+                    "input": tokens.get("input", 0),
+                    "output": tokens.get("output", 0),
+                    "reasoning": tokens.get("reasoning", 0),
+                    "cache_read": tokens.get("cache_read", 0),
+                    "total": (
+                        tokens.get("input", 0)
+                        + tokens.get("output", 0)
+                        + tokens.get("reasoning", 0)
+                    ),
+                },
             }
 
         return {

@@ -222,6 +222,13 @@ class TestGeminiEnrichment:
         assert by_model["flash"]["token_usage"]["input"] == 100
         assert by_model["pro"]["token_usage"]["input"] == 200
 
+        assert by_model["flash"]["by_model"]["gemini-2.5-flash"]["tokens"]["input"] == 100
+        assert by_model["flash"]["by_model"]["gemini-2.5-flash"]["tokens"]["output"] == 50
+        assert by_model["flash"]["by_model"]["gemini-2.5-flash"]["tokens"]["total"] == 150
+        assert by_model["pro"]["by_model"]["gemini-2.5-pro"]["tokens"]["input"] == 200
+        assert by_model["pro"]["by_model"]["gemini-2.5-pro"]["tokens"]["output"] == 100
+        assert by_model["pro"]["by_model"]["gemini-2.5-pro"]["tokens"]["total"] == 300
+
     @pytest.mark.asyncio
     async def test_local_enrichment_filters_by_reset_at(self, tmp_path):
         """Messages before the daily window start (reset_at - 24h) should be excluded."""
