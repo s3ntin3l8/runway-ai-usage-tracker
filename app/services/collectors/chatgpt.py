@@ -48,6 +48,24 @@ class ChatGPTCollector(
         self._refreshed_token_expiry = None
         self._device_id = str(uuid.uuid4())
 
+    def _capture_primary_metadata(self, primary: list[dict[str, Any]]) -> None:
+        """
+        Extract reset_at from primary cards so enrichment can align its window boundaries.
+        """
+        from datetime import datetime
+
+        self._primary_reset_at = None
+        for card in primary:
+            reset_at_str = card.get("reset_at")
+            if not reset_at_str:
+                continue
+            try:
+                dt = datetime.fromisoformat(reset_at_str.replace("Z", "+00:00"))
+                self._primary_reset_at = dt
+                break  # We only need one reset_at for ChatGPT
+            except (ValueError, TypeError):
+                continue
+
     async def is_configured(self) -> bool:
         """Check if ChatGPT auth data (logs or tokens) is present."""
         # Use None for client to avoid triggering background refreshes during config check
