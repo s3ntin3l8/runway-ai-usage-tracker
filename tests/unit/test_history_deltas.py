@@ -74,6 +74,56 @@ async def test_delta_glitch_filtering(session: Session):
 
 
 @pytest.mark.asyncio
+async def test_delta_first_read_is_baseline(session: Session):
+    """The first non-zero read should be treated as a baseline, not consumption."""
+    now = datetime.now(UTC)
+    
+    # 1. First poll sees 500M tokens (baseline)
+    session.add(_snap(now - timedelta(minutes=10), tokens=500_000_000.0))
+    
+    # 2. Second poll sees 500M + 1000 tokens (consumption)
+    session.add(_snap(now, tokens=500_001_000.0))
+    
+    session.commit()
+
+    scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
+    mock_request = Request(scope=scope)
+
+    result = await get_usage_history_deltas(
+        request=mock_request,
+        days=1.0,
+        session=session
+    )
+
+    # Should be 1000, NOT 500,001,000
+    assert result["token_delta_total"] == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_delta_recovery_from_zero_is_ignored(session: Session):
+    """If a reading drops to 0 and jumps back to the previous peak, ignore it."""
+    now = datetime.now(UTC)
+    
+    session.add(_snap(now - timedelta(minutes=15), tokens=1000.0)) # baseline
+    session.add(_snap(now - timedelta(minutes=10), tokens=0.0))    # glitch to zero
+    session.add(_snap(now - timedelta(minutes=5), tokens=1000.0))  # recovery (ignore)
+    session.add(_snap(now, tokens=1100.0))                         # real usage (+100)
+    
+    session.commit()
+
+    scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
+    mock_request = Request(scope=scope)
+
+    result = await get_usage_history_deltas(
+        request=mock_request,
+        days=1.0,
+        session=session
+    )
+
+    assert result["token_delta_total"] == 100.0
+
+
+@pytest.mark.asyncio
 async def test_cost_delta_glitch_filtering(session: Session):
     """Same logic for currency/cost deltas."""
     now = datetime.now(UTC)

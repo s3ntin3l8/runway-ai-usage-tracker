@@ -429,15 +429,24 @@ async def get_usage_history_deltas(
         cost_delta = 0.0
         critical = False
 
-        # Track high-water marks per series to filter glitches
-        max_tokens = arr[0].tokens_total or 0.0
-        max_cost = (arr[0].used_value or 0.0) if arr[0].unit_type == "currency" else 0.0
+        # Initialize high-water marks from the first reading (Baseline)
+        # This prevents "Big Bang" deltas when a model first appears with a large total.
+        first = arr[0]
+        max_tokens = first.tokens_total if first.tokens_total is not None else 0.0
+        max_cost = (first.used_value if first.used_value is not None else 0.0) if first.unit_type == "currency" else 0.0
 
         for i in range(1, len(arr)):
             curr = arr[i]
 
             # 1. Token Delta with Glitch Filtering
-            curr_tok = curr.tokens_total or 0.0
+            curr_tok = curr.tokens_total if curr.tokens_total is not None else 0.0
+            
+            # If we were at 0 and jump to a huge number, it's likely a recovery or baseline
+            # rather than new consumption. We use the glitch threshold to distinguish.
+            if max_tokens == 0.0 and curr_tok > 0:
+                max_tokens = curr_tok
+                continue
+
             if curr_tok > max_tokens:
                 token_delta += curr_tok - max_tokens
                 max_tokens = curr_tok
@@ -447,7 +456,12 @@ async def get_usage_history_deltas(
 
             # 2. Cost Delta (currency only) with Glitch Filtering
             if curr.unit_type == "currency":
-                curr_cost = curr.used_value or 0.0
+                curr_cost = curr.used_value if curr.used_value is not None else 0.0
+                
+                if max_cost == 0.0 and curr_cost > 0:
+                    max_cost = curr_cost
+                    continue
+
                 if curr_cost > max_cost:
                     cost_delta += curr_cost - max_cost
                     max_cost = curr_cost
@@ -670,10 +684,7 @@ def _group_snapshots(
 
     grouped: dict[tuple, dict] = defaultdict(
         lambda: {
-            "session": [],
-            "weekly": [],
-            "monthly": [],
-            "additional": [],
+            "windows": [],
         }
     )
 
@@ -705,48 +716,26 @@ def _group_snapshots(
             account_id_map[key] = s.account_id
 
         category = _classify_window(s.window_type, s.provider_id, s.model_id)
-        entry = {
-            "value": s.used_value,
-            "unit": s.unit_type,
-            "limit": s.limit_value,
-            "token_usage": {
-                "input": s.tokens_input,
-                "output": s.tokens_output,
-                "reasoning": s.tokens_reasoning,
-                "cache_read": s.tokens_cache_read,
-                "total": s.tokens_total,
-            }
-            if s.tokens_total is not None
-            else None,
-            "msgs": s.msgs,
-        }
-
-        if category == "session":
-            grouped[key]["session"].append(entry)
-        elif category == "weekly":
-            grouped[key]["weekly"].append(entry)
-        elif category == "monthly":
-            grouped[key]["monthly"].append(entry)
-        else:
-            grouped[key]["additional"].append(
-                {
-                    "window": s.window_type,
-                    "model_id": s.model_id,
-                    "value": s.used_value,
-                    "unit": s.unit_type,
-                    "limit": s.limit_value,
-                    "token_usage": {
-                        "input": s.tokens_input,
-                        "output": s.tokens_output,
-                        "reasoning": s.tokens_reasoning,
-                        "cache_read": s.tokens_cache_read,
-                        "total": s.tokens_total,
-                    }
-                    if s.tokens_total is not None
-                    else None,
-                    "msgs": s.msgs,
+        grouped[key]["windows"].append(
+            {
+                "category": category,
+                "window": s.window_type,
+                "model_id": s.model_id,
+                "value": s.used_value,
+                "unit": s.unit_type,
+                "limit": s.limit_value,
+                "token_usage": {
+                    "input": s.tokens_input,
+                    "output": s.tokens_output,
+                    "reasoning": s.tokens_reasoning,
+                    "cache_read": s.tokens_cache_read,
+                    "total": s.tokens_total,
                 }
-            )
+                if s.tokens_total is not None
+                else None,
+                "msgs": s.msgs,
+            }
+        )
 
     result = []
     for (bucket_ts_iso, provider_id, account_label), data in grouped.items():
@@ -768,10 +757,7 @@ def _group_snapshots(
                 "timestamp": rep_ts.isoformat(),
                 "provider_id": provider_id,
                 "account_label": account_label,
-                "session": data["session"] or None,
-                "weekly": data["weekly"] or None,
-                "monthly": data["monthly"] or None,
-                "additional": data["additional"] or None,
+                "windows": data["windows"],
                 "by_model": by_model,
             }
         )

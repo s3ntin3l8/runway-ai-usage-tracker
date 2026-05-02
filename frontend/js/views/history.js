@@ -34,13 +34,7 @@ function toggleExpandRow(rowIndex) {
 }
 
 function computePrimaryValue(row, metric) {
-    // Flatten arrays: session/weekly/monthly are now arrays of entries
-    const windows = [
-        ...(row.session || []),
-        ...(row.weekly || []),
-        ...(row.monthly || []),
-        ...(row.additional || []),
-    ].filter(Boolean);
+    const windows = row.windows || [];
     if (windows.length === 0) return null;
 
     if (metric === 'percent') {
@@ -258,22 +252,17 @@ const MODEL_LABEL_OVERRIDES = {
 };
 
 function friendlyWindowLabel(entry) {
-    if (entry?.model_id && MODEL_LABEL_OVERRIDES[entry.model_id]) {
-        return MODEL_LABEL_OVERRIDES[entry.model_id];
+    if (entry?.model_id) {
+        if (MODEL_LABEL_OVERRIDES[entry.model_id]) return MODEL_LABEL_OVERRIDES[entry.model_id];
+        return entry.model_id;
     }
-    const w = entry?.window;
+    const w = entry?.window || entry?.category;
     if (!w) return '—';
     return w.replace(/^seven_day_/, '').replace(/_/g, ' ');
 }
 
 function renderWindowsTable(row, metric) {
-    const windows = [
-        ...(row.session || []).map(e => ({ ...e, window: 'session' })),
-        ...(row.weekly || []).map(e => ({ ...e, window: 'weekly' })),
-        ...(row.monthly || []).map(e => ({ ...e, window: 'monthly' })),
-        ...(row.additional || []).map(a => ({ ...a, window: a.window || 'other' })),
-    ].filter(Boolean);
-
+    const windows = row.windows || [];
     if (windows.length === 0) return '';
 
     const hasCost = windows.some(w => w.unit === 'currency');
@@ -368,11 +357,19 @@ function groupBySeries(rows) {
 function positiveTokenDeltas(seriesRows) {
     if (seriesRows.length === 0) return 0;
     let total = 0;
-    let maxSeen = seriesRows[0].token_usage?.total ?? seriesRows[0].used_value ?? 0;
+    let firstVal = seriesRows[0].token_usage?.total ?? seriesRows[0].used_value ?? 0;
+    let maxSeen = firstVal;
     const GLITCH_THRESHOLD = 0.5;
 
     for (let i = 1; i < seriesRows.length; i++) {
         const curr = seriesRows[i].token_usage?.total ?? seriesRows[i].used_value ?? 0;
+        
+        // Baseline read: if we were at 0 and jump to a value, treat as baseline
+        if (maxSeen === 0 && curr > 0) {
+            maxSeen = curr;
+            continue;
+        }
+
         if (curr > maxSeen) {
             total += curr - maxSeen;
             maxSeen = curr;
@@ -386,11 +383,19 @@ function positiveTokenDeltas(seriesRows) {
 function positiveCurrencyDeltas(seriesRows) {
     if (seriesRows.length === 0) return 0;
     let total = 0;
-    let maxSeen = seriesRows[0].used_value ?? 0;
+    let firstVal = seriesRows[0].used_value ?? 0;
+    let maxSeen = firstVal;
     const GLITCH_THRESHOLD = 0.5;
 
     for (let i = 1; i < seriesRows.length; i++) {
         const curr = seriesRows[i].used_value ?? 0;
+
+        // Baseline read: if we were at 0 and jump to a value, treat as baseline
+        if (maxSeen === 0 && curr > 0) {
+            maxSeen = curr;
+            continue;
+        }
+
         if (curr > maxSeen) {
             total += curr - maxSeen;
             maxSeen = curr;
@@ -467,9 +472,12 @@ function renderHistoryTiles(rawHistory, metric, days, deltas) {
     }
 
     const burnRate = minutes > 0 ? totalTokenDelta / minutes : 0;
-    const burnLabel = burnRate >= 1000
-        ? `${(burnRate / 1000).toFixed(1)}<span>k tok/min</span>`
-        : `${Math.round(burnRate)}<span>tok/min</span>`;
+    let burnLabel = `${Math.round(burnRate)}<span>tok/min</span>`;
+    if (burnRate >= 1_000_000) {
+        burnLabel = `${(burnRate / 1_000_000).toFixed(1)}<span>M tok/min</span>`;
+    } else if (burnRate >= 1000) {
+        burnLabel = `${(burnRate / 1000).toFixed(1)}<span>k tok/min</span>`;
+    }
 
     // Sparkline: always computed client-side from rawHistory for visual shape
     let sparklineSvg = '';
@@ -612,13 +620,8 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
 
     // Filter: keep rows that have at least one window with data for the active metric
     const metric = historyState.metric;
-    const tableData = filtered.filter(s => {
-        const windows = [
-            ...(s.session || []),
-            ...(s.weekly || []),
-            ...(s.monthly || []),
-            ...(s.additional || []),
-        ].filter(Boolean);
+    let tableData = filtered.filter(s => {
+        const windows = s.windows || [];
         if (windows.length === 0) return false;
         if (metric === 'percent') {
             return windows.some(w => w.unit === 'percent' || (w.limit && w.limit > 0));
@@ -635,10 +638,8 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     // Apply window filter (session/weekly/monthly)
     if (historyState.windowFilter !== 'all') {
         tableData = tableData.filter(s => {
-            if (historyState.windowFilter === 'session') return (s.session || []).length > 0;
-            if (historyState.windowFilter === 'weekly') return (s.weekly || []).length > 0;
-            if (historyState.windowFilter === 'monthly') return (s.monthly || []).length > 0;
-            return true;
+            const windows = s.windows || [];
+            return windows.some(w => w.category === historyState.windowFilter);
         });
     }
 

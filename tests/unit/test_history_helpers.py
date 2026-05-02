@@ -172,12 +172,14 @@ def test_group_snapshots_session_and_weekly_in_same_row():
     rows = _group_snapshots(snaps, bucket_seconds=3600)
     assert len(rows) == 1
     row = rows[0]
-    assert row["session"] is not None
-    assert row["weekly"] is not None
-    assert len(row["session"]) == 1
-    assert len(row["weekly"]) == 1
-    assert row["session"][0]["value"] == 20.0
-    assert row["weekly"][0]["value"] == 60.0
+    assert "windows" in row
+    assert len(row["windows"]) == 2
+    
+    cats = {w["category"] for w in row["windows"]}
+    assert cats == {"session", "weekly"}
+    
+    vals = {w["value"] for w in row["windows"]}
+    assert vals == {20.0, 60.0}
 
 
 def test_group_snapshots_label_map_overlay():
@@ -217,16 +219,16 @@ def test_group_snapshots_additional_preserves_token_usage():
     )
     rows = _group_snapshots([snap], bucket_seconds=3600)
     assert len(rows) == 1
-    additional = rows[0]["additional"]
-    assert additional is not None and len(additional) == 1
-    assert additional[0]["token_usage"] == {
+    windows = rows[0]["windows"]
+    assert windows is not None and len(windows) == 1
+    assert windows[0]["token_usage"] == {
         "input": 1200.0,
         "output": 800.0,
         "reasoning": None,
         "cache_read": None,
         "total": 2000.0,
     }
-    assert additional[0]["msgs"] == 42
+    assert windows[0]["msgs"] == 42
 
 
 # ── _build_by_model_lookup ───────────────────────────────────────────────────

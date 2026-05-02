@@ -73,7 +73,9 @@ def test_get_history_with_data(client: TestClient, session: Session):
     data = response.json()
     assert len(data["averages"]) == 2
     assert data["averages"][0]["provider_id"] == "anthropic"
+    assert "windows" in data["averages"][0]
     assert data["averages"][1]["provider_id"] == "openai"
+    assert "windows" in data["averages"][1]
 
 
 def test_get_history_filtering(client: TestClient, session: Session):
