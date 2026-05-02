@@ -2075,6 +2075,8 @@ class TestOpenCodeCollector:
         assert fh["token_usage"]["input"] == 30000
         assert fh["token_usage"]["total"] == 30000 + 1300 + 0  # in + out + reasoning
         assert "qwen3.5-plus" in fh["by_model"]
+        assert "tokens" in fh["by_model"]["qwen3.5-plus"]
+        assert fh["by_model"]["qwen3.5-plus"]["tokens"]["total"] > 0
 
         # Weekly window: only Go rows (100h < 168h = 7d)
         weekly = by_wt["weekly"]
@@ -2247,6 +2249,16 @@ class TestOpenCodeCollector:
         assert bd["free"]["lifetime"]["msgs"] == 1
         assert bd["api"]["lifetime"]["msgs"] == 1
         assert abs(bd["api"]["lifetime"]["cost"] - 0.05) < 1e-9
+
+        # by_model token accumulation
+        assert "sonnet" in bd["go"]["5h"]["by_model"]
+        assert bd["go"]["5h"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
+        assert bd["go"]["5h"]["by_model"]["sonnet"]["tokens"]["output"] == 100
+        assert bd["go"]["5h"]["by_model"]["sonnet"]["tokens"]["total"] == 1100
+        assert bd["go"]["7d"]["by_model"]["sonnet"]["tokens"]["input"] == 2000
+        assert bd["go"]["7d"]["by_model"]["sonnet"]["tokens"]["total"] == 2200
+        assert bd["free"]["lifetime"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
+        assert bd["api"]["lifetime"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
 
     def test_parse_usage_data_enriches_go_cards_and_emits_extra_cards(self):
         """_parse_usage_data with a breakdown enriches detail and adds Free/API cards."""

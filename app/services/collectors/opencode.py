@@ -478,9 +478,18 @@ class OpenCodeCollector(BaseCollector):
             bucket["msgs"] += 1
             for k in ("input", "output", "reasoning", "cache_read"):
                 bucket["tokens"][k] += r.get(k, 0)
-            entry = bucket["by_model"].setdefault(r["model_short"], {"cost": 0.0, "msgs": 0})
+            entry = bucket["by_model"].setdefault(
+                r["model_short"],
+                {
+                    "cost": 0.0,
+                    "msgs": 0,
+                    "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                },
+            )
             entry["cost"] += r["cost_usd"]
             entry["msgs"] += 1
+            for k in ("input", "output", "reasoning", "cache_read"):
+                entry["tokens"][k] += r.get(k, 0)
 
         # Map window keys to internal window names
         window_map = {
@@ -522,6 +531,13 @@ class OpenCodeCollector(BaseCollector):
                 _add_to_bucket(result["free"]["lifetime"], r)
             else:
                 _add_to_bucket(result["api"]["lifetime"], r)
+
+        # Compute total tokens per model
+        for source_buckets in result.values():
+            for bucket in source_buckets.values():
+                for entry in bucket["by_model"].values():
+                    t = entry["tokens"]
+                    t["total"] = t["input"] + t["output"] + t["reasoning"]
 
         return result
 
@@ -602,33 +618,6 @@ class OpenCodeCollector(BaseCollector):
             "reset_at": None,
             "tier": "API",
             "provider_id": "opencode",
-            "data_source": self.DATA_SOURCE_WEB,
-            "input_source": input_source,
-            "usage_url": usage_url,
-            "updated_at": now_iso,
-        }
-        # api
-        detail += f" · API key{identity_suffix}"
-        return {
-            "service_name": "OpenCode",
-            "variant": "API",
-            "window_type": "rolling",
-            "icon": "⚡",
-            # remaining shows total spend; detail falls through to subtitle
-            "remaining": f"${data['cost']:.4f}",
-            "unit": "pay-as-you-go",
-            "reset": "Lifetime",
-            "health": "good",
-            "pace": "—",
-            "detail": detail,
-            "used_value": data["cost"],
-            "limit_value": None,
-            "is_unlimited": False,
-            "unit_type": "currency",
-            "currency": "USD",
-            "account_label": email,
-            "reset_at": None,
-            "tier": "API",
             "data_source": self.DATA_SOURCE_WEB,
             "input_source": input_source,
             "usage_url": usage_url,
@@ -919,9 +908,29 @@ class OpenCodeCollector(BaseCollector):
                             convos.add(parent_id)
                         if model_id:
                             short = self._short_model_id_oc(model_id)
-                            entry = by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
+                            entry = by_model.setdefault(
+                                short,
+                                {
+                                    "cost": 0.0,
+                                    "msgs": 0,
+                                    "tokens": {
+                                        "input": 0,
+                                        "output": 0,
+                                        "reasoning": 0,
+                                        "cache_read": 0,
+                                    },
+                                },
+                            )
                             entry["cost"] += float(cost or 0)
                             entry["msgs"] += 1
+                            entry["tokens"]["input"] += int(t_in or 0)
+                            entry["tokens"]["output"] += int(t_out or 0)
+                            entry["tokens"]["reasoning"] += int(t_reason or 0)
+                            entry["tokens"]["cache_read"] += int(cr or 0)
+
+                    for entry in by_model.values():
+                        t = entry["tokens"]
+                        t["total"] = t["input"] + t["output"] + t["reasoning"]
 
                     totals = {
                         "cost": total_cost,
@@ -981,8 +990,29 @@ class OpenCodeCollector(BaseCollector):
                         _cache_w += int(cw or 0)
                         if m_id:
                             short = self._short_model_id_oc(m_id)
-                            entry = _by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
+                            entry = _by_model.setdefault(
+                                short,
+                                {
+                                    "cost": 0.0,
+                                    "msgs": 0,
+                                    "tokens": {
+                                        "input": 0,
+                                        "output": 0,
+                                        "reasoning": 0,
+                                        "cache_read": 0,
+                                    },
+                                },
+                            )
                             entry["msgs"] += 1
+                            entry["tokens"]["input"] += int(t_in or 0)
+                            entry["tokens"]["output"] += int(t_out or 0)
+                            entry["tokens"]["reasoning"] += int(t_reason or 0)
+                            entry["tokens"]["cache_read"] += int(cr or 0)
+
+                    for entry in _by_model.values():
+                        t = entry["tokens"]
+                        t["total"] = t["input"] + t["output"] + t["reasoning"]
+
                     return (
                         _total_in,
                         _total_out,
