@@ -328,9 +328,9 @@ def test_build_by_model_lookup_aggregates_per_bucket(session: Session):
     assert len(lookup[key]) == 2
 
     by_model = {m["model_id"]: m for m in lookup[key]}
-    assert by_model["flash"]["cost"] == 0.50  # 0.30 + 0.20
-    assert by_model["flash"]["msgs"] == 5  # 3 + 2
-    assert by_model["flash"]["tokens_total"] == 3300.0  # 2000 + 1300
+    assert by_model["flash"]["cost"] == 0.25  # avg(0.30, 0.20)
+    assert by_model["flash"]["msgs"] == 2  # avg(3, 2) rounded
+    assert by_model["flash"]["tokens_total"] == 1650.0  # avg(2000, 1300)
     assert by_model["pro"]["cost"] == 0.15
     assert by_model["pro"]["msgs"] == 1
     assert by_model["pro"]["tokens_total"] == 800.0

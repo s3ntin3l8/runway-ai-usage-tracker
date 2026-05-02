@@ -1,4 +1,4 @@
-import { fetchHistory, fetchHistoryRaw } from '../api.js';
+import { fetchHistory, fetchHistoryRaw, fetchHistoryDeltas } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
@@ -13,6 +13,7 @@ const historyState = {
 };
 let _historyCache = [];
 let _historyRawCache = [];
+let _deltasCache = null;
 
 const _expandedRows = new Set(); // Set of row index strings
 
@@ -342,6 +343,169 @@ function renderModelBreakdown(byModel) {
     return html;
 }
 
+function seriesKey(r) {
+    return `${r.provider_id || ''}|${r.account_id || ''}|${r.window_type || ''}|${r.model_id || ''}|${r.unit_type || ''}`;
+}
+
+function groupBySeries(rows) {
+    const groups = new Map();
+    rows.forEach(r => {
+        const key = seriesKey(r);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(r);
+    });
+    groups.forEach(arr => arr.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)));
+    return groups;
+}
+
+function positiveTokenDeltas(seriesRows) {
+    let total = 0;
+    for (let i = 1; i < seriesRows.length; i++) {
+        const curr = seriesRows[i].token_usage?.total ?? seriesRows[i].used_value ?? 0;
+        const prev = seriesRows[i - 1].token_usage?.total ?? seriesRows[i - 1].used_value ?? 0;
+        total += Math.max(0, curr - prev);
+    }
+    return total;
+}
+
+function positiveCurrencyDeltas(seriesRows) {
+    let total = 0;
+    for (let i = 1; i < seriesRows.length; i++) {
+        const curr = seriesRows[i].used_value ?? 0;
+        const prev = seriesRows[i - 1].used_value ?? 0;
+        total += Math.max(0, curr - prev);
+    }
+    return total;
+}
+
+function hasCriticalReading(seriesRows) {
+    return seriesRows.some(r => {
+        if (r.used_value == null) return false;
+        if (r.unit_type === 'percent') return r.used_value >= 90;
+        if (r.limit_value > 0) return (r.used_value / r.limit_value) >= 0.9;
+        return false;
+    });
+}
+
+function renderHistoryTiles(rawHistory, metric, days, deltas) {
+    const container = document.getElementById('history-tiles');
+    if (!container) return;
+
+    const minutes = days * 24 * 60;
+    const providerNames = {
+        claude: 'Claude', chatgpt: 'ChatGPT', gemini: 'Gemini',
+        copilot: 'Copilot', opencode: 'Opencode', zai: 'Z.AI',
+        ollama: 'Ollama', openrouter: 'OpenRouter', kimi: 'Kimi',
+        minimax: 'MiniMax', anthropic: 'Claude', openai: 'ChatGPT',
+        github: 'Copilot',
+    };
+
+    // ------------------------------------------------------------------
+    // Prefer server-computed deltas; fall back to client-side computation
+    // ------------------------------------------------------------------
+    let totalTokenDelta = 0;
+    let totalCostDelta = 0;
+    let providerTokenDeltas = {};
+    let critSeries = 0;
+    let sampled = false;
+
+    if (deltas && typeof deltas.token_delta_total === 'number') {
+        totalTokenDelta = deltas.token_delta_total;
+        totalCostDelta = deltas.cost_delta_total;
+        providerTokenDeltas = deltas.provider_token_deltas || {};
+        critSeries = deltas.critical_series_count || 0;
+        sampled = deltas.series_sampled || false;
+    } else {
+        // Client-side fallback (for when deltas endpoint fails or is absent)
+        let rows = rawHistory || [];
+        if (historyState.activeProviders) {
+            rows = rows.filter(r => historyState.activeProviders.has(r.provider_id));
+        }
+        if (rows.length === 0) {
+            container.innerHTML = '<div class="hud-panel tile" style="grid-column:1/-1;"><div class="t-kicker">No data</div><div class="t-val">—</div></div>';
+            return;
+        }
+        const series = groupBySeries(rows);
+        series.forEach((arr, key) => {
+            const delta = positiveTokenDeltas(arr);
+            totalTokenDelta += delta;
+            const pid = arr[0]?.provider_id || 'unknown';
+            providerTokenDeltas[pid] = (providerTokenDeltas[pid] || 0) + delta;
+            if (arr[0]?.unit_type === 'currency') {
+                totalCostDelta += positiveCurrencyDeltas(arr);
+            }
+            if (hasCriticalReading(arr)) critSeries++;
+        });
+    }
+
+    if (totalTokenDelta === 0 && totalCostDelta === 0 && critSeries === 0 && Object.keys(providerTokenDeltas).length === 0) {
+        container.innerHTML = '<div class="hud-panel tile" style="grid-column:1/-1;"><div class="t-kicker">No data</div><div class="t-val">—</div></div>';
+        return;
+    }
+
+    const burnRate = minutes > 0 ? totalTokenDelta / minutes : 0;
+    const burnLabel = burnRate >= 1000
+        ? `${(burnRate / 1000).toFixed(1)}<span>k tok/min</span>`
+        : `${Math.round(burnRate)}<span>tok/min</span>`;
+
+    // Sparkline: always computed client-side from rawHistory for visual shape
+    let sparklineSvg = '';
+    if (rawHistory && rawHistory.length > 1) {
+        const bucketCount = 12;
+        const sorted = [...rawHistory].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        const timeSpan = new Date(sorted[sorted.length - 1].timestamp) - new Date(sorted[0].timestamp);
+        const bucketMs = timeSpan / bucketCount || 1;
+        const buckets = new Array(bucketCount).fill(0);
+        sorted.forEach(r => {
+            const t = new Date(r.timestamp) - new Date(sorted[0].timestamp);
+            const idx = Math.min(bucketCount - 1, Math.floor(t / bucketMs));
+            buckets[idx] += (r.token_usage?.total || 0);
+        });
+        const maxBucket = Math.max(...buckets, 1);
+        const w = 120, h = 28;
+        const step = w / (bucketCount - 1);
+        const points = buckets.map((v, i) => {
+            const x = i * step;
+            const y = h - (v / maxBucket) * h;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        sparklineSvg = `<svg viewBox="0 0 ${w} ${h}" class="t-spark" preserveAspectRatio="none"><polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="1.6"/></svg>`;
+    }
+
+    // Hottest provider
+    const providerEntries = Object.entries(providerTokenDeltas).sort((a, b) => b[1] - a[1]);
+    const [hotProvider, hotTokens] = providerEntries[0] || ['—', 0];
+    const hotShare = totalTokenDelta > 0 ? Math.round((hotTokens / totalTokenDelta) * 100) : 0;
+    const hotName = providerNames[hotProvider] || hotProvider;
+
+    let html = '';
+
+    html += `<div class="hud-panel tile">
+        <div class="t-kicker">Burn rate · avg</div>
+        <div class="t-val">${burnLabel}</div>
+        ${sparklineSvg}
+    </div>`;
+
+    html += `<div class="hud-panel tile">
+        <div class="t-kicker">Est. cost · period</div>
+        <div class="t-val">$${totalCostDelta.toFixed(2)}<span>spent</span></div>
+    </div>`;
+
+    html += `<div class="hud-panel tile">
+        <div class="t-kicker">Hottest provider</div>
+        <div class="t-val" style="font-size:22px">${escapeHTML(hotName)}</div>
+        <div class="t-sub"><b>${Math.round(hotTokens).toLocaleString()} tok</b> · ${hotShare}% share</div>
+    </div>`;
+
+    html += `<div class="hud-panel tile">
+        <div class="t-kicker">Critical events</div>
+        <div class="t-val">${critSeries}<span>series</span>${sampled ? ' <span style="font-size:11px;color:var(--text-dim)">*</span>' : ''}</div>
+        <div class="t-sub">${critSeries > 0 ? '≥90% limit crossed' : 'all clear'}${sampled ? ' · partial sample' : ''}</div>
+    </div>`;
+
+    container.innerHTML = html;
+}
+
 export function renderHistoryFromCache(skipChartUpdate = false) {
     const history = _historyCache;
     const rawHistory = _historyRawCache || [];
@@ -352,6 +516,9 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     if (summaryEl) {
         summaryEl.innerHTML = buildHistorySummary(rawHistory, historyState.activeProviders, historyState.metric, historyState.days);
     }
+
+    // Update summary tiles
+    renderHistoryTiles(rawHistory, historyState.metric, historyState.days, _deltasCache);
 
     // Render cross-view filter pill
     renderHistoryFilterPill();
@@ -552,18 +719,22 @@ export async function loadHistoryView() {
     }
 
     try {
-        // Fetch grouped data for table
-        const response = await fetchHistoryCached({ days: historyState.days, limit: 1000 });
-        _historyCache = response?.averages || [];
+        // Fetch grouped data for table, raw data for chart, and deltas for tiles
+        const [response, rawResponse, deltasResponse] = await Promise.all([
+            fetchHistoryCached({ days: historyState.days, limit: 1000 }),
+            fetchHistoryRaw({ days: historyState.days, limit: 1000 }).catch(rawErr => {
+                console.warn('Failed to fetch raw history for chart:', rawErr);
+                return [];
+            }),
+            fetchHistoryDeltas({ days: historyState.days }).catch(deltasErr => {
+                console.warn('Failed to fetch history deltas:', deltasErr);
+                return null;
+            }),
+        ]);
 
-        // Fetch raw data for chart (each provider+window as separate line)
-        try {
-            const rawResponse = await fetchHistoryRaw({ days: historyState.days, limit: 1000 });
-            _historyRawCache = rawResponse || [];
-        } catch (rawErr) {
-            console.warn('Failed to fetch raw history for chart:', rawErr);
-            _historyRawCache = [];
-        }
+        _historyCache = response?.averages || [];
+        _historyRawCache = rawResponse || [];
+        _deltasCache = deltasResponse;
 
         renderHistoryFromCache();
     } catch (err) {

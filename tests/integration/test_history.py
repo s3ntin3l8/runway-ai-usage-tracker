@@ -272,3 +272,135 @@ def test_get_history_includes_by_model(client: TestClient, session: Session):
     assert by_model["flash"]["tokens_total"] == 2000.0
     assert by_model["pro"]["cost"] == 0.15
     assert by_model["pro"]["msgs"] == 1
+
+
+def test_get_history_deltas_computes_positive_deltas(client: TestClient, session: Session):
+    """Positive deltas sum actual consumption; resets (negative jumps) are ignored."""
+    now = datetime.now(UTC)
+    base = now - timedelta(hours=4)
+
+    # One series: tokens climb, reset, then climb again
+    tokens = [1000, 1500, 2000, 0, 300]
+    for i, tok in enumerate(tokens):
+        session.add(
+            UsageSnapshot(
+                provider_id="anthropic",
+                account_id="user1",
+                service_name="Claude",
+                health="good",
+                data_source="api",
+                timestamp=base + timedelta(minutes=i * 10),
+                tokens_total=float(tok),
+                unit_type="tokens",
+                window_type="session",
+            )
+        )
+    session.commit()
+
+    response = client.get("/api/v1/usage/history/deltas?days=1")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Expected deltas: 500 + 500 + 0 (reset) + 300 = 1300
+    assert data["token_delta_total"] == 1300.0
+    assert data["provider_token_deltas"]["anthropic"] == 1300.0
+    assert data["critical_series_count"] == 0
+    assert data["series_sampled"] is False
+    assert len(data["series"]) == 1
+    assert data["series"][0]["token_delta"] == 1300.0
+    assert data["series"][0]["cost_delta"] == 0.0
+
+
+def test_get_history_deltas_filters_by_provider(client: TestClient, session: Session):
+    """Provider filter isolates deltas to matching rows."""
+    now = datetime.now(UTC)
+
+    for i in range(3):
+        # Insert chronologically ascending (oldest first) so deltas are positive
+        session.add(
+            UsageSnapshot(
+                provider_id="anthropic",
+                account_id="a1",
+                service_name="Claude",
+                health="good",
+                data_source="api",
+                timestamp=now - timedelta(minutes=(2 - i) * 10),
+                tokens_total=float((i + 1) * 1000),
+                unit_type="tokens",
+                window_type="session",
+            )
+        )
+        session.add(
+            UsageSnapshot(
+                provider_id="openai",
+                account_id="o1",
+                service_name="ChatGPT",
+                health="good",
+                data_source="api",
+                timestamp=now - timedelta(minutes=(2 - i) * 10),
+                tokens_total=float((i + 1) * 500),
+                unit_type="tokens",
+                window_type="session",
+            )
+        )
+    session.commit()
+
+    response = client.get("/api/v1/usage/history/deltas?days=1&provider_id=anthropic")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Anthropic deltas: 1000 + 1000 = 2000
+    assert data["token_delta_total"] == 2000.0
+    assert "anthropic" in data["provider_token_deltas"]
+    assert "openai" not in data["provider_token_deltas"]
+    assert len(data["series"]) == 1
+
+
+def test_get_history_deltas_counts_critical_series(client: TestClient, session: Session):
+    """Critical flag is per-series (any reading >= 90%), not per-row."""
+    now = datetime.now(UTC)
+
+    # Series A: peaks at 92% (critical)
+    for i, pct in enumerate([50.0, 75.0, 92.0, 80.0]):
+        session.add(
+            UsageSnapshot(
+                provider_id="anthropic",
+                account_id="user1",
+                service_name="Claude",
+                health="good",
+                data_source="api",
+                timestamp=now - timedelta(minutes=i * 10),
+                used_value=pct,
+                limit_value=100.0,
+                unit_type="percent",
+                window_type="session",
+            )
+        )
+
+    # Series B: stays at 70% (not critical)
+    for i in range(3):
+        session.add(
+            UsageSnapshot(
+                provider_id="openai",
+                account_id="user2",
+                service_name="ChatGPT",
+                health="good",
+                data_source="api",
+                timestamp=now - timedelta(minutes=i * 10),
+                used_value=70.0,
+                limit_value=100.0,
+                unit_type="percent",
+                window_type="session",
+            )
+        )
+    session.commit()
+
+    response = client.get("/api/v1/usage/history/deltas?days=1")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["critical_series_count"] == 1
+    anthropic_series = next(s for s in data["series"] if s["provider_id"] == "anthropic")
+    assert anthropic_series["critical"] is True
+    openai_series = next(s for s in data["series"] if s["provider_id"] == "openai")
+    assert openai_series["critical"] is False

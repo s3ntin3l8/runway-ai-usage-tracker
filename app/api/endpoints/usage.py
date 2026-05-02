@@ -132,6 +132,7 @@ async def get_usage_history(
             UsageSnapshot.account_label,
             UsageSnapshot.service_name,
             UsageSnapshot.window_type,
+            UsageSnapshot.model_id,
             UsageSnapshot.variant,
             UsageSnapshot.unit_type,
             UsageSnapshot.data_source,
@@ -159,6 +160,7 @@ async def get_usage_history(
         UsageSnapshot.account_id,
         UsageSnapshot.service_name,
         UsageSnapshot.window_type,
+        UsageSnapshot.model_id,
         UsageSnapshot.variant,
         UsageSnapshot.unit_type,
     )
@@ -184,6 +186,7 @@ async def get_usage_history(
             ),
             "service_name": r.service_name,
             "window_type": r.window_type,
+            "model_id": r.model_id,
             "variant": r.variant,
             "unit_type": r.unit_type,
             "data_source": r.data_source,
@@ -280,6 +283,7 @@ async def get_usage_history_raw(
             UsageSnapshot.account_label,
             UsageSnapshot.service_name,
             UsageSnapshot.window_type,
+            UsageSnapshot.model_id,
             UsageSnapshot.variant,
             UsageSnapshot.unit_type,
             UsageSnapshot.data_source,
@@ -309,6 +313,7 @@ async def get_usage_history_raw(
         UsageSnapshot.account_id,
         UsageSnapshot.service_name,
         UsageSnapshot.window_type,
+        UsageSnapshot.model_id,
         UsageSnapshot.variant,
         UsageSnapshot.unit_type,
     )
@@ -333,6 +338,7 @@ async def get_usage_history_raw(
             "max_used_value": round(r.max_used, 4) if r.max_used is not None else None,
             "unit_type": r.unit_type,
             "window_type": r.window_type,
+            "model_id": r.model_id,
             "variant": r.variant,
             "data_source": r.data_source,
             "token_usage": {
@@ -354,6 +360,127 @@ async def get_usage_history_raw(
         }
         for r in raw
     ][:limit]
+
+
+@router.get("/history/deltas")
+@limiter.limit("30/minute")
+async def get_usage_history_deltas(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    days: float = Query(default=1.0, ge=0.01, le=90.0),
+    limit: int = Query(default=10000, ge=1, le=10000),
+    session: Session = Depends(get_session),
+):
+    """Fetch raw snapshots and compute positive deltas per series.
+
+    Unlike /history/raw (which buckets and averages), this endpoint returns
+    the *actual consumption* within the period by walking each time-series
+    chronologically and summing only positive deltas.  Window resets (where
+    the cumulative counter drops) are ignored, giving a lower-bound on true
+    usage.
+
+    A 10 000-row raw limit covers ~60 days of typical 5–10 min polling.
+    """
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    stmt = (
+        select(  # type: ignore[call-overload]
+            UsageSnapshot.timestamp,
+            UsageSnapshot.provider_id,
+            UsageSnapshot.account_id,
+            UsageSnapshot.window_type,
+            UsageSnapshot.model_id,
+            UsageSnapshot.unit_type,
+            UsageSnapshot.tokens_total,
+            UsageSnapshot.used_value,
+            UsageSnapshot.limit_value,
+        )
+        .where(UsageSnapshot.timestamp >= since)
+        .order_by(asc(UsageSnapshot.timestamp))
+    )
+
+    if provider_id:
+        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(UsageSnapshot.account_id == account_id)
+
+    rows = session.exec(stmt.limit(limit)).all()
+
+    # Group by series key
+    series_groups: dict[str, list[Any]] = {}
+    for r in rows:
+        key = (
+            f"{r.provider_id}|{r.account_id}|{r.window_type or ''}|{r.model_id or ''}|{r.unit_type}"
+        )
+        series_groups.setdefault(key, []).append(r)
+
+    token_delta_total = 0.0
+    cost_delta_total = 0.0
+    provider_token_deltas: dict[str, float] = {}
+    critical_series_count = 0
+    series_list = []
+
+    for key, arr in series_groups.items():
+        arr.sort(key=lambda r: r.timestamp)
+        token_delta = 0.0
+        cost_delta = 0.0
+        critical = False
+
+        for i in range(1, len(arr)):
+            prev = arr[i - 1]
+            curr = arr[i]
+
+            # Positive token delta
+            prev_tok = prev.tokens_total or 0
+            curr_tok = curr.tokens_total or 0
+            token_delta += max(0.0, curr_tok - prev_tok)
+
+            # Positive cost delta (currency only)
+            if curr.unit_type == "currency":
+                prev_cost = prev.used_value or 0
+                curr_cost = curr.used_value or 0
+                cost_delta += max(0.0, curr_cost - prev_cost)
+
+            # Critical check
+            if not critical and curr.used_value is not None:
+                if (curr.unit_type == "percent" and curr.used_value >= 90) or (
+                    curr.limit_value
+                    and curr.limit_value > 0
+                    and (curr.used_value / curr.limit_value) >= 0.9
+                ):
+                    critical = True
+
+        if critical:
+            critical_series_count += 1
+
+        token_delta_total += token_delta
+        cost_delta_total += cost_delta
+
+        pid = arr[0].provider_id
+        provider_token_deltas[pid] = provider_token_deltas.get(pid, 0.0) + token_delta
+
+        series_list.append(
+            {
+                "provider_id": pid,
+                "account_id": arr[0].account_id,
+                "window_type": arr[0].window_type,
+                "model_id": arr[0].model_id,
+                "unit_type": arr[0].unit_type,
+                "token_delta": round(token_delta, 2),
+                "cost_delta": round(cost_delta, 2),
+                "critical": critical,
+            }
+        )
+
+    return {
+        "token_delta_total": round(token_delta_total, 2),
+        "cost_delta_total": round(cost_delta_total, 2),
+        "provider_token_deltas": {k: round(v, 2) for k, v in provider_token_deltas.items()},
+        "critical_series_count": critical_series_count,
+        "series_sampled": len(rows) >= limit,
+        "series": series_list,
+    }
 
 
 def _effective_label(raw: str | None) -> str | None:
@@ -395,18 +522,18 @@ def _build_by_model_lookup(
     ).label("bucket_ts")
 
     stmt = (
-        select(
+        select(  # type: ignore[call-overload]
             bucket_expr,
             UsageSnapshot.provider_id,
             UsageSnapshot.account_id,
             UsageSnapshotModel.model_id,
-            func.sum(UsageSnapshotModel.cost).label("sum_cost"),
-            func.sum(UsageSnapshotModel.msgs).label("sum_msgs"),
-            func.sum(UsageSnapshotModel.tokens_input).label("sum_input"),
-            func.sum(UsageSnapshotModel.tokens_output).label("sum_output"),
-            func.sum(UsageSnapshotModel.tokens_reasoning).label("sum_reasoning"),
-            func.sum(UsageSnapshotModel.tokens_cache_read).label("sum_cache_read"),
-            func.sum(UsageSnapshotModel.tokens_total).label("sum_total"),
+            func.avg(UsageSnapshotModel.cost).label("avg_cost"),
+            func.avg(UsageSnapshotModel.msgs).label("avg_msgs"),
+            func.avg(UsageSnapshotModel.tokens_input).label("avg_input"),
+            func.avg(UsageSnapshotModel.tokens_output).label("avg_output"),
+            func.avg(UsageSnapshotModel.tokens_reasoning).label("avg_reasoning"),
+            func.avg(UsageSnapshotModel.tokens_cache_read).label("avg_cache_read"),
+            func.avg(UsageSnapshotModel.tokens_total).label("avg_total"),
         )
         .join(UsageSnapshotModel, UsageSnapshot.id == UsageSnapshotModel.snapshot_id)
         .where(UsageSnapshot.timestamp >= since)
@@ -433,17 +560,17 @@ def _build_by_model_lookup(
         lookup[key].append(
             {
                 "model_id": r.model_id,
-                "cost": round(r.sum_cost, 4) if r.sum_cost is not None else None,
-                "msgs": int(r.sum_msgs) if r.sum_msgs is not None else None,
-                "tokens_input": round(r.sum_input, 0) if r.sum_input is not None else None,
-                "tokens_output": round(r.sum_output, 0) if r.sum_output is not None else None,
-                "tokens_reasoning": round(r.sum_reasoning, 0)
-                if r.sum_reasoning is not None
+                "cost": round(r.avg_cost, 4) if r.avg_cost is not None else None,
+                "msgs": int(r.avg_msgs) if r.avg_msgs is not None else None,
+                "tokens_input": round(r.avg_input, 0) if r.avg_input is not None else None,
+                "tokens_output": round(r.avg_output, 0) if r.avg_output is not None else None,
+                "tokens_reasoning": round(r.avg_reasoning, 0)
+                if r.avg_reasoning is not None
                 else None,
-                "tokens_cache_read": round(r.sum_cache_read, 0)
-                if r.sum_cache_read is not None
+                "tokens_cache_read": round(r.avg_cache_read, 0)
+                if r.avg_cache_read is not None
                 else None,
-                "tokens_total": round(r.sum_total, 0) if r.sum_total is not None else None,
+                "tokens_total": round(r.avg_total, 0) if r.avg_total is not None else None,
             }
         )
 
