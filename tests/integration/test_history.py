@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import UsageSnapshot
+from app.models.db import UsageSnapshot, UsageSnapshotModel
 
 
 # Create a temporary database for testing
@@ -209,3 +209,66 @@ def test_get_history_bucket_size_adapts_to_window(client: TestClient, session: S
     assert 1 <= len(r1d["averages"]) <= 3, (
         f"1d window expected 1-3 points (30-min buckets), got {len(r1d['averages'])}"
     )
+
+
+def test_get_history_includes_by_model(client: TestClient, session: Session):
+    """History response includes aggregated by_model breakdown per bucket."""
+    now = datetime.now(UTC)
+
+    # Create a snapshot
+    snap = UsageSnapshot(
+        provider_id="gemini",
+        account_id="user1",
+        service_name="Gemini Advanced",
+        health="good",
+        data_source="api",
+        timestamp=now,
+        used_value=50.0,
+        limit_value=100.0,
+        unit_type="percent",
+        window_type="monthly",
+    )
+    session.add(snap)
+    session.flush()  # Get snap.id
+
+    # Create per-model records
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap.id,
+            model_id="flash",
+            cost=0.30,
+            msgs=3,
+            tokens_input=1200.0,
+            tokens_output=800.0,
+            tokens_total=2000.0,
+        )
+    )
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap.id,
+            model_id="pro",
+            cost=0.15,
+            msgs=1,
+            tokens_input=500.0,
+            tokens_output=300.0,
+            tokens_total=800.0,
+        )
+    )
+    session.commit()
+
+    response = client.get("/api/v1/usage/history?days=1")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data["averages"]) == 1
+    row = data["averages"][0]
+    assert "by_model" in row
+    assert row["by_model"] is not None
+    assert len(row["by_model"]) == 2
+
+    by_model = {m["model_id"]: m for m in row["by_model"]}
+    assert by_model["flash"]["cost"] == 0.30
+    assert by_model["flash"]["msgs"] == 3
+    assert by_model["flash"]["tokens_total"] == 2000.0
+    assert by_model["pro"]["cost"] == 0.15
+    assert by_model["pro"]["msgs"] == 1
