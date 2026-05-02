@@ -184,3 +184,40 @@ def test_group_snapshots_label_map_overlay():
 
     assert len(rows) == 1
     assert rows[0]["account_label"] == "alice@example.com"
+
+
+def test_group_snapshots_additional_preserves_token_usage():
+    """Additional entries must carry token_usage and msgs, not just value/unit."""
+    ts = datetime(2026, 4, 22, 10, 0, 0, tzinfo=UTC)
+    snap = UsageSnapshot(
+        timestamp=ts,
+        provider_id="anthropic",
+        account_id="acc1",
+        service_name="Claude",
+        window_type="seven_day_sonnet",
+        used_value=38.0,
+        limit_value=100.0,
+        unit_type="percent",
+        account_label=None,
+        health="good",
+        remaining="62%",
+        reset="in 7 days",
+        data_source="api",
+        input_source="config",
+        tokens_input=1200.0,
+        tokens_output=800.0,
+        tokens_total=2000.0,
+        msgs=42,
+    )
+    rows = _group_snapshots([snap], bucket_seconds=3600)
+    assert len(rows) == 1
+    additional = rows[0]["additional"]
+    assert additional is not None and len(additional) == 1
+    assert additional[0]["token_usage"] == {
+        "input": 1200.0,
+        "output": 800.0,
+        "reasoning": None,
+        "cache_read": None,
+        "total": 2000.0,
+    }
+    assert additional[0]["msgs"] == 42

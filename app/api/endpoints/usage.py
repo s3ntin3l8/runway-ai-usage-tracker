@@ -499,6 +499,16 @@ def _group_snapshots(
                     "value": s.used_value,
                     "unit": s.unit_type,
                     "limit": s.limit_value,
+                    "token_usage": {
+                        "input": s.tokens_input,
+                        "output": s.tokens_output,
+                        "reasoning": s.tokens_reasoning,
+                        "cache_read": s.tokens_cache_read,
+                        "total": s.tokens_total,
+                    }
+                    if s.tokens_total is not None
+                    else None,
+                    "msgs": s.msgs,
                 }
             )
 
