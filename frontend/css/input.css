@@ -1172,7 +1172,7 @@ header.top .icon-btn[aria-pressed="true"] {
 .card.err .health     { background: var(--crit); box-shadow: 0 0 7px var(--crit); }
 
 /* Badge cluster */
-.badges { display: flex; flex-direction: column; gap: 3px; margin-left: auto; align-items: flex-end; }
+.badges { display: flex; flex-direction: column; gap: 3px; margin-left: auto; align-items: flex-end; flex-shrink: 0; }
 .badge {
     font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
     padding: 1px 5px; background: transparent; white-space: nowrap;
@@ -1996,6 +1996,13 @@ header.top .icon-btn[aria-pressed="true"] {
     white-space: nowrap;
 }
 .ht-detail-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.ht-detail-table tbody tr:last-child td {
+    border-bottom: none;
+}
+l-table td.num {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
