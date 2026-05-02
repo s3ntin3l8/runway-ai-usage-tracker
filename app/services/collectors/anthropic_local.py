@@ -388,9 +388,11 @@ class AnthropicLocalMixin:
         def _window_start(reset_dt: datetime | None, duration: timedelta) -> datetime:
             if reset_dt is None:
                 return now - duration
-            if reset_dt < now:
-                # If reset time is in the past, it was the START of the current window.
-                return reset_dt
+
+            # Roll forward if the reset time is in the past
+            while reset_dt < now:
+                reset_dt += duration
+
             # If reset time is in the future, the window started duration ago from then.
             start = reset_dt - duration
             # Cap at "now" so we don't exclude messages when reset_at is far
