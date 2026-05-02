@@ -1000,6 +1000,8 @@ class TestAnthropicCollector:
         assert sess["token_usage"]["input"] == 4200
         assert sess["token_usage"]["output"] == 500
         assert sess["msgs"] == 1
+        assert "tokens" in sess["by_model"]["opus"]
+        assert sess["by_model"]["opus"]["tokens"]["total"] == 4700
 
         # Weekly aggregate
         assert ("weekly", None) in by_key
@@ -1009,6 +1011,8 @@ class TestAnthropicCollector:
         assert "sonnet" in week["_enrichment_detail"]
         assert week["token_usage"]["input"] == 5800
         assert week["msgs"] == 2
+        assert "tokens" in week["by_model"]["opus"]
+        assert "tokens" in week["by_model"]["sonnet"]
 
         # Weekly Sonnet-specific
         assert ("weekly", "sonnet") in by_key
@@ -1017,6 +1021,8 @@ class TestAnthropicCollector:
         assert week_sonnet["msgs"] == 1
         assert "sonnet" in week_sonnet["_enrichment_detail"]
         assert "opus" not in week_sonnet["_enrichment_detail"]
+        assert "tokens" in week_sonnet["by_model"]["sonnet"]
+        assert week_sonnet["by_model"]["sonnet"]["tokens"]["total"] == 1800
 
         # Weekly Opus-specific
         assert ("weekly", "opus") in by_key
@@ -1025,6 +1031,8 @@ class TestAnthropicCollector:
         assert week_opus["msgs"] == 1
         assert "opus" in week_opus["_enrichment_detail"]
         assert "sonnet" not in week_opus["_enrichment_detail"]
+        assert "tokens" in week_opus["by_model"]["opus"]
+        assert week_opus["by_model"]["opus"]["tokens"]["total"] == 4700
 
     def test_enrichment_isolation_composite_keys(self, tmp_path):
         """Enrichment should isolate usage by (window_type, model_id) using composite reset keys."""

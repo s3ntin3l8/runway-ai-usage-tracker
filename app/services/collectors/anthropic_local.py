@@ -438,9 +438,16 @@ class AnthropicLocalMixin:
             # To align with the universal contract, we sum them back into input.
             total_input = bucket["input"] + bucket["cache_read"] + bucket["cache_creation"]
             total = total_input + bucket["output"]
-            by_model = {
-                m: {"cost": 0.0, "msgs": c} for m, c in bucket["model_msgs"].items() if c > 0
-            }
+            by_model = {}
+            for m, c in bucket["model_msgs"].items():
+                if c > 0:
+                    by_model[m] = {
+                        "cost": 0.0,
+                        "msgs": c,
+                        "tokens": {
+                            "total": bucket["models"].get(m, 0),
+                        },
+                    }
 
             token_usage = {
                 "input": total_input,

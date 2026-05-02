@@ -73,6 +73,7 @@ task.md
 diagnose.py
 docs/internal/
 scratch/
+.opencode/
 
 # --- SUPERPOWERS ---
 .superpowers/
