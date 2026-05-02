@@ -1,16 +1,20 @@
 """Tests for usage history helper functions."""
 
+import os
+import tempfile
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlmodel import Session, SQLModel, create_engine
 
 from app.api.endpoints.usage import (
+    _build_by_model_lookup,
     _classify_window,
     _effective_label,
     _group_snapshots,
     _pick_bucket_seconds,
 )
-from app.models.db import UsageSnapshot
+from app.models.db import UsageSnapshot, UsageSnapshotModel
 
 
 def _make_snapshot(
@@ -221,3 +225,192 @@ def test_group_snapshots_additional_preserves_token_usage():
         "total": 2000.0,
     }
     assert additional[0]["msgs"] == 42
+
+
+# ── _build_by_model_lookup ───────────────────────────────────────────────────
+
+
+@pytest.fixture(name="session")
+def session_fixture():
+    fd, db_path = tempfile.mkstemp()
+    db_url = f"sqlite:///{db_path}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        yield session
+
+    os.close(fd)
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
+
+def test_build_by_model_lookup_aggregates_per_bucket(session: Session):
+    """_build_by_model_lookup aggregates UsageSnapshotModel by time bucket."""
+    now = datetime(2026, 4, 22, 10, 30, 0, tzinfo=UTC)
+    bucket_seconds = 1800  # 30-min bucket
+
+    # Create two snapshots in the same bucket
+    snap1 = UsageSnapshot(
+        provider_id="gemini",
+        account_id="user1",
+        service_name="Gemini Advanced",
+        health="good",
+        data_source="api",
+        timestamp=now,
+        used_value=50.0,
+        limit_value=100.0,
+        unit_type="percent",
+        window_type="monthly",
+    )
+    snap2 = UsageSnapshot(
+        provider_id="gemini",
+        account_id="user1",
+        service_name="Gemini Advanced",
+        health="good",
+        data_source="api",
+        timestamp=now + timedelta(minutes=5),
+        used_value=60.0,
+        limit_value=100.0,
+        unit_type="percent",
+        window_type="monthly",
+    )
+    session.add(snap1)
+    session.add(snap2)
+    session.commit()
+    session.refresh(snap1)
+    session.refresh(snap2)
+
+    # Add model records for both snapshots
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap1.id,
+            model_id="flash",
+            cost=0.30,
+            msgs=3,
+            tokens_input=1200.0,
+            tokens_output=800.0,
+            tokens_total=2000.0,
+        )
+    )
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap2.id,
+            model_id="flash",
+            cost=0.20,
+            msgs=2,
+            tokens_input=800.0,
+            tokens_output=500.0,
+            tokens_total=1300.0,
+        )
+    )
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap1.id,
+            model_id="pro",
+            cost=0.15,
+            msgs=1,
+            tokens_input=500.0,
+            tokens_output=300.0,
+            tokens_total=800.0,
+        )
+    )
+    session.commit()
+
+    since = now - timedelta(hours=1)
+    lookup = _build_by_model_lookup(session, since, bucket_seconds)
+
+    # Both snapshots are in the same 30-min bucket
+    bucket_epoch = int(now.timestamp()) // bucket_seconds * bucket_seconds
+    key = (bucket_epoch, "gemini", "user1")
+
+    assert key in lookup
+    assert len(lookup[key]) == 2
+
+    by_model = {m["model_id"]: m for m in lookup[key]}
+    assert by_model["flash"]["cost"] == 0.50  # 0.30 + 0.20
+    assert by_model["flash"]["msgs"] == 5  # 3 + 2
+    assert by_model["flash"]["tokens_total"] == 3300.0  # 2000 + 1300
+    assert by_model["pro"]["cost"] == 0.15
+    assert by_model["pro"]["msgs"] == 1
+    assert by_model["pro"]["tokens_total"] == 800.0
+
+
+def test_build_by_model_lookup_filters_by_provider_and_account(session: Session):
+    """_build_by_model_lookup respects provider_id and account_id filters."""
+    now = datetime(2026, 4, 22, 10, 0, 0, tzinfo=UTC)
+    bucket_seconds = 3600
+
+    snap1 = UsageSnapshot(
+        provider_id="gemini",
+        account_id="user1",
+        service_name="Gemini Advanced",
+        health="good",
+        data_source="api",
+        timestamp=now,
+        used_value=50.0,
+        limit_value=100.0,
+        unit_type="percent",
+        window_type="monthly",
+    )
+    snap2 = UsageSnapshot(
+        provider_id="openai",
+        account_id="user2",
+        service_name="ChatGPT Plus",
+        health="good",
+        data_source="api",
+        timestamp=now,
+        used_value=30.0,
+        limit_value=100.0,
+        unit_type="percent",
+        window_type="monthly",
+    )
+    session.add(snap1)
+    session.add(snap2)
+    session.commit()
+    session.refresh(snap1)
+    session.refresh(snap2)
+
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap1.id,
+            model_id="flash",
+            cost=0.30,
+            msgs=3,
+            tokens_total=2000.0,
+        )
+    )
+    session.add(
+        UsageSnapshotModel(
+            snapshot_id=snap2.id,
+            model_id="gpt-4",
+            cost=0.50,
+            msgs=5,
+            tokens_total=3000.0,
+        )
+    )
+    session.commit()
+
+    since = now - timedelta(hours=1)
+
+    # Filter by provider
+    lookup = _build_by_model_lookup(session, since, bucket_seconds, provider_id="gemini")
+    assert len(lookup) == 1
+    key = (int(now.timestamp()) // bucket_seconds * bucket_seconds, "gemini", "user1")
+    assert key in lookup
+    assert lookup[key][0]["model_id"] == "flash"
+
+    # Filter by account
+    lookup = _build_by_model_lookup(session, since, bucket_seconds, account_id="user2")
+    assert len(lookup) == 1
+    key = (int(now.timestamp()) // bucket_seconds * bucket_seconds, "openai", "user2")
+    assert key in lookup
+    assert lookup[key][0]["model_id"] == "gpt-4"
+
+
+def test_build_by_model_lookup_empty(session: Session):
+    """_build_by_model_lookup returns empty dict when no data."""
+    now = datetime(2026, 4, 22, 10, 0, 0, tzinfo=UTC)
+    since = now - timedelta(hours=1)
+    lookup = _build_by_model_lookup(session, since, 3600)
+    assert lookup == {}

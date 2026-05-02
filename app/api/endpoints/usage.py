@@ -167,6 +167,9 @@ async def get_usage_history(
 
     # Post-processing: Apply label map
     label_map = _build_label_map(session)
+    by_model_lookup = _build_by_model_lookup(
+        session, since, bucket_seconds, provider_id, account_id
+    )
 
     # Build aggregated snapshots for averages and peaks
     averages = []
@@ -233,8 +236,8 @@ async def get_usage_history(
         )
 
     # Group by timestamp+provider+account for table display
-    avg_grouped = _group_snapshots(averages[:limit], bucket_seconds, label_map)
-    peak_grouped = _group_snapshots(peaks[:limit], bucket_seconds, label_map)
+    avg_grouped = _group_snapshots(averages[:limit], bucket_seconds, label_map, by_model_lookup)
+    peak_grouped = _group_snapshots(peaks[:limit], bucket_seconds, label_map, by_model_lookup)
 
     return {"averages": avg_grouped, "peaks": peak_grouped}
 
@@ -372,6 +375,81 @@ def _build_label_map(session: Session) -> dict[tuple[str, str], str]:
     return {(c.provider_id, c.account_id): c.account_label for c in configs if c.account_label}
 
 
+def _build_by_model_lookup(
+    session: Session,
+    since: datetime,
+    bucket_seconds: int,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+) -> dict[tuple[int, str, str], list[dict]]:
+    """Aggregate UsageSnapshotModel by time bucket for history detail.
+
+    Returns dict keyed by (bucket_epoch, provider_id, account_id) with
+    summed cost, msgs, and token fields per model.
+    """
+    from app.models.db import UsageSnapshotModel
+
+    bucket_expr = (
+        func.floor(func.strftime("%s", UsageSnapshot.timestamp).cast(Integer()) / bucket_seconds)
+        * bucket_seconds
+    ).label("bucket_ts")
+
+    stmt = (
+        select(
+            bucket_expr,
+            UsageSnapshot.provider_id,
+            UsageSnapshot.account_id,
+            UsageSnapshotModel.model_id,
+            func.sum(UsageSnapshotModel.cost).label("sum_cost"),
+            func.sum(UsageSnapshotModel.msgs).label("sum_msgs"),
+            func.sum(UsageSnapshotModel.tokens_input).label("sum_input"),
+            func.sum(UsageSnapshotModel.tokens_output).label("sum_output"),
+            func.sum(UsageSnapshotModel.tokens_reasoning).label("sum_reasoning"),
+            func.sum(UsageSnapshotModel.tokens_cache_read).label("sum_cache_read"),
+            func.sum(UsageSnapshotModel.tokens_total).label("sum_total"),
+        )
+        .join(UsageSnapshotModel, UsageSnapshot.id == UsageSnapshotModel.snapshot_id)
+        .where(UsageSnapshot.timestamp >= since)
+        .group_by(
+            bucket_expr,
+            UsageSnapshot.provider_id,
+            UsageSnapshot.account_id,
+            UsageSnapshotModel.model_id,
+        )
+    )
+
+    if provider_id:
+        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(UsageSnapshot.account_id == account_id)
+
+    results = session.exec(stmt).all()
+
+    lookup: dict[tuple[int, str, str], list[dict]] = {}
+    for r in results:
+        key = (int(r.bucket_ts), r.provider_id, r.account_id)
+        if key not in lookup:
+            lookup[key] = []
+        lookup[key].append(
+            {
+                "model_id": r.model_id,
+                "cost": round(r.sum_cost, 4) if r.sum_cost is not None else None,
+                "msgs": int(r.sum_msgs) if r.sum_msgs is not None else None,
+                "tokens_input": round(r.sum_input, 0) if r.sum_input is not None else None,
+                "tokens_output": round(r.sum_output, 0) if r.sum_output is not None else None,
+                "tokens_reasoning": round(r.sum_reasoning, 0)
+                if r.sum_reasoning is not None
+                else None,
+                "tokens_cache_read": round(r.sum_cache_read, 0)
+                if r.sum_cache_read is not None
+                else None,
+                "tokens_total": round(r.sum_total, 0) if r.sum_total is not None else None,
+            }
+        )
+
+    return lookup
+
+
 # Credit-based providers: their "monthly" is a credit bucket, goes to weekly column
 CREDIT_PROVIDERS = {"openrouter", "minimax"}
 
@@ -424,6 +502,7 @@ def _group_snapshots(
     snapshots: Sequence[UsageSnapshot],
     bucket_seconds: int = 60,
     label_map: dict[tuple[str, str], str] | None = None,
+    by_model_lookup: dict[tuple[int, str, str], list[dict]] | None = None,
 ) -> list[dict]:
     """Group snapshots by bucket+provider+account_label for table display.
 
@@ -453,6 +532,9 @@ def _group_snapshots(
     # Track original timestamps per key to return the "representative" timestamp
     timestamp_map: dict[tuple, datetime] = {}
 
+    # Track account_id per group key for by_model lookup
+    account_id_map: dict[tuple, str] = {}
+
     for s in snapshots:
         ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=UTC)
         # Epoch-based bucket: floor-divide epoch seconds so all timestamps within
@@ -469,6 +551,10 @@ def _group_snapshots(
         # Store first timestamp seen for this key as representative
         if key not in timestamp_map:
             timestamp_map[key] = ts
+
+        # Track account_id per group key for by_model lookup
+        if key not in account_id_map:
+            account_id_map[key] = s.account_id
 
         category = _classify_window(s.window_type, s.provider_id, s.model_id)
         entry = {
@@ -517,6 +603,16 @@ def _group_snapshots(
         # Use the stored representative timestamp for display
         rep_ts = timestamp_map[(bucket_ts_iso, provider_id, account_label)]
 
+        account_id = account_id_map.get((bucket_ts_iso, provider_id, account_label))
+        by_model = None
+        if by_model_lookup and account_id:
+            bm_key = (
+                int(rep_ts.timestamp()) // bucket_seconds * bucket_seconds,
+                provider_id,
+                account_id,
+            )
+            by_model = by_model_lookup.get(bm_key)
+
         result.append(
             {
                 "timestamp": rep_ts.isoformat(),
@@ -525,6 +621,7 @@ def _group_snapshots(
                 "session": data["session"],
                 "weekly": data["weekly"],
                 "additional": data["additional"] or None,
+                "by_model": by_model,
             }
         )
 
