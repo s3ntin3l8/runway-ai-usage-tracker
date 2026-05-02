@@ -209,16 +209,23 @@ class SmartCollector:
             # Don't hammer the API during outages or 429 backoff
             if not self._should_retry_after_error(now):
                 backoff_rem = self._get_429_backoff_remaining(now)
+                provider_id = getattr(self.collector, "PROVIDER_ID", None)
+
                 if backoff_rem > 0:
                     logger.debug(
                         f"{self.collector_name}: Still in 429 backoff ({backoff_rem:.0f}s)"
                     )
-                    msg = f"Rate limited — retry in {backoff_rem:.0f}s"
+                    # Standardize to match provider-specific formatting (minutes if > 60s)
+                    if backoff_rem >= 60:
+                        msg = f"Rate Limited (429) - Try in {backoff_rem / 60:.1f}m"
+                    else:
+                        msg = f"Rate Limited (429) - Try in {backoff_rem:.0f}s"
                 else:
                     last_fetch = self.last_fetch_time or 0.0
                     delay_rem = self.error_retry_delay - (now - last_fetch)
                     logger.debug(f"{self.collector_name}: Still in retry delay ({delay_rem:.0f}s)")
                     msg = f"Retry in {delay_rem:.0f}s"
+
                 if self.last_result:
                     return self._tag_as_cached(self.last_result, now)
                 return [
@@ -227,6 +234,7 @@ class SmartCollector:
                         "⏳",
                         msg,
                         error_type="rate_limited",
+                        provider_id=provider_id,
                     )
                 ]
 
@@ -263,6 +271,7 @@ class SmartCollector:
                         "❌",
                         "No data available",
                         error_type="parse_error",
+                        provider_id=getattr(self.collector, "PROVIDER_ID", None),
                     )
                 ]
 
@@ -283,6 +292,7 @@ class SmartCollector:
                         "❌",
                         f"Collection failed: {str(e)[:40]}",
                         error_type="api_error",
+                        provider_id=getattr(self.collector, "PROVIDER_ID", None),
                     )
                 ]
 

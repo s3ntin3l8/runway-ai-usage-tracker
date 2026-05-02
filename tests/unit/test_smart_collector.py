@@ -25,6 +25,7 @@ from app.services.smart_collector import SmartCollector
 def mock_collector():
     """Create a mock collector."""
     collector = AsyncMock(spec=BaseCollector)
+    collector.PROVIDER_ID = "test_provider"
     return collector
 
 

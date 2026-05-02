@@ -132,10 +132,16 @@ def human_delta(target_dt: datetime | None) -> str:
     return f"{days}d {hours}h"
 
 
-def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
+def error_card(
+    service: str,
+    icon: str,
+    message: str,
+    error_type: str = "unknown",
+    provider_id: str | None = None,
+):
     from app.models.builder import LimitCardBuilder
 
-    return LimitCardBuilder.error(service, icon, message, error_type)
+    return LimitCardBuilder.error(service, icon, message, error_type, provider_id)
 
 
 def extract_token_regex(detail: str, prefix: str) -> str | None:
