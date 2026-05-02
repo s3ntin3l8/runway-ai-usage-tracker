@@ -568,6 +568,7 @@ def _build_by_model_lookup(
             bucket_expr,
             UsageSnapshot.provider_id,
             UsageSnapshot.account_id,
+            UsageSnapshot.window_type,
             UsageSnapshotModel.model_id,
             func.avg(UsageSnapshotModel.cost).label("avg_cost"),
             func.avg(UsageSnapshotModel.msgs).label("avg_msgs"),
@@ -579,11 +580,11 @@ def _build_by_model_lookup(
         )
         .join(UsageSnapshotModel, UsageSnapshot.id == UsageSnapshotModel.snapshot_id)
         .where(UsageSnapshot.timestamp >= since)
-        .where(UsageSnapshot.window_type.in_(SESSION_WINDOWS))  # type: ignore[attr-defined]
         .group_by(
             bucket_expr,
             UsageSnapshot.provider_id,
             UsageSnapshot.account_id,
+            UsageSnapshot.window_type,
             UsageSnapshotModel.model_id,
         )
     )
@@ -595,9 +596,9 @@ def _build_by_model_lookup(
 
     results = session.exec(stmt).all()
 
-    lookup: dict[tuple[int, str, str], list[dict]] = {}
+    lookup: dict[tuple[int, str, str, str], list[dict]] = {}
     for r in results:
-        key = (int(r.bucket_ts), r.provider_id, r.account_id)
+        key = (int(r.bucket_ts), r.provider_id, r.account_id, r.window_type)
         if key not in lookup:
             lookup[key] = []
         lookup[key].append(
@@ -731,6 +732,18 @@ def _group_snapshots(
             account_id_map[key] = s.account_id
 
         category = _classify_window(s.window_type, s.provider_id, s.model_id)
+
+        # Lookup per-model breakdown for THIS specific snapshot
+        by_model = None
+        if by_model_lookup:
+            bm_key = (
+                int(bucket_ts.timestamp()),
+                s.provider_id,
+                s.account_id,
+                s.window_type,
+            )
+            by_model = by_model_lookup.get(bm_key)
+
         grouped[key]["windows"].append(
             {
                 "category": category,
@@ -749,6 +762,7 @@ def _group_snapshots(
                 if s.tokens_total is not None
                 else None,
                 "msgs": s.msgs,
+                "by_model": by_model,
             }
         )
 
@@ -757,23 +771,12 @@ def _group_snapshots(
         # Use the stored representative timestamp for display
         rep_ts = timestamp_map[(bucket_ts_iso, provider_id, account_label)]
 
-        account_id = account_id_map.get((bucket_ts_iso, provider_id, account_label))
-        by_model = None
-        if by_model_lookup and account_id:
-            bm_key = (
-                int(rep_ts.timestamp()) // bucket_seconds * bucket_seconds,
-                provider_id,
-                account_id,
-            )
-            by_model = by_model_lookup.get(bm_key)
-
         result.append(
             {
                 "timestamp": rep_ts.isoformat(),
                 "provider_id": provider_id,
                 "account_label": account_label,
                 "windows": data["windows"],
-                "by_model": by_model,
             }
         )
 

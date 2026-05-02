@@ -326,7 +326,7 @@ def test_build_by_model_lookup_aggregates_per_bucket(session: Session):
 
     # Both snapshots are in the same 30-min bucket
     bucket_epoch = int(now.timestamp()) // bucket_seconds * bucket_seconds
-    key = (bucket_epoch, "gemini", "user1")
+    key = (bucket_epoch, "gemini", "user1", "session")
 
     assert key in lookup
     assert len(lookup[key]) == 2
@@ -400,14 +400,14 @@ def test_build_by_model_lookup_filters_by_provider_and_account(session: Session)
     # Filter by provider
     lookup = _build_by_model_lookup(session, since, bucket_seconds, provider_id="gemini")
     assert len(lookup) == 1
-    key = (int(now.timestamp()) // bucket_seconds * bucket_seconds, "gemini", "user1")
+    key = (int(now.timestamp()) // bucket_seconds * bucket_seconds, "gemini", "user1", "session")
     assert key in lookup
     assert lookup[key][0]["model_id"] == "flash"
 
     # Filter by account
     lookup = _build_by_model_lookup(session, since, bucket_seconds, account_id="user2")
     assert len(lookup) == 1
-    key = (int(now.timestamp()) // bucket_seconds * bucket_seconds, "openai", "user2")
+    key = (int(now.timestamp()) // bucket_seconds * bucket_seconds, "openai", "user2", "session")
     assert key in lookup
     assert lookup[key][0]["model_id"] == "gpt-4"
 

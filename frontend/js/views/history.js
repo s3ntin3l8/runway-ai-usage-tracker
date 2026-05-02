@@ -269,7 +269,7 @@ function renderWindowsTable(row, metric) {
     const hasTokens = windows.some(w => w.token_usage?.total != null);
     const hasMsgs = windows.some(w => w.msgs != null);
 
-    let html = '<div class="ht-section-title">Windows</div>';
+    let html = '<div class="ht-section-title">Windows & Breakdowns</div>';
     html += '<table class="ht-detail-table"><thead><tr>';
     html += '<th>Window</th><th>Model</th>';
     html += '<th class="num">Used %</th>';
@@ -293,7 +293,8 @@ function renderWindowsTable(row, metric) {
         const cost = w.unit === 'currency' && w.value != null ? formatValue(w.value, 'currency') : '—';
         const msgs = w.msgs != null ? w.msgs.toLocaleString() : '—';
 
-        html += `<tr>`;
+        // Primary window row
+        html += `<tr class="ht-window-primary">`;
         html += `<td>${windowLabel}</td>`;
         html += `<td>${modelLabel}</td>`;
         html += `<td class="num">${pct}</td>`;
@@ -301,38 +302,26 @@ function renderWindowsTable(row, metric) {
         if (hasCost) html += `<td class="num">${cost}</td>`;
         if (hasMsgs) html += `<td class="num">${msgs}</td>`;
         html += `</tr>`;
-    });
 
-    html += '</tbody></table>';
-    return html;
-}
-
-function renderModelBreakdown(byModel) {
-    if (!byModel || byModel.length === 0) return '';
-
-    const hasCost = byModel.some(m => m.cost != null);
-    const hasMsgs = byModel.some(m => m.msgs != null);
-    const hasTokens = byModel.some(m => m.tokens_total != null);
-
-    let html = '<div class="ht-section-title">Model Breakdown</div>';
-    html += '<table class="ht-detail-table"><thead><tr>';
-    html += '<th>Model</th>';
-    if (hasCost) html += '<th class="num">Cost</th>';
-    if (hasMsgs) html += '<th class="num">Msgs</th>';
-    if (hasTokens) html += '<th class="num">Input</th><th class="num">Output</th><th class="num">Total</th>';
-    html += '</tr></thead><tbody>';
-
-    byModel.forEach(m => {
-        html += `<tr>`;
-        html += `<td>${escapeHTML(m.model_id)}</td>`;
-        if (hasCost) html += `<td class="num">${m.cost != null ? formatValue(m.cost, 'currency') : '—'}</td>`;
-        if (hasMsgs) html += `<td class="num">${m.msgs != null ? m.msgs.toLocaleString() : '—'}</td>`;
-        if (hasTokens) {
-            html += `<td class="num">${m.tokens_input != null ? formatValue(m.tokens_input, 'tokens') : '—'}</td>`;
-            html += `<td class="num">${m.tokens_output != null ? formatValue(m.tokens_output, 'tokens') : '—'}</td>`;
-            html += `<td class="num">${m.tokens_total != null ? formatValue(m.tokens_total, 'tokens') : '—'}</td>`;
+        // If this window has its own model breakdown, render it indented
+        if (w.by_model && Object.keys(w.by_model).length > 0) {
+            const models = Object.values(w.by_model);
+            models.forEach(m => {
+                html += `<tr class="ht-window-model-breakdown">`;
+                html += `<td colspan="2" class="ht-model-name">└ ${escapeHTML(m.model_id)}</td>`;
+                html += `<td></td>`; // Empty pct
+                if (hasTokens) {
+                    html += `<td class="num">${m.tokens_total != null ? formatValue(m.tokens_total, 'tokens') : '—'}</td>`;
+                }
+                if (hasCost) {
+                    html += `<td class="num">${m.cost != null ? formatValue(m.cost, 'currency') : '—'}</td>`;
+                }
+                if (hasMsgs) {
+                    html += `<td class="num">${m.msgs != null ? m.msgs.toLocaleString() : '—'}</td>`;
+                }
+                html += `</tr>`;
+            });
         }
-        html += `</tr>`;
     });
 
     html += '</tbody></table>';
@@ -720,7 +709,6 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
             <td colspan="5">
                 <div class="ht-detail-inner">
                     ${renderWindowsTable(s, metric)}
-                    ${renderModelBreakdown(s.by_model)}
                 </div>
             </td>
         </tr>`;

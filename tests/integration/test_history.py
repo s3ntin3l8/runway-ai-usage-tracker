@@ -264,11 +264,14 @@ def test_get_history_includes_by_model(client: TestClient, session: Session):
 
     assert len(data["averages"]) == 1
     row = data["averages"][0]
-    assert "by_model" in row
-    assert row["by_model"] is not None
-    assert len(row["by_model"]) == 2
+    # by_model is now INSIDE each window
+    assert "windows" in row
+    window = row["windows"][0]
+    assert "by_model" in window
+    assert window["by_model"] is not None
+    assert len(window["by_model"]) == 2
 
-    by_model = {m["model_id"]: m for m in row["by_model"]}
+    by_model = {m["model_id"]: m for m in window["by_model"]}
     assert by_model["flash"]["cost"] == 0.30
     assert by_model["flash"]["msgs"] == 3
     assert by_model["flash"]["tokens_total"] == 2000.0
@@ -303,13 +306,19 @@ def test_get_history_deltas_computes_positive_deltas(client: TestClient, session
     assert response.status_code == 200
     data = response.json()
 
-    # Expected deltas: 500 + 500 + 0 (reset) + 300 = 1300
-    assert data["token_delta_total"] == 1300.0
-    assert data["provider_token_deltas"]["anthropic"] == 1300.0
+    # Expected deltas: 
+    # [1000] -> Baseline
+    # [1500] -> +500
+    # [2000] -> +500
+    # [0]    -> Glitch to zero (ignored)
+    # [300]  -> Still < 2000 (ignored recovery)
+    # Total: 1000.0
+    assert data["token_delta_total"] == 1000.0
+    assert data["provider_token_deltas"]["anthropic"] == 1000.0
     assert data["critical_series_count"] == 0
     assert data["series_sampled"] is False
     assert len(data["series"]) == 1
-    assert data["series"][0]["token_delta"] == 1300.0
+    assert data["series"][0]["token_delta"] == 1000.0
     assert data["series"][0]["cost_delta"] == 0.0
 
 
