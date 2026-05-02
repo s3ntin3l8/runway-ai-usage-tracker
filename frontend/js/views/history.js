@@ -454,15 +454,45 @@ function renderHistoryTiles(rawHistory, metric, days, deltas) {
             return;
         }
         const series = groupBySeries(rows);
+        const seriesDeltas = new Map();
+
         series.forEach((arr, key) => {
-            const delta = positiveTokenDeltas(arr);
-            totalTokenDelta += delta;
-            const pid = arr[0]?.provider_id || 'unknown';
-            providerTokenDeltas[pid] = (providerTokenDeltas[pid] || 0) + delta;
-            if (arr[0]?.unit_type === 'currency') {
-                totalCostDelta += positiveCurrencyDeltas(arr);
-            }
-            if (hasCriticalReading(arr)) critSeries++;
+            const tokenDelta = positiveTokenDeltas(arr);
+            const costDelta = arr[0]?.unit_type === 'currency' ? positiveCurrencyDeltas(arr) : 0;
+            const critical = hasCriticalReading(arr);
+            const r = arr[0];
+
+            seriesDeltas.set(key, {
+                tokenDelta,
+                costDelta,
+                critical,
+                providerId: r.provider_id,
+                accountId: r.account_id,
+                windowType: r.window_type,
+                modelId: r.model_id,
+                unitType: r.unit_type,
+            });
+        });
+
+        // Hierarchy Filter (Prevent double-counting)
+        const hierarchyGroups = new Map();
+        seriesDeltas.forEach((d, key) => {
+            const hKey = `${d.providerId}|${d.accountId}|${d.windowType}|${d.unitType}`;
+            if (!hierarchyGroups.has(hKey)) hierarchyGroups.set(hKey, []);
+            hierarchyGroups.get(hKey).push(key);
+        });
+
+        hierarchyGroups.forEach((keys, hKey) => {
+            const modelKeys = keys.filter(k => seriesDeltas.get(k).modelId != null);
+            const selectedKeys = modelKeys.length > 0 ? modelKeys : keys;
+
+            selectedKeys.forEach(k => {
+                const d = seriesDeltas.get(k);
+                totalTokenDelta += d.tokenDelta;
+                totalCostDelta += d.costDelta;
+                providerTokenDeltas[d.providerId] = (providerTokenDeltas[d.providerId] || 0) + d.tokenDelta;
+                if (d.critical) critSeries++;
+            });
         });
     }
 

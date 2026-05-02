@@ -124,6 +124,38 @@ async def test_delta_recovery_from_zero_is_ignored(session: Session):
 
 
 @pytest.mark.asyncio
+async def test_delta_hierarchy_filter_prevents_double_counting(session: Session):
+    """If model-specific and aggregate cards exist for same window, only sum models."""
+    now = datetime.now(UTC)
+    
+    # 1. Aggregate series (model_id=None) - increase of 1000
+    session.add(_snap(now - timedelta(minutes=5), tokens=10000.0, provider="anthropic"))
+    session.add(_snap(now, tokens=11000.0, provider="anthropic"))
+    
+    # 2. Specific model series (model_id="sonnet") - same increase of 1000
+    s1 = _snap(now - timedelta(minutes=5), tokens=10000.0, provider="anthropic")
+    s1.model_id = "sonnet"
+    session.add(s1)
+    s2 = _snap(now, tokens=11000.0, provider="anthropic")
+    s2.model_id = "sonnet"
+    session.add(s2)
+    
+    session.commit()
+
+    scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
+    mock_request = Request(scope=scope)
+
+    result = await get_usage_history_deltas(
+        request=mock_request,
+        days=1.0,
+        session=session
+    )
+
+    # Without hierarchy filter, this would be 2000. With it, it must be 1000.
+    assert result["token_delta_total"] == 1000.0
+
+
+@pytest.mark.asyncio
 async def test_cost_delta_glitch_filtering(session: Session):
     """Same logic for currency/cost deltas."""
     now = datetime.now(UTC)

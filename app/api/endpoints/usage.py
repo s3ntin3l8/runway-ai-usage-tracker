@@ -414,12 +414,8 @@ async def get_usage_history_deltas(
         )
         series_groups.setdefault(key, []).append(r)
 
-    token_delta_total = 0.0
-    cost_delta_total = 0.0
-    provider_token_deltas: dict[str, float] = {}
-    critical_series_count = 0
-    series_list = []
-
+    # 1. Calculate deltas for EVERY individual series
+    series_deltas = {}
     # Glitch filter: drops below 50% are resets; others are ignored as glitches
     GLITCH_THRESHOLD = 0.5
 
@@ -430,82 +426,101 @@ async def get_usage_history_deltas(
         critical = False
 
         # Initialize high-water marks from the first reading (Baseline)
-        # This prevents "Big Bang" deltas when a model first appears with a large total.
         first = arr[0]
         max_tokens = first.tokens_total if first.tokens_total is not None else 0.0
         max_cost = (first.used_value if first.used_value is not None else 0.0) if first.unit_type == "currency" else 0.0
 
         for i in range(1, len(arr)):
             curr = arr[i]
-
-            # 1. Token Delta with Glitch Filtering
-            curr_tok = curr.tokens_total if curr.tokens_total is not None else 0.0
             
-            # If we were at 0 and jump to a huge number, it's likely a recovery or baseline
-            # rather than new consumption. We use the glitch threshold to distinguish.
+            # Token Delta
+            curr_tok = curr.tokens_total if curr.tokens_total is not None else 0.0
             if max_tokens == 0.0 and curr_tok > 0:
                 max_tokens = curr_tok
                 continue
-
             if curr_tok > max_tokens:
                 token_delta += curr_tok - max_tokens
                 max_tokens = curr_tok
             elif curr_tok < max_tokens * GLITCH_THRESHOLD:
-                # Substantial drop: treat as counter reset
                 max_tokens = curr_tok
 
-            # 2. Cost Delta (currency only) with Glitch Filtering
+            # Cost Delta
             if curr.unit_type == "currency":
                 curr_cost = curr.used_value if curr.used_value is not None else 0.0
-                
                 if max_cost == 0.0 and curr_cost > 0:
                     max_cost = curr_cost
                     continue
-
                 if curr_cost > max_cost:
                     cost_delta += curr_cost - max_cost
                     max_cost = curr_cost
                 elif curr_cost < max_cost * GLITCH_THRESHOLD:
-                    # Substantial drop: treat as counter reset
                     max_cost = curr_cost
 
             # Critical check
             if not critical and curr.used_value is not None:
                 if (curr.unit_type == "percent" and curr.used_value >= 90) or (
-                    curr.limit_value
-                    and curr.limit_value > 0
-                    and (curr.used_value / curr.limit_value) >= 0.9
+                    curr.limit_value and curr.limit_value > 0 and (curr.used_value / curr.limit_value) >= 0.9
                 ):
                     critical = True
 
-        if critical:
-            critical_series_count += 1
+        series_deltas[key] = {
+            "token_delta": token_delta,
+            "cost_delta": cost_delta,
+            "critical": critical,
+            "provider_id": arr[0].provider_id,
+            "account_id": arr[0].account_id,
+            "window_type": arr[0].window_type,
+            "model_id": arr[0].model_id,
+            "unit_type": arr[0].unit_type,
+        }
 
-        token_delta_total += token_delta
-        cost_delta_total += cost_delta
+    # 2. Aggregate totals with Hierarchy Filter (Prevent double-counting)
+    # Group series by (provider, account, window, unit)
+    hierarchy_groups: dict[tuple, list[str]] = {}
+    for key, d in series_deltas.items():
+        h_key = (d["provider_id"], d["account_id"], d["window_type"], d["unit_type"])
+        hierarchy_groups.setdefault(h_key, []).append(key)
 
-        pid = arr[0].provider_id
-        provider_token_deltas[pid] = provider_token_deltas.get(pid, 0.0) + token_delta
+    token_delta_total = 0.0
+    cost_delta_total = 0.0
+    provider_token_deltas: dict[str, float] = {}
+    critical_series_count = 0
+    series_list = []
 
-        series_list.append(
-            {
+    for h_key, keys in hierarchy_groups.items():
+        # Check if we have specific models for this window
+        model_keys = [k for k in keys if series_deltas[k]["model_id"] is not None]
+        
+        # If specific models exist, use ONLY them (ignore model_id=None)
+        # If no models exist, use whatever is there (usually just the aggregate model_id=None)
+        selected_keys = model_keys if model_keys else keys
+
+        for k in selected_keys:
+            d = series_deltas[k]
+            token_delta_total += d["token_delta"]
+            cost_delta_total += d["cost_delta"]
+            pid = d["provider_id"]
+            provider_token_deltas[pid] = provider_token_deltas.get(pid, 0.0) + d["token_delta"]
+            if d["critical"]:
+                critical_series_count += 1
+            
+            series_list.append({
                 "provider_id": pid,
-                "account_id": arr[0].account_id,
-                "window_type": arr[0].window_type,
-                "model_id": arr[0].model_id,
-                "unit_type": arr[0].unit_type,
-                "token_delta": round(token_delta, 2),
-                "cost_delta": round(cost_delta, 2),
-                "critical": critical,
-            }
-        )
+                "account_id": d["account_id"],
+                "window_type": d["window_type"],
+                "model_id": d["model_id"],
+                "unit_type": d["unit_type"],
+                "token_delta": round(d["token_delta"], 2),
+                "cost_delta": round(d["cost_delta"], 2),
+                "critical": d["critical"],
+            })
 
     return {
         "token_delta_total": round(token_delta_total, 2),
         "cost_delta_total": round(cost_delta_total, 2),
         "provider_token_deltas": {k: round(v, 2) for k, v in provider_token_deltas.items()},
         "critical_series_count": critical_series_count,
-        "series_sampled": False,  # No longer truncated
+        "series_sampled": False,
         "series": series_list,
     }
 
