@@ -40,34 +40,30 @@ def _snap(ts, tokens=None, used=None, unit="tokens", provider="anthropic"):
 async def test_delta_glitch_filtering(session: Session):
     """Minor drops should be ignored as glitches, substantial drops as resets."""
     now = datetime.now(UTC)
-    
+
     # 1. Normal increase
     session.add(_snap(now - timedelta(minutes=20), tokens=1000.0))
-    session.add(_snap(now - timedelta(minutes=15), tokens=1100.0)) # +100
-    
+    session.add(_snap(now - timedelta(minutes=15), tokens=1100.0))  # +100
+
     # 2. Minor drop (glitch) - 1050 is > 50% of 1100
-    session.add(_snap(now - timedelta(minutes=10), tokens=1050.0)) # ignore
-    
+    session.add(_snap(now - timedelta(minutes=10), tokens=1050.0))  # ignore
+
     # 3. Recovery after glitch
-    session.add(_snap(now - timedelta(minutes=5), tokens=1200.0)) # +100 from high-water mark 1100
-    
+    session.add(_snap(now - timedelta(minutes=5), tokens=1200.0))  # +100 from high-water mark 1100
+
     # 4. Substantial drop (reset) - 400 is < 50% of 1200
-    session.add(_snap(now, tokens=400.0)) # reset high-water to 400
-    
+    session.add(_snap(now, tokens=400.0))  # reset high-water to 400
+
     # 5. Increase after reset
-    session.add(_snap(now + timedelta(minutes=5), tokens=500.0)) # +100
-    
+    session.add(_snap(now + timedelta(minutes=5), tokens=500.0))  # +100
+
     session.commit()
 
     # We need to mock the Request object for the dependency
     scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
     mock_request = Request(scope=scope)
 
-    result = await get_usage_history_deltas(
-        request=mock_request,
-        days=1.0,
-        session=session
-    )
+    result = await get_usage_history_deltas(request=mock_request, days=1.0, session=session)
 
     # Expected delta: (1100-1000) + (1200-1100) + (500-400) = 100 + 100 + 100 = 300
     assert result["token_delta_total"] == 300.0
@@ -77,23 +73,19 @@ async def test_delta_glitch_filtering(session: Session):
 async def test_delta_first_read_is_baseline(session: Session):
     """The first non-zero read should be treated as a baseline, not consumption."""
     now = datetime.now(UTC)
-    
+
     # 1. First poll sees 500M tokens (baseline)
     session.add(_snap(now - timedelta(minutes=10), tokens=500_000_000.0))
-    
+
     # 2. Second poll sees 500M + 1000 tokens (consumption)
     session.add(_snap(now, tokens=500_001_000.0))
-    
+
     session.commit()
 
     scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
     mock_request = Request(scope=scope)
 
-    result = await get_usage_history_deltas(
-        request=mock_request,
-        days=1.0,
-        session=session
-    )
+    result = await get_usage_history_deltas(request=mock_request, days=1.0, session=session)
 
     # Should be 1000, NOT 500,001,000
     assert result["token_delta_total"] == 1000.0
@@ -103,22 +95,18 @@ async def test_delta_first_read_is_baseline(session: Session):
 async def test_delta_recovery_from_zero_is_ignored(session: Session):
     """If a reading drops to 0 and jumps back to the previous peak, ignore it."""
     now = datetime.now(UTC)
-    
-    session.add(_snap(now - timedelta(minutes=15), tokens=1000.0)) # baseline
-    session.add(_snap(now - timedelta(minutes=10), tokens=0.0))    # glitch to zero
+
+    session.add(_snap(now - timedelta(minutes=15), tokens=1000.0))  # baseline
+    session.add(_snap(now - timedelta(minutes=10), tokens=0.0))  # glitch to zero
     session.add(_snap(now - timedelta(minutes=5), tokens=1000.0))  # recovery (ignore)
-    session.add(_snap(now, tokens=1100.0))                         # real usage (+100)
-    
+    session.add(_snap(now, tokens=1100.0))  # real usage (+100)
+
     session.commit()
 
     scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
     mock_request = Request(scope=scope)
 
-    result = await get_usage_history_deltas(
-        request=mock_request,
-        days=1.0,
-        session=session
-    )
+    result = await get_usage_history_deltas(request=mock_request, days=1.0, session=session)
 
     assert result["token_delta_total"] == 100.0
 
@@ -127,11 +115,11 @@ async def test_delta_recovery_from_zero_is_ignored(session: Session):
 async def test_delta_hierarchy_filter_prevents_double_counting(session: Session):
     """If model-specific and aggregate cards exist for same window, only sum models."""
     now = datetime.now(UTC)
-    
+
     # 1. Aggregate series (model_id=None) - increase of 1000
     session.add(_snap(now - timedelta(minutes=5), tokens=10000.0, provider="anthropic"))
     session.add(_snap(now, tokens=11000.0, provider="anthropic"))
-    
+
     # 2. Specific model series (model_id="sonnet") - same increase of 1000
     s1 = _snap(now - timedelta(minutes=5), tokens=10000.0, provider="anthropic")
     s1.model_id = "sonnet"
@@ -139,17 +127,13 @@ async def test_delta_hierarchy_filter_prevents_double_counting(session: Session)
     s2 = _snap(now, tokens=11000.0, provider="anthropic")
     s2.model_id = "sonnet"
     session.add(s2)
-    
+
     session.commit()
 
     scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
     mock_request = Request(scope=scope)
 
-    result = await get_usage_history_deltas(
-        request=mock_request,
-        days=1.0,
-        session=session
-    )
+    result = await get_usage_history_deltas(request=mock_request, days=1.0, session=session)
 
     # Without hierarchy filter, this would be 2000. With it, it must be 1000.
     assert result["token_delta_total"] == 1000.0
@@ -159,22 +143,18 @@ async def test_delta_hierarchy_filter_prevents_double_counting(session: Session)
 async def test_cost_delta_glitch_filtering(session: Session):
     """Same logic for currency/cost deltas."""
     now = datetime.now(UTC)
-    
+
     session.add(_snap(now - timedelta(minutes=15), used=10.0, unit="currency"))
-    session.add(_snap(now - timedelta(minutes=10), used=11.0, unit="currency")) # +1.0
+    session.add(_snap(now - timedelta(minutes=10), used=11.0, unit="currency"))  # +1.0
     session.add(_snap(now - timedelta(minutes=5), used=10.5, unit="currency"))  # glitch
-    session.add(_snap(now, used=12.0, unit="currency"))                        # +1.0
-    
+    session.add(_snap(now, used=12.0, unit="currency"))  # +1.0
+
     session.commit()
 
     scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
     mock_request = Request(scope=scope)
 
-    result = await get_usage_history_deltas(
-        request=mock_request,
-        days=1.0,
-        session=session
-    )
+    result = await get_usage_history_deltas(request=mock_request, days=1.0, session=session)
 
     assert result["cost_delta_total"] == 2.0
 
@@ -183,11 +163,11 @@ async def test_cost_delta_glitch_filtering(session: Session):
 async def test_no_limit_truncation(session: Session):
     """The endpoint should handle more than 10,000 rows without truncation."""
     now = datetime.now(UTC)
-    
+
     # Add 10,100 rows
     for i in range(10100):
         session.add(_snap(now - timedelta(minutes=i), tokens=float(100000 - i)))
-    
+
     session.commit()
 
     scope = {"type": "http", "client": ("127.0.0.1", 12345), "path": "/"}
@@ -195,8 +175,8 @@ async def test_no_limit_truncation(session: Session):
 
     result = await get_usage_history_deltas(
         request=mock_request,
-        days=30.0, # Large enough window
-        session=session
+        days=30.0,  # Large enough window
+        session=session,
     )
 
     assert result["series_sampled"] is False

@@ -174,10 +174,10 @@ def test_group_snapshots_session_and_weekly_in_same_row():
     row = rows[0]
     assert "windows" in row
     assert len(row["windows"]) == 2
-    
+
     cats = {w["category"] for w in row["windows"]}
     assert cats == {"session", "weekly"}
-    
+
     vals = {w["value"] for w in row["windows"]}
     assert vals == {20.0, 60.0}
 

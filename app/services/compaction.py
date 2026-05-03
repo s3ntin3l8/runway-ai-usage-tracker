@@ -60,7 +60,7 @@ def _compact_range(
     if start is not None:
         stmt = stmt.where(UsageSnapshot.timestamp >= start)
 
-    rows = session.exec(stmt).all()
+    rows = session.exec(stmt).all(); print(f"DEBUG: Found {len(rows)} rows to compact")
     if not rows:
         return 0
 
@@ -83,8 +83,14 @@ def _compact_range(
 
         # Collect all numeric values for averaging UsageSnapshot
         numeric_fields = [
-            "used_value", "limit_value", "tokens_input", "tokens_output",
-            "tokens_reasoning", "tokens_cache_read", "tokens_total", "msgs"
+            "used_value",
+            "limit_value",
+            "tokens_input",
+            "tokens_output",
+            "tokens_reasoning",
+            "tokens_cache_read",
+            "tokens_total",
+            "msgs",
         ]
         averages = {}
         for field in numeric_fields:
@@ -95,7 +101,9 @@ def _compact_range(
         snapshot_ids = [r.id for r in group_rows if r.id is not None]
         model_groups: dict[str, list[UsageSnapshotModel]] = defaultdict(list)
         if snapshot_ids:
-            stmt_models = select(UsageSnapshotModel).where(UsageSnapshotModel.snapshot_id.in_(snapshot_ids))
+            stmt_models = select(UsageSnapshotModel).where(
+                UsageSnapshotModel.snapshot_id.in_(snapshot_ids)
+            )
             model_rows = session.exec(stmt_models).all()
             for mr in model_rows:
                 model_groups[mr.model_id].append(mr)
@@ -138,8 +146,13 @@ def _compact_range(
 
         # Create compacted model entries
         model_numeric_fields = [
-            "cost", "msgs", "tokens_input", "tokens_output",
-            "tokens_reasoning", "tokens_cache_read", "tokens_total"
+            "cost",
+            "msgs",
+            "tokens_input",
+            "tokens_output",
+            "tokens_reasoning",
+            "tokens_cache_read",
+            "tokens_total",
         ]
         for model_id, mrs in model_groups.items():
             m_averages = {}
@@ -147,17 +160,19 @@ def _compact_range(
                 vals = [getattr(mr, field) for mr in mrs if getattr(mr, field) is not None]
                 m_averages[field] = sum(vals) / len(vals) if vals else None
 
-            session.add(UsageSnapshotModel(
-                snapshot_id=new_snapshot.id,
-                model_id=model_id,
-                cost=m_averages["cost"],
-                msgs=int(m_averages["msgs"]) if m_averages["msgs"] is not None else None,
-                tokens_input=m_averages["tokens_input"],
-                tokens_output=m_averages["tokens_output"],
-                tokens_reasoning=m_averages["tokens_reasoning"],
-                tokens_cache_read=m_averages["tokens_cache_read"],
-                tokens_total=m_averages["tokens_total"],
-            ))
+            session.add(
+                UsageSnapshotModel(
+                    snapshot_id=new_snapshot.id,
+                    model_id=model_id,
+                    cost=m_averages["cost"],
+                    msgs=int(m_averages["msgs"]) if m_averages["msgs"] is not None else None,
+                    tokens_input=m_averages["tokens_input"],
+                    tokens_output=m_averages["tokens_output"],
+                    tokens_reasoning=m_averages["tokens_reasoning"],
+                    tokens_cache_read=m_averages["tokens_cache_read"],
+                    tokens_total=m_averages["tokens_total"],
+                )
+            )
 
         created += 1
 

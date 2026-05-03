@@ -199,3 +199,51 @@ class UsageSnapshotModel(SQLModel, table=True):
     tokens_reasoning: float | None = Field(default=None)
     tokens_cache_read: float | None = Field(default=None)
     tokens_total: float | None = Field(default=None)
+
+
+class LatestUsage(SQLModel, table=True):
+    __tablename__ = "latest_usage"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "sidecar_id",
+            "window_type",
+            "variant",
+            name="uq_latest_usage_identity",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    account_id: str = Field(index=True)
+    sidecar_id: str = Field(default="local", index=True)
+    window_type: str = Field(default="unknown")
+    variant: str = Field(default="default")
+    card_json: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CumulativeUsage(SQLModel, table=True):
+    __tablename__ = "cumulative_usage"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "sidecar_id",
+            "period_type",
+            "period_key",
+            "unit_type",
+            name="uq_cumulative_usage_identity",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    account_id: str = Field(index=True)
+    sidecar_id: str = Field(default="local", index=True)
+    period_type: str = Field(index=True)  # 'lifetime', 'year', 'month'
+    period_key: str = Field(index=True)  # 'all', '2026', '2026-05'
+    unit_type: str = Field(index=True)  # 'tokens_input', 'cost_usd'
+    total_value: float = Field(default=0.0)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))

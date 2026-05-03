@@ -306,7 +306,7 @@ def test_get_history_deltas_computes_positive_deltas(client: TestClient, session
     assert response.status_code == 200
     data = response.json()
 
-    # Expected deltas: 
+    # Expected deltas:
     # [1000] -> Baseline
     # [1500] -> +500
     # [2000] -> +500

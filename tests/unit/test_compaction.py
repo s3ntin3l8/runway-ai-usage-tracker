@@ -154,7 +154,9 @@ def test_compaction_preserves_tokens_and_breakdown(session):
     session.add(s1)
     session.flush()
     session.add(UsageSnapshotModel(snapshot_id=s1.id, model_id="gpt-4", tokens_total=500.0, msgs=5))
-    session.add(UsageSnapshotModel(snapshot_id=s1.id, model_id="gpt-3.5", tokens_total=500.0, msgs=5))
+    session.add(
+        UsageSnapshotModel(snapshot_id=s1.id, model_id="gpt-3.5", tokens_total=500.0, msgs=5)
+    )
 
     # Snapshot 2
     s2 = _snap(old + timedelta(minutes=5), 200.0, 1000.0)
@@ -162,8 +164,12 @@ def test_compaction_preserves_tokens_and_breakdown(session):
     s2.msgs = 20
     session.add(s2)
     session.flush()
-    session.add(UsageSnapshotModel(snapshot_id=s2.id, model_id="gpt-4", tokens_total=1000.0, msgs=10))
-    session.add(UsageSnapshotModel(snapshot_id=s2.id, model_id="gpt-3.5", tokens_total=1000.0, msgs=10))
+    session.add(
+        UsageSnapshotModel(snapshot_id=s2.id, model_id="gpt-4", tokens_total=1000.0, msgs=10)
+    )
+    session.add(
+        UsageSnapshotModel(snapshot_id=s2.id, model_id="gpt-3.5", tokens_total=1000.0, msgs=10)
+    )
 
     session.commit()
 

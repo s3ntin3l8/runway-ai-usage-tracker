@@ -428,11 +428,15 @@ async def get_usage_history_deltas(
         # Initialize high-water marks from the first reading (Baseline)
         first = arr[0]
         max_tokens = first.tokens_total if first.tokens_total is not None else 0.0
-        max_cost = (first.used_value if first.used_value is not None else 0.0) if first.unit_type == "currency" else 0.0
+        max_cost = (
+            (first.used_value if first.used_value is not None else 0.0)
+            if first.unit_type == "currency"
+            else 0.0
+        )
 
         for i in range(1, len(arr)):
             curr = arr[i]
-            
+
             # Token Delta
             curr_tok = curr.tokens_total if curr.tokens_total is not None else 0.0
             if max_tokens == 0.0 and curr_tok > 0:
@@ -459,7 +463,9 @@ async def get_usage_history_deltas(
             # Critical check
             if not critical and curr.used_value is not None:
                 if (curr.unit_type == "percent" and curr.used_value >= 90) or (
-                    curr.limit_value and curr.limit_value > 0 and (curr.used_value / curr.limit_value) >= 0.9
+                    curr.limit_value
+                    and curr.limit_value > 0
+                    and (curr.used_value / curr.limit_value) >= 0.9
                 ):
                     critical = True
 
@@ -490,7 +496,7 @@ async def get_usage_history_deltas(
     for h_key, keys in hierarchy_groups.items():
         # Check if we have specific models for this window
         model_keys = [k for k in keys if series_deltas[k]["model_id"] is not None]
-        
+
         # If specific models exist, use ONLY them (ignore model_id=None)
         # If no models exist, use whatever is there (usually just the aggregate model_id=None)
         selected_keys = model_keys if model_keys else keys
@@ -503,17 +509,19 @@ async def get_usage_history_deltas(
             provider_token_deltas[pid] = provider_token_deltas.get(pid, 0.0) + d["token_delta"]
             if d["critical"]:
                 critical_series_count += 1
-            
-            series_list.append({
-                "provider_id": pid,
-                "account_id": d["account_id"],
-                "window_type": d["window_type"],
-                "model_id": d["model_id"],
-                "unit_type": d["unit_type"],
-                "token_delta": round(d["token_delta"], 2),
-                "cost_delta": round(d["cost_delta"], 2),
-                "critical": d["critical"],
-            })
+
+            series_list.append(
+                {
+                    "provider_id": pid,
+                    "account_id": d["account_id"],
+                    "window_type": d["window_type"],
+                    "model_id": d["model_id"],
+                    "unit_type": d["unit_type"],
+                    "token_delta": round(d["token_delta"], 2),
+                    "cost_delta": round(d["cost_delta"], 2),
+                    "critical": d["critical"],
+                }
+            )
 
     return {
         "token_delta_total": round(token_delta_total, 2),
