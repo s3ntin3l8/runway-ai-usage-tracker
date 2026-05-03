@@ -182,6 +182,25 @@ async def ingest_metrics(
         logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
         poller.wake()
 
+    # Process deltas for cumulative tracking
+    if request.deltas:
+        from app.services.accumulator import UsageAccumulator
+
+        accumulator = UsageAccumulator(session)
+        for delta in request.deltas:
+            try:
+                accumulator.process_delta(
+                    provider_id=delta.provider_id,
+                    account_id=delta.account_id,
+                    sidecar_id=request.sidecar_id or "unknown",
+                    unit_type=delta.unit_type,
+                    delta_value=delta.value,
+                    timestamp=delta.timestamp,
+                )
+            except Exception as e:
+                logger.error(f"Failed to process delta: {e}")
+        logger.info(f"Processed {len(request.deltas)} deltas from {request.sidecar_id}")
+
     # Check if a remote trigger is pending for this sidecar
     trigger = (
         fleet_registry.consume_pending_trigger(request.sidecar_id) if request.sidecar_id else False
