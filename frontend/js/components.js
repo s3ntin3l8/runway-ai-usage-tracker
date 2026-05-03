@@ -1411,18 +1411,50 @@ export function buildHorizonCard(card, forecastEntry) {
     // Reset display
     const resetStr = card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : (card.reset || '—');
 
-    const hzHeadContent = card.is_unlimited
-        ? (card.unit_type === 'tokens'
-            ? `<div class="pct" style="color:var(--unlm);">${(card.used_value / 1000000).toFixed(1)}<em>M</em></div><span class="sub">tokens</span>`
-            : `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`)
-        : pctRemaining != null
-            ? `<div class="pct">${pctRemaining}<em>%</em></div><span class="sub">remaining</span>`
-            : `<div class="pct" style="color:var(--unk);">—</div>`;
+    // Glide Path Calculation
+    let glidePathMarker = '';
+    if (!card.is_unlimited && card.reset_at && card.window_type !== 'unknown') {
+        const resetDate = new Date(card.reset_at);
+        const now = new Date();
+        // Approximation of window durations
+        const durations = { session: 5 * 3600000, daily: 86400000, weekly: 604800000, monthly: 2592000000 };
+        const windowMs = durations[card.window_type] || 86400000;
+        const elapsed = windowMs - (resetDate - now);
+        const glidePct = Math.max(0, Math.min(100, (elapsed / windowMs) * 100));
+        
+        const isOverPace = usedPct > glidePct;
+        const markerColor = isOverPace ? 'var(--warn)' : 'var(--good)';
+        glidePathMarker = `<div class="glide-path" style="left:${glidePct}%; background:${markerColor}; width:1px; height:10px; position:absolute; top:-2px; z-index:10; box-shadow: 0 0 4px ${markerColor};"></div>`;
+    }
 
-    const hzBar = card.is_unlimited ? '' : `<div class="horizon">
+    if (card.is_unlimited || !card.limit_value) {
+        // Velocity Card Variant
+        const formatted = formatUsageValues(card.used_value, card.limit_value, card.unit_type, card.currency);
+        return `<article class="glass card v-horizon ${hCls}" data-prov="${escapeHTMLAttr(card.provider_id || '')}" data-card-key="${escapeHTMLAttr(cKey)}">
+            ${head}
+            <div class="hz-head">
+                <div class="pct" style="color:var(--unlm); font-size:24px;">${escapeHTML(formatted.used)}</div>
+                <span class="sub">Total Spend</span>
+                <div class="reset">Burn: <b>${pace || 'stable'}</b></div>
+            </div>
+            <div style="font-size:10px;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-top:4px;">
+                ${card.token_usage?.total ? `Total Tokens: ${_formatTokenShort(card.token_usage.total)}` : '&nbsp;'}
+            </div>
+            <div class="hz-foot" style="border-top:1px dashed var(--hairline); margin-top:8px; padding-top:4px;">
+                <div class="hz-meta"><span class="hz-lbl">forecast</span><b>${projPct ? Math.round(projPct) + '%' : '—'}</b></div>
+            </div>
+        </article>`;
+    }
+
+    const hzHeadContent = pctRemaining != null
+        ? `<div class="pct">${pctRemaining}<em>%</em></div><span class="sub">remaining</span>`
+        : `<div class="pct" style="color:var(--unk);">—</div>`;
+
+    const hzBar = `<div class="horizon">
         <div class="used" style="width:${usedPct}%"></div>
         ${projWidth != null && projWidth > 0 ? `<div class="projected" style="left:${usedPct}%;width:${projWidth}%"></div>` : ''}
         <div class="now" style="left:${usedPct}%"></div>
+        ${glidePathMarker}
         <div class="reset-mk"></div>
         <div class="axis"><span>NOW</span><span>+1h</span><span>+2h</span><span>RESET</span></div>
     </div>`;
