@@ -75,9 +75,19 @@ class LimitsResponse(BaseModel):
     limits: list[LimitCard]
 
 
+class UsageDelta(BaseModel):
+    provider_id: str
+    account_id: str
+    model_id: str | None = None
+    unit_type: str  # "tokens_input", "tokens_output", "cost_usd", etc.
+    value: float
+    timestamp: str  # ISO-8601
+
+
 class IngestRequest(BaseModel):
     provider: str
     metrics: list[LimitCard]
+    deltas: list[UsageDelta] = Field(default_factory=list)
     sidecar_id: str | None = None  # Originating host identifier (Phase 4B fleet mgmt)
     sidecar_version: str | None = None  # App version from package.json
     os_platform: str | None = None  # platform.system() + "/" + platform.release()
