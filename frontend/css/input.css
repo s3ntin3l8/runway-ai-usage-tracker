@@ -2058,3 +2058,168 @@ l-table td.num {
 .ht-detail-table tbody tr:last-child td {
     border-bottom: none;
 }
+
+/* ============================================
+   FLEET HUD — Fleet Commander, LEDs, Fuel Dump, Wingman Pods
+   (spec §5.1 / §5.2)
+   ============================================ */
+.fleet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+}
+.fleet-commander {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    padding: 0;
+    border-radius: 4px;
+    transition: border-color var(--dur) var(--ease);
+}
+.fleet-commander:hover {
+    border-color: var(--hairline-strong);
+}
+.fleet-commander > .glass.card {
+    border: none;
+    border-radius: 0;
+    margin: 0;
+}
+
+/* ─── Status LED row ─── */
+.led-row {
+    display: flex;
+    gap: 5px;
+    padding: 4px 12px 0 12px;
+    align-items: center;
+}
+.led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--unk);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4) inset;
+    transition: transform var(--dur-fast) var(--ease);
+    cursor: help;
+}
+.led:hover { transform: scale(1.4); }
+.led-good       { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.led-warn       { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.led-crit       { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
+.led-unlimited  { background: var(--unlm); box-shadow: 0 0 6px var(--unlm); }
+.led-off        { background: var(--unk); opacity: 0.4; }
+
+/* ─── Fuel Dump bar ─── */
+.fuel-dump-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-top: 1px dashed var(--hairline);
+    padding: 6px 12px;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.fuel-dump-bar:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+}
+.fuel-dump-bar[aria-expanded="true"] {
+    background: var(--accent-dim);
+    color: var(--accent);
+}
+.fuel-dump-bar[aria-expanded="true"] .fuel-dump-label::after { content: " ▾"; }
+.fuel-dump-bar[aria-expanded="false"] .fuel-dump-label::after { content: " ▸"; }
+.fuel-dump-label { font-weight: 700; flex-shrink: 0; }
+.fuel-dump-track {
+    flex: 1;
+    display: flex;
+    height: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    overflow: hidden;
+    border-radius: 1px;
+}
+.fuel-dump-segment {
+    height: 100%;
+    background: var(--accent);
+    border-right: 1px solid var(--surface);
+    transition: background var(--dur-fast) var(--ease);
+}
+.fuel-dump-segment:last-child { border-right: none; }
+.fuel-dump-segment:nth-child(2) { background: var(--accent-cool); }
+.fuel-dump-segment:nth-child(3) { background: var(--good); }
+.fuel-dump-segment:nth-child(4) { background: var(--unlm); }
+.fuel-dump-segment:nth-child(n+5) { background: var(--text-dim); }
+.fuel-dump-empty {
+    border-top: 1px dashed var(--hairline);
+    padding: 6px 12px;
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+}
+
+/* ─── Wingman Pods row ─── */
+.wingman-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 6px;
+    padding: 8px 12px 12px 12px;
+    background: var(--surface-2);
+    border-top: 1px dashed var(--hairline);
+}
+.wingman-row[hidden] { display: none; }
+.wingman-pod {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-radius: 2px;
+}
+.wingman-pod .pod-head {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-bottom: 2px;
+}
+.wingman-pod .pod-sidecar {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.wingman-pod .pod-sub {
+    color: var(--text-dim);
+    font-size: 9px;
+}
+.wingman-pod .pod-metric {
+    font-size: 13px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+.wingman-pod .pod-unit {
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-left: 2px;
+}
+.wingman-pod .pod-empty {
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-style: italic;
+}

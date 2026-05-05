@@ -13,6 +13,17 @@ async function fetchWithAuth(url, options = {}) {
 }
 
 /**
+ * Fetch the Fleet HUD aggregation: one entry per (provider_id, account_id)
+ * with critical_gauge / secondary_limits / sidecar_contributions.
+ * @returns {Promise<{fleet: Array<FleetEntry>, generated_at: string}>}
+ */
+export async function fetchUsageFleet() {
+    const resp = await fetchWithAuth('/api/v1/usage/fleet');
+    if (!resp.ok) throw new Error(`Failed to fetch fleet view: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+/**
  * Fetch all limits from the backend
  * @returns {Promise<{limits: Array<LimitCard>}>} Limits response
  * @throws {Error} Network, HTTP, or parsing errors with descriptive messages

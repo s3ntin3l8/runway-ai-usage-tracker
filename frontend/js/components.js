@@ -1597,3 +1597,145 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
             </details>
         </div>`;
 }
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fleet HUD: Fleet Commander cards, Wingman Pods, Fuel Dump bar, Status LEDs
+// (Spec §5.1 / §5.2 — driven by /api/v1/usage/fleet)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Render a Fleet Commander card for one (provider_id, account_id) group.
+ * Wraps the existing horizon-card renderer for the critical gauge and adds:
+ *   - LED row showing the health of each secondary limit
+ *   - Fuel Dump bar segmented by sidecar contribution
+ *   - Collapsible Wingman Pods row driven by the Fuel Dump click
+ *
+ * @param {object} entry             - One fleet[] entry from /api/v1/usage/fleet
+ * @param {Map}    forecastMap       - Map<seriesKey, ForecastEntry> for glide path
+ * @returns {string} HTML
+ */
+export function buildFleetCommanderCard(entry, forecastMap) {
+    const critical = entry.critical_gauge;
+    if (!critical) return '';
+
+    // Reuse the existing card renderer for the critical gauge — it already does
+    // glide path + velocity card + forecast stripe.
+    const fKey = _forecastSeriesKey(critical);
+    const fe = forecastMap?.get?.(fKey);
+    const criticalCard = buildHorizonCard(critical, fe);
+
+    const secondary = entry.secondary_limits || [];
+    const contributions = entry.sidecar_contributions || {};
+
+    const ledRow = secondary.length ? _buildStatusLEDRow(secondary) : '';
+    const fuelDump = _buildFuelDumpBar(contributions);
+    const wingmanRow = _buildWingmanPodsRow(secondary, contributions);
+
+    const groupId = `fleet-${escapeHTMLAttr(entry.provider_id)}-${escapeHTMLAttr(entry.account_id || 'default')}`;
+
+    return `<div class="fleet-commander" data-group-id="${groupId}"
+                 data-provider-id="${escapeHTMLAttr(entry.provider_id)}"
+                 data-account-id="${escapeHTMLAttr(entry.account_id || '')}">
+        ${criticalCard}
+        ${ledRow}
+        ${fuelDump}
+        ${wingmanRow}
+    </div>`;
+}
+
+/**
+ * Status LED row — one colored dot per secondary limit.
+ * Spec §5.1: green <70%, yellow <90%, red ≥90%.
+ */
+function _buildStatusLEDRow(secondary) {
+    const dots = secondary.map(card => {
+        const pct = card.pct_used != null ? card.pct_used
+            : (card.used_value != null && card.limit_value ? card.used_value / card.limit_value * 100 : null);
+        let cls = 'led led-off';
+        let label = card.service_name || card.window_type || '';
+        if (pct != null) {
+            if (pct >= 90) cls = 'led led-crit';
+            else if (pct >= 70) cls = 'led led-warn';
+            else cls = 'led led-good';
+        } else if (card.is_unlimited) {
+            cls = 'led led-unlimited';
+        }
+        const tipPct = pct != null ? `${Math.round(pct)}% used` : (card.is_unlimited ? 'unlimited' : 'no data');
+        return `<span class="${cls}" data-tip="${escapeHTMLAttr(label)} · ${escapeHTMLAttr(tipPct)}"></span>`;
+    }).join('');
+    return `<div class="led-row" aria-label="Secondary quotas">${dots}</div>`;
+}
+
+/**
+ * Fuel Dump bar — horizontal segmented bar showing each sidecar's share of
+ * the current-month token burn. Click toggles the Wingman Pods row.
+ * Spec §5.2: "mini-bar indicating exactly which Sidecar contributed".
+ */
+function _buildFuelDumpBar(contributions) {
+    const entries = Object.entries(contributions || {});
+    if (!entries.length) {
+        return `<div class="fuel-dump-empty" data-tip="No sidecar telemetry yet">— no sidecar telemetry —</div>`;
+    }
+
+    // Sum tokens_input across sidecars; fall back to "total" or 0
+    const valueOf = ([_, units]) =>
+        Number(units?.tokens_input ?? units?.tokens_total ?? units?.total ?? 0);
+    const total = entries.reduce((sum, e) => sum + valueOf(e), 0) || 1;
+
+    const segments = entries
+        .map(e => ({ sidecar: e[0], value: valueOf(e) }))
+        .sort((a, b) => b.value - a.value)
+        .map(s => {
+            const pct = (s.value / total) * 100;
+            const widthPct = Math.max(2, pct).toFixed(2); // floor at 2% so 0-burn sidecars stay visible
+            const tip = `${s.sidecar}: ${_formatTokenShort(s.value)} (${pct.toFixed(0)}%)`;
+            return `<span class="fuel-dump-segment" style="width:${widthPct}%;"
+                          data-sidecar="${escapeHTMLAttr(s.sidecar)}"
+                          data-tip="${escapeHTMLAttr(tip)}"></span>`;
+        })
+        .join('');
+
+    return `<button type="button" class="fuel-dump-bar" aria-expanded="false"
+                    aria-label="Per-sidecar token contribution. Click to expand pods.">
+        <span class="fuel-dump-label">FUEL DUMP</span>
+        <span class="fuel-dump-track">${segments}</span>
+    </button>`;
+}
+
+/**
+ * Wingman Pods row — collapsible, holds one mini-card per sidecar.
+ */
+function _buildWingmanPodsRow(secondaryCards, contributions) {
+    const sidecars = Object.keys(contributions || {});
+    if (!sidecars.length) return '';
+
+    const pods = sidecars.map(sid => {
+        const units = contributions[sid] || {};
+        const tokens = Number(units.tokens_input ?? units.tokens_total ?? 0);
+        const cost = Number(units.cost_usd ?? 0);
+
+        // Find matching card for this sidecar (if any) to show service name
+        const matchingCard = secondaryCards.find(c => c.sidecar_id === sid);
+        const subtitle = matchingCard?.service_name || sid;
+
+        const tokenLine = tokens > 0
+            ? `<div class="pod-metric">${_formatTokenShort(tokens)} <span class="pod-unit">tokens</span></div>`
+            : '';
+        const costLine = cost > 0
+            ? `<div class="pod-metric">$${cost.toFixed(2)} <span class="pod-unit">spend</span></div>`
+            : '';
+        const empty = !tokens && !cost ? `<div class="pod-empty">no telemetry</div>` : '';
+
+        return `<article class="wingman-pod" data-sidecar="${escapeHTMLAttr(sid)}">
+            <div class="pod-head">
+                <span class="pod-sidecar">${escapeHTML(sid)}</span>
+                <span class="pod-sub">${escapeHTML(subtitle)}</span>
+            </div>
+            ${tokenLine}${costLine}${empty}
+        </article>`;
+    }).join('');
+
+    return `<div class="wingman-row" hidden>${pods}</div>`;
+}
+

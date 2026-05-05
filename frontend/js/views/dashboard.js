@@ -1,7 +1,7 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits, fetchForecast, fetchHistoryRaw } from '../api.js';
+import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchUsageFleet } from '../api.js';
 import { STATE } from '../state.js';
-import { buildHorizonCard, buildCardModalContent, providerDisplayLabel } from '../components.js';
+import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFleetCommanderCard } from '../components.js';
 import { cardKey, applyOrder } from '../layout.js';
 
 let loadDataGeneration = 0;
@@ -210,74 +210,105 @@ function renderFilterBar(cards) {
     valChipsEl.innerHTML = html;
 }
 
-/** Build and inject grouped sections (the main card grid). */
+/** Build and inject the Fleet Commander grid (one card per provider+account).
+ *
+ * Driven by STATE.fleet (from /api/v1/usage/fleet). Filters from the chip bar
+ * still operate on flat cards (STATE.data) — we apply the same filter to the
+ * fleet entries by checking each entry's critical_gauge + secondary_limits.
+ */
 function renderProviderSections(cards) {
     const container = document.getElementById('dashboard-sections');
     if (!container) return;
 
-    const visible = applyFilters(cards);
+    const fleet = STATE.fleet || [];
+    if (!fleet.length) {
+        // Fallback: if /fleet returned nothing (e.g. bootstrap on a fresh DB),
+        // show the legacy flat-card grid so the dashboard isn't empty.
+        if (cards.length) return _renderLegacyFlatGrid(cards);
+        container.innerHTML = `<div class="dash-empty">NO DATA</div>`;
+        return;
+    }
+
+    // Apply current filter chip to fleet entries: keep an entry if any of its
+    // cards (critical_gauge + secondary_limits) match the filter.
+    const filter = STATE.activeFilter;
+    const matchEntry = (entry) => {
+        if (!filter) return true;
+        const all = [entry.critical_gauge, ...(entry.secondary_limits || [])].filter(Boolean);
+        return all.some(c => c[filter.dimension] === filter.value);
+    };
+
+    let visible = fleet.filter(matchEntry);
     if (!visible.length) {
         container.innerHTML = `<div class="dash-empty">NO MATCH · <button class="toggle-btn" onclick="setFilter(null)">CLEAR FILTER</button></div>`;
         return;
     }
 
-    const dim = STATE.filterDimension || 'provider_id';
-
-    // Group by current dimension
-    const groups = new Map();
-    visible.forEach(card => {
-        const key = card[dim] || '__other__';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(card);
-    });
-
-    // Sort groups by worst health, then alphabetically
+    // Sort entries by worst health on the critical gauge
     const SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const sortedKeys = [...groups.keys()].sort((a, b) => {
-        if (a === '__other__') return 1;
-        if (b === '__other__') return -1;
-        const aW = groups.get(a).reduce((m, c) => Math.max(m, SEVERITY[c.health] || 0), 0);
-        const bW = groups.get(b).reduce((m, c) => Math.max(m, SEVERITY[c.health] || 0), 0);
-        return bW !== aW ? bW - aW : a.localeCompare(b);
+    visible = [...visible].sort((a, b) => {
+        const aW = SEVERITY[a.critical_gauge?.health] || 0;
+        const bW = SEVERITY[b.critical_gauge?.health] || 0;
+        if (aW !== bW) return bW - aW;
+        return (a.provider_id || '').localeCompare(b.provider_id || '');
     });
 
-    // We only apply layout reordering if dimension is provider_id
-    let orderedKeys = sortedKeys;
-    if (dim === 'provider_id') {
-        orderedKeys = applyOrder(
-            sortedKeys.map(pid => ({ pid })), x => x.pid, STATE.layout?.provider_order ?? []
-        ).map(x => x.pid);
+    // Honor the saved provider order (Fleet Commander cards still group by provider)
+    const providerOrder = STATE.layout?.provider_order ?? [];
+    if (providerOrder.length) {
+        visible = applyOrder(visible, e => e.provider_id, providerOrder);
     }
 
-    let totalCount = 0;
     let html = '';
-    for (const key of orderedKeys) {
-        const items = applyOrder(
-            groups.get(key), cardKey, (dim === 'provider_id' ? STATE.layout?.card_orders?.[key] : null) ?? []
-        );
-        let cardsHtml = '';
-        for (const card of items) {
-            const fKey = _forecastSeriesKey(card);
-            const fe = STATE.forecastMap.get(fKey);
-            try { cardsHtml += buildHorizonCard(card, fe); } catch (e) { console.error('buildHorizonCard failed:', e); }
+    let totalCount = 0;
+    for (const entry of visible) {
+        try {
+            html += buildFleetCommanderCard(entry, STATE.forecastMap);
+            totalCount += 1 + (entry.secondary_limits || []).length;
+        } catch (e) {
+            console.error('buildFleetCommanderCard failed:', e, entry);
         }
-        if (!cardsHtml) continue;
-
-        let label = key;
-        if (dim === 'provider_id') label = providerDisplayLabel(key);
-        else if (dim === 'window_type') label = (key.charAt(0).toUpperCase() + key.slice(1)) + ' Window';
-
-        html += `<div class="section" data-group-key="${escapeHTML(key)}">
-            <div class="section-head">${escapeHTML(label)}<div class="ln"></div><span class="count">${items.length}</span></div>
-            <div class="hz-grid">${cardsHtml}</div>
-        </div>`;
-        totalCount += items.length;
     }
 
-    container.innerHTML = html || `<div class="dash-empty">NO MATCH</div>`;
+    container.innerHTML = html
+        ? `<div class="hz-grid fleet-grid">${html}</div>`
+        : `<div class="dash-empty">NO MATCH</div>`;
+
+    _wireFuelDumpToggles(container);
 
     const footerCount = document.getElementById('footer-count');
     if (footerCount) footerCount.textContent = totalCount;
+}
+
+/** Click on a Fuel Dump bar toggles the matching Wingman Pods row open/closed. */
+function _wireFuelDumpToggles(root) {
+    root.querySelectorAll('.fleet-commander').forEach(commander => {
+        const bar = commander.querySelector('.fuel-dump-bar');
+        const row = commander.querySelector('.wingman-row');
+        if (!bar || !row) return;
+        bar.addEventListener('click', () => {
+            const expanded = bar.getAttribute('aria-expanded') === 'true';
+            bar.setAttribute('aria-expanded', String(!expanded));
+            if (expanded) row.setAttribute('hidden', '');
+            else row.removeAttribute('hidden');
+        });
+    });
+}
+
+/** Bootstrap fallback: render flat cards when /fleet has no data yet. */
+function _renderLegacyFlatGrid(cards) {
+    const container = document.getElementById('dashboard-sections');
+    if (!container) return;
+
+    let cardsHtml = '';
+    for (const card of cards) {
+        const fKey = _forecastSeriesKey(card);
+        const fe = STATE.forecastMap.get(fKey);
+        try { cardsHtml += buildHorizonCard(card, fe); } catch (e) { console.error('buildHorizonCard failed:', e); }
+    }
+    container.innerHTML = cardsHtml
+        ? `<div class="section"><div class="hz-grid">${cardsHtml}</div></div>`
+        : `<div class="dash-empty">NO DATA</div>`;
 }
 
 /** Open the per-card detail modal. */
@@ -336,9 +367,10 @@ export async function loadDashboard() {
     if (errorBanner) errorBanner.classList.add('hidden');
 
     try {
-        const [limitsResult, forecastResult] = await Promise.allSettled([
+        const [limitsResult, forecastResult, fleetResult] = await Promise.allSettled([
             fetchLimits(),
             fetchForecast(),
+            fetchUsageFleet(),
         ]);
 
         if (myGeneration !== loadDataGeneration) return;
@@ -353,6 +385,10 @@ export async function loadDashboard() {
             }
             STATE.forecastMap = newMap;
         }
+
+        // STATE.fleet drives the new Fleet Commander grid; STATE.data still
+        // backs the top LED strip, hero ring, and filter chips.
+        STATE.fleet = fleetResult.status === 'fulfilled' ? (fleetResult.value.fleet || []) : [];
 
         renderFleetHealth(STATE.data);
         renderAggregateHero(STATE.data, STATE.forecastMap);
