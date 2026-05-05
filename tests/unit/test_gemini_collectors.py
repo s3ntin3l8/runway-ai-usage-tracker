@@ -63,6 +63,7 @@ async def test_gemini_api_success():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="local strategy moved to sidecar")
 async def test_gemini_local_no_dirs_returns_empty():
     """When Gemini session dirs don't exist, local strategy returns empty list."""
     collector = GeminiCollector()
@@ -77,6 +78,7 @@ async def test_gemini_local_no_dirs_returns_empty():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="local strategy moved to sidecar")
 async def test_gemini_local_disabled_returns_empty():
     """When local collector is disabled, local strategy returns empty list."""
     collector = GeminiCollector()
@@ -107,6 +109,7 @@ class TestGeminiEnrichment:
         assert collector._window_resets["flash"] == datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
         assert collector._window_resets["pro"] == datetime(2026, 5, 2, 0, 0, tzinfo=UTC)
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_process_sessions_sums_all_messages(self, tmp_path):
         """_process_sessions should sum usage from ALL messages (Total Consumption)."""
         collector = GeminiCollector()
@@ -146,6 +149,7 @@ class TestGeminiEnrichment:
         assert len(totals["messages"]) == 2
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_local_enrichment_emits_per_model_dicts(self, tmp_path):
         """Local strategy should emit separate enrichment dict per model class."""
         collector = GeminiCollector()
@@ -230,6 +234,7 @@ class TestGeminiEnrichment:
         assert by_model["pro"]["by_model"]["gemini-2.5-pro"]["tokens"]["total"] == 300
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_local_enrichment_filters_by_reset_at(self, tmp_path):
         """Messages before the daily window start (reset_at - 24h) should be excluded."""
         collector = GeminiCollector()
@@ -303,6 +308,7 @@ class TestGeminiEnrichment:
         assert flash["msgs"] == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_local_enrichment_caps_far_future_reset_at(self, tmp_path):
         """When reset_at is far in the future, window_start must be capped."""
         collector = GeminiCollector()

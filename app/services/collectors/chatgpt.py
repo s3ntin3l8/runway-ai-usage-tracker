@@ -1,5 +1,8 @@
 """
-ChatGPT Codex quota collector orchestrating API and log fallback strategies.
+ChatGPT Codex quota collector orchestrating Web Gateway / OAuth strategies.
+
+Local CLI / log enrichment has moved to the sidecar; this server-side collector
+only handles HTTP-based strategies.
 """
 
 import logging
@@ -10,7 +13,6 @@ import httpx
 
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
-from app.services.collectors.chatgpt_local import ChatGPTLocalMixin
 
 # Mixins
 from app.services.collectors.chatgpt_oauth import ChatGPTWebOAuthMixin
@@ -22,12 +24,11 @@ logger = logging.getLogger(__name__)
 class ChatGPTCollector(
     ChatGPTWebOAuthMixin,
     ChatGPTWebMixin,
-    ChatGPTLocalMixin,
     BaseCollector,
 ):
     """
     Orchestrator for ChatGPT data collection.
-    Inherits from mixins for auth, API, and local strategies.
+    Inherits from mixins for auth and HTTP API strategies.
     """
 
     PROVIDER_ID = "chatgpt"
@@ -35,8 +36,6 @@ class ChatGPTCollector(
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "web": ("Web Gateway (web)", "_strategy_web_wrap"),
-        "cli": ("CLI RPC (local)", "_collect_via_cli_rpc"),
-        "local": ("Local Enrichment (local)", "_strategy_local_enrichment", {"enrich": True}),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -67,21 +66,14 @@ class ChatGPTCollector(
                 continue
 
     async def is_configured(self) -> bool:
-        """Check if ChatGPT auth data (logs or tokens) is present."""
+        """Check if ChatGPT auth data (OAuth token or session cookie) is present."""
         # Use None for client to avoid triggering background refreshes during config check
         auth = await self._get_auth_data(None)
-
-        # Check if we have an OAuth token, a session cookie, or local logs
-        has_auth = bool(auth.get("token"))
-        has_local = auth.get("source") == "local"
-
-        return has_auth or has_local
+        return bool(auth.get("token"))
 
     def _fallback_strategies(self) -> list[Any]:
-        """Return the fallback strategies for ChatGPT."""
-        return [
-            self._collect_via_cli_rpc,
-        ]
+        """Return the fallback strategies for ChatGPT (HTTP only)."""
+        return []
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Web API / OAuth strategy."""

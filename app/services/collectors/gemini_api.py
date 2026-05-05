@@ -28,6 +28,21 @@ MODEL_DISPLAY_NAMES = {
 class GeminiApiMixin:
     """Mixin for Gemini Cloud Code API collection."""
 
+    def _map_model_to_class(self, model_name: str) -> str:
+        """Map raw model name to card category (pro, flash, flash-lite)."""
+        if not model_name:
+            return "unknown"
+        lower = model_name.lower()
+        if "flash-lite" in lower or "gemini-1.5-flash-lite" in lower:
+            return "flash-lite"
+        if "flash" in lower or "gemini-1.5-flash" in lower:
+            return "flash"
+        if "pro" in lower or "gemini-1.5-pro" in lower:
+            return "pro"
+        if "ultra" in lower:
+            return "ultra"
+        return model_name
+
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
         now = datetime.now(UTC)

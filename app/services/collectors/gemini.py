@@ -1,5 +1,8 @@
 """
-Google Gemini quota collector orchestrating API and log fallback strategies.
+Google Gemini quota collector orchestrating API strategy.
+
+Local CLI / log fallback has moved to the sidecar; this server-side collector
+only handles HTTP-based strategies.
 """
 
 import logging
@@ -12,7 +15,6 @@ from app.core.config import settings
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 from app.services.collectors.gemini_api import GeminiApiMixin
-from app.services.collectors.gemini_local import GeminiLocalMixin
 
 # Mixins
 from app.services.collectors.gemini_oauth import GeminiOAuthMixin
@@ -24,12 +26,11 @@ logger = logging.getLogger(__name__)
 class GeminiCollector(
     GeminiOAuthMixin,
     GeminiApiMixin,
-    GeminiLocalMixin,
     BaseCollector,
 ):
     """
     Orchestrator for Gemini data collection.
-    Inherits from GeminiOAuthMixin for token logic and other mixins for strategies.
+    Inherits from GeminiOAuthMixin for token logic and GeminiApiMixin for strategies.
     """
 
     PROVIDER_ID = "gemini"
@@ -37,7 +38,6 @@ class GeminiCollector(
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "api": ("API (api)", "_strategy_api_wrap"),
-        "local": ("Local Logs / CLI (local)", "_collect_via_logs", {"enrich": True}),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -73,19 +73,12 @@ class GeminiCollector(
         self._window_resets = resets
 
     async def is_configured(self) -> bool:
-        """Check if Gemini credentials or logs are present."""
-        if await self._get_current_token():
-            return True
-        # Check logs/CLI
-        if await self._collect_via_logs(None):
-            return True
-        return False
+        """Check if Gemini credentials are present."""
+        return bool(await self._get_current_token())
 
     def _fallback_strategies(self) -> list[Any]:
-        """Return the fallback strategies for Gemini (Logs)."""
-        return [
-            self._collect_via_logs,
-        ]
+        """Return the fallback strategies for Gemini (HTTP only)."""
+        return []
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """API strategy."""
@@ -96,7 +89,7 @@ class GeminiCollector(
         return await self._collect_via_api(client)
 
     async def _error_handler(self) -> list[dict[str, Any]]:
-        """Return final error card context when both API and logs fail."""
+        """Return final error card context when the API strategy fails."""
         creds = await self._get_credentials()
         if not creds:
             return [
@@ -108,6 +101,4 @@ class GeminiCollector(
                 )
             ]
 
-        return [
-            error_card("Gemini", "🔵", "All collection strategies failed", error_type="api_error")
-        ]
+        return [error_card("Gemini", "🔵", "API strategy failed", error_type="api_error")]

@@ -1,5 +1,8 @@
 """
-Anthropic collector orchestrating OAuth, Web Scraping, and Local Log strategies.
+Anthropic collector orchestrating OAuth and Web Scraping strategies.
+
+Local CLI/log/statusline scraping has moved to the sidecar; this server-side
+collector only handles HTTP-based strategies (api + web).
 """
 
 import logging
@@ -9,7 +12,6 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.services.collectors.anthropic_local import AnthropicLocalMixin
 
 # Mixins
 from app.services.collectors.anthropic_oauth import AnthropicOAuthMixin
@@ -23,7 +25,6 @@ logger = logging.getLogger(__name__)
 class AnthropicCollector(
     AnthropicOAuthMixin,
     AnthropicWebMixin,
-    AnthropicLocalMixin,
 ):
     """
     Orchestrator for Anthropic data collection.
@@ -34,11 +35,8 @@ class AnthropicCollector(
     DEFAULT_WINDOW_TYPE = "weekly"  # Free tier; Pro/paid windows are tagged per-card
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
-        "statusline": ("Local Statusline (local)", "_strategy_statusline_wrap"),
         "oauth": ("OAuth API (api)", "_strategy_oauth_wrap"),
         "web": ("Web API (web)", "_strategy_web_wrap"),
-        "cli": ("CLI PTY (local)", "_strategy_cli_pty"),
-        "local": ("Local Logs (local)", "_strategy_local_enhanced", {"enrich": True}),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -65,13 +63,16 @@ class AnthropicCollector(
         self._terminal_failure = False  # Guard for invalid_grant
 
     async def is_configured(self) -> bool:
-        """Check if Anthropic credentials (OAuth, token, or local logs) are present."""
+        """Check if Anthropic credentials (OAuth or session cookie) are present."""
         if await self._get_current_token():
             return True
         if self._is_valid_credential(settings.CLAUDE_CODE_OAUTH_TOKEN):
             return True
-        # Check for statusline/local logs
-        if await self._strategy_statusline():
+        # Web fallback: a session cookie pushed by sidecar or stored in ProviderConfig
+        cookie = await token_cache.get_token(
+            "anthropic", "cookie_sessionKey", account_id=self.account_id or "default"
+        )
+        if cookie:
             return True
         return False
 
@@ -163,11 +164,9 @@ class AnthropicCollector(
         return all(r.get("remaining") == "ERR" for r in results)
 
     def _fallback_strategies(self) -> list[Any]:
-        """Return ordered fallback strategies."""
+        """Return ordered fallback strategies (HTTP only — local scraping is in the sidecar)."""
         return [
             self._get_claude_via_web_api,
-            self._strategy_cli_pty,
-            self._strategy_local_enhanced,
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -181,10 +180,6 @@ class AnthropicCollector(
         return []
 
     # ── Individual strategy wrappers (used by dynamic STRATEGIES dispatch) ────
-
-    async def _strategy_statusline_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Dispatch wrapper: Local Statusline (fast path)."""
-        return await self._strategy_statusline()
 
     async def _strategy_web_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Dispatch wrapper: Web API via session cookie."""

@@ -278,6 +278,7 @@ class TestChatGPTCollectorDetailed:
             assert codex_card["tier"] == "plus"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_local_enrichment_injects_tokens(self, mock_http_client):
         """Verify local enrichment injects token_usage into primary Codex card."""
         collector = ChatGPTCollector()
@@ -329,6 +330,7 @@ class TestChatGPTCollectorDetailed:
             assert "out:600" in codex_card["detail"]
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_local_enrichment_does_not_fallback(self, mock_http_client):
         """Enrichment must not act as fallback when all primaries fail."""
         collector = ChatGPTCollector()
@@ -379,6 +381,7 @@ class TestChatGPTCollectorDetailed:
         assert "Chrome" in headers["User-Agent"]
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_collect_via_cli_rpc_success(self):
         """Test successful data collection via codex CLI RPC."""
         collector = ChatGPTCollector()

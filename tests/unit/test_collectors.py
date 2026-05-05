@@ -115,6 +115,7 @@ class TestAnthropicCollector:
         mock_get_token.assert_awaited_once_with("anthropic", "refresh_token", account_id="acc_a")
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_collect_oauth_401_fallback(self, mock_http_client):
         """Test fallback to local logs when OAuth token is invalid (401)."""
         collector = AnthropicCollector()
@@ -390,6 +391,7 @@ class TestAnthropicCollector:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_collect_enhanced_local_no_fallback(self, mock_http_client):
         """Enrichment does not act as fallback when OAuth and Web API fail."""
         collector = AnthropicCollector()
@@ -473,6 +475,7 @@ class TestAnthropicCollector:
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_get_claude_local_enhanced_sync_dedup(self, tmp_path):
         """Test deduplication of streaming chunks in local logs."""
         collector = AnthropicCollector()
@@ -541,6 +544,7 @@ class TestAnthropicCollector:
         assert week["msgs"] == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_collect_multi_config_dirs(self, mock_http_client):
         """Test scanning multiple config directories via CLAUDE_CONFIG_DIR."""
         collector = AnthropicCollector()
@@ -842,6 +846,7 @@ class TestAnthropicCollector:
         assert result[0]["remaining"] == "100.0%"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_get_claude_local_enhanced_uses_to_thread(self):
         """C5: _get_claude_local_enhanced must delegate sync I/O to asyncio.to_thread."""
 
@@ -887,6 +892,7 @@ class TestAnthropicCollector:
         assert result[0]["tier"] == "Plus"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_collect_via_cli_pty_success(self):
         """Test successful parsing of 'claude /usage' output including ANSI codes."""
         collector = AnthropicCollector()
@@ -928,6 +934,7 @@ class TestAnthropicCollector:
         assert result[1]["remaining"] == "95.0%"
         assert "4d" in result[1]["reset"]
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_get_claude_local_enhanced_sync_per_window(self, tmp_path):
         """Local log sync returns per-window enrichment dicts with correct bucketing."""
         now = datetime.now(UTC)
@@ -1034,6 +1041,7 @@ class TestAnthropicCollector:
         assert "tokens" in week_opus["by_model"]["opus"]
         assert week_opus["by_model"]["opus"]["tokens"]["total"] == 4700
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_enrichment_isolation_composite_keys(self, tmp_path):
         """Enrichment should isolate usage by (window_type, model_id) using composite reset keys."""
         now = datetime.now(UTC)
@@ -1111,6 +1119,7 @@ class TestAnthropicCollector:
         haiku = by_key[("weekly", "haiku")]
         assert haiku["token_usage"]["input"] == 200
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_enrichment_respects_primary_reset_at(self, tmp_path):
         """Enrichment should only count tokens since the primary card's reset_at."""
         import json
@@ -1542,6 +1551,7 @@ class TestChatGPTCollector:
         # Should return error card if both API and logs fail
         assert isinstance(result, list)
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_chatgpt_codex_sums_all_messages(self, tmp_path):
         """_process_codex_sessions should sum usage from ALL interactions (Total Consumption)."""
         from app.services.collectors.chatgpt import ChatGPTCollector
@@ -1603,6 +1613,7 @@ class TestChatGPTCollector:
         assert enriched["token_usage"]["total"] == 330
         assert "in:220, out:110" in enriched["_enrichment_detail"]
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_chatgpt_codex_rolls_forward_old_window(self, tmp_path):
         """_process_codex_sessions should roll forward an old resets_at to find the current window cutoff."""
         from datetime import UTC, datetime, timedelta
@@ -1646,6 +1657,7 @@ class TestChatGPTCollector:
         result = collector._process_codex_sessions([str(fpath)])
         assert len(result) == 0
 
+    @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_chatgpt_codex_uses_primary_metadata_cutoff(self, tmp_path):
         """_process_codex_sessions should use the primary metadata reset_at for the cutoff."""
         from datetime import UTC, datetime, timedelta
