@@ -1,90 +1,67 @@
-"""Tests for the registry-backed /limits endpoint (Phase 4C)."""
+"""Integration tests for GET /api/v1/usage/limits endpoint with LatestUsage DB."""
 
-from unittest.mock import AsyncMock, patch
+import json
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
+from app.core.db import get_session
 from app.main import app
-from app.services.collector_manager import manager
+from app.models.db import LatestUsage
 
 
-@pytest.fixture
-def client():
-    return TestClient(app)
+@pytest.fixture(name="session")
+def session_fixture():
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
 
 
-def test_limits_serves_from_registry(client):
-    """When registry has cards, /limits returns them without calling collect_all."""
-    fixture_cards = [
-        {
-            "service_name": "Test Service",
-            "icon": "🧪",
-            "remaining": "50%",
-            "unit": "capacity",
-            "reset": "—",
-            "health": "good",
-            "pace": "Stable",
-            "detail": "Test detail",
-        }
-    ]
-    with patch.object(manager, "_registry", fixture_cards):
-        with patch.object(manager, "collect_all", new_callable=AsyncMock) as mock_collect:
-            response = client.get("/api/v1/usage/limits")
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["limits"]) == 1
-            assert data["limits"][0]["service_name"] == "Test Service"
-            # collect_all should NOT have been called — registry was populated
-            mock_collect.assert_not_called()
+@pytest.fixture(autouse=True)
+def setup_api(session):
+    app.dependency_overrides[get_session] = lambda: session
+    yield
+    app.dependency_overrides.clear()
 
 
-def test_limits_fallback_when_registry_empty(client):
-    """When registry is empty, /limits falls back to collect_all."""
-    fresh_cards = [
-        {
-            "service_name": "Fresh Service",
-            "icon": "✨",
-            "remaining": "80%",
-            "unit": "capacity",
-            "reset": "—",
-            "health": "good",
-            "pace": "Stable",
-            "detail": "Fresh detail",
-        }
-    ]
-    with (
-        patch.object(manager, "_registry", []),
-        patch.object(
-            manager, "collect_all", new_callable=AsyncMock, return_value=fresh_cards
-        ) as mock_collect,
-    ):
-        response = client.get("/api/v1/usage/limits")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["limits"]) == 1
-        assert data["limits"][0]["service_name"] == "Fresh Service"
-        # collect_all should have been called as fallback
-        mock_collect.assert_called_once()
+def test_limits_serves_from_db(session: Session):
+    card = {
+        "service_name": "TestService",
+        "provider_id": "test",
+        "account_id": "1",
+        "icon": "❓",
+        "remaining": "100",
+        "unit": "tokens",
+        "health": "good",
+    }
+    record = LatestUsage(
+        provider_id="test",
+        account_id="1",
+        sidecar_id="local",
+        window_type="monthly",
+        variant="default",
+        card_json=json.dumps(card),
+    )
+    session.add(record)
+    session.commit()
+
+    client = TestClient(app)
+    response = client.get("/api/v1/usage/limits")
+    assert response.status_code == 200
+    data = response.json()
+    assert "limits" in data
+    assert any(item["service_name"] == "TestService" for item in data["limits"])
 
 
-def test_get_registry_snapshot_returns_copy():
-    """get_registry_snapshot returns a copy, not a reference."""
-    cards = [
-        {
-            "service_name": "Test",
-            "icon": "T",
-            "remaining": "50%",
-            "unit": "u",
-            "reset": "—",
-            "health": "good",
-            "pace": "Stable",
-            "detail": "d",
-        }
-    ]
-    with patch.object(manager, "_registry", cards):
-        snapshot = manager.get_registry_snapshot()
-        assert snapshot == cards
-        # Mutating the snapshot should not affect the registry
-        snapshot.append({"service_name": "Extra"})
-        assert len(manager._registry) == 1
+def test_limits_fallback_when_db_empty(session: Session):
+    client = TestClient(app)
+    response = client.get("/api/v1/usage/limits")
+    assert response.status_code == 200
+    data = response.json()
+    assert "limits" in data
+    assert isinstance(data["limits"], list)
