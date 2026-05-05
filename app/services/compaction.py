@@ -60,7 +60,7 @@ def _compact_range(
     if start is not None:
         stmt = stmt.where(UsageSnapshot.timestamp >= start)
 
-    rows = session.exec(stmt).all(); print(f"DEBUG: Found {len(rows)} rows to compact")
+    rows = session.exec(stmt).all()
     if not rows:
         return 0
 
