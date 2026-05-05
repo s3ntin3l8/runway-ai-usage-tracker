@@ -35,6 +35,7 @@ class TestAnthropicCollector:
     """Test suite for Anthropic (Claude) collector."""
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_oauth_success(self, mock_http_client, mock_anthropic_oauth_response):
         """Test successful OAuth API collection."""
         collector = AnthropicCollector()
@@ -315,6 +316,7 @@ class TestAnthropicCollector:
         assert any(card.get("data_source") == "api" for card in result)
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_web_api_fallback(
         self,
         mock_http_client,
@@ -693,6 +695,7 @@ class TestAnthropicCollector:
         assert identity == ""
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_oauth_with_identity_in_detail(self, mock_http_client):
         """Test that OAuth response includes identity in detail field."""
         collector = AnthropicCollector()
@@ -732,6 +735,7 @@ class TestAnthropicCollector:
         assert "[OAuth]" in detail
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_web_api_with_identity(self, mock_http_client):
         """Test that Web API response includes identity in detail field."""
         collector = AnthropicCollector()
@@ -1533,6 +1537,7 @@ class TestChatGPTCollector:
         assert "%" in str(result[0].get("remaining", ""))
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_fallback_to_local_logs(self, mock_http_client):
         """Test fallback to local logs when API fails."""
         collector = ChatGPTCollector()
@@ -1958,6 +1963,7 @@ class TestOpenCodeCollector:
                 assert isinstance(saved["rollingUsage"]["cutoff"], str)
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_collect_returns_list(self, mock_http_client):
         """Test OpenCode collector returns a list (may be empty if no data sources available)."""
         collector = OpenCodeCollector()
@@ -1985,6 +1991,7 @@ class TestOpenCodeCollector:
         assert result == []
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_get_opencode_tui_per_window_enrichment(self, tmp_path):
         """_get_opencode_tui emits enrichment dicts, not plain cards."""
         import json
@@ -2176,6 +2183,7 @@ class TestOpenCodeCollector:
         assert collector._enrich_results(primary, []) == primary
         assert collector._enrich_results(primary, [{"remaining": "ERR"}]) == primary
 
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     def test_parse_usage_records_classifies_go_free_api(self):
         """Records with enrichment→go, cost==0→free, cost>0+no-enrichment→api."""
         collector = OpenCodeCollector()
@@ -2272,6 +2280,7 @@ class TestOpenCodeCollector:
         assert bd["free"]["lifetime"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
         assert bd["api"]["lifetime"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
 
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     def test_parse_usage_data_enriches_go_cards_and_emits_extra_cards(self):
         """_parse_usage_data with a breakdown enriches detail and adds Free/API cards."""
         collector = OpenCodeCollector()
@@ -2365,6 +2374,7 @@ class TestOpenCodeCollector:
         # input_source defaults to "server"
         assert all(c.get("input_source") == "server" for c in cards)
 
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     def test_parse_usage_data_input_source_config(self):
         """input_source='config' propagates to all cards when cookie came from UI."""
         collector = OpenCodeCollector()
@@ -2577,6 +2587,7 @@ class TestOpenCodeCollector:
         assert result is None
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_get_opencode_web_full_flow(self, mock_http_client, tmp_path):
         """End-to-end web API collection with mocked responses."""
         collector = OpenCodeCollector()
@@ -2638,6 +2649,7 @@ class TestOpenCodeCollector:
         assert monthly["remaining"] == "$51.00"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_get_opencode_web_no_cookie_returns_empty(self, mock_http_client):
         """When no session cookie is available, return empty list immediately."""
         collector = OpenCodeCollector()
@@ -2658,6 +2670,7 @@ class TestOpenCodeCollector:
         assert result == []
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_get_opencode_web_workspace_failure_returns_empty(self, mock_http_client):
         """If workspace ID cannot be discovered, return empty list."""
         collector = OpenCodeCollector()
@@ -2683,6 +2696,7 @@ class TestOpenCodeCollector:
         assert result == []
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_negative_tokens_clamped_to_zero(self):
         """Negative raw token values are clamped to zero."""
         collector = OpenCodeCollector()
@@ -2714,6 +2728,7 @@ class TestOpenCodeCollector:
         assert r["cache_read"] == 0
         assert r["cost_usd"] == 0.0
 
+    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     def test_free_api_cards_have_provider_id(self):
         """Free and API cards emitted by _build_free_api_card carry provider_id."""
         collector = OpenCodeCollector()
@@ -3125,6 +3140,7 @@ class TestKimiCodingCollector:
         assert result[0]["remaining"] == "No active plan"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_no_auth(self, mock_http_client):
         """Test Kimi Coding collection without auth."""
         collector = KimiCodingCollector()

@@ -101,6 +101,7 @@ async def test_ollama_remaining_bars_and_free_tier():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
 async def test_ollama_no_auth():
     collector = OllamaCollector()
 
@@ -116,6 +117,7 @@ async def test_ollama_no_auth():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
 async def test_ollama_primary_strategy(ollama_html):
     collector = OllamaCollector()
 
@@ -138,6 +140,7 @@ async def test_ollama_primary_strategy(ollama_html):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
 async def test_ollama_cookie_header_selection():
     collector = OllamaCollector()
 

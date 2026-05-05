@@ -1,16 +1,11 @@
-import asyncio
-import json
 import logging
-import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 
-from app.core.browser_cookies import get_chatgpt_device_id, get_chatgpt_session_token
-from app.core.config import is_local_credential_scraping_enabled, settings
-from app.core.utils import http_request_with_retry, safe_write_json
+from app.core.utils import http_request_with_retry
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
@@ -107,12 +102,6 @@ class ChatGPTWebOAuthMixin:
                         "config" if source_meta in ("config", "manual_config") else "sidecar"
                     )
 
-            # Fallback to direct local cookies if enabled and cache is empty
-            if not session_token and is_local_credential_scraping_enabled():
-                session_token = await asyncio.to_thread(get_chatgpt_session_token)
-                if session_token:
-                    input_source = "server"
-
             if session_token:
                 self._current_input_source = input_source
                 if client:
@@ -169,48 +158,19 @@ class ChatGPTWebOAuthMixin:
                     "refresh_token": data.get("refresh_token"),
                     "id_token": data.get("id_token"),
                 }
-                # Persist to disk if possible
-                await self._save_refreshed_oauth_token(new_data)
+                # Refreshed token is cached via token_cache.store() in the caller;
+                # disk persistence of auth.json is the sidecar's responsibility now.
                 return new_data
         except Exception as e:
             logger.debug(f"Error refreshing ChatGPT OAuth token: {e}")
         return None
 
-    async def _save_refreshed_oauth_token(self, data: dict[str, str]):
-        """Persist refreshed OAuth tokens back to auth.json."""
-        if not is_local_credential_scraping_enabled():
-            return
-
-        auth_path = settings.CHATGPT_AUTH_PATH
-        if not os.path.exists(auth_path):
-            return
-
-        try:
-            # Read existing
-            with open(auth_path) as f:
-                existing = json.load(f)
-
-            # Update
-            existing["tokens"]["access_token"] = data["access_token"]
-            if data.get("refresh_token"):
-                existing["refresh_token"] = data["refresh_token"]
-            if data.get("id_token"):
-                existing["id_token"] = data["id_token"]
-            existing["last_refresh"] = datetime.now(UTC).isoformat()
-
-            # Write back
-            safe_write_json(auth_path, existing)
-            logger.info(f"Updated ChatGPT OAuth tokens in {auth_path}")
-        except Exception as e:
-            logger.debug(f"Failed to persist refreshed ChatGPT token: {e}")
-
     async def _get_device_id(self) -> str:
-        """Get device ID from cookies or use generated session ID."""
-        cookie_id = await asyncio.to_thread(get_chatgpt_device_id)
-        if cookie_id:
-            return cookie_id
+        """Get a device ID for ChatGPT API calls.
 
-        # Fallback to generated ID (cached on instance)
+        Browser-cookie extraction moved to the sidecar; the server now generates
+        a stable UUID per collector instance.
+        """
         if not hasattr(self, "_device_id") or not self._device_id:
             self._device_id = str(uuid.uuid4())
         return self._device_id

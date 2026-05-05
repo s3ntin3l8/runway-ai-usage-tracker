@@ -46,17 +46,16 @@ Error Handling:
 - Invalid response: Returns error card
 """
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from app.core.browser_cookies import get_kimi_auth_cookie
 from app.core.config import settings
 from app.core.utils import error_card, human_delta
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
+from app.services.token_cache import token_cache
 
 
 class KimiCodingCollector(BaseCollector):
@@ -149,10 +148,12 @@ class KimiCodingCollector(BaseCollector):
             self._current_input_source = "server"
             return token
 
-        # Priority 3: Chrome cookie
-        token = await asyncio.to_thread(get_kimi_auth_cookie)
+        # Priority 3: Sidecar-pushed cookie via token cache
+        token = await token_cache.get_token(
+            "kimi_coding", "cookie_kimi-auth", account_id=self.account_id or "default"
+        )
         if token:
-            self._current_input_source = "server"
+            self._current_input_source = "sidecar"
         return token
 
     def _parse_response(self, data: dict[str, Any]) -> list[dict[str, Any]]:

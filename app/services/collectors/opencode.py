@@ -29,10 +29,9 @@ from typing import Any
 
 import httpx
 
-from app.core.browser_cookies import get_opencode_session_cookie
-from app.core.config import is_local_collector_enabled, settings
-from app.core.utils import PaceCalculator, error_card, http_request_with_retry
-from app.services.collectors.base import BaseCollector, format_token_details
+from app.core.config import settings
+from app.core.utils import PaceCalculator, http_request_with_retry
+from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
 from app.services.token_cache import token_cache
 
@@ -73,9 +72,8 @@ class OpenCodeCollector(BaseCollector):
     DEFAULT_WINDOW_TYPE = "weekly"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
-        "web": ("Web API (Browser Cookie)", "_get_opencode_web"),
+        "web": ("Web API (session cookie)", "_get_opencode_web"),
         "sidecar": ("Sidecar Aggregation (Multi-Host)", "_strategy_sidecar_aggregation"),
-        "local": ("Local Database", "_strategy_local_db_fallback", {"enrich": True}),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -126,33 +124,16 @@ class OpenCodeCollector(BaseCollector):
             logger.debug(f"Failed to save OpenCode state to {path}: {e}")
 
     async def is_configured(self) -> bool:
-        """Check if OpenCode session cookie or local DB is present."""
-        # Check for session cookie (browser or manually entered via UI)
-        session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
-        if not session_cookie:
-            session_cookie = await token_cache.get_token(
-                "opencode", "cookie_session", account_id=self.account_id or "default"
-            )
-        if session_cookie:
-            return True
-
-        # Check for local DB if enabled
-        if is_local_collector_enabled():
-            potential_paths = [
-                settings.OPENCODE_DB_PATH,
-                os.path.expanduser("~/.local/share/opencode/opencode.db"),
-                os.path.expanduser("~/.opencode/opencode.db"),
-            ]
-            if any(os.path.exists(p) for p in potential_paths):
-                return True
-
-        return False
+        """Check if OpenCode session cookie is available (sidecar-pushed or UI)."""
+        session_cookie = await token_cache.get_token(
+            "opencode", "cookie_session", account_id=self.account_id or "default"
+        )
+        return bool(session_cookie)
 
     def _fallback_strategies(self) -> list[Any]:
-        """Return the fallback strategies for OpenCode (Sidecar, Local DB)."""
+        """Return fallback strategies for OpenCode (sidecar aggregation only)."""
         return [
             self._strategy_sidecar_aggregation,
-            self._strategy_local_db_fallback,
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -168,12 +149,6 @@ class OpenCodeCollector(BaseCollector):
     ) -> list[dict[str, Any]]:
         """Second tier: Sidecar aggregation of multi-host data."""
         return await external_metric_service.get_opencode_aggregated()
-
-    async def _strategy_local_db_fallback(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Third tier: Local database collection (if enabled)."""
-        if is_local_collector_enabled():
-            return await self._get_opencode_tui()
-        return []
 
     async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
@@ -191,16 +166,11 @@ class OpenCodeCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
         """
-        # Check for session cookie (browser, then token cache for UI-entered values)
-        session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
-        input_source = "server" if session_cookie else None
-
-        if not session_cookie:
-            session_cookie = await token_cache.get_token(
-                "opencode", "cookie_session", account_id=self.account_id or "default"
-            )
-            if session_cookie:
-                input_source = "config"
+        # Source: token cache — populated by sidecar push or via UI ProviderConfig
+        session_cookie = await token_cache.get_token(
+            "opencode", "cookie_session", account_id=self.account_id or "default"
+        )
+        input_source = "config" if session_cookie else None
 
         if not session_cookie:
             session_cookie = await token_cache.get_token(
@@ -795,439 +765,3 @@ class OpenCodeCollector(BaseCollector):
 
         # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
         return cards
-
-    async def _get_opencode_tui(self) -> list[dict[str, Any]]:
-        """
-        Query local DB and emit one enrichment dict per window.
-
-        Returns enrichment-shaped dicts (not real cards) carrying
-        `_enrichment_detail`, `totals`, and `_fallback_card`. The custom
-        `_enrich_results` merges them into the web-API primary cards; when
-        there is no primary, `_fallback_card` is promoted so local-only
-        hosts still render a card.
-        """
-        potential_paths = [
-            settings.OPENCODE_DB_PATH,
-            os.path.expanduser("~/.local/share/opencode/opencode.db"),
-            os.path.expanduser("~/.opencode/opencode.db"),
-        ]
-
-        db = None
-        for p in potential_paths:
-            if os.path.exists(p):
-                db = p
-                logger.debug(f"Found OpenCode database at: {p}")
-                break
-
-        if not db:
-            logger.debug("No OpenCode database found in any of the potential paths.")
-            return []
-
-        try:
-            import aiosqlite
-
-            now = datetime.now(UTC)
-
-            async with aiosqlite.connect(db) as conn:
-                # Discover identity if not already set via UI/Web
-                if not self.account_label or self.account_label.lower() == "default":
-                    # 1. Check for environment variable override
-                    env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
-                    if env_label:
-                        self.account_label = env_label
-                    else:
-                        # 2. Check local account table
-                        try:
-                            cursor = await conn.execute("SELECT email FROM account LIMIT 1")
-                            row = await cursor.fetchone()
-                            if row and row[0]:
-                                self.account_label = row[0]
-                            else:
-                                self.account_label = "Default"
-                        except Exception:
-                            self.account_label = "Default"
-
-                identity_suffix = f" | {self.account_label}" if self.account_label else ""
-
-                # Define windows. If we have web-discovered info, use those exact cutoffs.
-                # Mapping: rollingUsage->session, weeklyUsage->weekly, monthlyUsage->monthly
-                win_map = {
-                    "session": ("rollingUsage", 5, 12.0),
-                    "weekly": ("weeklyUsage", 7 * 24, 30.0),
-                    "monthly": ("monthlyUsage", 30 * 24, 60.0),
-                }
-
-                windows = []
-                for window_type, (web_key, rolling_hours, limit) in win_map.items():
-                    # Check if we have a fresh cutoff from the web API
-                    web_info = (self._last_window_info or {}).get(web_key)
-                    if web_info and "cutoff" in web_info:
-                        cutoff_ms = int(web_info["cutoff"].timestamp() * 1000)
-                    else:
-                        # Fallback to rolling
-                        cutoff_ms = int((now - timedelta(hours=rolling_hours)).timestamp() * 1000)
-
-                    windows.append((web_key, cutoff_ms, "OpenCode", limit, window_type))
-
-                results = []
-                for _window_key, cutoff_ms, service_name, limit, window_type in windows:
-                    cursor = await conn.execute(
-                        """
-                        SELECT
-                            json_extract(data, '$.cost'),
-                            json_extract(data, '$.tokens.input'),
-                            json_extract(data, '$.tokens.output'),
-                            json_extract(data, '$.tokens.reasoning'),
-                            json_extract(data, '$.tokens.cache.read'),
-                            json_extract(data, '$.tokens.cache.write'),
-                            json_extract(data, '$.modelID'),
-                            json_extract(data, '$.parentID')
-                        FROM message
-                        WHERE time_created > ?
-                          AND json_extract(data, '$.role') = 'assistant'
-                          AND json_extract(data, '$.providerID') = 'opencode-go'
-                        """,
-                        (cutoff_ms,),
-                    )
-
-                    total_cost = 0.0
-                    total_in = total_out = total_reason = cache_r = cache_w = 0
-                    by_model: dict[str, dict] = {}
-                    convos: set[str] = set()
-                    msgs = 0
-
-                    async for cost, t_in, t_out, t_reason, cr, cw, model_id, parent_id in cursor:
-                        msgs += 1
-                        total_cost += float(cost or 0)
-                        total_in += int(t_in or 0)
-                        total_out += int(t_out or 0)
-                        total_reason += int(t_reason or 0)
-                        cache_r += int(cr or 0)
-                        cache_w += int(cw or 0)
-                        if parent_id:
-                            convos.add(parent_id)
-                        if model_id:
-                            short = self._short_model_id_oc(model_id)
-                            entry = by_model.setdefault(
-                                short,
-                                {
-                                    "cost": 0.0,
-                                    "msgs": 0,
-                                    "tokens": {
-                                        "input": 0,
-                                        "output": 0,
-                                        "reasoning": 0,
-                                        "cache_read": 0,
-                                    },
-                                },
-                            )
-                            entry["cost"] += float(cost or 0)
-                            entry["msgs"] += 1
-                            entry["tokens"]["input"] += int(t_in or 0)
-                            entry["tokens"]["output"] += int(t_out or 0)
-                            entry["tokens"]["reasoning"] += int(t_reason or 0)
-                            entry["tokens"]["cache_read"] += int(cr or 0)
-
-                    for entry in by_model.values():
-                        t = entry["tokens"]
-                        t["total"] = t["input"] + t["output"] + t["reasoning"]
-
-                    totals = {
-                        "cost": total_cost,
-                        "msgs": msgs,
-                        "convos": len(convos),
-                        "tokens": {
-                            "input": total_in,
-                            "output": total_out,
-                            "reasoning": total_reason,
-                            "cache_read": cache_r,
-                            "cache_write": cache_w,
-                        },
-                        "by_model": by_model,
-                    }
-
-                    enrichment_detail = self._build_oc_enrichment_detail(totals)
-
-                    # Map totals to canonical card fields
-                    token_usage = totals["tokens"].copy()
-                    token_usage["total"] = (
-                        token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
-                    )
-
-                    results.append(
-                        {
-                            "service_name": service_name,
-                            "window_type": window_type,
-                            "_enrichment_detail": enrichment_detail,
-                            "token_usage": token_usage,
-                            "by_model": by_model,
-                            "msgs": msgs,
-                            "totals": totals,
-                        }
-                    )
-
-                async def sum_tokens_from_cursor(
-                    cur,
-                ) -> tuple[int, int, int, int, int, dict, int]:
-                    _total_in = _total_out = _total_reason = _cache_r = _cache_w = 0
-                    _by_model: dict[str, dict] = {}
-                    _msgs = 0
-                    async for (
-                        t_in,
-                        t_out,
-                        t_reason,
-                        cr,
-                        cw,
-                        m_id,
-                        _,
-                    ) in cur:
-                        _msgs += 1
-                        _total_in += int(t_in or 0)
-                        # Fold reasoning into output for universal contract
-                        _total_out += int(t_out or 0) + int(t_reason or 0)
-                        _total_reason += int(t_reason or 0)
-                        _cache_r += int(cr or 0)
-                        _cache_w += int(cw or 0)
-                        if m_id:
-                            short = self._short_model_id_oc(m_id)
-                            entry = _by_model.setdefault(
-                                short,
-                                {
-                                    "cost": 0.0,
-                                    "msgs": 0,
-                                    "tokens": {
-                                        "input": 0,
-                                        "output": 0,
-                                        "reasoning": 0,
-                                        "cache_read": 0,
-                                    },
-                                },
-                            )
-                            entry["msgs"] += 1
-                            entry["tokens"]["input"] += int(t_in or 0)
-                            entry["tokens"]["output"] += int(t_out or 0)
-                            entry["tokens"]["reasoning"] += int(t_reason or 0)
-                            entry["tokens"]["cache_read"] += int(cr or 0)
-
-                    for entry in _by_model.values():
-                        t = entry["tokens"]
-                        t["total"] = t["input"] + t["output"] + t["reasoning"]
-
-                    return (
-                        _total_in,
-                        _total_out,
-                        _total_reason,
-                        _cache_r,
-                        _cache_w,
-                        _by_model,
-                        _msgs,
-                    )
-
-                free_cursor = await conn.execute(
-                    """
-                    SELECT
-                        json_extract(data, '$.tokens.input'),
-                        json_extract(data, '$.tokens.output'),
-                        json_extract(data, '$.tokens.reasoning'),
-                        json_extract(data, '$.tokens.cache.read'),
-                        json_extract(data, '$.tokens.cache.write'),
-                        json_extract(data, '$.modelID'),
-                        json_extract(data, '$.parentID')
-                    FROM message
-                    WHERE json_extract(data, '$.role') = 'assistant'
-                      AND json_extract(data, '$.providerID') = 'opencode'
-                    """,
-                )
-
-                session_cutoff_ms = int((now - timedelta(hours=5)).timestamp() * 1000)
-                session_cursor = await conn.execute(
-                    """
-                    SELECT
-                        json_extract(data, '$.tokens.input'),
-                        json_extract(data, '$.tokens.output'),
-                        json_extract(data, '$.tokens.reasoning'),
-                        json_extract(data, '$.tokens.cache.read'),
-                        json_extract(data, '$.tokens.cache.write'),
-                        json_extract(data, '$.modelID'),
-                        json_extract(data, '$.parentID')
-                    FROM message
-                    WHERE time_created > ?
-                      AND json_extract(data, '$.role') = 'assistant'
-                      AND json_extract(data, '$.providerID') = 'opencode'
-                    """,
-                    (session_cutoff_ms,),
-                )
-
-                (
-                    lt_in,
-                    lt_out,
-                    lt_reason,
-                    lt_cache_r,
-                    lt_cache_w,
-                    lt_by_model,
-                    lt_msgs,
-                ) = await sum_tokens_from_cursor(free_cursor)
-                (
-                    se_in,
-                    se_out,
-                    se_reason,
-                    se_cache_r,
-                    se_cache_w,
-                    se_by_model,
-                    se_msgs,
-                ) = await sum_tokens_from_cursor(session_cursor)
-
-                if lt_msgs > 0:
-                    # lt_out and se_out already include reasoning from sum_tokens_from_cursor
-                    lifetime_tokens = lt_in + lt_out
-                    session_tokens = se_in + se_out
-
-                    free_totals = {
-                        "lifetime": {
-                            "tokens": {
-                                "input": lt_in,
-                                "output": lt_out,
-                                "reasoning": lt_reason,
-                                "cache_read": lt_cache_r,
-                                "cache_write": lt_cache_w,
-                            },
-                            "msgs": lt_msgs,
-                            "by_model": lt_by_model,
-                        },
-                        "session": {
-                            "tokens": {
-                                "input": se_in,
-                                "output": se_out,
-                                "reasoning": se_reason,
-                                "cache_read": se_cache_r,
-                                "cache_write": se_cache_w,
-                            },
-                            "msgs": se_msgs,
-                            "by_model": se_by_model,
-                        },
-                    }
-
-                    free_token_usage = {
-                        "input": se_in,
-                        "output": se_out,
-                        "reasoning": se_reason,
-                        "cache_read": se_cache_r,
-                        "cache_write": se_cache_w,
-                        "total": session_tokens,
-                    }
-
-                    free_detail = format_token_details(free_token_usage) or "$0.00"
-                    free_detail += f" · Lifetime: {lifetime_tokens:,} tokens{identity_suffix}"
-
-                    results.append(
-                        {
-                            "service_name": service_name,
-                            "window_type": "rolling",
-                            "variant": "Free",
-                            "_enrichment_detail": free_detail,
-                            "token_usage": free_token_usage,
-                            "by_model": se_by_model,
-                            "msgs": se_msgs,
-                            "totals": free_totals,
-                        }
-                    )
-
-            return results
-
-        except Exception as e:
-            return [
-                error_card(
-                    "OpenCode TUI",
-                    "⚡",
-                    f"DB Error: {str(e)[:15]}",
-                    error_type="api_error",
-                )
-            ]
-
-    def _short_model_id_oc(self, model_id: str) -> str:
-        """Shorten a model ID for display, e.g. claude-sonnet-4-6 → sonnet."""
-        m = model_id.lower()
-        # Strip claude- prefix then any trailing -version suffix
-        m = re.sub(r"^claude-", "", m)
-        m = re.sub(r"-\d+[-.]?\d*$", "", m)
-        # Trim -free / -latest suffixes
-        m = re.sub(r"-(free|latest|preview)$", "", m)
-        return m or model_id
-
-    def _extract_window_info(self, text: str) -> dict[str, dict]:
-        """
-        Extract window type (rolling vs fixed) from the usage text.
-
-        Returns dict keyed by window name (e.g., "rollingUsage")
-        with cutoff timestamp and is_fixed flag.
-        """
-        now = datetime.now(UTC)
-        windows = [
-            ("rollingUsage", "5h"),
-            ("weeklyUsage", "7d"),
-            ("monthlyUsage", "30d"),
-        ]
-
-        FIXED_RESET_THRESHOLD = 86400  # 1 day in seconds
-        result: dict[str, dict] = {}
-
-        for key, duration_label in windows:
-            pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
-            match = re.search(pattern, text)
-            if not match:
-                continue
-
-            obj_content = match.group(1)
-            reset_match = re.search(r"resetInSec:(\d+)", obj_content)
-            if not reset_match:
-                continue
-
-            reset_sec = int(reset_match.group(1))
-            is_fixed = reset_sec > FIXED_RESET_THRESHOLD
-
-            if is_fixed:
-                reset_at = now + timedelta(seconds=reset_sec)
-                if key == "weeklyUsage":
-                    cutoff = reset_at - timedelta(days=7)
-                elif key == "monthlyUsage":
-                    cutoff = reset_at - timedelta(days=30)
-                else:
-                    cutoff = reset_at - timedelta(hours=5)
-            elif key == "rollingUsage":
-                cutoff = now - timedelta(hours=5)
-            elif key == "weeklyUsage":
-                cutoff = now - timedelta(days=7)
-            else:
-                cutoff = now - timedelta(days=30)
-
-            result[key] = {
-                "cutoff": cutoff,
-                "is_fixed": is_fixed,
-            }
-
-        return result
-
-    def _build_oc_enrichment_detail(self, totals: dict) -> str:
-        """Build the enrichment detail string from per-window totals."""
-        parts: list[str] = []
-
-        cost = totals.get("cost", 0.0)
-        parts.append(f"${cost:.2f}")
-
-        # Token summary
-        tok = totals.get("tokens", {})
-        tok_str = format_token_details(tok)
-        if tok_str:
-            parts.append(tok_str)
-
-        by_model = totals.get("by_model", {})
-        if by_model:
-            top = sorted(by_model.items(), key=lambda x: x[1]["cost"], reverse=True)[:3]
-            model_segs = [f"{name}:${info['cost']:.2f}" for name, info in top]
-            parts.append(" ".join(model_segs))
-
-        convos = totals.get("convos", 0)
-        if convos:
-            parts.append(f"{convos} convos")
-
-        return " | ".join(parts)
