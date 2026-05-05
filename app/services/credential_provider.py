@@ -1,14 +1,12 @@
 import json
 import logging
 import os
-import platform
 from typing import Any
 
 from app.core.config import (
     get_platform_config_dir,
     is_local_credential_scraping_enabled,
 )
-from app.core.keychain import get_keychain_secret
 from app.core.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -131,39 +129,9 @@ class CredentialProvider:
                         except Exception as e:
                             logger.debug(f"Error reading file {path}: {e}")
 
-            # 3. macOS Keychain
-            elif rule_type == "keychain" and platform.system() == "Darwin":
-                if not is_scraping_enabled:
-                    continue
-                try:
-                    needs_extraction = any(t not in results for t in mapping.values())
-                    if not needs_extraction and mapping:
-                        continue
-
-                    # Use centralized keychain access with caching
-                    service = rule.get("service_name")
-                    raw = get_keychain_secret(service)
-
-                    if raw:
-                        if rule.get("format") == "json":
-                            data = json.loads(raw)
-                            for key_path_str, target in mapping.items():
-                                if target not in results:
-                                    val = CredentialProvider._resolve_mapping_value(
-                                        data, key_path_str
-                                    )
-                                    if val:
-                                        results[target] = val
-                                        if target not in sources:
-                                            sources[target] = "server"
-                        else:
-                            target = mapping.get("value", "token")
-                            if target not in results:
-                                results[target] = raw
-                                if target not in sources:
-                                    sources[target] = "server"
-                except Exception:
-                    pass
+            # 3. macOS Keychain rules are intentionally skipped on the server.
+            # Keychain access has moved to the sidecar; rule_type == "keychain"
+            # is silently ignored here.
 
         return CredentialMap(results, sources=sources)
 

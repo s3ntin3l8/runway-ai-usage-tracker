@@ -8,14 +8,11 @@ Now supports multi-account dynamic spawning based on discovered tokens.
 
 import asyncio
 import logging
-import os
-import platform
 import time
 from typing import Any
 
 import httpx
 
-from app.core.config import is_local_credential_scraping_enabled
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
@@ -68,7 +65,6 @@ class CollectorManager:
         # Active collectors keyed by "provider_id:account_id"
         self.smart_collectors: dict[str, SmartCollector] = {}
         self._client = None
-        self._keychain_warmed_up = False
         self._last_sync_time: float = 0.0
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
@@ -78,35 +74,6 @@ class CollectorManager:
         logger.info(
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
-
-    async def _warmup_keychain(self):
-        """Sequentially pre-fetch keychain secrets on macOS."""
-        if self._keychain_warmed_up:
-            return
-        if platform.system() != "Darwin" or not is_local_credential_scraping_enabled():
-            self._keychain_warmed_up = True
-            return
-
-        from app.core.keychain import get_keychain_secret
-
-        tasks = []
-
-        if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
-            tasks.append(asyncio.to_thread(get_keychain_secret, "Claude Code-credentials"))
-
-        cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi", "ollama"]
-        if any(os.getenv(f"{c.upper()}_SESSION_TOKEN") is None for c in cookie_collectors):
-            tasks.append(asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage"))
-            tasks.append(asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage"))
-
-        if tasks:
-            for task in tasks:
-                try:
-                    await task
-                except Exception as e:
-                    logger.debug(f"Keychain warmup task failed: {e}")
-
-        self._keychain_warmed_up = True
 
     async def _sync_collectors(self):
         """Synchronize active SmartCollectors with discovered accounts.
@@ -351,9 +318,6 @@ class CollectorManager:
         """Execute one collection cycle across all active collectors."""
         # Ensure we have collectors for all current accounts
         await self._sync_collectors()
-
-        # Warm up keychain access if on macOS
-        await self._warmup_keychain()
 
         client = await self._get_client()
 

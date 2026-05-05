@@ -57,25 +57,15 @@ class TestCollectorManagerInitialization:
 
 
 class TestCollectorManagerWarmup:
+    @pytest.mark.skip(reason="keychain warmup removed; keychain access moved to sidecar")
     @pytest.mark.asyncio
     async def test_warmup_keychain_non_darwin(self, manager):
-        """Test that warmup is skipped on non-macOS."""
-        with patch("platform.system", return_value="Linux"):
-            with patch("app.core.keychain.get_keychain_secret") as mock_secret:
-                await manager._warmup_keychain()
-                mock_secret.assert_not_called()
+        pass
 
+    @pytest.mark.skip(reason="keychain warmup removed; keychain access moved to sidecar")
     @pytest.mark.asyncio
     async def test_warmup_keychain_disabled(self, manager):
-        """Test that warmup respects config."""
-        with patch("platform.system", return_value="Darwin"):
-            with patch(
-                "app.services.collector_manager.is_local_credential_scraping_enabled",
-                return_value=False,
-            ):
-                with patch("app.core.keychain.get_keychain_secret") as mock_secret:
-                    await manager._warmup_keychain()
-                    mock_secret.assert_not_called()
+        pass
 
 
 class TestCollectorManagerCollection:
