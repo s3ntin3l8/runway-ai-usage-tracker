@@ -65,38 +65,37 @@ class TestLimitsEndpoint:
 
         test_client = TestClient(app)
 
-        with patch.object(manager, "_registry", [], create=True):  # force fallback path
-            with patch.object(manager, "collect_all") as mock_collect:
-                mock_collect.return_value = [
-                    {
-                        "service_name": "Claude Pro",
-                        "icon": "🟠",
-                        "remaining": "45.5%",
-                        "unit": "capacity",
-                        "reset": "in 4h 23m",
-                        "health": "good",
-                        "pace": "~5 days",
-                        "detail": "45.5% used [OAuth]",
-                    },
-                    {
-                        "service_name": "GitHub Copilot",
-                        "icon": "🐙",
-                        "remaining": "450/500",
-                        "unit": "requests",
-                        "reset": "in 2h 15m",
-                        "health": "warning",
-                        "pace": "Sustainable",
-                        "detail": "90.0% used",
-                    },
-                ]
+        with patch.object(manager, "collect_all") as mock_collect:
+            mock_collect.return_value = [
+                {
+                    "service_name": "Claude Pro",
+                    "icon": "🟠",
+                    "remaining": "45.5%",
+                    "unit": "capacity",
+                    "reset": "in 4h 23m",
+                    "health": "good",
+                    "pace": "~5 days",
+                    "detail": "45.5% used [OAuth]",
+                },
+                {
+                    "service_name": "GitHub Copilot",
+                    "icon": "🐙",
+                    "remaining": "450/500",
+                    "unit": "requests",
+                    "reset": "in 2h 15m",
+                    "health": "warning",
+                    "pace": "Sustainable",
+                    "detail": "90.0% used",
+                },
+            ]
 
-                response = test_client.get("/api/v1/usage/limits")
+            response = test_client.get("/api/v1/usage/limits")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert "limits" in data
-            assert isinstance(data["limits"], list)
-            assert len(data["limits"]) == 2
+        assert response.status_code == 200
+        data = response.json()
+        assert "limits" in data
+        assert isinstance(data["limits"], list)
+        assert len(data["limits"]) == 2
 
     async def test_limits_endpoint_partial_failure(self):
         """Test endpoint gracefully handles one collector failing."""
@@ -104,42 +103,41 @@ class TestLimitsEndpoint:
 
         test_client = TestClient(app)
 
-        with patch.object(manager, "_registry", [], create=True):  # force fallback path
-            with patch.object(manager, "collect_all") as mock_collect:
-                # Some collectors succeed, some fail (collector failures handled internally)
-                mock_collect.return_value = [
-                    {
-                        "service_name": "Claude Pro",
-                        "icon": "🟠",
-                        "remaining": "50%",
-                        "unit": "capacity",
-                        "reset": "in 5h",
-                        "health": "good",
-                        "pace": "~5 days",
-                        "detail": "API: OAuth",
-                    },
-                    {
-                        "service_name": "GitHub API",
-                        "icon": "🐙",
-                        "remaining": "ERR",
-                        "unit": "request",
-                        "reset": "Unknown",
-                        "health": "critical",
-                        "pace": "N/A",
-                        "detail": "Connection timeout",
-                    },
-                ]
+        with patch.object(manager, "collect_all") as mock_collect:
+            # Some collectors succeed, some fail (collector failures handled internally)
+            mock_collect.return_value = [
+                {
+                    "service_name": "Claude Pro",
+                    "icon": "🟠",
+                    "remaining": "50%",
+                    "unit": "capacity",
+                    "reset": "in 5h",
+                    "health": "good",
+                    "pace": "~5 days",
+                    "detail": "API: OAuth",
+                },
+                {
+                    "service_name": "GitHub API",
+                    "icon": "🐙",
+                    "remaining": "ERR",
+                    "unit": "request",
+                    "reset": "Unknown",
+                    "health": "critical",
+                    "pace": "N/A",
+                    "detail": "Connection timeout",
+                },
+            ]
 
-                response = test_client.get("/api/v1/usage/limits")
+            response = test_client.get("/api/v1/usage/limits")
 
-            # Should still return 200 with mixed results
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["limits"]) == 2
+        # Should still return 200 with mixed results
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["limits"]) == 2
 
-            # One success, one error
-            assert any(card.get("remaining") != "ERR" for card in data["limits"])
-            assert any(card.get("remaining") == "ERR" for card in data["limits"])
+        # One success, one error
+        assert any(card.get("remaining") != "ERR" for card in data["limits"])
+        assert any(card.get("remaining") == "ERR" for card in data["limits"])
 
     async def test_limits_endpoint_all_collectors_fail(self):
         """Test endpoint when all collectors fail."""
@@ -147,16 +145,15 @@ class TestLimitsEndpoint:
 
         test_client = TestClient(app)
 
-        with patch.object(manager, "_registry", [], create=True):  # force fallback path
-            with patch.object(manager, "collect_all") as mock_collect:
-                mock_collect.return_value = []
+        with patch.object(manager, "collect_all") as mock_collect:
+            mock_collect.return_value = []
 
-                response = test_client.get("/api/v1/usage/limits")
+            response = test_client.get("/api/v1/usage/limits")
 
-            # Should still return 200 with empty limits
-            assert response.status_code == 200
-            data = response.json()
-            assert data["limits"] == []
+        # Should still return 200 with empty limits
+        assert response.status_code == 200
+        data = response.json()
+        assert data["limits"] == []
 
 
 @pytest.mark.asyncio
