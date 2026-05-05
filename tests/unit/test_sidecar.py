@@ -131,7 +131,7 @@ class TestDaemonRunnerRunOnceSuccess:
     def test_run_once_success_status_ok(self):
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -147,7 +147,7 @@ class TestDaemonRunnerRunOnceSuccess:
     def test_run_once_empty_metrics_still_ok(self):
         """No metrics collected → still 'ok', no HTTP call made."""
         runner = _make_runner()
-        with patch.object(sidecar, "run_collection", return_value=([], 0)):
+        with patch.object(sidecar, "run_collection", return_value=([], [], 0)):
             result = runner.run_once()
 
         assert result is True
@@ -162,7 +162,7 @@ class TestDaemonRunnerRunOnceFailure:
     def test_run_once_http_500_status_err(self):
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -196,7 +196,7 @@ class TestDaemonRunnerQueuedStatus:
         runner = _make_runner()
         queued = []
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -230,7 +230,7 @@ class TestDaemonRunnerPauseResume:
         """Resuming after a completed cycle → 'ok'."""
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -257,7 +257,7 @@ class TestDaemonRunnerStartStop:
         runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=on_status)
 
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -273,7 +273,7 @@ class TestDaemonRunnerStartStop:
         runner = _make_runner()
 
         with (
-            patch.object(sidecar, "run_collection", return_value=([], 0)),
+            patch.object(sidecar, "run_collection", return_value=([], [], 0)),
             patch.object(sidecar, "queue_flush"),
         ):
             runner.start()
@@ -290,7 +290,7 @@ class TestDaemonRunnerOnStatusChange:
         runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=statuses.append)
 
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -322,7 +322,7 @@ class TestDaemonRunnerOnStatusChange:
         runner = _make_runner()
 
         with (
-            patch.object(sidecar, "run_collection", return_value=([], 0)),
+            patch.object(sidecar, "run_collection", return_value=([], [], 0)),
             patch.object(sidecar, "queue_flush"),
         ):
             runner.run_once()  # must not raise
@@ -332,7 +332,7 @@ class TestDaemonRunnerOnStatusChange:
         runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=statuses.append)
 
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, 0)),
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",

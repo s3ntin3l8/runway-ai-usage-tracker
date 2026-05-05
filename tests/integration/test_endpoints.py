@@ -16,11 +16,34 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
+from app.core.db import get_session
 from app.main import app
 from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
+
+
+@pytest.fixture
+def _empty_db_session():
+    """Override get_session with an empty in-memory SQLite so /limits falls
+    back to manager.collect_all() instead of reading rows from the real DB."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session():
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _get_session
+    yield engine
+    app.dependency_overrides.pop(get_session, None)
 
 
 @pytest.fixture
@@ -32,6 +55,7 @@ async def test_client():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_empty_db_session")
 class TestLimitsEndpoint:
     """Integration tests for /api/limits endpoint."""
 
@@ -41,7 +65,7 @@ class TestLimitsEndpoint:
 
         test_client = TestClient(app)
 
-        with patch.object(manager, "_registry", []):  # force fallback path
+        with patch.object(manager, "_registry", [], create=True):  # force fallback path
             with patch.object(manager, "collect_all") as mock_collect:
                 mock_collect.return_value = [
                     {
@@ -80,7 +104,7 @@ class TestLimitsEndpoint:
 
         test_client = TestClient(app)
 
-        with patch.object(manager, "_registry", []):  # force fallback path
+        with patch.object(manager, "_registry", [], create=True):  # force fallback path
             with patch.object(manager, "collect_all") as mock_collect:
                 # Some collectors succeed, some fail (collector failures handled internally)
                 mock_collect.return_value = [
@@ -123,7 +147,7 @@ class TestLimitsEndpoint:
 
         test_client = TestClient(app)
 
-        with patch.object(manager, "_registry", []):  # force fallback path
+        with patch.object(manager, "_registry", [], create=True):  # force fallback path
             with patch.object(manager, "collect_all") as mock_collect:
                 mock_collect.return_value = []
 

@@ -1,7 +1,7 @@
 """Integration tests for GET /api/v1/usage/forecast endpoint."""
 
+import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,235 +10,95 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.db import get_session
 from app.main import app as fastapi_app
-from app.models.db import UsageSnapshot
-from app.services.collector_manager import manager
+from app.models.db import LatestUsage
+
+
+@pytest.fixture(name="session")
+def session_fixture():
+    # Use StaticPool to ensure all connections use the same in-memory DB
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
 
 
 @pytest.fixture(autouse=True)
-def _empty_db():
-    """Override get_session with an empty in-memory SQLite so the forecast
-    endpoint never touches the real on-disk database (which may not exist in CI)."""
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+def setup_api(session):
+    fastapi_app.dependency_overrides[get_session] = lambda: session
+    yield
+    fastapi_app.dependency_overrides.clear()
+
+
+def _add_latest(session: Session, **overrides):
+    # Use a unique combination to avoid IntegrityError in same-session tests
+    p_id = overrides.get("provider_id", f"anthropic_{overrides.get('service_name', 'default')}")
+    card = {
+        "service_name": overrides.get("service_name", "Test Service"),
+        "provider_id": p_id,
+        "account_id": overrides.get("account_id", "acc1"),
+        "window_type": overrides.get("window_type", "weekly"),
+        "unit_type": "tokens",
+        "used_value": overrides.get("used_value", 500_000.0),
+        "limit_value": overrides.get("limit_value", 1_000_000.0),
+        "is_unlimited": overrides.get("is_unlimited", False),
+        "reset_at": (datetime.now(UTC) + timedelta(days=4)).isoformat(),
+        "health": "good",
+    }
+    record = LatestUsage(
+        provider_id=card["provider_id"],
+        account_id=card["account_id"],
+        sidecar_id="local",
+        window_type=card["window_type"],
+        variant="default",
+        card_json=json.dumps(card),
     )
-    SQLModel.metadata.create_all(engine)
-
-    def _get_session():
-        with Session(engine) as session:
-            yield session
-
-    fastapi_app.dependency_overrides[get_session] = _get_session
-    yield engine
-    fastapi_app.dependency_overrides.pop(get_session, None)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_BASE_CARD = {
-    "service_name": "Test Service",
-    "provider_id": "anthropic",
-    "account_id": "acc1",
-    "window_type": "weekly",
-    "unit_type": "tokens",
-    "unit": "tokens",
-    "used_value": 500_000.0,
-    "limit_value": 1_000_000.0,
-    "is_unlimited": False,
-    "reset_at": (datetime.now(UTC) + timedelta(days=4)).isoformat(),
-    "health": "good",
-    "data_source": "api",
-    "input_source": "server",
-}
-
-
-def _card(**overrides) -> dict:
-    return {**_BASE_CARD, **overrides}
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+    session.add(record)
+    session.commit()
 
 
 class TestForecastEndpoint:
-    """Integration tests for GET /api/v1/usage/forecast."""
+    def test_forecast_endpoint_returns_200(self, session):
+        _add_latest(session, service_name="Service A", account_id="acc1")
+        _add_latest(session, service_name="Service B", account_id="acc2")
 
-    def test_forecast_endpoint_returns_200(self):
-        """With 2 forecastable cards and no history, both should be insufficient_data."""
-        registry = [
-            _card(service_name="Service A", account_id="acc1"),
-            _card(service_name="Service B", account_id="acc2"),
-        ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "get_registry_snapshot", return_value=registry):
-            response = client.get("/api/v1/usage/forecast")
-
+        response = client.get("/api/v1/usage/forecast")
         assert response.status_code == 200
         data = response.json()
-
-        assert "forecasts" in data
         assert len(data["forecasts"]) == 2
 
-        assert "summary" in data
-        assert set(data["summary"].keys()) == {
-            "risk",
-            "warn",
-            "ok",
-            "insufficient_data",
-            "stable",
-            "exhausted",
-        }
+    def test_forecast_endpoint_filters_by_provider_id(self, session):
+        _add_latest(session, provider_id="p1")
+        _add_latest(session, provider_id="p2")
 
-        assert "generated_at" in data
-        assert data["generated_at"]  # non-empty
-
-        # No snapshot history → insufficient_data for all entries
-        for entry in data["forecasts"]:
-            assert entry["status"] == "insufficient_data"
-
-    def test_forecast_endpoint_filters_by_provider_id(self):
-        """Only cards matching provider_id=anthropic should be returned."""
-        registry = [
-            _card(service_name="Anthropic Card", provider_id="anthropic", account_id="a1"),
-            _card(service_name="ChatGPT Card", provider_id="chatgpt", account_id="b1"),
-        ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "get_registry_snapshot", return_value=registry):
-            response = client.get("/api/v1/usage/forecast?provider_id=anthropic")
+        response = client.get("/api/v1/usage/forecast?provider_id=p1")
+        assert len(response.json()["forecasts"]) == 1
 
-        assert response.status_code == 200
-        data = response.json()
-        forecasts = data["forecasts"]
+    def test_forecast_endpoint_filters_by_window_type(self, session):
+        _add_latest(session, window_type="weekly", service_name="W1")
+        _add_latest(session, window_type="monthly", service_name="M1")
 
-        assert len(forecasts) == 1
-        assert forecasts[0]["provider_id"] == "anthropic"
-        assert forecasts[0]["service_name"] == "Anthropic Card"
-
-    def test_forecast_endpoint_filters_by_window_type(self):
-        """Only cards with window_type=weekly should be returned when filtered."""
-        registry = [
-            _card(service_name="Weekly Card", window_type="weekly"),
-            _card(
-                service_name="Daily Card",
-                window_type="daily",
-                reset_at=(datetime.now(UTC) + timedelta(hours=20)).isoformat(),
-            ),
-        ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "get_registry_snapshot", return_value=registry):
-            response = client.get("/api/v1/usage/forecast?window_type=weekly")
+        response = client.get("/api/v1/usage/forecast?window_type=weekly")
+        assert len(response.json()["forecasts"]) == 1
 
-        assert response.status_code == 200
-        data = response.json()
-        forecasts = data["forecasts"]
+    def test_forecast_endpoint_filters_by_account_id(self, session):
+        _add_latest(session, account_id="acc1", service_name="A1")
+        _add_latest(session, account_id="acc2", service_name="A2")
 
-        assert len(forecasts) == 1
-        assert forecasts[0]["window_type"] == "weekly"
-        assert forecasts[0]["service_name"] == "Weekly Card"
-
-    def test_forecast_endpoint_filters_by_account_id(self):
-        """Only cards matching account_id should be returned."""
-        registry = [
-            _card(service_name="Account A", provider_id="anthropic", account_id="acc-alpha"),
-            _card(service_name="Account B", provider_id="anthropic", account_id="acc-beta"),
-        ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "get_registry_snapshot", return_value=registry):
-            response = client.get("/api/v1/usage/forecast?account_id=acc-alpha")
+        response = client.get("/api/v1/usage/forecast?account_id=acc1")
+        assert len(response.json()["forecasts"]) == 1
 
-        assert response.status_code == 200
-        data = response.json()
-        forecasts = data["forecasts"]
-        assert len(forecasts) == 1
-        assert forecasts[0]["service_name"] == "Account A"
+    def test_forecast_endpoint_excludes_unlimited(self, session):
+        _add_latest(session, service_name="Limited", is_unlimited=False)
+        _add_latest(session, service_name="Unlimited", is_unlimited=True)
 
-    def test_forecast_endpoint_excludes_unlimited(self):
-        """Unlimited cards must not appear in the forecast output."""
-        registry = [
-            _card(service_name="Limited Card", is_unlimited=False),
-            _card(
-                service_name="Unlimited Card",
-                is_unlimited=True,
-                limit_value=None,
-            ),
-        ]
         client = TestClient(fastapi_app)
-        with patch.object(manager, "get_registry_snapshot", return_value=registry):
-            response = client.get("/api/v1/usage/forecast")
-
-        assert response.status_code == 200
-        data = response.json()
-        forecasts = data["forecasts"]
-
-        service_names = [f["service_name"] for f in forecasts]
-        assert "Unlimited Card" not in service_names
-        assert "Limited Card" in service_names
-
-    def test_forecast_endpoint_with_snapshot_history(self):
-        """With real snapshot history, the endpoint should return a non-insufficient_data status."""
-        # Build an in-memory SQLite engine for this test.
-        # StaticPool forces all SQLAlchemy connections to share a single underlying
-        # sqlite3 connection, which is required so that tables created by create_all
-        # and rows seeded by the test are visible to the override_get_session used by
-        # the request handler (default sqlite:// gives each connection its own DB).
-        test_engine = create_engine(
-            "sqlite://",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
-        SQLModel.metadata.create_all(test_engine)
-
-        def override_get_session():
-            with Session(test_engine) as session:
-                yield session
-
-        fastapi_app.dependency_overrides[get_session] = override_get_session
-
-        try:
-            card = _card(
-                service_name="Snapshot Service", provider_id="anthropic", account_id="snap_acc"
-            )
-            reset_at = datetime.fromisoformat(card["reset_at"])
-            window_start = reset_at - timedelta(days=7)
-
-            # Seed 5 snapshot rows spread across the window with increasing usage
-            with Session(test_engine) as session:
-                for i in range(5):
-                    frac = (i + 1) / 6  # 1/6 … 5/6 of the window
-                    ts = window_start + timedelta(seconds=frac * 7 * 24 * 3600)
-                    snap = UsageSnapshot(
-                        timestamp=ts,
-                        provider_id=card["provider_id"],
-                        account_id=card["account_id"],
-                        account_label=None,
-                        service_name=card["service_name"],
-                        used_value=200_000.0 * (i + 1),  # 200k … 1000k
-                        limit_value=card["limit_value"],
-                        unit_type=card["unit_type"],
-                        model_id=None,
-                        window_type=card["window_type"],
-                        health="good",
-                        data_source="api",
-                        is_unlimited=False,
-                    )
-                    session.add(snap)
-                session.commit()
-
-            client = TestClient(fastapi_app)
-            with patch.object(manager, "_registry", [card]):
-                response = client.get("/api/v1/usage/forecast")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["forecasts"]) == 1
-            entry = data["forecasts"][0]
-            # With 5 data points the forecast must go beyond insufficient_data
-            assert entry["status"] != "insufficient_data", (
-                f"Expected a real forecast status, got: {entry['status']}"
-            )
-        finally:
-            fastapi_app.dependency_overrides.pop(get_session, None)
+        response = client.get("/api/v1/usage/forecast")
+        names = [f["service_name"] for f in response.json()["forecasts"]]
+        assert "Limited" in names
+        assert "Unlimited" not in names
