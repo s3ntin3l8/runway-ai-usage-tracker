@@ -438,11 +438,19 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
         print(f"ERROR: Cannot read config file: {e}")
         sys.exit(1)
 
+    # Environment variable overrides (useful for dev / docker / CI without
+    # editing the config file).
+    if os.environ.get("RUNWAY_API_URL"):
+        config["api_url"] = os.environ["RUNWAY_API_URL"]
+    if os.environ.get("RUNWAY_API_KEY"):
+        config["api_key"] = os.environ["RUNWAY_API_KEY"]
+
     # Validate required fields
     missing = [f for f in REQUIRED_CONFIG_FIELDS if f not in config or not config[f]]
     if missing:
         print(f"ERROR: Missing required config fields: {', '.join(missing)}")
         print(f"Config file: {config_file}")
+        print("Tip: you can also set RUNWAY_API_URL / RUNWAY_API_KEY env vars.")
         sys.exit(1)
 
     # Apply defaults for optional fields
@@ -1871,24 +1879,26 @@ class DeltaTracker:
     def __init__(self):
         self._last_values: dict[str, float] = {}
 
-    def get_delta(self, provider_id: str, account_id: str, unit_type: str, current_value: float) -> float:
+    def get_delta(
+        self, provider_id: str, account_id: str, unit_type: str, current_value: float
+    ) -> float:
         key = f"{provider_id}:{account_id}:{unit_type}"
         previous = self._last_values.get(key)
-        
+
         # Update baseline for next cycle
         self._last_values[key] = current_value
-        
+
         if previous is None:
             # First read - we don't know the delta yet, but we have a baseline now.
-            # To be safe, we report 0 delta for the first observation to avoid massive 
+            # To be safe, we report 0 delta for the first observation to avoid massive
             # spikes if the account already has high usage.
             return 0.0
-            
+
         if current_value < previous:
             # Reset detected (e.g. quota window rollover).
             # The delta is the entire current value (starting from 0).
             return current_value
-            
+
         return current_value - previous
 
 
@@ -1896,7 +1906,9 @@ class DeltaTracker:
 delta_tracker = DeltaTracker()
 
 
-def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+def run_collection(
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Run collection for all enabled providers.
 
     Returns (metrics, deltas, error_count).
@@ -1921,17 +1933,21 @@ def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], list[d
                         u_val = card.get("used_value")
                         u_type = card.get("unit_type")
                         acc_id = card.get("account_id") or "default"
-                        
+
                         if u_val is not None and u_type:
-                            delta = delta_tracker.get_delta(provider_id, acc_id, u_type, float(u_val))
+                            delta = delta_tracker.get_delta(
+                                provider_id, acc_id, u_type, float(u_val)
+                            )
                             if delta > 0:
-                                all_deltas.append({
-                                    "provider_id": provider_id,
-                                    "account_id": acc_id,
-                                    "unit_type": u_type,
-                                    "value": delta,
-                                    "timestamp": now_iso
-                                })
+                                all_deltas.append(
+                                    {
+                                        "provider_id": provider_id,
+                                        "account_id": acc_id,
+                                        "unit_type": u_type,
+                                        "value": delta,
+                                        "timestamp": now_iso,
+                                    }
+                                )
                 else:
                     logging.info(f"  [{provider_id}] no data")
                 all_metrics.extend(metrics)
