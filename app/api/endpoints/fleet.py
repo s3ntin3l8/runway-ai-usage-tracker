@@ -176,10 +176,21 @@ async def ingest_metrics(
 
     # Store local data metrics
     if local_cards:
-        from app.services.poller import poller
-
         await external_metric_service.metrics_update_from_ingest(request.provider, local_cards)
         logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
+
+    # Wake the poller whenever the sidecar pushes anything actionable —
+    # tokens or local cards. Without this, token-only payloads (the common
+    # case) leave the poller asleep until its 15-min interval, so the
+    # dashboard stays empty even though credentials are in the cache.
+    if tokens_to_store or local_cards:
+        from app.services.collector_manager import manager
+        from app.services.poller import poller
+
+        # Force the next collect_all to re-sync per-account collectors so
+        # the freshly-pushed accounts get SmartCollectors immediately
+        # instead of waiting the 60s sync throttle.
+        manager._last_sync_time = 0.0
         poller.wake()
 
     # Process deltas for cumulative tracking
