@@ -5,10 +5,10 @@ import logging
 from collections import deque
 from datetime import UTC, datetime
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models.db import UsageSnapshot, UsageSnapshotModel
+from app.models.db import LatestUsage, UsageSnapshot, UsageSnapshotModel
 from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
 
@@ -230,6 +230,36 @@ class BackgroundPoller:
                         session.add(snapshot)
                         session.flush()  # Get snapshot.id for model records
                         _create_model_records(session, snapshot.id, card)
+
+                        # Upsert into LatestUsage — the table the dashboard
+                        # reads from. Without this, snapshots accumulate but
+                        # /api/v1/usage/limits returns nothing.
+                        card_json_str = card.model_dump_json(exclude_none=False)
+                        sidecar_id = card.sidecar_id or "local"
+                        variant = card.variant or "default"
+                        existing = session.exec(
+                            select(LatestUsage).where(
+                                LatestUsage.provider_id == card.provider_id,
+                                LatestUsage.account_id == card.account_id,
+                                LatestUsage.sidecar_id == sidecar_id,
+                                LatestUsage.window_type == card.window_type,
+                                LatestUsage.variant == variant,
+                            )
+                        ).first()
+                        if existing:
+                            existing.card_json = card_json_str
+                            existing.updated_at = datetime.now(UTC)
+                        else:
+                            session.add(
+                                LatestUsage(
+                                    provider_id=card.provider_id,
+                                    account_id=card.account_id,
+                                    sidecar_id=sidecar_id,
+                                    window_type=card.window_type,
+                                    variant=variant,
+                                    card_json=card_json_str,
+                                )
+                            )
                     except Exception as e:
                         logger.error(f"Failed to map card to snapshot: {e}")
 

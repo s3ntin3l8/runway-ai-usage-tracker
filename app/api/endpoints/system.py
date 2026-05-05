@@ -93,12 +93,20 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
 @limiter.limit("6/minute")
 async def force_collect(request: Request) -> dict[str, Any]:
     """Trigger an immediate collection cycle and update the registry."""
+    from sqlmodel import Session, select
+
+    from app.core.db import engine
+    from app.models.db import LatestUsage
     from app.services.poller import poller
 
     try:
         poller.wake()  # reset dormancy before polling
         await poller.poll_now()
-        cards = manager.get_registry_snapshot()
+        # poll_now() upserts the freshly collected cards into LatestUsage.
+        # Count what's there to confirm to the caller how many cards the
+        # dashboard will now show.
+        with Session(engine) as session:
+            cards = session.exec(select(LatestUsage)).all()
         return {"ok": True, "cards": len(cards)}
     except Exception as e:
         logger.error(f"Force collect failed: {e}")
