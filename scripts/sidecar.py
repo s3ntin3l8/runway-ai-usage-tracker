@@ -1778,7 +1778,16 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         if rem_frac is None:
             continue
         label = cfg.get("label", "Model")
-        model_id = cfg.get("modelOrAlias", label)
+        # Antigravity's LSP sometimes returns modelOrAlias as a dict
+        # (e.g. {"model": "MODEL_PLACEHOLDER_M36"}) for newer model entries.
+        # Pydantic on the server requires model_id: str | None, so coerce.
+        raw_model = cfg.get("modelOrAlias", label)
+        if isinstance(raw_model, dict):
+            model_id = (
+                raw_model.get("model") or raw_model.get("name") or raw_model.get("alias") or label
+            )
+        else:
+            model_id = raw_model
         rem_pct = float(rem_frac) * 100
         reset_ts = quota.get("resetTime")
         try:
@@ -2083,13 +2092,16 @@ class DaemonRunner:
                         )
                         self._trigger_event.set()
                     return True
-                # Check for clock skew error (400 timestamp_expired)
+                # Check for clock skew error (400 timestamp_expired). Note that
+                # `result["detail"]` is a dict only for the structured clock-skew
+                # response — validation errors return a plain string there.
+                detail = result.get("detail") if isinstance(result, dict) else None
                 if (
                     code == 400
-                    and isinstance(result, dict)
-                    and result.get("detail", {}).get("error") == "timestamp_expired"
+                    and isinstance(detail, dict)
+                    and detail.get("error") == "timestamp_expired"
                 ):
-                    skew = result.get("detail", {}).get("skew_seconds", "?")
+                    skew = detail.get("skew_seconds", "?")
                     logging.error("=" * 60)
                     logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")
                     logging.error(f"Server reported skew of {skew} seconds.")
