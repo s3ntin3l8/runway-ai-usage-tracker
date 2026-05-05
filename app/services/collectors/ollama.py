@@ -16,7 +16,6 @@ from typing import Any
 
 import httpx
 
-from app.core.browser_cookies import get_session_cookies
 from app.core.config import settings
 from app.core.utils import (
     HealthCalculator,
@@ -117,13 +116,13 @@ class OllamaCollector(BaseCollector):
 
     async def is_configured(self) -> bool:
         """Check if Ollama session cookie is present."""
-        return self._is_valid_credential(self._get_cookie_header())
+        return self._is_valid_credential(await self._get_cookie_header())
 
     async def reset(self):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
 
-    def _get_cookie_header(self) -> str | None:
+    async def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
         # 1. DB-stored session cookie (manual override set via settings UI)
         db_token = credential_provider.get_provider_session_cookie("ollama")
@@ -142,24 +141,16 @@ class OllamaCollector(BaseCollector):
             self._current_input_source = "server"
             return f"session={env_token}"
 
-        # 3. Check browser cookies for various possible names (ordered by priority)
-        for name in self.RECOGNIZED_COOKIE_NAMES:
-            # get_session_cookies returns a list (handles chunked .0, .1, etc.)
-            cookies = get_session_cookies("ollama.com", name)
-            if cookies:
-                self._current_input_source = "server"
-                # Join chunked cookies: "name=val0; name.0=val0; name.1=val1..."
-                # Actually NextAuth typically uses the base name for the first chunk if small,
-                # or name.0, name.1 if large.
-                # The Swift code joins them with "; "
-                header_parts = []
-                if len(cookies) == 1:
-                    header_parts.append(f"{name}={cookies[0]}")
-                else:
-                    for i, val in enumerate(cookies):
-                        header_parts.append(f"{name}.{i}={val}")
-
-                return "; ".join(header_parts)
+        # 3. Sidecar-pushed cookie via token cache (browser scraping moved to sidecar)
+        cookie = await token_cache.get_token(
+            "ollama", "session_cookie", account_id=self.account_id or "default"
+        )
+        if cookie:
+            self._current_input_source = "sidecar"
+            cookie = cookie.strip()
+            if self.RE_COOKIE_PATTERN.search(cookie):
+                return cookie
+            return f"session={cookie}"
 
         return None
 
@@ -195,7 +186,7 @@ class OllamaCollector(BaseCollector):
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Scrape Ollama settings page."""
-        cookie_header = self._get_cookie_header()
+        cookie_header = await self._get_cookie_header()
         if not cookie_header:
             return []
 

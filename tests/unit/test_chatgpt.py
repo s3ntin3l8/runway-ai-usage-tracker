@@ -146,6 +146,7 @@ class TestChatGPTCollectorDetailed:
                     assert auth["source"] == "api"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_auth_priority_cookies_and_refresh(self, mock_http_client):
         """Priority 3: Browser cookies should trigger a token refresh."""
         collector = ChatGPTCollector()
@@ -181,6 +182,7 @@ class TestChatGPTCollectorDetailed:
                     )
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_token_refresh_caching(self, mock_http_client):
         """Refreshed token should be cached in memory for 1 hour."""
         collector = ChatGPTCollector()

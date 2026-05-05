@@ -18,7 +18,6 @@ from typing import Any
 
 import httpx
 
-from app.core.browser_cookies import get_claude_session_cookie
 from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.collectors._anthropic_common import (
@@ -224,7 +223,11 @@ class AnthropicWebMixin:
 
     async def _has_web_cookie(self) -> bool:
         """Check if a web cookie is available without making API calls."""
-        return await asyncio.to_thread(get_claude_session_cookie) is not None
+        return (
+            await token_cache.get_token(
+                "anthropic", "cookie_sessionKey", account_id=self.account_id or "default"
+            )
+        ) is not None
 
     async def _get_claude_via_web_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
@@ -238,28 +241,26 @@ class AnthropicWebMixin:
         2. GET /api/account — Get tier/plan info (optional)
         3. GET /api/organizations/{orgId}/usage — Get usage quotas
         """
-        session_key = await asyncio.to_thread(get_claude_session_cookie)
+        # Source: token cache — populated by sidecar push or via UI ProviderConfig
+        session_key = await token_cache.get_token(
+            "anthropic", "cookie_sessionKey", account_id=self.account_id or "default"
+        )
+        # Fallback to generic UI-provided session_cookie
         if not session_key:
-            # Fallback to token cache (user-provided in UI or sidecar-ingested)
             session_key = await token_cache.get_token(
-                "anthropic", "cookie_sessionKey", account_id=self.account_id or "default"
+                "anthropic", "session_cookie", account_id=self.account_id or "default"
             )
-            # Second fallback to generic UI-provided session_cookie
-            if not session_key:
-                session_key = await token_cache.get_token(
-                    "anthropic", "session_cookie", account_id=self.account_id or "default"
-                )
 
-            # Third fallback: Check if a session key was accidentally put into the oauth_token field
-            if not session_key:
-                oauth_token = await token_cache.get_token(
-                    "anthropic", "oauth_token", account_id=self.account_id or "default"
-                )
-                if oauth_token and oauth_token.startswith("sk-ant-sid"):
-                    session_key = oauth_token
+        # Final fallback: Check if a session key was accidentally put into the oauth_token field
+        if not session_key:
+            oauth_token = await token_cache.get_token(
+                "anthropic", "oauth_token", account_id=self.account_id or "default"
+            )
+            if oauth_token and oauth_token.startswith("sk-ant-sid"):
+                session_key = oauth_token
 
         if not session_key:
-            logger.debug("No Claude sessionKey cookie found (browser or cache)")
+            logger.debug("No Claude sessionKey cookie found in token cache")
             return []
 
         # If the session_key already looks like a multi-cookie string (contains ; or =),
