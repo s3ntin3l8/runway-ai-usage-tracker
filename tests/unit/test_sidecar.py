@@ -339,6 +339,24 @@ class TestDaemonRunnerOnStatusChange:
         ):
             runner.run_once()  # must not raise
 
+    def test_callback_receives_queued_warn_status(self):
+        statuses: list[str] = []
+        runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=statuses.append)
+
+        with (
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(False, "net error", 0),
+            ),
+            patch.object(sidecar, "queue_flush"),
+            patch.object(sidecar, "queue_push"),
+        ):
+            runner.run_once()
+
+        assert "warn" in statuses
+
 
 # ---------------------------------------------------------------------------
 # Account email helpers (JWT id_token extraction)
@@ -435,24 +453,6 @@ class TestCodexAccountEmail:
         with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
             result = sidecar._codex_account_email()
         assert result == "default"
-
-    def test_callback_receives_queued_warn_status(self):
-        statuses: list[str] = []
-        runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=statuses.append)
-
-        with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
-            patch.object(
-                sidecar,
-                "http_post_signed_with_retry",
-                return_value=(False, "net error", 0),
-            ),
-            patch.object(sidecar, "queue_flush"),
-            patch.object(sidecar, "queue_push"),
-        ):
-            runner.run_once()
-
-        assert "warn" in statuses
 
 
 def _load_sidecar_module():
