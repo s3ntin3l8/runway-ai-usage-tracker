@@ -205,15 +205,15 @@ class LatestUsage(SQLModel, table=True):
     __tablename__ = "latest_usage"
     __table_args__ = (
         # model_id must be in the identity tuple — collectors legitimately
-        # emit multiple cards for the same (provider, account, sidecar,
-        # window, variant) tuple that differ only by model (e.g. Claude
-        # Sonnet weekly vs Claude Design weekly). The original spec's
-        # constraint without model_id caused IntegrityError on commit
-        # and rolled back the whole poll cycle.
+        # emit multiple cards for the same (provider, account, window,
+        # variant) tuple that differ only by model (e.g. Claude Sonnet
+        # weekly vs Claude Design weekly). sidecar_id is intentionally
+        # excluded so that server-scraped rows and sidecar-enriched rows
+        # for the same logical account merge into one row instead of
+        # creating duplicates.
         UniqueConstraint(
             "provider_id",
             "account_id",
-            "sidecar_id",
             "window_type",
             "variant",
             "model_id",
@@ -235,10 +235,12 @@ class LatestUsage(SQLModel, table=True):
 class CumulativeUsage(SQLModel, table=True):
     __tablename__ = "cumulative_usage"
     __table_args__ = (
+        # sidecar_id is intentionally excluded so that server-scraped rows
+        # and sidecar-enriched rows for the same logical account merge into
+        # one row (via SUM on collision) instead of creating duplicates.
         UniqueConstraint(
             "provider_id",
             "account_id",
-            "sidecar_id",
             "period_type",
             "period_key",
             "unit_type",

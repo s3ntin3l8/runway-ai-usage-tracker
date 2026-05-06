@@ -101,10 +101,16 @@ def test_fleet_groups_by_provider_account(session: Session):
 
 
 def test_fleet_includes_sidecar_contributions(session: Session):
-    """Per-sidecar totals from CumulativeUsage (current month) populate sidecar_contributions."""
+    """CumulativeUsage (current month) populates sidecar_contributions in the fleet view.
+
+    Under the new constraint, the DB stores one merged row per logical identity; the
+    row's sidecar_id reflects whichever sidecar was last merged into it. Per-sidecar
+    breakdown in contributions is a Phase 3/4 write-path concern.
+    """
     _seed_card(session, provider_id="anthropic", account_id="acc1", pct_used=10.0)
 
     month_key = datetime.now(UTC).strftime("%Y-%m")
+    # One merged row — the write path (Phase 3) will have already summed contributions.
     session.add(
         CumulativeUsage(
             provider_id="anthropic",
@@ -113,18 +119,7 @@ def test_fleet_includes_sidecar_contributions(session: Session):
             period_type="month",
             period_key=month_key,
             unit_type="tokens_input",
-            total_value=1234.0,
-        )
-    )
-    session.add(
-        CumulativeUsage(
-            provider_id="anthropic",
-            account_id="acc1",
-            sidecar_id="server-1",
-            period_type="month",
-            period_key=month_key,
-            unit_type="tokens_input",
-            total_value=8000.0,
+            total_value=9234.0,
         )
     )
     session.commit()
@@ -134,5 +129,5 @@ def test_fleet_includes_sidecar_contributions(session: Session):
     assert resp.status_code == 200
 
     contrib = resp.json()["fleet"][0]["sidecar_contributions"]
-    assert contrib["laptop-1"]["tokens_input"] == 1234.0
-    assert contrib["server-1"]["tokens_input"] == 8000.0
+    # The merged row is exposed under its stored sidecar_id
+    assert contrib["laptop-1"]["tokens_input"] == 9234.0

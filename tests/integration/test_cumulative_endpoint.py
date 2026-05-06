@@ -43,13 +43,16 @@ def _seed(session: Session, **fields):
     session.add(CumulativeUsage(**defaults))
 
 
-def test_cumulative_groups_across_sidecars(session: Session):
-    """Two sidecars contributing to the same (provider, account) get summed."""
-    # Same identity, two sidecars, same lifetime bucket
-    _seed(session, sidecar_id="laptop-1", total_value=100.0)
-    _seed(session, sidecar_id="server-1", total_value=400.0)
-    # Same identity, different unit_type — should NOT merge with the above
-    _seed(session, sidecar_id="laptop-1", unit_type="cost_usd", total_value=2.5)
+def test_cumulative_exposes_unit_types_separately(session: Session):
+    """Multiple unit_types for the same (provider, account) are exposed as separate keys.
+
+    Cross-sidecar merge now happens at the write path (Phase 3) before rows reach
+    the DB — the DB stores one already-merged row per logical identity.
+    """
+    # Single merged row (as the write path will produce after Phase 3)
+    _seed(session, unit_type="tokens_input", total_value=500.0)
+    # Different unit_type — should NOT merge with the above
+    _seed(session, unit_type="cost_usd", total_value=2.5)
     session.commit()
 
     client = TestClient(app)
@@ -64,7 +67,7 @@ def test_cumulative_groups_across_sidecars(session: Session):
     assert entry["provider_id"] == "anthropic"
     assert entry["account_id"] == "acc1"
 
-    # Lifetime bucket sums tokens across the two sidecars; cost_usd stays separate
+    # Lifetime bucket exposes both unit_types
     lifetime = entry["lifetime"]
     assert lifetime["tokens_input"] == 500.0
     assert lifetime["cost_usd"] == 2.5

@@ -184,7 +184,8 @@ def _seed(engine):
                     card_json=json.dumps(card),
                 )
             )
-        # Two sidecars contributing to anthropic/acc1 — Fuel Dump should show 2 segments
+        # Anthropic/acc1 cumulative for the Fuel Dump bar — one merged row
+        # (cross-sidecar merge now happens at the write path; DB stores one row per identity)
         s.add(
             CumulativeUsage(
                 provider_id="anthropic",
@@ -193,18 +194,7 @@ def _seed(engine):
                 period_type="month",
                 period_key=month_key,
                 unit_type="tokens_input",
-                total_value=4000.0,
-            )
-        )
-        s.add(
-            CumulativeUsage(
-                provider_id="anthropic",
-                account_id="acc1",
-                sidecar_id="server-1",
-                period_type="month",
-                period_key=month_key,
-                unit_type="tokens_input",
-                total_value=12000.0,
+                total_value=16000.0,
             )
         )
         s.commit()

@@ -44,6 +44,112 @@ def init_db():
     _run_migrations()
 
 
+def _migrate_latest_usage_remove_sidecar_id(conn) -> bool:
+    """Drop and recreate latest_usage without sidecar_id in the unique constraint.
+
+    latest_usage is a cache — dropping it is safe; the next poll cycle repopulates it.
+    Returns True if migration ran, False if not needed.
+    """
+    sa = __import__("sqlalchemy").text
+    row = conn.execute(
+        sa("SELECT sql FROM sqlite_master WHERE type='table' AND name='latest_usage'")
+    ).first()
+    if not row or not row[0]:
+        return False
+    old_sql: str = row[0]
+    m = re.search(r"CONSTRAINT\s+\S+\s+UNIQUE\s*\(([^)]+)\)", old_sql, re.IGNORECASE)
+    constraint_cols = m.group(1) if m else ""
+    needs_recreate = bool(m) and "sidecar_id" in constraint_cols
+    if not needs_recreate:
+        return False
+
+    logger.info("Recreating latest_usage to remove sidecar_id from unique constraint")
+    conn.execute(sa("DROP TABLE latest_usage"))
+    conn.execute(
+        sa(
+            """
+            CREATE TABLE latest_usage (
+                id INTEGER PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                sidecar_id TEXT NOT NULL DEFAULT 'local',
+                window_type TEXT NOT NULL DEFAULT 'unknown',
+                variant TEXT NOT NULL DEFAULT 'default',
+                model_id TEXT NOT NULL DEFAULT '',
+                card_json TEXT NOT NULL,
+                updated_at TIMESTAMP,
+                CONSTRAINT uq_latest_usage_identity UNIQUE
+                    (provider_id, account_id, window_type, variant, model_id)
+            )
+            """
+        )
+    )
+    conn.commit()
+    logger.info("latest_usage recreated without sidecar_id in unique constraint")
+    return True
+
+
+def _migrate_cumulative_usage_remove_sidecar_id(conn) -> bool:
+    """Recreate cumulative_usage without sidecar_id in the unique constraint.
+
+    Rows with the same (provider_id, account_id, period_type, period_key, unit_type)
+    but different sidecar_ids are summed — cumulative is additive.
+    Returns True if migration ran, False if not needed.
+    """
+    sa = __import__("sqlalchemy").text
+    row = conn.execute(
+        sa("SELECT sql FROM sqlite_master WHERE type='table' AND name='cumulative_usage'")
+    ).first()
+    if not row or not row[0]:
+        return False
+    old_sql: str = row[0]
+    m = re.search(r"CONSTRAINT\s+\S+\s+UNIQUE\s*\(([^)]+)\)", old_sql, re.IGNORECASE)
+    constraint_cols = m.group(1) if m else ""
+    needs_recreate = bool(m) and "sidecar_id" in constraint_cols
+    if not needs_recreate:
+        return False
+
+    logger.info("Recreating cumulative_usage to remove sidecar_id from unique constraint")
+    conn.execute(
+        sa(
+            """
+            CREATE TABLE cumulative_usage_new (
+                id INTEGER PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                sidecar_id TEXT NOT NULL DEFAULT 'local',
+                period_type TEXT NOT NULL,
+                period_key TEXT NOT NULL,
+                unit_type TEXT NOT NULL,
+                total_value REAL NOT NULL DEFAULT 0.0,
+                last_updated TIMESTAMP,
+                CONSTRAINT uq_cumulative_usage_identity UNIQUE
+                    (provider_id, account_id, period_type, period_key, unit_type)
+            )
+            """
+        )
+    )
+    conn.execute(
+        sa(
+            """
+            INSERT INTO cumulative_usage_new
+                (provider_id, account_id, sidecar_id, period_type, period_key,
+                 unit_type, total_value, last_updated)
+            SELECT provider_id, account_id, MAX(sidecar_id), period_type, period_key,
+                   unit_type, SUM(total_value), MAX(last_updated)
+            FROM cumulative_usage
+            GROUP BY provider_id, account_id, period_type, period_key, unit_type
+            """
+        )
+    )
+    conn.execute(sa("ALTER TABLE cumulative_usage RENAME TO cumulative_usage_old"))
+    conn.execute(sa("ALTER TABLE cumulative_usage_new RENAME TO cumulative_usage"))
+    conn.execute(sa("DROP TABLE cumulative_usage_old"))
+    conn.commit()
+    logger.info("cumulative_usage recreated without sidecar_id in unique constraint")
+    return True
+
+
 def _run_migrations():
     """Apply additive schema migrations that CREATE TABLE won't cover."""
     migrations = [
@@ -131,6 +237,19 @@ def _run_migrations():
                     logger.info("latest_usage recreated with model_id in unique constraint")
         except Exception as e:
             logger.error(f"latest_usage constraint migration failed: {e}")
+
+        # latest_usage: remove sidecar_id from the unique constraint so that
+        # server-scraped and sidecar-enriched rows for the same account merge.
+        try:
+            _migrate_latest_usage_remove_sidecar_id(conn)
+        except Exception as e:
+            logger.error(f"latest_usage sidecar_id constraint migration failed: {e}")
+
+        # cumulative_usage: same — remove sidecar_id and sum collisions.
+        try:
+            _migrate_cumulative_usage_remove_sidecar_id(conn)
+        except Exception as e:
+            logger.error(f"cumulative_usage sidecar_id constraint migration failed: {e}")
 
         # Drop legacy cumulative_usage unit_types (percent/currency/credits).
         # Sidecar now emits only tokens_*/cost_usd; old rows are diagnostic noise.
