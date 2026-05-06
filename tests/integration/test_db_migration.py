@@ -63,7 +63,7 @@ def _make_temp_engine():
 def _constraint_cols_for(conn, table_name: str) -> str:
     """Return the column list inside the UNIQUE constraint for `table_name`, or ''."""
     row = conn.execute(
-        sa(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+        sa("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"), {"name": table_name}
     ).first()
     if not row or not row[0]:
         return ""
