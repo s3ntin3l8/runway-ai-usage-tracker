@@ -249,18 +249,10 @@ __REGISTRY__ = {
                     "mapping": {"value": "cookie_session"},
                 },
                 {
-                    "type": "sqlite",
+                    "type": "opencode_enrichment",
                     "paths": [
                         "~/.local/share/opencode/opencode.db",
                         "{{DATA_DIR:opencode}}/opencode.db",
-                    ],
-                    "queries": [
-                        {
-                            "name": "Usage (5h/7d/30d)",
-                            "query": "SELECT SUM(json_extract(data, '$.cost')), COUNT(*) FROM message WHERE time_created > ? AND json_valid(data) AND json_extract(data, '$.role') = 'assistant'",
-                            "windows": {"5h": 18000, "week": 604800, "month": 2592000},
-                            "limits": {"5h": 12.0, "week": 30.0, "month": 60.0},
-                        }
                     ],
                 },
             ],
@@ -1417,6 +1409,253 @@ class GenericCollector:
                                 conn.close()
                         except Exception as e:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
+
+            # 7a. Specialized: OpenCode enrichment (per-model token + cost breakdown)
+            elif rule_type == "opencode_enrichment":
+                db_path = None
+                for path_str in rule.get("paths", []):
+                    p = resolve_path(path_str)
+                    if p.exists():
+                        db_path = p
+                        break
+                if db_path:
+                    try:
+                        conn = sqlite3.connect(str(db_path))
+                        try:
+                            cursor = conn.cursor()
+                            now = datetime.datetime.now(datetime.UTC)
+                            hostname = get_hostname()
+
+                            acc_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
+                            if not acc_label:
+                                try:
+                                    cursor.execute("SELECT email FROM account LIMIT 1")
+                                    row = cursor.fetchone()
+                                    if row and row[0]:
+                                        acc_label = row[0]
+                                except Exception:
+                                    pass
+
+                            # --- Go / paid tier: per-window cost + token breakdown ---
+                            win_defs = [
+                                ("session", 5 * 3600, "5h", 12.0),
+                                ("weekly", 7 * 24 * 3600, "week", 30.0),
+                                ("monthly", 30 * 24 * 3600, "month", 60.0),
+                            ]
+                            for window_type, secs, label, limit in win_defs:
+                                cutoff_ms = int(
+                                    (now - datetime.timedelta(seconds=secs)).timestamp() * 1000
+                                )
+                                cursor.execute(
+                                    """
+                                    SELECT
+                                        json_extract(data, '$.modelID'),
+                                        SUM(json_extract(data, '$.cost')),
+                                        SUM(json_extract(data, '$.tokens.input')),
+                                        SUM(json_extract(data, '$.tokens.output')),
+                                        SUM(json_extract(data, '$.tokens.reasoning')),
+                                        SUM(json_extract(data, '$.tokens.cache.read')),
+                                        COUNT(*)
+                                    FROM message
+                                    WHERE time_created > ?
+                                      AND json_extract(data, '$.role') = 'assistant'
+                                      AND json_extract(data, '$.providerID') = 'opencode-go'
+                                    GROUP BY json_extract(data, '$.modelID')
+                                    """,
+                                    (cutoff_ms,),
+                                )
+                                rows = cursor.fetchall()
+                                if not rows:
+                                    continue
+                                total_cost = 0.0
+                                total_in = total_out = total_reason = cache_r = total_msgs = 0
+                                by_model: dict = {}
+                                for model_id, cost, t_in, t_out, t_reason, cr, msgs in rows:
+                                    c = float(cost or 0)
+                                    i = int(t_in or 0)
+                                    o = int(t_out or 0)
+                                    r = int(t_reason or 0)
+                                    cr_ = int(cr or 0)
+                                    m = int(msgs or 0)
+                                    total_cost += c
+                                    total_in += i
+                                    total_out += o
+                                    total_reason += r
+                                    cache_r += cr_
+                                    total_msgs += m
+                                    if model_id:
+                                        by_model[model_id] = {
+                                            "cost": c,
+                                            "msgs": m,
+                                            "tokens": {
+                                                "input": i,
+                                                "output": o,
+                                                "reasoning": r,
+                                                "cache_read": cr_,
+                                                "total": i + o + r,
+                                            },
+                                        }
+                                pct = (total_cost / limit * 100) if limit > 0 else 0
+                                results.append(
+                                    {
+                                        "provider_id": provider_id,
+                                        "account_id": "opencode-go",
+                                        "account_label": acc_label,
+                                        "service_name": f"OpenCode Go ({label})",
+                                        "icon": icon,
+                                        "used_value": total_cost,
+                                        "limit_value": limit,
+                                        "unit_type": "currency",
+                                        "window_type": window_type,
+                                        "variant": "Go",
+                                        "health": "good"
+                                        if pct < 70
+                                        else "warning"
+                                        if pct < 90
+                                        else "critical",
+                                        "data_source": "local",
+                                        "msgs": total_msgs,
+                                        "token_usage": {
+                                            "input": total_in,
+                                            "output": total_out,
+                                            "reasoning": total_reason,
+                                            "cache_read": cache_r,
+                                            "total": total_in + total_out + total_reason,
+                                        },
+                                        "by_model": by_model,
+                                        "detail": f"${total_cost:.4f} of ${limit:.0f} · {hostname} [Sidecar]",
+                                        "remaining": f"${max(0, limit - total_cost):.2f}",
+                                        "unit": f"${limit:.0f} limit",
+                                        "reset": f"Rolling {label}",
+                                        "pace": "Stable" if pct < 50 else "High",
+                                    }
+                                )
+
+                            # --- Free tier: lifetime + 5h session token breakdown ---
+                            cursor.execute(
+                                """
+                                SELECT
+                                    json_extract(data, '$.modelID'),
+                                    SUM(json_extract(data, '$.tokens.input')),
+                                    SUM(json_extract(data, '$.tokens.output')),
+                                    SUM(json_extract(data, '$.tokens.reasoning')),
+                                    SUM(json_extract(data, '$.tokens.cache.read')),
+                                    COUNT(*)
+                                FROM message
+                                WHERE json_extract(data, '$.role') = 'assistant'
+                                  AND json_extract(data, '$.providerID') = 'opencode'
+                                GROUP BY json_extract(data, '$.modelID')
+                                """,
+                            )
+                            lt_rows = cursor.fetchall()
+                            if lt_rows:
+                                lt_in = lt_out = lt_reason = lt_cr = lt_msgs = 0
+                                lt_by_model: dict = {}
+                                for model_id, t_in, t_out, t_reason, cr, msgs in lt_rows:
+                                    i = int(t_in or 0)
+                                    o = int(t_out or 0)
+                                    r = int(t_reason or 0)
+                                    cr_ = int(cr or 0)
+                                    m = int(msgs or 0)
+                                    lt_in += i
+                                    lt_out += o
+                                    lt_reason += r
+                                    lt_cr += cr_
+                                    lt_msgs += m
+                                    if model_id:
+                                        lt_by_model[model_id] = {
+                                            "cost": 0.0,
+                                            "msgs": m,
+                                            "tokens": {
+                                                "input": i,
+                                                "output": o,
+                                                "reasoning": r,
+                                                "cache_read": cr_,
+                                                "total": i + o + r,
+                                            },
+                                        }
+                                se_cutoff_ms = int(
+                                    (now - datetime.timedelta(hours=5)).timestamp() * 1000
+                                )
+                                cursor.execute(
+                                    """
+                                    SELECT
+                                        json_extract(data, '$.modelID'),
+                                        SUM(json_extract(data, '$.tokens.input')),
+                                        SUM(json_extract(data, '$.tokens.output')),
+                                        SUM(json_extract(data, '$.tokens.reasoning')),
+                                        SUM(json_extract(data, '$.tokens.cache.read')),
+                                        COUNT(*)
+                                    FROM message
+                                    WHERE time_created > ?
+                                      AND json_extract(data, '$.role') = 'assistant'
+                                      AND json_extract(data, '$.providerID') = 'opencode'
+                                    GROUP BY json_extract(data, '$.modelID')
+                                    """,
+                                    (se_cutoff_ms,),
+                                )
+                                se_rows = cursor.fetchall() or []
+                                se_in = se_out = se_reason = se_cr = se_msgs = 0
+                                se_by_model: dict = {}
+                                for model_id, t_in, t_out, t_reason, cr, msgs in se_rows:
+                                    i = int(t_in or 0)
+                                    o = int(t_out or 0)
+                                    r = int(t_reason or 0)
+                                    cr_ = int(cr or 0)
+                                    m = int(msgs or 0)
+                                    se_in += i
+                                    se_out += o
+                                    se_reason += r
+                                    se_cr += cr_
+                                    se_msgs += m
+                                    if model_id:
+                                        se_by_model[model_id] = {
+                                            "cost": 0.0,
+                                            "msgs": m,
+                                            "tokens": {
+                                                "input": i,
+                                                "output": o,
+                                                "reasoning": r,
+                                                "cache_read": cr_,
+                                                "total": i + o + r,
+                                            },
+                                        }
+                                lt_total = lt_in + lt_out + lt_reason
+                                se_total = se_in + se_out + se_reason
+                                results.append(
+                                    {
+                                        "provider_id": provider_id,
+                                        "account_id": "opencode",
+                                        "account_label": acc_label,
+                                        "service_name": "OpenCode Free (session)",
+                                        "icon": icon,
+                                        "used_value": se_total,
+                                        "limit_value": None,
+                                        "unit_type": "tokens",
+                                        "window_type": "rolling",
+                                        "variant": "Free",
+                                        "health": "good",
+                                        "data_source": "local",
+                                        "msgs": se_msgs,
+                                        "token_usage": {
+                                            "input": se_in,
+                                            "output": se_out,
+                                            "reasoning": se_reason,
+                                            "cache_read": se_cr,
+                                            "total": se_total,
+                                        },
+                                        "by_model": se_by_model or lt_by_model,
+                                        "detail": f"Session: {se_total:,} tokens · Lifetime: {lt_total:,} · {hostname} [Sidecar]",
+                                        "remaining": f"{se_total:,}",
+                                        "unit": "tokens",
+                                        "reset": "Rolling 5h",
+                                        "pace": "Stable",
+                                    }
+                                )
+                        finally:
+                            conn.close()
+                    except Exception as e:
+                        logging.debug(f"OpenCode enrichment error: {e}")
 
             # 7. Specialized: JSON Data (Antigravity)
             # 8. Specialized: JSONL Cumulative (ChatGPT, Gemini)
