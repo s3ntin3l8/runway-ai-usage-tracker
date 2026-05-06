@@ -129,3 +129,10 @@ class TestCardMerge:
         result = merge_card_json(existing, incoming)
         parsed = json.loads(result)
         assert parsed["input_source"] == "server"
+
+    def test_data_source_no_accumulation_on_repeated_merge(self):
+        # Three alternating poll cycles: server → sidecar → server again
+        state = merge_card_json(None, {"data_source": "web"})
+        state = merge_card_json(state, {"data_source": "local"})
+        state = merge_card_json(state, {"data_source": "web"})
+        assert json.loads(state)["data_source"] == "web,local"

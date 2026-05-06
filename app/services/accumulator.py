@@ -10,12 +10,12 @@ from app.models.db import CumulativeUsage
 def _join_distinct(a: str | None, b: str | None) -> str | None:
     if a == b or b is None:
         return a
-    if a is None:
-        return b
-    return ",".join(dict.fromkeys(filter(None, [a, b])))
+    parts = dict.fromkeys(p for s in (a, b) for p in (s or "").split(",") if p)
+    return ",".join(parts) or None
 
 
 def merge_card_json(existing: str | None, incoming: dict) -> str:
+    """Merge an incoming card payload into an existing row's JSON; pass partial dicts, not full model_dump()."""
     if not existing:
         return json.dumps(incoming)
 
@@ -24,6 +24,7 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
 
     for key, value in incoming.items():
         if key == "by_model":
+            # {} means "not populated by this source" — legitimate empty resets are unrepresentable
             if isinstance(value, dict) and value:
                 merged[key] = value
         elif key in ("data_source", "input_source"):
