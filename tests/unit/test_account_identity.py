@@ -137,3 +137,12 @@ class TestResolveAccountId:
         )
         expected = hashlib.sha256(hint.encode()).hexdigest()[:12]
         assert result == expected
+
+    def test_email_with_trailing_garbage_not_matched(self):
+        """Test that regex anchor prevents matching emails with trailing garbage."""
+        result = resolve_account_id(
+            provider_id="anthropic",
+            raw_account_id="default",
+            account_label="user@example.comEXTRA",
+        )
+        assert result == "default"
