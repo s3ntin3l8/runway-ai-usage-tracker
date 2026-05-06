@@ -78,6 +78,9 @@ class LimitsResponse(BaseModel):
 class UsageDelta(BaseModel):
     provider_id: str
     account_id: str
+    account_label: str | None = (
+        None  # Human-readable label (email) for canonical_account_id resolution
+    )
     model_id: str | None = None
     unit_type: str  # "tokens_input", "tokens_output", "cost_usd", etc.
     value: float

@@ -207,6 +207,7 @@ async def ingest_metrics(
                     unit_type=delta.unit_type,
                     delta_value=delta.value,
                     timestamp=delta.timestamp,
+                    account_label=delta.account_label,
                 )
             except Exception as e:
                 logger.error(f"Failed to process delta: {e}")

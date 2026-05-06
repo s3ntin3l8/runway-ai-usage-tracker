@@ -48,11 +48,12 @@ class UsageAccumulator:
         unit_type: str,
         delta_value: float,
         timestamp: str,
-    ):
+        account_label: str | None = None,
+    ) -> None:
         if delta_value <= 0:
             return
 
-        canonical_account_id = resolve_account_id(provider_id, account_id, None)
+        canonical_account_id = resolve_account_id(provider_id, account_id, account_label)
 
         dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         year_key = dt.strftime("%Y")

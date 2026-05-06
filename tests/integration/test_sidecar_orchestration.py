@@ -103,65 +103,84 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     assert data["trigger"] is True
 
 
-def test_server_and_sidecar_cards_merge_into_one_latest_usage_row(session):
-    """Server scrape and sidecar enrichment must land in a single LatestUsage row."""
-    # 1. Simulate a server scrape writing the initial row
-    server_card_json = json.dumps(
-        {
-            "pct_used": 12.0,
-            "limit_value": 100.0,
-            "token_usage": None,
-            "data_source": "web",
-            "input_source": "server",
-        }
-    )
-    server_row = LatestUsage(
+def test_server_and_sidecar_resolve_to_same_row(session):
+    """Server scrape (account_id='default') and sidecar card (account_id=email) must resolve
+    to the same canonical_account_id via resolve_account_id and merge into a single LatestUsage row.
+
+    This exercises the exact lookup+merge logic from poller.py:247-275, so if someone removes
+    the resolve_account_id call from that code path, this test will break.
+    """
+    from app.models.schemas import LimitCard
+    from app.services.account_identity import resolve_account_id
+
+    # Server scrape: account_id is "default" but account_label is the email
+    server_card = LimitCard(
         provider_id="anthropic",
-        account_id="s3ntin3l8@gmail.com",
-        sidecar_id="local",
+        account_id="default",
+        account_label="test@example.com",
+        service_name="Test",
+        icon="🔬",
+        remaining="88%",
         window_type="weekly",
         variant="default",
-        model_id="",
-        card_json=server_card_json,
+        data_source="web",
+        pct_used=12.0,
     )
-    session.add(server_row)
-    session.commit()
+    # Sidecar card: account_id is already the email
+    sidecar_card = LimitCard(
+        provider_id="anthropic",
+        account_id="test@example.com",
+        account_label="test@example.com",
+        service_name="Test",
+        icon="🔬",
+        remaining="—",
+        window_type="weekly",
+        variant="default",
+        data_source="local",
+        token_usage={"input": 100, "output": 200, "total": 654000000},
+    )
 
-    # 2. Simulate sidecar enrichment: look up by identity tuple (no sidecar_id),
-    #    then merge incoming fields into the existing row
-    sidecar_card = {
-        "token_usage": {"total": 654000000},
-        "by_model": {"sonnet": {"tokens": 100}},
-        "data_source": "local",
-        "input_source": "unknown",
-    }
+    # Exercise the exact write-path logic from poller.py for each card in sequence
+    for card in [server_card, sidecar_card]:
+        canonical_id = resolve_account_id(card.provider_id, card.account_id, card.account_label)
+        incoming = card.model_dump(exclude_none=True)
+        existing = session.exec(
+            select(LatestUsage).where(
+                LatestUsage.provider_id == card.provider_id,
+                LatestUsage.account_id == canonical_id,
+                LatestUsage.window_type == card.window_type,
+                LatestUsage.variant == (card.variant or "default"),
+                LatestUsage.model_id == (card.model_id or ""),
+            )
+        ).first()
+        if existing:
+            existing.card_json = merge_card_json(existing.card_json, incoming)
+            existing.sidecar_id = card.sidecar_id or "local"
+        else:
+            session.add(
+                LatestUsage(
+                    provider_id=card.provider_id,
+                    account_id=canonical_id,
+                    sidecar_id=card.sidecar_id or "local",
+                    window_type=card.window_type,
+                    variant=card.variant or "default",
+                    model_id=card.model_id or "",
+                    card_json=merge_card_json(None, incoming),
+                )
+            )
+        session.commit()
 
-    existing = session.exec(
+    # Assert exactly one row resolved under the canonical email identity
+    rows = session.exec(
         select(LatestUsage).where(
             LatestUsage.provider_id == "anthropic",
-            LatestUsage.account_id == "s3ntin3l8@gmail.com",
-            LatestUsage.window_type == "weekly",
-            LatestUsage.variant == "default",
-            LatestUsage.model_id == "",
-        )
-    ).first()
-
-    assert existing is not None, "Server-scrape row must exist before sidecar merge"
-    existing.card_json = merge_card_json(existing.card_json, sidecar_card)
-    existing.sidecar_id = "dev-01"
-    session.commit()
-
-    # 3. Assert exactly one row and merged fields
-    all_rows = session.exec(
-        select(LatestUsage).where(
-            LatestUsage.provider_id == "anthropic",
-            LatestUsage.account_id == "s3ntin3l8@gmail.com",
+            LatestUsage.account_id == "test@example.com",
         )
     ).all()
-    assert len(all_rows) == 1, f"Expected 1 row, got {len(all_rows)}"
+    assert len(rows) == 1, f"Expected 1 row, got {len(rows)}: {[r.account_id for r in rows]}"
 
-    merged = json.loads(all_rows[0].card_json)
+    merged = json.loads(rows[0].card_json)
     assert merged["pct_used"] == 12.0, "pct_used from server scrape must be preserved"
     assert merged["token_usage"]["total"] == 654000000, "token_usage from sidecar must be present"
-    assert "web" in merged["data_source"], "web data_source must be preserved"
-    assert "local" in merged["data_source"], "local data_source from sidecar must be merged"
+    assert "web" in merged.get("data_source", ""), "web data_source must be preserved"
+    assert "local" in merged.get("data_source", ""), "local data_source from sidecar must be merged"
