@@ -80,6 +80,7 @@ __REGISTRY__ = {
                     "type": "file_json_statusline",
                     "paths": ["~/.claude/statusline.json", "{{CONFIG_DIR:claude}}/statusline.json"],
                 },
+                {"type": "anthropic_jsonl_enrichment"},
             ],
         },
         "openrouter": {
@@ -1196,6 +1197,219 @@ def get_windows_credential(target: str) -> str | None:
     return None
 
 
+# --- Anthropic JSONL Enrichment ---
+
+
+def _anthropic_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
+    """Scan ~/.claude/projects/**/*.jsonl and append token-breakdown cards to results."""
+    dirs: list[str] = []
+    config_env = os.getenv("CLAUDE_CONFIG_DIR", "")
+    if config_env:
+        for p in config_env.split(","):
+            p = p.strip()
+            if not p:
+                continue
+            proj = os.path.join(p, "projects") if not p.endswith("/projects") else p
+            if os.path.isdir(proj) and proj not in dirs:
+                dirs.append(proj)
+
+    default_candidates = [
+        os.path.expanduser("~/.claude/projects"),
+        os.path.expanduser("~/.config/claude/projects"),
+    ]
+    for p in default_candidates:
+        if os.path.isdir(p) and p not in dirs:
+            dirs.append(p)
+
+    if not dirs:
+        return
+
+    # Discover account email from credentials file
+    email = ""
+    for creds_path in [
+        os.path.expanduser("~/.claude/.credentials.json"),
+        os.path.expanduser("~/.config/claude/.credentials.json"),
+        os.path.expanduser("~/.claude.json"),
+    ]:
+        if os.path.exists(creds_path):
+            try:
+                with open(creds_path) as f:
+                    data = json.load(f)
+                oauth_acc = data.get("oauthAccount", {})
+                email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
+                if email:
+                    break
+            except Exception:
+                pass
+
+    # Collect all .jsonl files
+    all_files: list[Path] = []
+    for d in dirs:
+        all_files.extend(Path(d).glob("**/*.jsonl"))
+
+    if not all_files:
+        return
+
+    # Parse assistant messages, deduplicate by (msg_id, request_id)
+    now = datetime.datetime.now(datetime.UTC)
+    seen: set = set()
+    messages: list[dict] = []
+
+    for fpath in all_files:
+        try:
+            with open(fpath, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if entry.get("type") != "assistant":
+                        continue
+                    ts_raw = entry.get("timestamp")
+                    if not ts_raw:
+                        continue
+                    try:
+                        ts = datetime.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    msg_data = entry.get("message", {})
+                    dedup_key = (msg_data.get("id", ""), msg_data.get("requestId", ""))
+                    if dedup_key in seen:
+                        continue
+                    seen.add(dedup_key)
+                    usage = msg_data.get("usage", {})
+                    model = msg_data.get("model", "")
+                    short_model = _anthropic_short_model(model) if model else ""
+                    messages.append(
+                        {
+                            "ts": ts,
+                            "model_id": short_model,
+                            "tokens": {
+                                "input": int(usage.get("input_tokens", 0)),
+                                "output": int(usage.get("output_tokens", 0)),
+                                "cache_read": int(usage.get("cache_read_input_tokens", 0)),
+                                "cache_creation": int(usage.get("cache_creation_input_tokens", 0)),
+                            },
+                        }
+                    )
+        except Exception:
+            continue
+
+    if not messages:
+        return
+
+    def _aggregate(msgs: list[dict], model_filter: str | None = None) -> dict:
+        b = {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 0,
+            "models": {},
+            "model_msgs": {},
+            "msg_count": 0,
+        }
+        for m in msgs:
+            if model_filter and m["model_id"] != model_filter:
+                continue
+            t = m["tokens"]
+            b["input"] += t["input"]
+            b["output"] += t["output"]
+            b["cache_read"] += t["cache_read"]
+            b["cache_creation"] += t["cache_creation"]
+            mid = m["model_id"]
+            if mid:
+                tok_sum = t["input"] + t["output"] + t["cache_read"] + t["cache_creation"]
+                b["models"][mid] = b["models"].get(mid, 0) + tok_sum
+                b["model_msgs"][mid] = b["model_msgs"].get(mid, 0) + 1
+            b["msg_count"] += 1
+        return b
+
+    def _make_card(bucket: dict, window_type: str, model_id: str | None) -> dict | None:
+        if bucket["msg_count"] == 0:
+            return None
+        # input_tokens in Anthropic logs EXCLUDES cached tokens — add them back
+        total_input = bucket["input"] + bucket["cache_read"] + bucket["cache_creation"]
+        total_tokens = total_input + bucket["output"]
+        by_model = {
+            m: {
+                "cost": 0.0,
+                "msgs": c,
+                "tokens": {
+                    "input": 0,
+                    "output": 0,
+                    "reasoning": 0,
+                    "cache_read": 0,
+                    "total": bucket["models"].get(m, 0),
+                },
+            }
+            for m, c in bucket["model_msgs"].items()
+        }
+        svc = "Claude Design" if model_id == "design" else "Claude"
+        return {
+            "provider_id": provider_id,
+            "account_id": email or "default",
+            "account_label": email or None,
+            "service_name": svc,
+            "icon": icon,
+            "used_value": total_tokens,
+            "limit_value": None,
+            "unit_type": "tokens",
+            "window_type": window_type,
+            "variant": model_id,
+            "model_id": model_id,
+            "health": "good",
+            "data_source": "local",
+            "msgs": bucket["msg_count"],
+            "token_usage": {
+                "input": total_input,
+                "output": bucket["output"],
+                "reasoning": 0,
+                "cache_read": bucket["cache_read"],
+                "total": total_tokens,
+            },
+            "by_model": by_model,
+            "remaining": f"{total_tokens:,}",
+            "unit": "tokens",
+            "reset": "Rolling window",
+            "pace": "Stable",
+            "detail": f"{total_tokens:,} tokens · {get_hostname()} [Sidecar]",
+        }
+
+    session_cutoff = now - datetime.timedelta(hours=5)
+    weekly_cutoff = now - datetime.timedelta(days=7)
+
+    session_msgs = [m for m in messages if m["ts"] >= session_cutoff]
+    weekly_msgs = [m for m in messages if m["ts"] >= weekly_cutoff]
+
+    card = _make_card(_aggregate(session_msgs), "session", None)
+    if card:
+        results.append(card)
+
+    card = _make_card(_aggregate(weekly_msgs), "weekly", None)
+    if card:
+        results.append(card)
+
+    # Per-model weekly cards
+    for mid in sorted({m["model_id"] for m in weekly_msgs if m["model_id"]}):
+        card = _make_card(_aggregate(weekly_msgs, mid), "weekly", mid)
+        if card:
+            results.append(card)
+
+
+def _anthropic_short_model(model: str) -> str:
+    m = model.lower()
+    if "opus" in m:
+        return "opus"
+    if "sonnet" in m:
+        return "sonnet"
+    if "haiku" in m:
+        return "haiku"
+    if "omelette" in m or "design" in m:
+        return "design"
+    base = m.replace("claude-", "")
+    return base.split("-")[0] if base else m
+
+
 # --- Generic Collector Engine ---
 
 
@@ -1718,6 +1932,13 @@ class GenericCollector:
                             },
                         }
                     )
+            # 8a. Specialized: Anthropic JSONL enrichment (token breakdown from ~/.claude logs)
+            elif rule_type == "anthropic_jsonl_enrichment":
+                try:
+                    _anthropic_jsonl_enrich(provider_id, icon, results)
+                except Exception as e:
+                    logging.debug(f"Anthropic JSONL enrichment error: {e}")
+
             elif rule_type == "file_json_data":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)
