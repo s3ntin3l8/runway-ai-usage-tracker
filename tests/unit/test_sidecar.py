@@ -1,5 +1,6 @@
 """Unit tests for sidecar critical bug fixes and DaemonRunner."""
 
+import base64
 import json
 import sys
 import threading
@@ -132,7 +133,11 @@ class TestDaemonRunnerRunOnceSuccess:
         runner = _make_runner()
         with (
             patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
-            patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(True, {"poll_providers": []}, 200),
+            ),
             patch.object(sidecar, "queue_flush"),
         ):
             result = runner.run_once()
@@ -145,15 +150,22 @@ class TestDaemonRunnerRunOnceSuccess:
         assert runner.last_cycle_at is not None
 
     def test_run_once_empty_metrics_still_ok(self):
-        """No metrics collected → still 'ok', no HTTP call made."""
+        """No metrics collected → still 'ok', heartbeat HTTP call made."""
         runner = _make_runner()
-        with patch.object(sidecar, "run_collection", return_value=([], [], 0)):
+        with (
+            patch.object(sidecar, "run_collection", return_value=([], [], 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(True, {"poll_providers": []}, 200),
+            ),
+        ):
             result = runner.run_once()
 
         assert result is True
         assert runner.status == "ok"
         assert runner.last_metrics_count == 0
-        assert runner.last_http_code is None
+        assert runner.last_http_code == 200
 
 
 class TestDaemonRunnerRunOnceFailure:
@@ -326,6 +338,103 @@ class TestDaemonRunnerOnStatusChange:
             patch.object(sidecar, "queue_flush"),
         ):
             runner.run_once()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Account email helpers (JWT id_token extraction)
+# ---------------------------------------------------------------------------
+
+
+def _make_jwt(payload: dict) -> str:
+    """Build a minimal unsigned JWT with the given payload dict."""
+    header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').rstrip(b"=").decode()
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    return f"{header}.{body}.fakesig"
+
+
+class TestDecodeIdTokenEmail:
+    """_decode_id_token_email: extract email from JWT payload."""
+
+    def test_valid_jwt_returns_email(self):
+        token = _make_jwt({"email": "user@example.com", "sub": "12345"})
+        result = sidecar._decode_id_token_email(token)
+        assert result == "user@example.com"
+
+    def test_jwt_missing_email_returns_none(self):
+        token = _make_jwt({"sub": "12345", "name": "Test User"})
+        result = sidecar._decode_id_token_email(token)
+        assert result is None
+
+    def test_invalid_string_returns_none(self):
+        result = sidecar._decode_id_token_email("not-a-jwt")
+        assert result is None
+
+    def test_empty_string_returns_none(self):
+        result = sidecar._decode_id_token_email("")
+        assert result is None
+
+    def test_email_without_at_sign_returns_none(self):
+        """A payload with a non-email 'email' field must not pass through."""
+        token = _make_jwt({"email": "notanemail"})
+        result = sidecar._decode_id_token_email(token)
+        assert result is None
+
+
+class TestGeminiAccountEmail:
+    """_gemini_account_email: reads ~/.gemini/oauth_creds.json."""
+
+    def test_returns_default_when_file_missing(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        with patch.object(sidecar.os.path, "expanduser", return_value=missing):
+            result = sidecar._gemini_account_email()
+        assert result == "default"
+
+    def test_returns_email_from_valid_creds(self, tmp_path):
+        token = _make_jwt({"email": "gemini@example.com"})
+        creds_file = tmp_path / "oauth_creds.json"
+        creds_file.write_text(json.dumps({"id_token": token, "access_token": "tok"}))
+        with patch.object(sidecar.os.path, "expanduser", return_value=str(creds_file)):
+            result = sidecar._gemini_account_email()
+        assert result == "gemini@example.com"
+
+    def test_returns_default_when_id_token_missing(self, tmp_path):
+        creds_file = tmp_path / "oauth_creds.json"
+        creds_file.write_text(json.dumps({"access_token": "tok"}))
+        with patch.object(sidecar.os.path, "expanduser", return_value=str(creds_file)):
+            result = sidecar._gemini_account_email()
+        assert result == "default"
+
+
+class TestCodexAccountEmail:
+    """_codex_account_email: reads ~/.codex/auth.json."""
+
+    def test_returns_default_when_file_missing(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        with patch.object(sidecar.os.path, "expanduser", return_value=missing):
+            result = sidecar._codex_account_email()
+        assert result == "default"
+
+    def test_returns_email_from_valid_auth(self, tmp_path):
+        token = _make_jwt({"email": "codex@example.com"})
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text(
+            json.dumps(
+                {
+                    "auth_mode": "chatgpt",
+                    "tokens": {"id_token": token, "access_token": "tok"},
+                }
+            )
+        )
+        with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
+            result = sidecar._codex_account_email()
+        assert result == "codex@example.com"
+
+    def test_returns_default_when_tokens_missing(self, tmp_path):
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text(json.dumps({"auth_mode": "chatgpt"}))
+        with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
+            result = sidecar._codex_account_email()
+        assert result == "default"
 
     def test_callback_receives_queued_warn_status(self):
         statuses: list[str] = []

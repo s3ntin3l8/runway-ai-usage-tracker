@@ -1194,6 +1194,26 @@ def get_windows_credential(target: str) -> str | None:
 # --- Anthropic JSONL Enrichment ---
 
 
+def discover_anthropic_email() -> str:
+    """Attempt to discover account email from credentials file."""
+    for creds_path in [
+        os.path.expanduser("~/.claude/.credentials.json"),
+        os.path.expanduser("~/.config/claude/.credentials.json"),
+        os.path.expanduser("~/.claude.json"),
+    ]:
+        if os.path.exists(creds_path):
+            try:
+                with open(creds_path) as f:
+                    data = json.load(f)
+                oauth_acc = data.get("oauthAccount", {})
+                email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
+                if email:
+                    return email
+            except Exception:
+                pass
+    return ""
+
+
 def _anthropic_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
     """Scan ~/.claude/projects/**/*.jsonl and append token-breakdown cards to results."""
     dirs: list[str] = []
@@ -1219,22 +1239,7 @@ def _anthropic_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
         return
 
     # Discover account email from credentials file
-    email = ""
-    for creds_path in [
-        os.path.expanduser("~/.claude/.credentials.json"),
-        os.path.expanduser("~/.config/claude/.credentials.json"),
-        os.path.expanduser("~/.claude.json"),
-    ]:
-        if os.path.exists(creds_path):
-            try:
-                with open(creds_path) as f:
-                    data = json.load(f)
-                oauth_acc = data.get("oauthAccount", {})
-                email = oauth_acc.get("emailAddress", "") or oauth_acc.get("email", "")
-                if email:
-                    break
-            except Exception:
-                pass
+    email = discover_anthropic_email()
 
     # Collect all .jsonl files
     all_files: list[Path] = []
@@ -1404,6 +1409,54 @@ def _anthropic_short_model(model: str) -> str:
     return base.split("-")[0] if base else m
 
 
+# --- Account Email Helpers (JWT id_token extraction) ---
+
+
+def _decode_id_token_email(id_token: str) -> str | None:
+    """Extract email from a JWT id_token without verifying the signature."""
+    try:
+        import base64 as _base64
+
+        payload_b64 = id_token.split(".")[1]
+        payload_b64 += "=" * (4 - len(payload_b64) % 4)
+        payload = json.loads(_base64.urlsafe_b64decode(payload_b64))
+        email = payload.get("email")
+        return email if isinstance(email, str) and "@" in email else None
+    except Exception:
+        return None
+
+
+def _gemini_account_email() -> str:
+    """Read email from ~/.gemini/oauth_creds.json id_token; returns 'default' if unavailable."""
+    cred_path = os.path.expanduser("~/.gemini/oauth_creds.json")
+    try:
+        with open(cred_path) as f:
+            creds = json.load(f)
+        email = _decode_id_token_email(creds.get("id_token", ""))
+        return email or "default"
+    except Exception:
+        return "default"
+
+
+def _codex_account_email() -> str:
+    """Read email from ~/.codex/auth.json id_token; returns 'default' if unavailable."""
+    candidate_paths = [
+        os.path.expanduser("~/.codex/auth.json"),
+    ]
+    for cred_path in candidate_paths:
+        try:
+            with open(cred_path) as f:
+                creds = json.load(f)
+            tokens = creds.get("tokens", {})
+            if isinstance(tokens, dict):
+                email = _decode_id_token_email(tokens.get("id_token", ""))
+                if email:
+                    return email
+        except Exception:
+            continue
+    return "default"
+
+
 # --- Gemini JSONL Enrichment ---
 
 
@@ -1514,6 +1567,7 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
             continue
 
     hostname = get_hostname()
+    gemini_account_id = _gemini_account_email()
     for model_class, ct in class_totals.items():
         if ct["total"] == 0:
             continue
@@ -1535,7 +1589,7 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
         results.append(
             {
                 "provider_id": provider_id,
-                "account_id": "default",
+                "account_id": gemini_account_id,
                 "service_name": "Gemini",
                 "icon": icon,
                 "used_value": token_total,
@@ -1667,10 +1721,11 @@ def _codex_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
         m: {"cost": 0.0, "msgs": bm["msgs"], "tokens": bm["tokens"]} for m, bm in by_model.items()
     }
 
+    codex_account_id = _codex_account_email()
     results.append(
         {
             "provider_id": provider_id,
-            "account_id": "default",
+            "account_id": codex_account_id,
             "service_name": "ChatGPT Codex",
             "icon": icon,
             "used_value": token_total,
@@ -1706,7 +1761,16 @@ class GenericCollector:
 
     @staticmethod
     def get_nested(data: Any, key_path: str) -> Any:
-        """Get nested value from dict using dot notation or list of keys."""
+        """Get nested value from dict using dot notation or list of keys.
+        Supports fallback syntax using '|' (e.g. 'pathA|pathB').
+        """
+        if isinstance(key_path, str) and "|" in key_path:
+            for path in key_path.split("|"):
+                val = GenericCollector.get_nested(data, path)
+                if val:
+                    return val
+            return None
+
         if isinstance(key_path, str):
             keys = key_path.split(".")
         else:
@@ -2299,6 +2363,7 @@ class GenericCollector:
                             with open(path) as f:
                                 data = json.load(f)
 
+                            email = discover_anthropic_email()
                             now_str = datetime.datetime.now(datetime.UTC).isoformat()
                             name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
 
@@ -2321,6 +2386,8 @@ class GenericCollector:
                                         "pace": "Active",
                                         "detail": f"{pct_used:.1f}% used [Sidecar]",
                                         "data_source": "local",
+                                        "account_id": email or None,
+                                        "account_label": email or None,
                                         "metadata": {"used": pct_used, "resets_at": reset_ts},
                                     }
                                 )
@@ -2345,6 +2412,8 @@ class GenericCollector:
                                         "pace": "Active",
                                         "detail": f"{total_tokens:,} tokens [Sidecar]",
                                         "data_source": "local",
+                                        "account_id": email or None,
+                                        "account_label": email or None,
                                     }
                                 )
                         except Exception:
@@ -2378,6 +2447,16 @@ class GenericCollector:
                     "metadata": {**tokens, "provider_id": provider_id},
                 }
             )
+
+        # Post-process: propagate discovered account identity to all cards
+        acc_id = tokens.get("account_id")
+        acc_label = tokens.get("account_label")
+        if acc_id or acc_label:
+            for card in results:
+                if acc_id and not card.get("account_id"):
+                    card["account_id"] = acc_id
+                if acc_label and not card.get("account_label"):
+                    card["account_label"] = acc_label
 
         return results
 
@@ -2739,15 +2818,20 @@ delta_tracker = DeltaTracker()
 
 def run_collection(
     config: dict[str, Any],
+    providers: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
-    """Run collection for all enabled providers.
+    """Run collection for specified or enabled providers.
 
     Returns (metrics, deltas, error_count).
     """
     all_metrics: list[dict[str, Any]] = []
     all_deltas: list[dict[str, Any]] = []
     error_count = 0
-    enabled_providers = config.get("providers", ["all"])
+
+    if providers:
+        enabled_providers = providers
+    else:
+        enabled_providers = config.get("providers", ["all"])
 
     registry_providers = __REGISTRY__.get("providers", {})
     now_iso = datetime.datetime.now(datetime.UTC).isoformat()
@@ -2813,7 +2897,8 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
-        self._interval: int = config.get("interval_seconds", 1800)
+        # Heartbeat interval: frequent check-ins for server orchestration
+        self._interval: int = config.get("interval_seconds", 60)
         self.on_status_change = on_status_change
 
         # Readable state attributes
@@ -2829,6 +2914,7 @@ class DaemonRunner:
         self._trigger_event = threading.Event()  # set to skip the inter-cycle sleep
         self._paused = False
         self._cycle_running = False  # guard against concurrent run_once() calls
+        self._next_poll_providers: list[str] | None = None
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------
@@ -2861,7 +2947,7 @@ class DaemonRunner:
     # Public methods
     # ------------------------------------------------------------------
 
-    def run_once(self) -> bool:
+    def run_once(self, providers: list[str] | None = None) -> bool:
         """Run one collection+ingest cycle synchronously. Returns True on success."""
         with self._lock:
             if self._cycle_running:
@@ -2869,120 +2955,116 @@ class DaemonRunner:
                 return False
             self._cycle_running = True
         try:
-            return self._run_once_impl()
+            return self._run_once_impl(providers=providers)
         finally:
             with self._lock:
                 self._cycle_running = False
 
-    def _run_once_impl(self) -> bool:
+    def _run_once_impl(self, providers: list[str] | None = None) -> bool:
         """Inner implementation of run_once (called only when no cycle is running)."""
         api_url = self._config["api_url"]
         api_key = self._config["api_key"]
 
         try:
-            logging.info("Starting collection cycle...")
-            metrics, deltas, collection_errors = run_collection(self._config)
+            if providers:
+                logging.info(f"Starting targeted collection for: {providers}...")
+            else:
+                logging.info("Starting heartbeat/collection cycle...")
+
+            metrics, deltas, collection_errors = run_collection(self._config, providers=providers)
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version", "unknown")
 
-            if metrics or deltas:
-                payload = {
-                    "provider": f"sidecar-{get_hostname()}",
-                    "metrics": metrics,
-                    "deltas": deltas,
-                    "sidecar_id": get_hostname(),
-                    "sidecar_version": sidecar_version,
-                    "os_platform": os_platform,
-                    "collection_errors": collection_errors,
-                    "last_log_lines": _tail_log(20),
-                }
-
-                # Try to flush queue first
-                queue_flush(api_url, api_key, stop_event=self._stop_event)
-
-                # Send fresh metrics
-                success, result, code = http_post_signed_with_retry(
-                    f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
-                    payload,
-                    api_key,
-                    max_attempts=self._config.get("retry_attempts", 3),
-                    backoff_seconds=self._config.get("retry_backoff_seconds", 5),
-                    stop_event=self._stop_event,
-                )
-
-                with self._lock:
-                    self.last_cycle_at = time.time()
-                    self.last_metrics_count = len(metrics)
-                    self.last_http_code = code
-
-                if success:
-                    logging.info(f"Successfully sent {len(metrics)} metrics")
-                    with self._lock:
-                        self.last_error = None
-                        self._status_reason = "success"
-                    self._fire_status_change()
-                    # Server may request an immediate follow-up cycle (remote trigger)
-                    if isinstance(result, dict) and result.get("trigger"):
-                        logging.info(
-                            "Remote trigger received — scheduling immediate follow-up cycle"
-                        )
-                        self._trigger_event.set()
-                    return True
-                # Check for clock skew error (400 timestamp_expired). Note that
-                # `result["detail"]` is a dict only for the structured clock-skew
-                # response — validation errors return a plain string there.
-                detail = result.get("detail") if isinstance(result, dict) else None
-                if (
-                    code == 400
-                    and isinstance(detail, dict)
-                    and detail.get("error") == "timestamp_expired"
-                ):
-                    skew = detail.get("skew_seconds", "?")
-                    logging.error("=" * 60)
-                    logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")
-                    logging.error(f"Server reported skew of {skew} seconds.")
-                    logging.error("Please check NTP sync on this machine.")
-                    logging.error("=" * 60)
-                else:
-                    logging.error(f"Failed to send metrics (HTTP {code}): {result}")
-                queue_push(payload)
-                with self._lock:
-                    self.last_error = str(result)
-                    # "error" if we got a real HTTP response (non-2xx), "queued" for
-                    # network-level failures (no connectivity, code 0)
-                    self._status_reason = "error" if code > 0 else "queued"
-                self._fire_status_change()
-                return False
-            logging.info("No metrics collected in this cycle")
-            # Send a heartbeat payload so the server updates last_seen and version info
-            heartbeat = {
+            # Prepare payload (might be empty heartbeat if no metrics/deltas and no providers requested)
+            payload = {
                 "provider": f"sidecar-{get_hostname()}",
-                "metrics": [],
+                "metrics": metrics,
+                "deltas": deltas,
                 "sidecar_id": get_hostname(),
                 "sidecar_version": sidecar_version,
                 "os_platform": os_platform,
                 "collection_errors": collection_errors,
+                "last_log_lines": _tail_log(20) if not providers else [],
             }
-            hb_success, hb_result, _ = http_post_signed_with_retry(
+
+            # Try to flush queue first
+            queue_flush(api_url, api_key, stop_event=self._stop_event)
+
+            # Send payload (metrics or heartbeat)
+            success, result, code = http_post_signed_with_retry(
                 f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
-                heartbeat,
+                payload,
                 api_key,
-                max_attempts=1,
+                max_attempts=self._config.get("retry_attempts", 3),
+                backoff_seconds=self._config.get("retry_backoff_seconds", 5),
                 stop_event=self._stop_event,
             )
-            if hb_success and isinstance(hb_result, dict) and hb_result.get("trigger"):
-                logging.info(
-                    "Remote trigger received via heartbeat — scheduling immediate follow-up cycle"
-                )
-                self._trigger_event.set()
+
             with self._lock:
                 self.last_cycle_at = time.time()
-                self.last_metrics_count = 0
-                self.last_http_code = None
-                self._status_reason = "success"
+                self.last_metrics_count = len(metrics)
+                self.last_http_code = code
+
+            if success:
+                if metrics or deltas:
+                    logging.info(f"Successfully sent {len(metrics)} metrics")
+                else:
+                    logging.debug("Heartbeat successful")
+
+                with self._lock:
+                    self.last_error = None
+                    self._status_reason = "success"
+                self._fire_status_change()
+
+                if isinstance(result, dict):
+                    # 1. Manual trigger (Global refresh) - Highest precedence
+                    if result.get("trigger"):
+                        logging.info(
+                            "Remote trigger received — scheduling immediate follow-up (Global Refresh)"
+                        )
+                        self._next_poll_providers = None
+                        self._trigger_event.set()
+
+                    # 2. Targeted polling instructions (Orchestration)
+                    else:
+                        poll_providers = result.get("poll_providers")
+                        if poll_providers:
+                            logging.info(f"Server requested targeted poll: {poll_providers}")
+                            self._next_poll_providers = poll_providers
+                            self._trigger_event.set()
+
+                return True
+
+            # Check for clock skew error (400 timestamp_expired). Note that
+            # `result["detail"]` is a dict only for the structured clock-skew
+            # response — validation errors return a plain string there.
+            detail = result.get("detail") if isinstance(result, dict) else None
+            if (
+                code == 400
+                and isinstance(detail, dict)
+                and detail.get("error") == "timestamp_expired"
+            ):
+                skew = detail.get("skew_seconds", "?")
+                logging.error("=" * 60)
+                logging.error("⚠️  CLOCK SKEW DETECTED — REQUEST REJECTED")
+                logging.error(f"Server reported skew of {skew} seconds.")
+                logging.error("Please check NTP sync on this machine.")
+                logging.error("=" * 60)
+            else:
+                logging.error(f"Failed to send metrics (HTTP {code}): {result}")
+
+            # Only queue metrics payloads; heartbeats don't need to be queued
+            if metrics or deltas:
+                queue_push(payload)
+
+            with self._lock:
+                self.last_error = str(result)
+                # "error" if we got a real HTTP response (non-2xx), "queued" for
+                # network-level failures (no connectivity, code 0)
+                self._status_reason = "error" if code > 0 else "queued"
             self._fire_status_change()
-            return True
+            return False
 
         except Exception as e:
             logging.error(f"Unexpected error in collection loop: {e}")
@@ -3055,7 +3137,12 @@ class DaemonRunner:
                 self._stop_event.wait(timeout=1)
                 continue
 
-            self.run_once()
+            # Check for specific poll instructions
+            with self._lock:
+                providers = self._next_poll_providers
+                self._next_poll_providers = None
+
+            self.run_once(providers=providers)
 
             if self._stop_event.is_set():
                 break
