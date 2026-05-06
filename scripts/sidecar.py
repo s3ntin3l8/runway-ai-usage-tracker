@@ -1882,33 +1882,93 @@ def collect_antigravity_lsp(icon: str) -> list[dict[str, Any]]:
 # --- Main Loop ---
 
 
+_WINDOW_RANK: dict[str, int] = {
+    "monthly": 5,
+    "weekly": 4,
+    "daily": 3,
+    "rolling": 2,
+    "session": 1,
+    "unknown": 0,
+}
+
+# Source token field → wire unit_type. "total" is omitted: it equals
+# input+output+reasoning+cache_read, so emitting it would double-count.
+_TOKEN_KEY_MAP: dict[str, str] = {
+    "input": "tokens_input",
+    "output": "tokens_output",
+    "reasoning": "tokens_reasoning",
+    "cache_read": "tokens_cache_read",
+}
+
+
+def _card_rank(card: dict) -> tuple[int, int]:
+    wt = (card.get("window_type") or "unknown").lower()
+    return (_WINDOW_RANK.get(wt, 0), 1 if card.get("token_usage") else 0)
+
+
+def _pick_primary_cards(cards: list[dict]) -> list[dict]:
+    """One card per model_id (None is its own bucket); highest window rank wins."""
+    buckets: dict = {}
+    for c in cards:
+        mid = c.get("model_id")
+        cur = buckets.get(mid)
+        if cur is None or _card_rank(c) > _card_rank(cur):
+            buckets[mid] = c
+    return list(buckets.values())
+
+
+def _extract_card_metrics(card: dict) -> dict[str, float]:
+    """Return {wire_unit_type: cumulative_value} from a card's token_usage / by_model."""
+    out: dict[str, float] = {}
+    tu = card.get("token_usage") or {}
+    for src, wire in _TOKEN_KEY_MAP.items():
+        v = tu.get(src)
+        if v is not None:
+            try:
+                out[wire] = float(v)
+            except (TypeError, ValueError):
+                pass
+
+    # cost_usd: prefer used_value when unit is "currency", else sum by_model[*].cost
+    if card.get("unit_type") == "currency" and card.get("used_value") is not None:
+        try:
+            out["cost_usd"] = float(card["used_value"])
+        except (TypeError, ValueError):
+            pass
+    elif card.get("by_model"):
+        total_cost, had_any = 0.0, False
+        for mdata in (card["by_model"] or {}).values():
+            c = (mdata or {}).get("cost")
+            if c is not None:
+                try:
+                    total_cost += float(c)
+                    had_any = True
+                except (TypeError, ValueError):
+                    pass
+        if had_any:
+            out["cost_usd"] = total_cost
+    return out
+
+
 class DeltaTracker:
-    """Track usage deltas between cycles to support authoritative accounting."""
+    """Track usage deltas between cycles.
+
+    Key: (provider_id, account_id, model_id, window_type, variant, unit_type)
+    — richer than the old 3-tuple so overlapping windows on the same account
+    each have their own baseline and don't corrupt each other.
+    """
 
     def __init__(self):
-        self._last_values: dict[str, float] = {}
+        self._last: dict[tuple, float] = {}
 
-    def get_delta(
-        self, provider_id: str, account_id: str, unit_type: str, current_value: float
-    ) -> float:
-        key = f"{provider_id}:{account_id}:{unit_type}"
-        previous = self._last_values.get(key)
-
-        # Update baseline for next cycle
-        self._last_values[key] = current_value
-
-        if previous is None:
-            # First read - we don't know the delta yet, but we have a baseline now.
-            # To be safe, we report 0 delta for the first observation to avoid massive
-            # spikes if the account already has high usage.
-            return 0.0
-
-        if current_value < previous:
-            # Reset detected (e.g. quota window rollover).
-            # The delta is the entire current value (starting from 0).
-            return current_value
-
-        return current_value - previous
+    def get_delta(self, key: tuple, current: float) -> float:
+        prev = self._last.get(key)
+        self._last[key] = current
+        if prev is None:
+            return 0.0  # first observation — establish baseline only
+        if current < prev:
+            return current  # window reset — credit from zero
+        return current - prev
 
 
 # Global delta tracker
@@ -1935,30 +1995,45 @@ def run_collection(
             try:
                 logging.info(f"  [{provider_id}] collecting...")
                 metrics = GenericCollector.collect_provider(provider_id, provider_config)
-                if metrics:
-                    logging.info(f"  [{provider_id}] {len(metrics)} card(s)")
-                    for card in metrics:
-                        # If card has used_value and unit_type, track delta
-                        u_val = card.get("used_value")
-                        u_type = card.get("unit_type")
-                        acc_id = card.get("account_id") or "default"
-
-                        if u_val is not None and u_type:
-                            delta = delta_tracker.get_delta(
-                                provider_id, acc_id, u_type, float(u_val)
-                            )
-                            if delta > 0:
-                                all_deltas.append(
-                                    {
-                                        "provider_id": provider_id,
-                                        "account_id": acc_id,
-                                        "unit_type": u_type,
-                                        "value": delta,
-                                        "timestamp": now_iso,
-                                    }
-                                )
-                else:
+                if not metrics:
                     logging.info(f"  [{provider_id}] no data")
+                    all_metrics.extend(metrics)
+                    continue
+
+                logging.info(f"  [{provider_id}] {len(metrics)} card(s)")
+
+                # Group cards by account, pick primary per model_id, emit
+                # token/cost deltas. One wire delta per (provider, account, unit_type)
+                # to prevent double-counting across overlapping windows.
+                by_account: dict[str, list[dict]] = {}
+                for card in metrics:
+                    acc = card.get("account_id") or "default"
+                    by_account.setdefault(acc, []).append(card)
+
+                for acc_id, acards in by_account.items():
+                    primaries = _pick_primary_cards(acards)
+                    wire_sums: dict[str, float] = {}
+                    for card in primaries:
+                        mid = card.get("model_id")
+                        wt = (card.get("window_type") or "unknown").lower()
+                        var = card.get("variant")
+                        for ut, cumulative in _extract_card_metrics(card).items():
+                            key = (provider_id, acc_id, mid, wt, var, ut)
+                            d = delta_tracker.get_delta(key, cumulative)
+                            if d > 0:
+                                wire_sums[ut] = wire_sums.get(ut, 0.0) + d
+                    for ut, total_d in wire_sums.items():
+                        if total_d > 0:
+                            all_deltas.append(
+                                {
+                                    "provider_id": provider_id,
+                                    "account_id": acc_id,
+                                    "unit_type": ut,
+                                    "value": total_d,
+                                    "timestamp": now_iso,
+                                }
+                            )
+
                 all_metrics.extend(metrics)
             except Exception as e:
                 logging.error(f"  [{provider_id}] error: {e}")

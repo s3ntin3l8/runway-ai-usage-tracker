@@ -132,6 +132,24 @@ def _run_migrations():
         except Exception as e:
             logger.error(f"latest_usage constraint migration failed: {e}")
 
+        # Drop legacy cumulative_usage unit_types (percent/currency/credits).
+        # Sidecar now emits only tokens_*/cost_usd; old rows are diagnostic noise.
+        try:
+            result = conn.execute(
+                __import__("sqlalchemy").text(
+                    "DELETE FROM cumulative_usage "
+                    "WHERE unit_type IN ('percent', 'currency', 'credits')"
+                )
+            )
+            if result.rowcount:
+                logger.info(
+                    f"Cleared {result.rowcount} legacy cumulative_usage rows "
+                    f"(percent/currency/credits)"
+                )
+            conn.commit()
+        except Exception as e:
+            logger.debug(f"cumulative_usage legacy cleanup skipped: {e}")
+
         # Pre-release: refuse to boot if the legacy `window_label` column is still present.
         # The schema rework removed it; carrying both columns silently would split aggregation.
         # Wipe `data/runway.db` to continue (no production users yet).
