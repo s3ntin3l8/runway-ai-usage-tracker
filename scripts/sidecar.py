@@ -1494,6 +1494,9 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
     if not session_files:
         return
 
+    now = datetime.datetime.now(datetime.UTC)
+    daily_cutoff = now - datetime.timedelta(hours=24)
+
     # model_class → {input, output, cached, thoughts, msgs, by_model}
     class_totals: dict[str, dict] = {}
 
@@ -1522,6 +1525,17 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
                 ]
 
             for msg in msgs:
+                # Filter to the last 24h to match the Gemini daily quota window.
+                # Entries without a parseable timestamp are included (safe default).
+                ts_raw = msg.get("timestamp")
+                if ts_raw:
+                    try:
+                        ts = datetime.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                        if ts < daily_cutoff:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
                 raw_tokens = msg.get("tokens", {})
                 raw_model = msg.get("model") or "unknown"
                 model_class = _gemini_map_model_class(raw_model)
@@ -1595,8 +1609,7 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
                 "used_value": token_total,
                 "limit_value": None,
                 "unit_type": "tokens",
-                "window_type": "session",
-                "variant": model_class,
+                "window_type": "daily",
                 "model_id": model_class,
                 "health": "good",
                 "data_source": "local",
@@ -1611,9 +1624,9 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
                 "by_model": by_model_out,
                 "remaining": f"{token_total:,}",
                 "unit": "tokens",
-                "reset": "Rolling",
+                "reset": "Daily",
                 "pace": "Stable",
-                "detail": f"{token_total:,} tokens ({model_class}) · {hostname} [Sidecar]",
+                "detail": f"{token_total:,} tokens ({model_class}, 24h) · {hostname} [Sidecar]",
             }
         )
 
