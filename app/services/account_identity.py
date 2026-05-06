@@ -3,13 +3,13 @@ import re
 
 
 def resolve_account_id(
-    provider_id: str,
+    provider_id: str,  # reserved for future provider-specific rules
     raw_account_id: str | None,
     account_label: str | None,
     credential_hint: str | None = None,
 ) -> str:
     """Canonical account_id used by both LatestUsage and CumulativeUsage."""
-    email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,6}$"
+    email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
 
     if account_label and re.match(email_pattern, account_label):
         return account_label.lower()

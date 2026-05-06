@@ -143,6 +143,15 @@ class TestResolveAccountId:
         result = resolve_account_id(
             provider_id="anthropic",
             raw_account_id="default",
-            account_label="user@example.comEXTRA",
+            account_label="user@example.com-extra",
         )
         assert result == "default"
+
+    def test_email_with_long_tld(self):
+        """Test that long TLDs like .photography are accepted."""
+        result = resolve_account_id(
+            provider_id="anthropic",
+            raw_account_id="default",
+            account_label="user@example.photography",
+        )
+        assert result == "user@example.photography"
