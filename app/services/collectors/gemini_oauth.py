@@ -77,6 +77,12 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             self._current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
+            # Inherit account identity from cache metadata so cards emitted
+            # from this path carry the correct email and resolve to the right
+            # canonical account_id instead of falling back to "default".
+            cached_label = metadata.get("account_label")
+            if cached_label and (not self.account_label or self.account_label == "Default"):
+                self.account_label = cached_label
             return tokens.get("oauth_token")
         return None
 
