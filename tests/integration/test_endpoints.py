@@ -314,8 +314,8 @@ class TestIngestEndpoint:
         test_key = "test-secret-key-for-ingest-tests"
 
         invalid_payload = {
-            "provider": "claude"
-            # Missing required 'metrics' field
+            # Missing required 'provider' field (metrics is now optional)
+            "metrics": []
         }
 
         body = json.dumps(invalid_payload)
