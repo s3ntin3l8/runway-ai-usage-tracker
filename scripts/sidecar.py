@@ -2606,6 +2606,56 @@ def _discover_anthropic_log_paths() -> list[Path]:
     return paths
 
 
+def _discover_codex_log_paths() -> list[Path]:
+    """Return all .jsonl files under the Codex session directories."""
+    candidate_dirs = [
+        os.path.expanduser("~/.codex/sessions"),
+        os.path.expanduser("~/.config/codex/sessions"),
+    ]
+    paths: list[Path] = []
+    for d in candidate_dirs:
+        dp = Path(d)
+        if dp.is_dir():
+            paths.extend(dp.glob("**/*.jsonl"))
+    return paths
+
+
+def _discover_gemini_log_paths() -> list[Path]:
+    """Return all .jsonl session files under the Gemini session directories."""
+    candidate_dirs = [
+        os.path.expanduser("~/.gemini/tmp/ai-usage-tracker/chats"),
+        os.path.expanduser("~/.gemini/tmp/gemini/chats"),
+        os.path.expanduser("~/.gemini/tmp/sessions"),
+        os.path.expanduser("~/.gemini/sessions"),
+        os.path.expanduser("~/.config/gemini/sessions"),
+    ]
+    # Also scan worktree-specific chats dirs under ~/.gemini/tmp
+    tmp_base = os.path.expanduser("~/.gemini/tmp")
+    if os.path.isdir(tmp_base):
+        for item in os.listdir(tmp_base):
+            chats_dir = os.path.join(tmp_base, item, "chats")
+            if os.path.isdir(chats_dir) and chats_dir not in candidate_dirs:
+                candidate_dirs.append(chats_dir)
+    paths: list[Path] = []
+    for d in candidate_dirs:
+        dp = Path(d)
+        if dp.is_dir():
+            paths.extend(dp.glob("session-*.jsonl"))
+    return paths
+
+
+def _discover_opencode_db_path() -> Path | None:
+    """Return the path to the OpenCode SQLite database, or None if not found."""
+    candidates = [
+        os.path.expanduser("~/.local/share/opencode/opencode.db"),
+    ]
+    for p in candidates:
+        path = Path(p)
+        if path.exists():
+            return path
+    return None
+
+
 def run_collection(
     config: dict[str, Any],
     providers: list[str] | None = None,
@@ -2618,6 +2668,9 @@ def run_collection(
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+        from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
+        from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
+        from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
         from scripts.sidecar_pkg.event_watermark import EventWatermark
 
         _watermark = EventWatermark(
@@ -2671,6 +2724,63 @@ def run_collection(
                             all_events.extend(e.model_dump(mode="json") for e in evts)
                 except Exception as e:
                     logging.warning(f"  [anthropic] event extraction error: {e}")
+
+            # --- ChatGPT/Codex event extraction ---
+            if provider_id == "chatgpt" and _events_enabled and _watermark is not None:
+                try:
+                    account_id = _codex_account_email() or "default"
+                    since = _watermark.last_pushed("chatgpt", account_id) or (
+                        datetime.datetime.now(datetime.UTC)
+                        - datetime.timedelta(days=bootstrap_days)
+                    )
+                    log_paths = _discover_codex_log_paths()
+                    if log_paths:
+                        evts = parse_chatgpt_events(log_paths, account_id=account_id, since=since)
+                        if evts:
+                            logging.info(
+                                f"  [chatgpt] {len(evts)} new event(s) since {since.isoformat()}"
+                            )
+                            all_events.extend(e.model_dump(mode="json") for e in evts)
+                except Exception as e:
+                    logging.warning(f"  [chatgpt] event extraction error: {e}")
+
+            # --- Gemini event extraction ---
+            if provider_id == "gemini" and _events_enabled and _watermark is not None:
+                try:
+                    account_id = _gemini_account_email() or "default"
+                    since = _watermark.last_pushed("gemini", account_id) or (
+                        datetime.datetime.now(datetime.UTC)
+                        - datetime.timedelta(days=bootstrap_days)
+                    )
+                    log_paths = _discover_gemini_log_paths()
+                    if log_paths:
+                        evts = parse_gemini_events(log_paths, account_id=account_id, since=since)
+                        if evts:
+                            logging.info(
+                                f"  [gemini] {len(evts)} new event(s) since {since.isoformat()}"
+                            )
+                            all_events.extend(e.model_dump(mode="json") for e in evts)
+                except Exception as e:
+                    logging.warning(f"  [gemini] event extraction error: {e}")
+
+            # --- OpenCode event extraction ---
+            if provider_id == "opencode" and _events_enabled and _watermark is not None:
+                try:
+                    account_id = "default"
+                    db_path = _discover_opencode_db_path()
+                    if db_path is not None:
+                        since = _watermark.last_pushed("opencode", account_id) or (
+                            datetime.datetime.now(datetime.UTC)
+                            - datetime.timedelta(days=bootstrap_days)
+                        )
+                        evts = parse_opencode_events(db_path, account_id=account_id, since=since)
+                        if evts:
+                            logging.info(
+                                f"  [opencode] {len(evts)} new event(s) since {since.isoformat()}"
+                            )
+                            all_events.extend(e.model_dump(mode="json") for e in evts)
+                except Exception as e:
+                    logging.warning(f"  [opencode] event extraction error: {e}")
 
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")
