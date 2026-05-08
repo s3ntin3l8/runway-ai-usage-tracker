@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=B612+Mono:ital,wght@0,400;0,700;1,400&family=B612:ital,wght@0,400;0,700;1,400&display=swap">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612+Mono:ital,wght@0,400;0,700;1,400&family=B612:ital,wght@0,400;0,700;1,400&display=swap">
-    <link rel="stylesheet" href="/static/css/styles.css?v=5">
+    <link rel="stylesheet" href="/static/css/styles.css?v=6">
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
 <body class="min-h-screen">
@@ -92,8 +92,8 @@
                     &gt; Connection refused.
                 </div>
 
-                <!-- Hero: fleet lights + aggregate ring -->
-                <div class="hero">
+                <!-- Hero: fleet lights + most constrained + aggregate ring -->
+                <div class="hero hero-3">
                     <div class="glass" id="fleet-health-panel">
                         <div class="health-head">
                             <h2>Fleet Health</h2>
@@ -109,14 +109,21 @@
                             <span class="k crit">CRIT</span>
                             <span id="fleet-counts" style="margin-left:auto;"></span>
                         </div>
+                        <!-- Health bucket counts row -->
+                        <div class="health-buckets" id="health-buckets"></div>
+                        <!-- Per-provider mini-table -->
+                        <div class="prov-table" id="prov-table"></div>
+                    </div>
+                    <div class="glass" id="most-constrained-panel">
+                        <div id="most-constrained-content"></div>
                     </div>
                     <div class="glass" id="agg-hero-panel">
-                        <div class="agg">
+                        <div class="agg agg-compact">
                             <div>
                                 <div class="label">Avg Remaining</div>
                                 <div class="big"><span id="agg-pct-val">—</span><em>%</em></div>
                                 <div class="sub" id="agg-reset-line">—</div>
-                                <div class="sub" id="agg-pace-line" style="margin-top:4px;"></div>
+                                <div class="agg-mini-stats" id="agg-mini-stats"></div>
                             </div>
                             <div class="agg-ring" id="agg-ring"></div>
                         </div>
