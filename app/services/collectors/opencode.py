@@ -31,8 +31,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.utils import PaceCalculator, http_request_with_retry
-from app.services.collectors.base import BaseCollector
-from app.services.external_metrics import external_metric_service
+from app.services.collectors.base import BaseCollector, format_token_details
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -73,7 +72,11 @@ class OpenCodeCollector(BaseCollector):
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "web": ("Web API (session cookie)", "_get_opencode_web"),
-        "sidecar": ("Sidecar Aggregation (Multi-Host)", "_strategy_sidecar_aggregation"),
+        "sidecar": (
+            "Sidecar Aggregation (Multi-Host)",
+            "_strategy_sidecar_aggregation",
+            {"enrich": True},
+        ),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -147,8 +150,94 @@ class OpenCodeCollector(BaseCollector):
     async def _strategy_sidecar_aggregation(
         self, client: httpx.AsyncClient
     ) -> list[dict[str, Any]]:
-        """Second tier: Sidecar aggregation of multi-host data."""
-        return await external_metric_service.get_opencode_aggregated()
+        """Second tier: Sidecar aggregation of multi-host data.
+
+        Queries UsageEvent rows for provider_id='opencode' and aggregates cost
+        across all sidecars into per-account Combined cards for the session (5h),
+        weekly (7d), and monthly (30d) windows.
+        """
+        from sqlmodel import Session, select
+
+        from app.core.db import engine
+        from app.models.db import UsageEvent
+
+        now = datetime.now(UTC)
+        cutoffs = {
+            "session": (now - timedelta(hours=5), 12.0),
+            "weekly": (now - timedelta(days=7), 30.0),
+            "monthly": (now - timedelta(days=30), 60.0),
+        }
+
+        # SQLite stores datetimes as naive strings; use naive UTC cutoff for the WHERE clause.
+        cutoff_30d_naive = (now - timedelta(days=30)).replace(tzinfo=None)
+        try:
+            with Session(engine) as session:
+                events = session.exec(
+                    select(UsageEvent).where(
+                        UsageEvent.provider_id == "opencode",
+                        UsageEvent.ts >= cutoff_30d_naive,
+                    )
+                ).all()
+        except Exception as e:
+            logger.warning(f"OpenCode sidecar aggregation DB query failed: {e}")
+            return []
+
+        if not events:
+            return []
+
+        # Aggregate cost and message count per (account_id, window_type)
+        # Structure: {account_id: {window_type: {"cost": float, "msgs": int}}}
+        agg: dict[str, dict[str, dict[str, Any]]] = {}
+        for event in events:
+            acc = event.account_id or "default"
+            if acc not in agg:
+                agg[acc] = {wt: {"cost": 0.0, "msgs": 0} for wt in cutoffs}
+            # SQLite may return timezone-naive datetimes; treat them as UTC for comparison.
+            event_ts = event.ts
+            if event_ts.tzinfo is None:
+                event_ts = event_ts.replace(tzinfo=UTC)
+            for window_type, (cutoff, _limit) in cutoffs.items():
+                if event_ts >= cutoff:
+                    agg[acc][window_type]["cost"] += event.cost_usd
+                    agg[acc][window_type]["msgs"] += 1
+
+        cards: list[dict[str, Any]] = []
+        now_iso = now.isoformat()
+        for acc_id, windows in agg.items():
+            for window_type, (cutoff, limit) in cutoffs.items():
+                data = windows[window_type]
+                if data["msgs"] == 0:
+                    continue
+                used = data["cost"]
+                msgs = data["msgs"]
+                remaining = max(0.0, limit - used)
+                pct = (used / limit * 100) if limit > 0 else 0.0
+                cards.append(
+                    {
+                        "provider_id": "opencode",
+                        "account_id": acc_id,
+                        "service_name": "OpenCode",
+                        "variant": "Combined",
+                        "window_type": window_type,
+                        "icon": "⚡",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": f"${limit:.0f} limit",
+                        "reset": "Rolling",
+                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                        "detail": f"${used:.2f} used · {msgs} msgs · Combined",
+                        "used_value": used,
+                        "limit_value": limit,
+                        "pct_used": pct,
+                        "msgs": msgs,
+                        "unit_type": "currency",
+                        "currency": "USD",
+                        "data_source": "local",
+                        "updated_at": now_iso,
+                    }
+                )
+
+        return cards
 
     async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
@@ -167,17 +256,17 @@ class OpenCodeCollector(BaseCollector):
             List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
         """
         # Source: token cache — populated by sidecar push or via UI ProviderConfig
-        session_cookie = await token_cache.get_token(
-            "opencode", "cookie_session", account_id=self.account_id or "default"
+        session_cookie = None
+        input_source = None
+        res = await token_cache.get_with_metadata(
+            "opencode", account_id=self.account_id or "default"
         )
-        input_source = "config" if session_cookie else None
-
-        if not session_cookie:
-            session_cookie = await token_cache.get_token(
-                "opencode", "session_cookie", account_id=self.account_id or "default"
-            )
+        if res:
+            tokens, metadata = res
+            session_cookie = tokens.get("cookie_session") or tokens.get("session_cookie")
             if session_cookie:
-                input_source = "config"
+                source = metadata.get("source")
+                input_source = "sidecar" if source else "config"
 
         if not session_cookie:
             return []
@@ -765,3 +854,91 @@ class OpenCodeCollector(BaseCollector):
 
         # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
         return cards
+
+    def _short_model_id_oc(self, model_id: str) -> str:
+        """Shorten a model ID for display, e.g. claude-sonnet-4-6 → sonnet."""
+        m = model_id.lower()
+        # Strip claude- prefix then any trailing -version suffix
+        m = re.sub(r"^claude-", "", m)
+        m = re.sub(r"-\d+[-.]?\d*$", "", m)
+        # Trim -free / -latest suffixes
+        m = re.sub(r"-(free|latest|preview)$", "", m)
+        return m or model_id
+
+    def _extract_window_info(self, text: str) -> dict[str, dict]:
+        """
+        Extract window type (rolling vs fixed) from the usage text.
+
+        Returns dict keyed by window name (e.g., "rollingUsage")
+        with cutoff timestamp and is_fixed flag.
+        """
+        now = datetime.now(UTC)
+        windows = [
+            ("rollingUsage", "5h"),
+            ("weeklyUsage", "7d"),
+            ("monthlyUsage", "30d"),
+        ]
+
+        FIXED_RESET_THRESHOLD = 86400  # 1 day in seconds
+        result: dict[str, dict] = {}
+
+        for key, duration_label in windows:
+            pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
+            match = re.search(pattern, text)
+            if not match:
+                continue
+
+            obj_content = match.group(1)
+            reset_match = re.search(r"resetInSec:(\d+)", obj_content)
+            if not reset_match:
+                continue
+
+            reset_sec = int(reset_match.group(1))
+            is_fixed = reset_sec > FIXED_RESET_THRESHOLD
+
+            if is_fixed:
+                reset_at = now + timedelta(seconds=reset_sec)
+                if key == "weeklyUsage":
+                    cutoff = reset_at - timedelta(days=7)
+                elif key == "monthlyUsage":
+                    cutoff = reset_at - timedelta(days=30)
+                else:
+                    cutoff = reset_at - timedelta(hours=5)
+            elif key == "rollingUsage":
+                cutoff = now - timedelta(hours=5)
+            elif key == "weeklyUsage":
+                cutoff = now - timedelta(days=7)
+            else:
+                cutoff = now - timedelta(days=30)
+
+            result[key] = {
+                "cutoff": cutoff,
+                "is_fixed": is_fixed,
+            }
+
+        return result
+
+    def _build_oc_enrichment_detail(self, totals: dict) -> str:
+        """Build the enrichment detail string from per-window totals."""
+        parts: list[str] = []
+
+        cost = totals.get("cost", 0.0)
+        parts.append(f"${cost:.2f}")
+
+        # Token summary
+        tok = totals.get("tokens", {})
+        tok_str = format_token_details(tok)
+        if tok_str:
+            parts.append(tok_str)
+
+        by_model = totals.get("by_model", {})
+        if by_model:
+            top = sorted(by_model.items(), key=lambda x: x[1]["cost"], reverse=True)[:3]
+            model_segs = [f"{name}:${info['cost']:.2f}" for name, info in top]
+            parts.append(" ".join(model_segs))
+
+        convos = totals.get("convos", 0)
+        if convos:
+            parts.append(f"{convos} convos")
+
+        return " | ".join(parts)
