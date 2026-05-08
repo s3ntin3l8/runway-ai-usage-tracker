@@ -209,3 +209,72 @@ def test_sidecar_pushed_card_skipped_without_provider_id(session):
     # The card had no provider_id — upsert_latest_usage skips it silently
     rows = session.exec(select(LatestUsage)).all()
     assert len(rows) == 0
+
+
+def test_two_sidecars_different_accounts_produce_separate_rows(session):
+    """Two sidecars pushing cards for different accounts produce 2 LatestUsage rows.
+
+    This is the DB-backed equivalent of the old external_metrics
+    test_keeps_different_accounts_separate: the UNIQUE constraint on
+    (provider_id, account_id, window_type, variant, model_id) ensures
+    different account_ids never collapse into one row.
+    """
+
+    def _card(account_id: str) -> dict:
+        return {
+            "provider_id": "antigravity",
+            "account_id": account_id,
+            "account_label": account_id,
+            "service_name": "claude-sonnet-4-5",
+            "window_type": "session",
+            "variant": "default",
+            "model_id": "",
+            "icon": "🛸",
+            "remaining": "75%",
+            "unit": "capacity",
+            "reset": "Dynamic",
+            "health": "good",
+            "pace": "Continuous",
+            "detail": "Pro | test [LSP]",
+            "data_source": "lsp",
+            "used_value": 25.0,
+            "limit_value": 100.0,
+            "pct_used": 25.0,
+            "unit_type": "percent",
+        }
+
+    with (
+        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+
+        # Sidecar A pushes alice's card
+        _ingest(
+            client,
+            {
+                "provider": "antigravity-sidecar",
+                "sidecar_id": "sidecar-a",
+                "metrics": [_card("alice@example.com")],
+                "events": [],
+            },
+        )
+        # Sidecar B pushes bob's card
+        _ingest(
+            client,
+            {
+                "provider": "antigravity-sidecar",
+                "sidecar_id": "sidecar-b",
+                "metrics": [_card("bob@example.com")],
+                "events": [],
+            },
+        )
+
+    rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == "antigravity")).all()
+    assert len(rows) == 2, f"Expected 2 rows (one per account), got {len(rows)}"
+    account_ids = {r.account_id for r in rows}
+    assert "alice@example.com" in account_ids
+    assert "bob@example.com" in account_ids

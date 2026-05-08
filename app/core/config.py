@@ -139,11 +139,6 @@ class Settings(BaseSettings):
     DATABASE_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "runway.db")
     )
-    EXTERNAL_METRICS_PATH: str = Field(
-        default_factory=lambda: os.path.join(
-            get_platform_config_dir("runway"), "external_metrics.json"
-        )
-    )
 
     LOCAL_COLLECTOR_ENABLED: bool = True
     LOCAL_CREDENTIAL_SCRAPING_ENABLED: bool = True
