@@ -39,6 +39,28 @@ class EventIngestor:
         result = IngestResult(events_received=len(pushes))
         for push in pushes:
             ts = datetime.fromisoformat(push.ts.replace("Z", "+00:00"))
+
+            # Error events: record the failure but skip cost calculation and rollup updates.
+            if push.kind == "error":
+                ev = UsageEvent(
+                    provider_id=push.provider_id,
+                    account_id=push.account_id,
+                    sidecar_id=sidecar_id or "local",
+                    event_id=push.event_id,
+                    ts=ts,
+                    kind="error",
+                    stop_reason=push.error_reason,  # store the error tag in stop_reason
+                    raw_json=push.raw_json,
+                )
+                try:
+                    self.session.add(ev)
+                    self.session.flush()
+                    result.events_inserted += 1
+                except IntegrityError:
+                    self.session.rollback()
+                    result.events_duplicate += 1
+                continue  # don't update rollups for error events
+
             if push.cost_usd is not None:
                 # Provider supplied an authoritative cost (e.g. OpenCode logs it per message).
                 # Use it directly rather than re-computing from the pricing table.
@@ -61,6 +83,7 @@ class EventIngestor:
                 sidecar_id=sidecar_id or "local",
                 event_id=push.event_id,
                 ts=ts,
+                kind=push.kind,
                 model_id=push.model_id,
                 session_id=push.session_id,
                 tokens_input=push.tokens_input,

@@ -8,6 +8,7 @@ must implement. Each collector follows a 3-tier fallback pattern:
 3. Tertiary Strategy: Error cards or graceful degradation
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -261,6 +262,7 @@ class BaseCollector(ABC):
                         update_best_error(results)
                     except Exception as e:
                         logger.warning(f"Strategy {s_id} failed: {e}")
+                        self._record_strategy_error(e)
 
                 # If no strategy succeeded, try the error handler
                 if self._is_error_result(results):
@@ -592,6 +594,47 @@ class BaseCollector(ABC):
     async def reset(self):
         """Reset collector state (e.g., terminal failures). Subclasses should override if needed."""
         pass
+
+    def _record_strategy_error(self, exc: Exception) -> None:
+        """Emit a kind=error UsageEvent for HTTP/timeout failures during strategy execution.
+
+        Best-effort: swallows all errors so it never disrupts the collector flow.
+        Only fires for actionable provider-side errors (rate_limit, auth_failed, timeout).
+        """
+        try:
+            reason: str | None = None
+            if isinstance(exc, httpx.HTTPStatusError):
+                status = exc.response.status_code
+                if status == 429:
+                    reason = "rate_limit"
+                elif status in (401, 403):
+                    reason = "auth_failed"
+                elif status == 503:
+                    reason = "quota_exceeded"
+            elif isinstance(exc, httpx.TimeoutException | asyncio.TimeoutError):
+                reason = "timeout"
+            elif isinstance(exc, httpx.NetworkError):
+                reason = "network"
+
+            if reason is None:
+                return  # non-actionable error; don't flood the table
+
+            from sqlmodel import Session
+
+            from app.core.db import engine
+            from app.services.error_events import record_provider_error
+
+            account = getattr(self, "account_id", None) or "default"
+            with Session(engine) as err_session:
+                record_provider_error(
+                    err_session,
+                    provider_id=self.PROVIDER_ID,
+                    account_id=account,
+                    reason=reason,
+                    detail=str(exc)[:500],
+                )
+        except Exception:
+            pass  # never let error recording break the collector
 
     def handle_429(
         self, response: httpx.Response | None = None, retry_after: float | None = None

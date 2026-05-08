@@ -98,6 +98,10 @@ class UsageEventPush(BaseModel):
     # cost_usd: set by providers that log it directly (e.g. OpenCode); None = server computes
     # sidecar_id intentionally NOT here — comes from IngestRequest.sidecar_id
     cost_usd: float | None = None
+    kind: str = "message"  # "message" | "error"; reserved: "reset", "anomaly"
+    error_reason: str | None = (
+        None  # short tag: "rate_limit", "auth_failed", "quota_exceeded", "timeout"
+    )
 
 
 class IngestRequest(BaseModel):

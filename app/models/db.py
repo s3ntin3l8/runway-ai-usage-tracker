@@ -182,6 +182,9 @@ class UsageEvent(SQLModel, table=True):
     sidecar_id: str = Field(default="local")  # hostname that pushed this
     event_id: str  # provider's msg_id / request_id
     ts: datetime = Field(index=True)  # actual log timestamp (UTC)
+    kind: str = Field(
+        default="message", index=True
+    )  # "message" | "error" | reserved: "reset", "anomaly"
     model_id: str | None = None  # normalized: sonnet, opus, gpt-5, ...
     session_id: str | None = None  # provider's conversation/session id
     tokens_input: int = Field(default=0)  # non-cached prompt tokens

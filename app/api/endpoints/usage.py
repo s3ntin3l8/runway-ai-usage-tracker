@@ -395,6 +395,7 @@ async def get_usage_events(
     until: str | None = Query(default=None),
     model_id: str | None = Query(default=None),
     sidecar_id: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     order: str = Query(default="desc"),
     include_raw: bool = Query(default=False),
@@ -402,8 +403,9 @@ async def get_usage_events(
 ) -> dict[str, Any]:
     """Recent event tail for a (provider_id, account_id) pair.
 
-    Supports filtering by time range, model, and sidecar. Returns events
+    Supports filtering by time range, model, sidecar, and kind. Returns events
     newest-first by default. raw_json is excluded unless include_raw=true.
+    Use kind=error to retrieve only provider failure events.
     """
     since_dt: datetime | None = None
     until_dt: datetime | None = None
@@ -420,6 +422,7 @@ async def get_usage_events(
         until=until_dt,
         model_id=model_id,
         sidecar_id=sidecar_id,
+        kind=kind,
         limit=limit,
         order=order,
     )

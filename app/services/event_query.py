@@ -26,6 +26,7 @@ def query_events(
     until: datetime | None = None,
     model_id: str | None = None,
     sidecar_id: str | None = None,
+    kind: str | None = None,
     limit: int = 200,
     order: str = "desc",
 ) -> list[UsageEvent]:
@@ -47,6 +48,8 @@ def query_events(
         stmt = stmt.where(UsageEvent.model_id == model_id)
     if sidecar_id is not None:
         stmt = stmt.where(UsageEvent.sidecar_id == sidecar_id)
+    if kind is not None:
+        stmt = stmt.where(UsageEvent.kind == kind)
 
     if order == "asc":
         stmt = stmt.order_by(UsageEvent.ts.asc())  # type: ignore[attr-defined]
