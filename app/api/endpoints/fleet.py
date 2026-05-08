@@ -193,6 +193,22 @@ async def ingest_metrics(
         manager._last_sync_time = 0.0
         poller.wake()
 
+    # Process events for atomic usage tracking
+    ingest_result = None
+    if request.events:
+        from app.services.event_ingestor import EventIngestor
+
+        try:
+            ingestor = EventIngestor(session)
+            ingest_result = ingestor.ingest(request.events, sidecar_id=request.sidecar_id)
+            logger.info(
+                f"Ingested {ingest_result.events_inserted} events "
+                f"({ingest_result.events_duplicate} dup) from {request.sidecar_id or 'unknown'}"
+            )
+        except Exception as e:
+            logger.error(f"Event ingestion failed: {e}")
+            ingest_result = None
+
     # Determine which providers this sidecar should poll right now.
     # Logic: Centralized orchestration based on UI-configured intervals.
     poll_providers: list[str] = []
@@ -224,9 +240,18 @@ async def ingest_metrics(
         "provider": request.provider,
         "tokens_received": tokens_received_count,
         "metrics_stored": len(local_cards),
+        "events_received": ingest_result.events_received if ingest_result else 0,
+        "events_inserted": ingest_result.events_inserted if ingest_result else 0,
+        "events_duplicate": ingest_result.events_duplicate if ingest_result else 0,
+        "windows_closed": ingest_result.windows_closed if ingest_result else 0,
         "poll_providers": poll_providers,
         "trigger": trigger,
+        "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
     }
+
+
+def _reset_anchors_for_sidecar(session: Session) -> dict:  # noqa: ARG001
+    return {}  # Phase 6 wires this to authoritative scrape data
 
 
 @router.get("/sidecars")
