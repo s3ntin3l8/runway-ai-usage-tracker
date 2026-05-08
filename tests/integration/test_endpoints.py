@@ -182,7 +182,7 @@ class TestIngestEndpoint:
         mock.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         return mock
 
-    async def test_ingest_success(self):
+    async def test_ingest_success(self, _empty_db_session):
         """Test successful metric ingestion."""
         from unittest.mock import patch
 
@@ -193,6 +193,7 @@ class TestIngestEndpoint:
 
         payload = {
             "provider": "claude",
+            "sidecar_id": "test-host",
             "metrics": [
                 {
                     "service_name": "Claude Pro",
@@ -203,6 +204,10 @@ class TestIngestEndpoint:
                     "health": "good",
                     "pace": "~5 days",
                     "detail": "External ingest",
+                    "provider_id": "anthropic",
+                    "account_id": "user@example.com",
+                    "window_type": "weekly",
+                    "data_source": "web",
                 }
             ],
         }
@@ -210,26 +215,18 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        # Mock external_metric_service to avoid writing to real file
-        with patch("app.api.endpoints.fleet.external_metric_service") as mock_service:
-            mock_service.metrics_update_from_ingest = AsyncMock()
+        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+            mock_settings.INGEST_API_KEY = test_key
+            mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            with patch("app.api.endpoints.fleet.settings") as mock_settings:
-                mock_settings.INGEST_API_KEY = test_key
-                mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+            with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
+                mock_cache.store = AsyncMock()
 
-                with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
-                    mock_cache.store = AsyncMock()
+                response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
-                    response = test_client.post(
-                        "/api/v1/fleet/ingest", content=body, headers=headers
-                    )
-
-            # Should accept valid ingest
-            assert response.status_code in [200, 202]
-            # Verify update method was called
-            assert mock_service.metrics_update_from_ingest.called
-            assert mock_service.metrics_update_from_ingest.call_args[0][0] == "claude"
+        # Should accept valid ingest
+        assert response.status_code in [200, 202]
+        assert response.json()["metrics_stored"] == 1
 
     async def test_ingest_invalid_signature(self):
         """Test that invalid signatures are rejected."""
@@ -255,7 +252,7 @@ class TestIngestEndpoint:
         assert response.status_code == 401
         assert "Invalid HMAC signature" in response.json()["detail"]
 
-    async def test_ingest_structured_metadata_extraction(self):
+    async def test_ingest_structured_metadata_extraction(self, _empty_db_session):
         """Verify that tokens are extracted from structured metadata."""
         from unittest.mock import patch
 
@@ -286,23 +283,18 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch("app.api.endpoints.fleet.external_metric_service") as mock_service:
-            mock_service.metrics_update_from_ingest = AsyncMock()
+        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+            mock_settings.INGEST_API_KEY = test_key
+            mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            with patch("app.api.endpoints.fleet.settings") as mock_settings:
-                mock_settings.INGEST_API_KEY = test_key
-                mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+            with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
+                mock_cache.store = AsyncMock()
+                response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
-                with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
-                    mock_cache.store = AsyncMock()
-                    response = test_client.post(
-                        "/api/v1/fleet/ingest", content=body, headers=headers
-                    )
-
-                    # Verify token was stored in cache
-                    mock_cache.store.assert_called_once()
-                    stored_tokens = mock_cache.store.call_args[0][1]
-                    assert stored_tokens["oauth_token"] == oauth_token
+                # Verify token was stored in cache
+                mock_cache.store.assert_called_once()
+                stored_tokens = mock_cache.store.call_args[0][1]
+                assert stored_tokens["oauth_token"] == oauth_token
 
         assert response.status_code == 200
 
