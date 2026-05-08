@@ -10,6 +10,8 @@ from app.core.rate_limit import limiter
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 from app.services.event_query import (
+    query_anomalies,
+    query_cost_forecast,
     query_events,
     query_heatmap,
     query_sessions,
@@ -536,3 +538,48 @@ async def collect_provider(
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     cards = await manager.collect_one(provider, account_id)
     return {"status": "ok", "provider": provider, "cards": len(cards)}
+
+
+@router.get("/cost-forecast")
+@limiter.limit("30/minute")
+async def get_cost_forecast(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Month-to-date cost + 7-day burn extrapolation to end of month.
+
+    Combines current MTD from period_type=month rollups with the average
+    daily cost over the last 7 days to project end-of-month spend.
+    Optionally filtered by provider_id and/or account_id.
+    """
+    return query_cost_forecast(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+    )
+
+
+@router.get("/anomalies")
+@limiter.limit("30/minute")
+async def get_anomalies(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    lookback_days: int = Query(default=30, ge=7, le=90),
+    z_threshold: float = Query(default=2.0, ge=0.5),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Anomaly detection: per-(provider, account, model) token spikes vs historical mean.
+
+    Uses z-score comparison of today's token usage against the last lookback_days
+    of daily rollup history. Returns anomalies where z > z_threshold.
+    """
+    return query_anomalies(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        lookback_days=lookback_days,
+        z_threshold=z_threshold,
+    )
