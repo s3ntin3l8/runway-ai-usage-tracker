@@ -1,10 +1,11 @@
+# ruff: noqa: F821  # Phase 1 schema reset: compute_forecast body references deleted UsageSnapshot; rewritten in Phase 7
 import logging
 from datetime import UTC, datetime, timedelta
 from statistics import LinearRegression, linear_regression
 
 from sqlmodel import Session, asc, select
 
-from app.models.db import UsageSnapshot
+# UsageSnapshot removed in event-sourced schema reset (Phase 1)
 from app.models.schemas import ForecastEntry, ForecastResponse, LimitCard
 
 logger = logging.getLogger(__name__)

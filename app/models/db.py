@@ -1,64 +1,10 @@
 import json
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.core.encryption import encryption_service
-
-
-class UsageSnapshot(SQLModel, table=True):
-    __tablename__ = "usage_snapshots"
-    __table_args__ = (
-        Index("ix_snapshot_provider_account_ts", "provider_id", "account_id", "timestamp"),
-        Index("ix_snapshot_provider_ts", "provider_id", "timestamp"),
-    )
-
-    id: int | None = Field(default=None, primary_key=True)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
-    provider_id: str = Field(index=True)
-    account_id: str = Field(index=True)
-    account_label: str | None = None
-    service_name: str
-    used_value: float | None = None
-    limit_value: float | None = None
-    unit_type: str = Field(default="generic")
-    currency: str | None = None
-    tier: str | None = None
-    model_id: str | None = None
-    window_type: str = Field(default="unknown")
-    variant: str | None = Field(default=None)
-    health: str
-    sidecar_id: str | None = Field(default=None, index=True)
-    is_unlimited: bool = Field(default=False)
-    data_source: str
-    error_type: str | None = None
-
-    # Token breakdown fields (nullable - only populated when provider reports them)
-    tokens_input: float | None = Field(default=None)
-    tokens_output: float | None = Field(default=None)
-    tokens_reasoning: float | None = Field(default=None)
-    tokens_cache_read: float | None = Field(default=None)
-    tokens_total: float | None = Field(
-        default=None
-    )  # input + output + reasoning (cache_read excluded)
-    msgs: int | None = Field(default=None)  # message count
-
-    # Store provider-specific data as (possibly encrypted) JSON string
-    raw_metadata_json: str | None = Field(default=None)
-
-    @property
-    def raw_metadata(self) -> dict[str, Any]:
-        """Decrypt and deserialize metadata."""
-        if not self.raw_metadata_json:
-            return {}
-        return encryption_service.decrypt_json(self.raw_metadata_json)
-
-    @raw_metadata.setter
-    def raw_metadata(self, value: dict[str, Any]):
-        """Encrypt and serialize metadata."""
-        self.raw_metadata_json = encryption_service.encrypt_json(value)
 
 
 class SidecarRegistry(SQLModel, table=True):
@@ -179,28 +125,6 @@ class SystemConfig(SQLModel, table=True):
     dashboard_layout_json: str | None = None
 
 
-class UsageSnapshotModel(SQLModel, table=True):
-    """Per-model cost and token breakdown for a snapshot.
-
-    One row per (snapshot, model) pair. Enables SQL-aggregation of per-model
-    spend and token usage across time windows.
-    """
-
-    __tablename__ = "usage_snapshot_models"
-    __table_args__ = (Index("ix_snapshot_model_snapshot", "snapshot_id"),)
-
-    id: int | None = Field(default=None, primary_key=True)
-    snapshot_id: int = Field(index=True)  # FK to UsageSnapshot
-    model_id: str
-    cost: float | None = None  # USD spent for this model in the snapshot window
-    msgs: int | None = None
-    tokens_input: float | None = Field(default=None)
-    tokens_output: float | None = Field(default=None)
-    tokens_reasoning: float | None = Field(default=None)
-    tokens_cache_read: float | None = Field(default=None)
-    tokens_total: float | None = Field(default=None)
-
-
 class LatestUsage(SQLModel, table=True):
     __tablename__ = "latest_usage"
     __table_args__ = (
@@ -232,28 +156,155 @@ class LatestUsage(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class CumulativeUsage(SQLModel, table=True):
-    __tablename__ = "cumulative_usage"
+class UsageEvent(SQLModel, table=True):
+    """One assistant-message-level usage record. Source of truth.
+
+    Idempotency: (provider_id, account_id, event_id) is UNIQUE — re-pushing
+    the same log entry from a sidecar is a no-op.
+    """
+
+    __tablename__ = "usage_events"
     __table_args__ = (
-        # sidecar_id is intentionally excluded so that server-scraped rows
-        # and sidecar-enriched rows for the same logical account merge into
-        # one row (via SUM on collision) instead of creating duplicates.
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "event_id",
+            name="uq_usage_events_identity",
+        ),
+        Index("ix_usage_events_account_ts", "provider_id", "account_id", "ts"),
+        Index("ix_usage_events_account_model_ts", "provider_id", "account_id", "model_id", "ts"),
+        Index("ix_usage_events_sidecar_ts", "sidecar_id", "ts"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)  # "anthropic", "chatgpt", ...
+    account_id: str = Field(index=True)  # canonical (email or hash)
+    sidecar_id: str = Field(default="local")  # hostname that pushed this
+    event_id: str  # provider's msg_id / request_id
+    ts: datetime = Field(index=True)  # actual log timestamp (UTC)
+    model_id: str | None = None  # normalized: sonnet, opus, gpt-5, ...
+    session_id: str | None = None  # provider's conversation/session id
+    tokens_input: int = Field(default=0)  # non-cached prompt tokens
+    tokens_output: int = Field(default=0)  # completion tokens
+    tokens_cache_read: int = Field(default=0)  # free reads
+    tokens_cache_create: int = Field(default=0)  # Anthropic cache writes (1.25x cost)
+    tokens_reasoning: int = Field(default=0)  # o1-style thinking tokens
+    cost_usd: float = Field(default=0.0)  # provider-reported or computed
+    stop_reason: str | None = None  # end_turn, max_tokens, tool_use, error
+    tool_calls: int = Field(default=0)  # number of tool_use blocks
+    latency_ms: int | None = None  # request duration if logged
+    raw_json: str | None = None  # original log line for debugging
+    ingested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class UsageWindow(SQLModel, table=True):
+    """One row per (window_type, model_id × sidecar_id) combination per closed window.
+
+    Written exactly once when a window's authoritative reset_at advances past
+    its end. Captures the final totals for that window — never updated.
+    """
+
+    __tablename__ = "usage_windows"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "window_type",
+            "window_end",
+            "model_id",
+            "sidecar_id",
+            name="uq_usage_windows_identity",
+        ),
+        Index("ix_usage_windows_history", "provider_id", "account_id", "window_type", "window_end"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str
+    account_id: str
+    window_type: str  # session, daily, weekly, monthly, weekly_sonnet, ...
+    window_start: datetime
+    window_end: datetime  # the reset_at from authoritative scrape
+    model_id: str = Field(default="")  # "" = all-models rollup row
+    sidecar_id: str = Field(default="")  # "" = all-sidecars rollup row
+    msgs: int = Field(default=0)
+    tokens_input: int = Field(default=0)
+    tokens_output: int = Field(default=0)
+    tokens_cache_read: int = Field(default=0)
+    tokens_cache_create: int = Field(default=0)
+    tokens_reasoning: int = Field(default=0)
+    cost_usd: float = Field(default=0.0)
+    limit_value: float | None = None
+    pct_used: float | None = None
+
+
+class UsagePeriodRollup(SQLModel, table=True):
+    """Pre-aggregated period totals for fast dashboard reads.
+
+    Maintained incrementally: every UsageEvent insert updates the matching
+    rows for day, month, year, and lifetime — at the (model_id, sidecar_id)
+    grain plus the all-up rollups.
+    """
+
+    __tablename__ = "usage_period_rollup"
+    __table_args__ = (
         UniqueConstraint(
             "provider_id",
             "account_id",
             "period_type",
             "period_key",
-            "unit_type",
-            name="uq_cumulative_usage_identity",
+            "model_id",
+            "sidecar_id",
+            name="uq_usage_period_rollup_identity",
+        ),
+        Index(
+            "ix_usage_period_rollup_lookup",
+            "provider_id",
+            "account_id",
+            "period_type",
+            "period_key",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str
+    account_id: str
+    period_type: str  # hour, day, month, year, lifetime
+    period_key: str  # 2026-05-08T14, 2026-05-08, 2026-05, 2026, 'all'
+    model_id: str = Field(default="")
+    sidecar_id: str = Field(default="")
+    msgs: int = Field(default=0)
+    tokens_input: int = Field(default=0)
+    tokens_output: int = Field(default=0)
+    tokens_cache_read: int = Field(default=0)
+    tokens_cache_create: int = Field(default=0)
+    tokens_reasoning: int = Field(default=0)
+    cost_usd: float = Field(default=0.0)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ProviderPricing(SQLModel, table=True):
+    """Per-model pricing in USD per million tokens.
+
+    Time-versioned: a row's effective_from defines when it became active.
+    For an event at time T, use the row with the largest effective_from <= T.
+    """
+
+    __tablename__ = "provider_pricing"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "model_id",
+            "effective_from",
+            name="uq_provider_pricing_identity",
         ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     provider_id: str = Field(index=True)
-    account_id: str = Field(index=True)
-    sidecar_id: str = Field(default="local", index=True)
-    period_type: str = Field(index=True)  # 'lifetime', 'year', 'month'
-    period_key: str = Field(index=True)  # 'all', '2026', '2026-05'
-    unit_type: str = Field(index=True)  # 'tokens_input', 'cost_usd'
-    total_value: float = Field(default=0.0)
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    model_id: str = Field(index=True)
+    effective_from: date
+    input_per_mtok: float  # $/M input tokens (non-cached)
+    output_per_mtok: float
+    cache_read_per_mtok: float = Field(default=0.0)
+    cache_create_per_mtok: float = Field(default=0.0)
+    notes: str | None = None
