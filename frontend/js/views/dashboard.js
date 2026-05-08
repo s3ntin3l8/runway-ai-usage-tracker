@@ -1,8 +1,9 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchUsageFleet } from '../api.js';
+import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchUsageFleet, fetchCumulative } from '../api.js';
 import { STATE } from '../state.js';
 import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFleetCommanderCard } from '../components.js';
 import { cardKey, applyOrder } from '../layout.js';
+import { openProviderModal, initProviderModal } from './modal/index.js';
 
 let loadDataGeneration = 0;
 let _searchQuery = '';
@@ -86,14 +87,116 @@ function renderFleetHealth(cards) {
         parts.push(`${accounts} account${accounts !== 1 ? 's' : ''}`);
         countsEl.textContent = parts.join(' · ');
     }
+
+    // Bucket counts row
+    const nOk   = cards.filter(c => c.health === 'good' || c.health === 'unlimited').length;
+    const nWarn = cards.filter(c => c.health === 'warning').length;
+    const nCrit = cards.filter(c => c.health === 'critical').length;
+    const nErr  = cards.filter(c => c.error_type).length;
+    const bucketsEl = document.getElementById('health-buckets');
+    if (bucketsEl) {
+        bucketsEl.innerHTML = [
+            `<div class="bk"><span class="bk-num">${nOk}</span><span>OK</span></div>`,
+            nWarn ? `<div class="bk"><span class="bk-num warn">${nWarn}</span><span>WARN</span></div>` : '',
+            nCrit ? `<div class="bk"><span class="bk-num crit">${nCrit}</span><span>CRIT</span></div>` : '',
+            nErr  ? `<div class="bk"><span class="bk-num err">${nErr}</span><span>ERR</span></div>`  : '',
+        ].join('');
+    }
+
+    // Per-provider mini-table
+    const provTableEl = document.getElementById('prov-table');
+    if (provTableEl) {
+        const byProv = new Map();
+        cards.forEach(c => {
+            if (!c.provider_id) return;
+            const g = byProv.get(c.provider_id) || { cards: [] };
+            g.cards.push(c);
+            byProv.set(c.provider_id, g);
+        });
+        const SEVER = { critical: 4, warning: 3, good: 2, unlimited: 1, unknown: 0 };
+        const rows = [...byProv.entries()].map(([pid, g]) => {
+            const worst = g.cards.reduce((a, b) => (SEVER[b.health] || 0) > (SEVER[a.health] || 0) ? b : a);
+            const pcts  = g.cards.map(c => c.pct_used != null ? c.pct_used
+                : (c.used_value && c.limit_value ? c.used_value / c.limit_value * 100 : null))
+                .filter(p => p != null);
+            const avgUsed   = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
+            const remaining = avgUsed != null ? Math.round(100 - avgUsed) : null;
+            const hCls      = worst.health === 'critical' ? 'crit' : worst.health === 'warning' ? 'warn' : 'good';
+            const label     = providerDisplayLabel(pid);
+            const barPct    = remaining != null ? Math.max(0, Math.min(100, remaining)) : 0;
+            return `<div class="prov-row">
+                <span style="font-size:11px;color:var(--text-dim);">${escapeHTML(label.charAt(0).toUpperCase())}</span>
+                <div>
+                    <div style="font-size:9px;color:var(--text);letter-spacing:0.04em;margin-bottom:2px;">${escapeHTML(label)}</div>
+                    <div class="prov-bar-wrap"><div class="prov-bar-fill ${hCls}" style="width:${barPct}%"></div></div>
+                </div>
+                <span class="prov-pct">${remaining != null ? remaining + '%' : '—'}</span>
+                <span class="prov-status ${hCls}">${hCls.toUpperCase()}</span>
+            </div>`;
+        });
+        provTableEl.innerHTML = rows.join('');
+    }
+}
+
+/** Render the Most Constrained centre hero panel. */
+function renderMostConstrained(fleet) {
+    const el = document.getElementById('most-constrained-content');
+    if (!el) return;
+    const header = `<div class="mc-head">Most Constrained</div>`;
+    const SEVER = { critical: 4, warning: 3, good: 2, unlimited: 1, unknown: 0 };
+
+    const atRisk = (fleet || []).filter(e => e.critical_gauge &&
+        (e.critical_gauge.health === 'critical' || e.critical_gauge.health === 'warning'));
+
+    if (!atRisk.length) {
+        el.innerHTML = `<div class="mc-panel">${header}<div class="mc-clear">
+            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <div class="mc-clear-label">All systems nominal</div>
+        </div></div>`;
+        return;
+    }
+
+    const worst = [...atRisk].sort((a, b) => {
+        const hd = (SEVER[b.critical_gauge.health] || 0) - (SEVER[a.critical_gauge.health] || 0);
+        if (hd !== 0) return hd;
+        return (b.critical_gauge.pct_used || 0) - (a.critical_gauge.pct_used || 0);
+    })[0];
+
+    const c = worst.critical_gauge;
+    const pct_used  = c.pct_used ?? (c.used_value && c.limit_value ? c.used_value / c.limit_value * 100 : null);
+    const remaining = pct_used != null ? Math.round(100 - pct_used) : null;
+    const hCls      = c.health === 'critical' ? 'crit' : 'warn';
+
+    const fKey = [c.provider_id || '', c.account_id || '', c.service_name || '', c.variant || '', c.model_id || '', c.window_type || '', c.unit_type || ''].join('||');
+    const fe   = STATE.forecastMap?.get(fKey);
+    const paceLabel = fe?.status === 'risk' || fe?.status === 'exhausted' ? 'FAST ⚠'
+        : fe?.status === 'warn' ? 'MODERATE' : fe?.status === 'ok' ? 'STABLE' : '—';
+    const landAt = fe?.exhaustion_at ? (() => {
+        const h = Math.floor((new Date(fe.exhaustion_at) - Date.now()) / 3600000);
+        return h > 0 ? `${h}h` : h === 0 ? '<1h' : 'DONE';
+    })() : '—';
+    const tokens     = c.token_usage?.total ? (c.token_usage.total / 1e6).toFixed(1) + 'M' : '—';
+    const windowLabel = c.window_type ? c.window_type.replace(/_/g, ' ') : '—';
+
+    el.innerHTML = `<div class="mc-panel">${header}
+        <div class="mc-provider">${escapeHTML(providerDisplayLabel(c.provider_id || ''))} · ${escapeHTML(c.account_label || c.account_id || '')}</div>
+        <div class="mc-service">${escapeHTML(c.service_name || c.window_type || '')}</div>
+        <div class="mc-pct ${hCls}">${remaining != null ? remaining : '—'}<em>%</em></div>
+        <div class="mc-bar-wrap"><div class="mc-bar-fill ${hCls}" style="width:${Math.max(0, Math.min(100, remaining ?? 0))}%"></div></div>
+        <div class="mc-stats">
+            <div class="mc-stat"><div class="mc-stat-label">Pace</div><div class="mc-stat-val">${escapeHTML(paceLabel)}</div></div>
+            <div class="mc-stat"><div class="mc-stat-label">Land at</div><div class="mc-stat-val">${escapeHTML(landAt)}</div></div>
+            <div class="mc-stat"><div class="mc-stat-label">Tokens</div><div class="mc-stat-val">${escapeHTML(tokens)}</div></div>
+            <div class="mc-stat"><div class="mc-stat-label">Window</div><div class="mc-stat-val">${escapeHTML(windowLabel)}</div></div>
+        </div>
+    </div>`;
 }
 
 /** Render the aggregate % remaining ring + hero numbers. */
 function renderAggregateHero(cards, forecastMap) {
-    const ringEl     = document.getElementById('agg-ring');
-    const pctValEl   = document.getElementById('agg-pct-val');
+    const ringEl      = document.getElementById('agg-ring');
+    const pctValEl    = document.getElementById('agg-pct-val');
     const resetLineEl = document.getElementById('agg-reset-line');
-    const paceLineEl  = document.getElementById('agg-pace-line');
 
     // Only include cards that have a computable remaining %
     const eligible = cards.filter(c =>
@@ -133,28 +236,36 @@ function renderAggregateHero(cards, forecastMap) {
         }
     }
 
-    // Aggregate pace from worst forecast status
-    if (paceLineEl) {
+    // Mini-stats grid (replaces pace line)
+    const miniStatsEl = document.getElementById('agg-mini-stats');
+    if (miniStatsEl) {
         const statuses = [...forecastMap.values()].map(f => f.status).filter(Boolean);
         const fast = statuses.some(s => s === 'risk' || s === 'exhausted');
         const warn = !fast && statuses.some(s => s === 'warn');
-        if (fast)       paceLineEl.innerHTML = `<span class="pace-dot fast" style="display:inline-block;"></span>pace fast`;
-        else if (warn)  paceLineEl.innerHTML = `<span class="pace-dot moderate" style="display:inline-block;"></span>pace moderate`;
-        else if (statuses.some(s => s === 'ok' || s === 'stable'))
-                        paceLineEl.innerHTML = `<span class="pace-dot" style="display:inline-block;"></span>pace stable`;
-        else            paceLineEl.textContent = '';
+        const paceVal = fast ? 'FAST' : warn ? 'MODERATE' : statuses.length ? 'STABLE' : '—';
+        const paceCls = fast ? 'pace-fast' : warn ? 'pace-moderate' : statuses.length ? 'pace-stable' : '';
+        const providers = new Set(cards.map(c => c.provider_id).filter(Boolean)).size;
+        const accounts  = new Set(cards.map(c => `${c.provider_id}|${c.account_id}`).filter(s => s !== '|')).size;
+        const errors    = cards.filter(c => c.error_type).length;
+        const errCls    = errors > 0 ? 'err-present' : '';
+        miniStatsEl.innerHTML = [
+            `<div class="agg-stat-row"><span class="asr-label">fleet pace</span><span class="asr-val ${paceCls}">${paceVal}</span></div>`,
+            `<div class="agg-stat-row"><span class="asr-label">accounts</span><span class="asr-val">${accounts}</span></div>`,
+            `<div class="agg-stat-row"><span class="asr-label">errors</span><span class="asr-val ${errCls}">${errors || '—'}</span></div>`,
+            `<div class="agg-stat-row"><span class="asr-label">providers</span><span class="asr-val">${providers}</span></div>`,
+        ].join('');
     }
 
-    // SVG ring
+    // SVG ring (compact: r=55, 130×130 viewBox)
     if (!ringEl) return;
     if (pctInt == null) { ringEl.innerHTML = ''; return; }
 
-    const r = 75, C = 2 * Math.PI * r;
+    const r = 55, C = 2 * Math.PI * r;
     const offset = C * (1 - pctInt / 100);
     ringEl.innerHTML = `
-        <svg viewBox="0 0 170 170">
-            <circle class="track" cx="85" cy="85" r="${r}"/>
-            <circle class="progress" cx="85" cy="85" r="${r}"
+        <svg viewBox="0 0 130 130">
+            <circle class="track" cx="65" cy="65" r="${r}"/>
+            <circle class="progress" cx="65" cy="65" r="${r}"
                 stroke-dasharray="${C.toFixed(2)}"
                 stroke-dashoffset="${offset.toFixed(2)}"/>
         </svg>
@@ -263,7 +374,7 @@ function renderProviderSections(cards) {
     let totalCount = 0;
     for (const entry of visible) {
         try {
-            html += buildFleetCommanderCard(entry, STATE.forecastMap);
+            html += buildFleetCommanderCard(entry, STATE.forecastMap, STATE.cumulativeMap);
             totalCount += 1 + (entry.secondary_limits || []).length;
         } catch (e) {
             console.error('buildFleetCommanderCard failed:', e, entry);
@@ -271,26 +382,24 @@ function renderProviderSections(cards) {
     }
 
     container.innerHTML = html
-        ? `<div class="hz-grid fleet-grid">${html}</div>`
+        ? `<div class="fleet-stack">${html}</div>`
         : `<div class="dash-empty">NO MATCH</div>`;
 
-    _wireFuelDumpToggles(container);
+    _wireFleetCommanderInteractions(container);
 
     const footerCount = document.getElementById('footer-count');
     if (footerCount) footerCount.textContent = totalCount;
 }
 
-/** Click on a Fuel Dump bar toggles the matching Wingman Pods row open/closed. */
-function _wireFuelDumpToggles(root) {
-    root.querySelectorAll('.fleet-commander').forEach(commander => {
-        const bar = commander.querySelector('.fuel-dump-bar');
-        const row = commander.querySelector('.wingman-row');
-        if (!bar || !row) return;
-        bar.addEventListener('click', () => {
-            const expanded = bar.getAttribute('aria-expanded') === 'true';
-            bar.setAttribute('aria-expanded', String(!expanded));
-            if (expanded) row.setAttribute('hidden', '');
-            else row.removeAttribute('hidden');
+/** Click on the wingmen toggle pill expands the .fc card to show pods. */
+function _wireFleetCommanderInteractions(root) {
+    root.querySelectorAll('.fc').forEach(card => {
+        card.querySelectorAll('[data-toggle="pods"]').forEach(el => {
+            el.addEventListener('click', e => {
+                e.stopPropagation();
+                card.classList.toggle('expanded');
+                el.textContent = card.classList.contains('expanded') ? '▴ wingmen' : '▾ wingmen';
+            });
         });
     });
 }
@@ -367,10 +476,11 @@ export async function loadDashboard() {
     if (errorBanner) errorBanner.classList.add('hidden');
 
     try {
-        const [limitsResult, forecastResult, fleetResult] = await Promise.allSettled([
+        const [limitsResult, forecastResult, fleetResult, cumulativeResult] = await Promise.allSettled([
             fetchLimits(),
             fetchForecast(),
             fetchUsageFleet(),
+            fetchCumulative(),
         ]);
 
         if (myGeneration !== loadDataGeneration) return;
@@ -390,7 +500,20 @@ export async function loadDashboard() {
         // backs the top LED strip, hero ring, and filter chips.
         STATE.fleet = fleetResult.status === 'fulfilled' ? (fleetResult.value.fleet || []) : [];
 
+        // Cumulative totals (this period / yearly / lifetime) are keyed by
+        // (provider_id, account_id) and feed the right rail of the Fleet Commander.
+        STATE.cumulativeMap = new Map();
+        if (cumulativeResult.status === 'fulfilled') {
+            for (const entry of (cumulativeResult.value.cumulative || [])) {
+                STATE.cumulativeMap.set(
+                    `${entry.provider_id}|${entry.account_id || ''}`,
+                    entry,
+                );
+            }
+        }
+
         renderFleetHealth(STATE.data);
+        renderMostConstrained(STATE.fleet || []);
         renderAggregateHero(STATE.data, STATE.forecastMap);
         renderFilterBar(STATE.data);
         renderProviderSections(STATE.data);
@@ -427,6 +550,9 @@ export function setFilterDimension(dim) {
 export function initDashboardView() {
     window.setFilter = setFilter;
 
+    // Initialize the provider detail modal once
+    initProviderModal();
+
     // Dimension chip click delegation
     const dimContainer = document.getElementById('dimension-chips');
     if (dimContainer) {
@@ -457,11 +583,28 @@ export function initDashboardView() {
         });
     }
 
-    // Card click delegation (open per-card modal)
+    // Fleet Commander card click → open provider modal
     const sections = document.getElementById('dashboard-sections');
     if (sections) {
         sections.addEventListener('click', e => {
-            const card = e.target.closest('article.card');
+            // Check if we clicked a Fleet Commander card (.fc)
+            const fcCard = e.target.closest('article.fc');
+            if (fcCard) {
+                // Ignore clicks on the pods toggle
+                if (e.target.closest('[data-toggle="pods"]')) return;
+                const prov = fcCard.dataset.prov;
+                const acc  = fcCard.dataset.acc;
+                const entry = (STATE.fleet || []).find(en =>
+                    (en.provider_id || '') === prov &&
+                    (en.account_id  || '') === (acc || '')
+                );
+                if (entry) {
+                    openProviderModal(entry);
+                    return;
+                }
+            }
+            // Fallback: legacy flat cards (.card but not .fc) → old per-card modal
+            const card = e.target.closest('article.card:not(.fc)');
             if (!card) return;
             const cardKey_ = card.dataset.cardKey;
             const prov = card.dataset.prov;
