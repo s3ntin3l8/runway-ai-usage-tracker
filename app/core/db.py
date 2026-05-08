@@ -39,6 +39,13 @@ def init_db():
     SQLModel.metadata.create_all(engine)
     logger.info(f"Database initialized at {settings.DATABASE_PATH}")
 
+    from app.services.pricing_seed import seed_pricing_table
+
+    with Session(engine) as session:
+        inserted = seed_pricing_table(session)
+        if inserted:
+            logger.info(f"Seeded provider_pricing with {inserted} new rows")
+
     # Performance indexes (idempotent)
     with engine.connect() as conn:
         _create_performance_indexes(conn)
