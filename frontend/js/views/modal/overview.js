@@ -170,10 +170,12 @@ function _buildSparkSvg(cells, range) {
     // Aggregate cells into n buckets
     const n = range === '24h' ? 24 : range === '7d' ? 7 * 24 : 30;
     const step = Math.max(1, Math.floor(cells.length / n));
+    // Normalise cells: accept either raw numbers or {tokens:n} dicts from the heatmap API
+    const flatCells = cells.map(c => (c != null && typeof c === 'object' ? (c.tokens || 0) : (c || 0)));
     const series = [];
     for (let i = 0; i < n; i++) {
-        const slice = cells.slice(i * step, (i + 1) * step);
-        series.push(slice.reduce((a, v) => a + (v || 0), 0) / (slice.length || 1));
+        const slice = flatCells.slice(i * step, (i + 1) * step);
+        series.push(slice.reduce((a, v) => a + v, 0) / (slice.length || 1));
     }
     const maxVal = Math.max(...series, 1);
     const w = 720, h = 140;
@@ -292,7 +294,7 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentEvents) {
             : `<span class="ontrack">✓ on glide path</span>`;
 
     // Countdown / burn rate
-    const resetIn = critical.reset_in || '—';
+    const resetIn = critical.reset_in || critical.reset || '—';
     const windowLabel = critical.window_type ? critical.window_type.replace(/_/g, ' ') : '—';
     const usedAbs = critical.used_value != null && critical.limit_value
         ? `${_fmtTokens(critical.used_value)} / ${_fmtTokens(critical.limit_value)} tok`

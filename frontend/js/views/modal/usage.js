@@ -34,12 +34,14 @@ function _buildSparkSvg(cells, range) {
     if (!cells || !cells.length) {
         return '<svg id="pu-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none"><text x="360" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">No data</text></svg>';
     }
+    // Normalise cells: accept either raw numbers or {tokens:n} dicts from the heatmap API
+    const flatCells = cells.map(c => (c != null && typeof c === 'object' ? (c.tokens || 0) : (c || 0)));
     const n = range === '24h' ? 24 : range === '7d' ? 7 * 24 : 30;
-    const step = Math.max(1, Math.floor(cells.length / n));
+    const step = Math.max(1, Math.floor(flatCells.length / n));
     const series = [];
     for (let i = 0; i < n; i++) {
-        const slice = cells.slice(i * step, (i + 1) * step);
-        series.push(slice.reduce((a, v) => a + (v || 0), 0) / (slice.length || 1));
+        const slice = flatCells.slice(i * step, (i + 1) * step);
+        series.push(slice.reduce((a, v) => a + v, 0) / (slice.length || 1));
     }
     const maxVal = Math.max(...series, 1);
     const w = 720, h = 140;
@@ -65,13 +67,16 @@ function _buildSparkSvg(cells, range) {
 /** Build heatmap cells HTML — 7 × 24 grid, Mon-first row order. */
 function _buildHeatGrid(rawCells, accentHue) {
     // rawCells: flat 168 values where index = day_of_week(0=Sun)*24 + hour
+    // Each element may be a plain number or a {dow, hour, tokens} dict from the API.
+    // Normalise to plain numbers first.
+    const flatRaw = rawCells.map(c => (c != null && typeof c === 'object' ? (c.tokens || 0) : (c || 0)));
     // Reorder so Mon first: days [Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6, Sun=0]
     const reorder = [1, 2, 3, 4, 5, 6, 0];
     const cells = [];
     for (let r = 0; r < 7; r++) {
         const d = reorder[r];
         for (let h = 0; h < 24; h++) {
-            cells.push(rawCells[d * 24 + h] || 0);
+            cells.push(flatRaw[d * 24 + h] || 0);
         }
     }
 
