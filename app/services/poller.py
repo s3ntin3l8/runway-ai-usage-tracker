@@ -1,5 +1,4 @@
 # app/services/poller.py
-# ruff: noqa: F821  # Phase 1 schema reset: poll_now body references deleted UsageSnapshot/UsageSnapshotModel; rewritten in Phase 3
 import asyncio
 import hashlib
 import logging
@@ -9,7 +8,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models.db import LatestUsage  # UsageSnapshot, UsageSnapshotModel removed in schema reset
+from app.models.db import LatestUsage
 from app.models.schemas import LimitCard
 from app.services.account_identity import resolve_account_id
 from app.services.accumulator import merge_card_json
@@ -17,59 +16,8 @@ from app.services.collector_manager import manager
 
 logger = logging.getLogger(__name__)
 
-_COMPACTION_INTERVAL_POLLS = 96  # 96 × 15 min ≈ 24 hours
 _SLEEP_INTERVAL = 7200  # 2 hours in seconds
 _DORMANT_THRESHOLD = 3  # consecutive identical polls before sleep
-
-
-def _extract_token_fields(card: LimitCard) -> dict:
-    """Extract token fields from LimitCard for UsageSnapshot columns."""
-    if not card.token_usage:
-        return {
-            "tokens_input": None,
-            "tokens_output": None,
-            "tokens_reasoning": None,
-            "tokens_cache_read": None,
-            "tokens_total": None,
-            "msgs": card.msgs,
-        }
-    return {
-        "tokens_input": card.token_usage.get("input"),
-        "tokens_output": card.token_usage.get("output"),
-        "tokens_reasoning": card.token_usage.get("reasoning"),
-        "tokens_cache_read": card.token_usage.get("cache_read"),
-        "tokens_total": card.token_usage.get("total"),
-        "msgs": card.msgs,
-    }
-
-
-def _create_model_records(session, snapshot_id: int, card: LimitCard) -> None:
-    """Create UsageSnapshotModel records from card.by_model."""
-    if not card.by_model:
-        return
-    for model_id, model_data in card.by_model.items():
-        tokens = model_data.get("tokens")
-        if tokens:
-            total = sum(tokens.get(k, 0) or 0 for k in ["input", "output", "reasoning"])
-            record = UsageSnapshotModel(
-                snapshot_id=snapshot_id,
-                model_id=model_id,
-                cost=model_data.get("cost"),
-                msgs=model_data.get("msgs"),
-                tokens_input=tokens.get("input"),
-                tokens_output=tokens.get("output"),
-                tokens_reasoning=tokens.get("reasoning"),
-                tokens_cache_read=tokens.get("cache_read"),
-                tokens_total=total,
-            )
-        else:
-            record = UsageSnapshotModel(
-                snapshot_id=snapshot_id,
-                model_id=model_id,
-                cost=model_data.get("cost"),
-                msgs=model_data.get("msgs"),
-            )
-        session.add(record)
 
 
 class BackgroundPoller:
@@ -78,7 +26,6 @@ class BackgroundPoller:
         self._interval = interval_seconds  # current active interval
         self._task: asyncio.Task | None = None
         self._running = False
-        self._poll_count = 0
         self._snapshot_hashes: dict[str, deque] = {}  # key → deque(maxlen=3) of SHA hex digests
         self._wake_event = asyncio.Event()
 
@@ -211,31 +158,6 @@ class BackgroundPoller:
                         canonical_account_id = resolve_account_id(
                             card.provider_id, card.account_id, card.account_label
                         )
-                        snapshot = UsageSnapshot(
-                            provider_id=card.provider_id,
-                            account_id=canonical_account_id,
-                            account_label=card.account_label,
-                            service_name=card.service_name,
-                            used_value=card.used_value,
-                            limit_value=card.limit_value,
-                            unit_type=card.unit_type,
-                            currency=card.currency,
-                            tier=card.tier,
-                            model_id=card.model_id,
-                            window_type=card.window_type,
-                            variant=card.variant,
-                            health=card.health,
-                            sidecar_id=card.sidecar_id,
-                            is_unlimited=card.is_unlimited,
-                            data_source=card.data_source,
-                            error_type=card.error_type,
-                            timestamp=datetime.now(UTC),
-                            **_extract_token_fields(card),
-                        )
-                        snapshot.raw_metadata = card.metadata
-                        session.add(snapshot)
-                        session.flush()  # Get snapshot.id for model records
-                        _create_model_records(session, snapshot.id, card)
 
                         # Upsert into LatestUsage — the table the dashboard
                         # reads from. Wrap in a savepoint so a single bad
@@ -329,18 +251,6 @@ class BackgroundPoller:
                     await check_and_fire(limit_cards, webhook_session)
         except Exception as e:
             logger.error(f"Webhook check failed (non-fatal): {e}")
-
-        # Daily compaction (every 96 polls ≈ 24h)
-        self._poll_count += 1
-        if self._poll_count % _COMPACTION_INTERVAL_POLLS == 0:
-            try:
-                from app.services.compaction import compact_snapshots
-
-                with Session(engine) as compact_session:
-                    result = compact_snapshots(compact_session)
-                    logger.info(f"Daily compaction: {result}")
-            except Exception as e:
-                logger.error(f"Compaction failed (non-fatal): {e}")
 
 
 # Global instance

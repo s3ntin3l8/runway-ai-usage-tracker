@@ -3,13 +3,13 @@ import csv
 import io
 import json
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import Integer, func
-from sqlmodel import Session, asc, desc, select
+from sqlmodel import Session, select
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -101,20 +101,10 @@ async def fetch_fleet_view(
             continue
         groups.setdefault((pid, aid), []).append(c)
 
-    # Per-sidecar contribution lookup from CumulativeUsage (current month)
     now = datetime.now(UTC)
-    month_key = now.strftime("%Y-%m")
-    contrib_rows = session.exec(
-        select(CumulativeUsage).where(
-            CumulativeUsage.period_type == "month",
-            CumulativeUsage.period_key == month_key,
-        )
-    ).all()
+    # Phase 7 will rewire sidecar_contributions from usage_period_rollup table.
+    # CumulativeUsage was removed in the Phase 1 schema reset.
     contrib: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
-    for cr in contrib_rows:
-        ident = (cr.provider_id, cr.account_id)
-        sb = contrib.setdefault(ident, {}).setdefault(cr.sidecar_id, {})
-        sb[cr.unit_type] = sb.get(cr.unit_type, 0.0) + cr.total_value
 
     fleet = []
     for (pid, aid), gcards in sorted(groups.items()):
@@ -175,48 +165,10 @@ async def get_cumulative_usage(
     - period_type: one of 'lifetime' | 'year' | 'month'
     - period_key: a specific bucket (e.g. '2026', '2026-05', 'all')
     """
-    stmt = select(CumulativeUsage)
-    if provider_id:
-        stmt = stmt.where(CumulativeUsage.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(CumulativeUsage.account_id == account_id)
-    if period_type:
-        stmt = stmt.where(CumulativeUsage.period_type == period_type)
-    if period_key:
-        stmt = stmt.where(CumulativeUsage.period_key == period_key)
-
-    rows = session.exec(stmt).all()
-
+    # Phase 8 will rewire from usage_period_rollup table.
+    # CumulativeUsage was removed in the Phase 1 schema reset.
     now = datetime.now(UTC)
-    current_year = now.strftime("%Y")
-    current_month = now.strftime("%Y-%m")
-
-    # Group by (provider_id, account_id). Within a group, rows for the same
-    # (period_type, period_key, unit_type) tuple are summed across sidecar_id.
-    grouped: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
-    for r in rows:
-        ident = (r.provider_id, r.account_id)
-        bucket_key = _cumulative_bucket_label(r.period_type, r.period_key)
-        bucket = grouped.setdefault(ident, {}).setdefault(bucket_key, {})
-        bucket[r.unit_type] = bucket.get(r.unit_type, 0.0) + r.total_value
-
-    # Stable shape: each entry always exposes lifetime + current-year +
-    # current-month keys (empty dicts when nothing matches), so consumers
-    # don't have to special-case missing buckets.
-    expected_keys = ["lifetime", f"year_{current_year}", f"month_{current_month}"]
-
-    cumulative = []
-    for (pid, aid), buckets in sorted(grouped.items()):
-        entry: dict[str, Any] = {"provider_id": pid, "account_id": aid}
-        for k in expected_keys:
-            entry[k] = buckets.get(k, {})
-        # Surface any other (historical) buckets the caller didn't filter out
-        for k, v in buckets.items():
-            if k not in entry:
-                entry[k] = v
-        cumulative.append(entry)
-
-    return {"cumulative": cumulative, "generated_at": now.isoformat()}
+    return {"cumulative": [], "generated_at": now.isoformat()}
 
 
 def _cumulative_bucket_label(period_type: str, period_key: str) -> str:
@@ -277,153 +229,9 @@ async def get_usage_history(
 
     Uses SQL GROUP BY for aggregation - dramatically faster than Python-side processing.
     """
-    since = datetime.now(UTC) - timedelta(days=days)
-
-    if export_format == "csv":
-        # CSV is the archival dump — fetch raw rows without aggregation
-        statement = (
-            select(UsageSnapshot)
-            .where(UsageSnapshot.timestamp >= since)
-            .order_by(desc(UsageSnapshot.timestamp))
-            .limit(limit)
-        )
-        if provider_id:
-            statement = statement.where(UsageSnapshot.provider_id == provider_id)
-        if account_id:
-            statement = statement.where(UsageSnapshot.account_id == account_id)
-
-        results = session.exec(statement).all()
-        return _history_as_csv(results)
-
-    # JSON path: SQL aggregation with adaptive bucket granularity
-    bucket_seconds = _pick_bucket_seconds(days)
-
-    # SQLite bucket expression
-    bucket_expr = (
-        func.floor(func.strftime("%s", UsageSnapshot.timestamp).cast(Integer()) / bucket_seconds)
-        * bucket_seconds
-    ).label("bucket_ts")
-
-    # SQL aggregation
-    stmt = (
-        select(  # type: ignore[call-overload]
-            bucket_expr,
-            UsageSnapshot.provider_id,
-            UsageSnapshot.account_id,
-            UsageSnapshot.account_label,
-            UsageSnapshot.service_name,
-            UsageSnapshot.window_type,
-            UsageSnapshot.model_id,
-            UsageSnapshot.variant,
-            UsageSnapshot.unit_type,
-            UsageSnapshot.data_source,
-            func.avg(UsageSnapshot.used_value).label("avg_used"),
-            func.max(UsageSnapshot.used_value).label("max_used"),
-            func.avg(UsageSnapshot.limit_value).label("avg_limit"),
-            func.avg(UsageSnapshot.tokens_input).label("avg_tokens_input"),
-            func.avg(UsageSnapshot.tokens_output).label("avg_tokens_output"),
-            func.avg(UsageSnapshot.tokens_reasoning).label("avg_tokens_reasoning"),
-            func.avg(UsageSnapshot.tokens_total).label("avg_tokens_total"),
-            func.avg(UsageSnapshot.msgs).label("avg_msgs"),
-        )
-        .where(UsageSnapshot.timestamp >= since)
-        .order_by(desc("bucket_ts"))
-    )
-
-    if provider_id:
-        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(UsageSnapshot.account_id == account_id)
-
-    stmt = stmt.group_by(
-        bucket_expr,
-        UsageSnapshot.provider_id,
-        UsageSnapshot.account_id,
-        UsageSnapshot.service_name,
-        UsageSnapshot.window_type,
-        UsageSnapshot.model_id,
-        UsageSnapshot.variant,
-        UsageSnapshot.unit_type,
-    )
-
-    raw = session.exec(stmt.limit(20000)).all()
-
-    # Post-processing: Apply label map
-    label_map = _build_label_map(session)
-    by_model_lookup = _build_by_model_lookup(
-        session, since, bucket_seconds, provider_id, account_id
-    )
-
-    # Build aggregated snapshots for averages and peaks
-    averages = []
-    peaks = []
-    for r in raw:
-        snapshot_base = {
-            "timestamp": datetime.fromtimestamp(r.bucket_ts, tz=UTC),
-            "provider_id": r.provider_id,
-            "account_id": r.account_id,
-            "account_label": (
-                _effective_label(r.account_label) or label_map.get((r.provider_id, r.account_id))
-            ),
-            "service_name": r.service_name,
-            "window_type": r.window_type,
-            "model_id": r.model_id,
-            "variant": r.variant,
-            "unit_type": r.unit_type,
-            "data_source": r.data_source,
-        }
-
-        # Average snapshot (include even if NULL to preserve structure)
-        averages.append(
-            UsageSnapshot(
-                **snapshot_base,
-                used_value=round(r.avg_used, 4) if r.avg_used is not None else None,
-                limit_value=round(r.avg_limit, 4) if r.avg_limit is not None else None,
-                tokens_input=round(r.avg_tokens_input, 4)
-                if r.avg_tokens_input is not None
-                else None,
-                tokens_output=round(r.avg_tokens_output, 4)
-                if r.avg_tokens_output is not None
-                else None,
-                tokens_reasoning=round(r.avg_tokens_reasoning, 4)
-                if r.avg_tokens_reasoning is not None
-                else None,
-                tokens_total=round(r.avg_tokens_total, 4)
-                if r.avg_tokens_total is not None
-                else None,
-                msgs=round(r.avg_msgs, 1) if r.avg_msgs is not None else None,
-                health="good",  # Not used for aggregated data
-            )
-        )
-
-        # Peak snapshot (include even if NULL)
-        peaks.append(
-            UsageSnapshot(
-                **snapshot_base,
-                used_value=round(r.max_used, 4) if r.max_used is not None else None,
-                limit_value=round(r.avg_limit, 4) if r.avg_limit is not None else None,
-                tokens_input=round(r.avg_tokens_input, 4)
-                if r.avg_tokens_input is not None
-                else None,
-                tokens_output=round(r.avg_tokens_output, 4)
-                if r.avg_tokens_output is not None
-                else None,
-                tokens_reasoning=round(r.avg_tokens_reasoning, 4)
-                if r.avg_tokens_reasoning is not None
-                else None,
-                tokens_total=round(r.avg_tokens_total, 4)
-                if r.avg_tokens_total is not None
-                else None,
-                msgs=round(r.avg_msgs, 1) if r.avg_msgs is not None else None,
-                health="good",
-            )
-        )
-
-    # Group by timestamp+provider+account for table display
-    avg_grouped = _group_snapshots(averages[:limit], bucket_seconds, label_map, by_model_lookup)
-    peak_grouped = _group_snapshots(peaks[:limit], bucket_seconds, label_map, by_model_lookup)
-
-    return {"averages": avg_grouped, "peaks": peak_grouped}
+    # Phase 7 will rewire from usage_period_rollup / UsageEvent tables.
+    # UsageSnapshot was removed in the Phase 1 schema reset.
+    return {"averages": [], "peaks": []}
 
 
 @router.get("/history/raw")
@@ -446,101 +254,9 @@ async def get_usage_history_raw(
 
     Uses SQL GROUP BY for aggregation - dramatically faster than Python-side processing.
     """
-    since = datetime.now(UTC) - timedelta(days=days)
-    bucket_seconds = _pick_bucket_seconds(days)
-
-    # SQLite bucket expression: floor-divide epoch seconds to bucket boundaries
-    bucket_expr = (
-        func.floor(func.strftime("%s", UsageSnapshot.timestamp).cast(Integer()) / bucket_seconds)
-        * bucket_seconds
-    ).label("bucket_ts")
-
-    # SQL aggregation: AVG for trend, MAX for spike preservation (BAND mode)
-    stmt = (
-        select(  # type: ignore[call-overload]
-            bucket_expr,
-            UsageSnapshot.provider_id,
-            UsageSnapshot.account_id,
-            UsageSnapshot.account_label,
-            UsageSnapshot.service_name,
-            UsageSnapshot.window_type,
-            UsageSnapshot.model_id,
-            UsageSnapshot.variant,
-            UsageSnapshot.unit_type,
-            UsageSnapshot.data_source,
-            func.avg(UsageSnapshot.used_value).label("avg_used"),
-            func.max(UsageSnapshot.used_value).label("max_used"),
-            func.avg(UsageSnapshot.limit_value).label("avg_limit"),
-            func.avg(UsageSnapshot.tokens_input).label("avg_tokens_input"),
-            func.avg(UsageSnapshot.tokens_output).label("avg_tokens_output"),
-            func.avg(UsageSnapshot.tokens_reasoning).label("avg_tokens_reasoning"),
-            func.avg(UsageSnapshot.tokens_cache_read).label("avg_tokens_cache_read"),
-            func.avg(UsageSnapshot.tokens_total).label("avg_tokens_total"),
-            func.avg(UsageSnapshot.msgs).label("avg_msgs"),
-        )
-        .where(UsageSnapshot.timestamp >= since)
-        .order_by(asc("bucket_ts"))
-    )
-
-    if provider_id:
-        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(UsageSnapshot.account_id == account_id)
-
-    # GROUP BY bucket timestamp + series identity
-    stmt = stmt.group_by(
-        bucket_expr,
-        UsageSnapshot.provider_id,
-        UsageSnapshot.account_id,
-        UsageSnapshot.service_name,
-        UsageSnapshot.window_type,
-        UsageSnapshot.model_id,
-        UsageSnapshot.variant,
-        UsageSnapshot.unit_type,
-    )
-
-    raw = session.exec(stmt).all()
-
-    # Post-processing: Apply label map (preserves current behavior)
-    label_map = _build_label_map(session)
-
-    return [
-        {
-            "id": None,
-            "timestamp": datetime.fromtimestamp(r.bucket_ts, tz=UTC).isoformat(),
-            "provider_id": r.provider_id,
-            "account_id": r.account_id,
-            "account_label": (
-                _effective_label(r.account_label) or label_map.get((r.provider_id, r.account_id))
-            ),
-            "service_name": r.service_name,
-            "used_value": round(r.avg_used, 4) if r.avg_used is not None else None,
-            "limit_value": round(r.avg_limit, 4) if r.avg_limit is not None else None,
-            "max_used_value": round(r.max_used, 4) if r.max_used is not None else None,
-            "unit_type": r.unit_type,
-            "window_type": r.window_type,
-            "model_id": r.model_id,
-            "variant": r.variant,
-            "data_source": r.data_source,
-            "token_usage": {
-                "input": round(r.avg_tokens_input, 0) if r.avg_tokens_input is not None else None,
-                "output": round(r.avg_tokens_output, 0)
-                if r.avg_tokens_output is not None
-                else None,
-                "reasoning": round(r.avg_tokens_reasoning, 0)
-                if r.avg_tokens_reasoning is not None
-                else None,
-                "cache_read": round(r.avg_tokens_cache_read, 0)
-                if r.avg_tokens_cache_read is not None
-                else None,
-                "total": round(r.avg_tokens_total, 0) if r.avg_tokens_total is not None else None,
-            }
-            if any([r.avg_tokens_input, r.avg_tokens_output, r.avg_tokens_total])
-            else None,
-            "msgs": round(r.avg_msgs, 0) if r.avg_msgs is not None else None,
-        }
-        for r in raw
-    ][:limit]
+    # Phase 7 will rewire from usage_period_rollup / UsageEvent tables.
+    # UsageSnapshot was removed in the Phase 1 schema reset.
+    return []
 
 
 @router.get("/history/deltas")
@@ -562,155 +278,15 @@ async def get_usage_history_deltas(
     - Minor drops (>50% of previous peak) are ignored as transient API glitches.
     - Substantial drops (<50% of previous peak) are treated as periodic counter resets.
     """
-    since = datetime.now(UTC) - timedelta(days=days)
-
-    stmt = (
-        select(  # type: ignore[call-overload]
-            UsageSnapshot.timestamp,
-            UsageSnapshot.provider_id,
-            UsageSnapshot.account_id,
-            UsageSnapshot.window_type,
-            UsageSnapshot.model_id,
-            UsageSnapshot.unit_type,
-            UsageSnapshot.tokens_total,
-            UsageSnapshot.used_value,
-            UsageSnapshot.limit_value,
-        )
-        .where(UsageSnapshot.timestamp >= since)
-        .order_by(asc(UsageSnapshot.timestamp))
-    )
-
-    if provider_id:
-        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(UsageSnapshot.account_id == account_id)
-
-    rows = session.exec(stmt).all()
-
-    # Group by series key
-    series_groups: dict[str, list[Any]] = {}
-    for r in rows:
-        key = (
-            f"{r.provider_id}|{r.account_id}|{r.window_type or ''}|{r.model_id or ''}|{r.unit_type}"
-        )
-        series_groups.setdefault(key, []).append(r)
-
-    # 1. Calculate deltas for EVERY individual series
-    series_deltas = {}
-    # Glitch filter: drops below 50% are resets; others are ignored as glitches
-    GLITCH_THRESHOLD = 0.5
-
-    for key, arr in series_groups.items():
-        arr.sort(key=lambda r: r.timestamp)
-        token_delta = 0.0
-        cost_delta = 0.0
-        critical = False
-
-        # Initialize high-water marks from the first reading (Baseline)
-        first = arr[0]
-        max_tokens = first.tokens_total if first.tokens_total is not None else 0.0
-        max_cost = (
-            (first.used_value if first.used_value is not None else 0.0)
-            if first.unit_type == "currency"
-            else 0.0
-        )
-
-        for i in range(1, len(arr)):
-            curr = arr[i]
-
-            # Token Delta
-            curr_tok = curr.tokens_total if curr.tokens_total is not None else 0.0
-            if max_tokens == 0.0 and curr_tok > 0:
-                max_tokens = curr_tok
-                continue
-            if curr_tok > max_tokens:
-                token_delta += curr_tok - max_tokens
-                max_tokens = curr_tok
-            elif curr_tok < max_tokens * GLITCH_THRESHOLD:
-                max_tokens = curr_tok
-
-            # Cost Delta
-            if curr.unit_type == "currency":
-                curr_cost = curr.used_value if curr.used_value is not None else 0.0
-                if max_cost == 0.0 and curr_cost > 0:
-                    max_cost = curr_cost
-                    continue
-                if curr_cost > max_cost:
-                    cost_delta += curr_cost - max_cost
-                    max_cost = curr_cost
-                elif curr_cost < max_cost * GLITCH_THRESHOLD:
-                    max_cost = curr_cost
-
-            # Critical check
-            if not critical and curr.used_value is not None:
-                if (curr.unit_type == "percent" and curr.used_value >= 90) or (
-                    curr.limit_value
-                    and curr.limit_value > 0
-                    and (curr.used_value / curr.limit_value) >= 0.9
-                ):
-                    critical = True
-
-        series_deltas[key] = {
-            "token_delta": token_delta,
-            "cost_delta": cost_delta,
-            "critical": critical,
-            "provider_id": arr[0].provider_id,
-            "account_id": arr[0].account_id,
-            "window_type": arr[0].window_type,
-            "model_id": arr[0].model_id,
-            "unit_type": arr[0].unit_type,
-        }
-
-    # 2. Aggregate totals with Hierarchy Filter (Prevent double-counting)
-    # Group series by (provider, account, window, unit)
-    hierarchy_groups: dict[tuple, list[str]] = {}
-    for key, d in series_deltas.items():
-        h_key = (d["provider_id"], d["account_id"], d["window_type"], d["unit_type"])
-        hierarchy_groups.setdefault(h_key, []).append(key)
-
-    token_delta_total = 0.0
-    cost_delta_total = 0.0
-    provider_token_deltas: dict[str, float] = {}
-    critical_series_count = 0
-    series_list = []
-
-    for h_key, keys in hierarchy_groups.items():
-        # Check if we have specific models for this window
-        model_keys = [k for k in keys if series_deltas[k]["model_id"] is not None]
-
-        # If specific models exist, use ONLY them (ignore model_id=None)
-        # If no models exist, use whatever is there (usually just the aggregate model_id=None)
-        selected_keys = model_keys if model_keys else keys
-
-        for k in selected_keys:
-            d = series_deltas[k]
-            token_delta_total += d["token_delta"]
-            cost_delta_total += d["cost_delta"]
-            pid = d["provider_id"]
-            provider_token_deltas[pid] = provider_token_deltas.get(pid, 0.0) + d["token_delta"]
-            if d["critical"]:
-                critical_series_count += 1
-
-            series_list.append(
-                {
-                    "provider_id": pid,
-                    "account_id": d["account_id"],
-                    "window_type": d["window_type"],
-                    "model_id": d["model_id"],
-                    "unit_type": d["unit_type"],
-                    "token_delta": round(d["token_delta"], 2),
-                    "cost_delta": round(d["cost_delta"], 2),
-                    "critical": d["critical"],
-                }
-            )
-
+    # Phase 7 will rewire from usage_period_rollup / UsageEvent tables.
+    # UsageSnapshot was removed in the Phase 1 schema reset.
     return {
-        "token_delta_total": round(token_delta_total, 2),
-        "cost_delta_total": round(cost_delta_total, 2),
-        "provider_token_deltas": {k: round(v, 2) for k, v in provider_token_deltas.items()},
-        "critical_series_count": critical_series_count,
+        "token_delta_total": 0.0,
+        "cost_delta_total": 0.0,
+        "provider_token_deltas": {},
+        "critical_series_count": 0,
         "series_sampled": False,
-        "series": series_list,
+        "series": [],
     }
 
 

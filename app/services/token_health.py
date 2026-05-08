@@ -1,5 +1,4 @@
 """Token health inspection — expiry parsing, status classification."""
-# ruff: noqa: F821  # Phase 1 schema reset: get_health body references deleted UsageSnapshot for label fallback; rewritten in later phase
 
 import base64
 import json

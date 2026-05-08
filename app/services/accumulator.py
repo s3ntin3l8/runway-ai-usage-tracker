@@ -1,12 +1,5 @@
 # app/services/accumulator.py
-# ruff: noqa: F821  # Phase 1 schema reset: process_delta body references deleted CumulativeUsage; rewritten in Phase 3
 import json
-from datetime import UTC, datetime
-
-from sqlmodel import Session, select
-
-# CumulativeUsage removed in event-sourced schema reset (Phase 1)
-from app.services.account_identity import resolve_account_id
 
 
 def _join_distinct(a: str | None, b: str | None) -> str | None:
@@ -48,56 +41,3 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
             merged[key] = value
 
     return json.dumps(merged)
-
-
-class UsageAccumulator:
-    def __init__(self, session: Session):
-        self.session = session
-
-    def process_delta(
-        self,
-        provider_id: str,
-        account_id: str,
-        sidecar_id: str,
-        unit_type: str,
-        delta_value: float,
-        timestamp: str,
-        account_label: str | None = None,
-    ) -> None:
-        if delta_value <= 0:
-            return
-
-        canonical_account_id = resolve_account_id(provider_id, account_id, account_label)
-
-        dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        year_key = dt.strftime("%Y")
-        month_key = dt.strftime("%Y-%m")
-
-        periods = [("lifetime", "all"), ("year", year_key), ("month", month_key)]
-
-        for p_type, p_key in periods:
-            stmt = select(CumulativeUsage).where(
-                CumulativeUsage.provider_id == provider_id,
-                CumulativeUsage.account_id == canonical_account_id,
-                CumulativeUsage.period_type == p_type,
-                CumulativeUsage.period_key == p_key,
-                CumulativeUsage.unit_type == unit_type,
-            )
-            record = self.session.exec(stmt).first()
-
-            if not record:
-                record = CumulativeUsage(
-                    provider_id=provider_id,
-                    account_id=canonical_account_id,
-                    sidecar_id=sidecar_id,
-                    period_type=p_type,
-                    period_key=p_key,
-                    unit_type=unit_type,
-                    total_value=0.0,
-                )
-                self.session.add(record)
-
-            record.total_value += delta_value
-            record.last_updated = datetime.now(UTC)
-
-        self.session.commit()

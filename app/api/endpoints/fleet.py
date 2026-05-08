@@ -193,25 +193,12 @@ async def ingest_metrics(
         manager._last_sync_time = 0.0
         poller.wake()
 
-    # Process deltas for cumulative tracking
+    # Deltas accepted but ignored until Phase 3 event ingestor lands.
     if request.deltas:
-        from app.services.accumulator import UsageAccumulator
-
-        accumulator = UsageAccumulator(session)
-        for delta in request.deltas:
-            try:
-                accumulator.process_delta(
-                    provider_id=delta.provider_id,
-                    account_id=delta.account_id,
-                    sidecar_id=request.sidecar_id or "unknown",
-                    unit_type=delta.unit_type,
-                    delta_value=delta.value,
-                    timestamp=delta.timestamp,
-                    account_label=delta.account_label,
-                )
-            except Exception as e:
-                logger.error(f"Failed to process delta: {e}")
-        logger.info(f"Processed {len(request.deltas)} deltas from {request.sidecar_id}")
+        logger.warning(
+            f"Received {len(request.deltas)} deltas from {request.sidecar_id} — "
+            "delta ingestion not implemented in this build (Phase 3)"
+        )
 
     # Determine which providers this sidecar should poll right now.
     # Logic: Centralized orchestration based on UI-configured intervals.
