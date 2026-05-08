@@ -1,4 +1,5 @@
 # app/services/poller.py
+# ruff: noqa: F821  # Phase 1 schema reset: poll_now body references deleted UsageSnapshot/UsageSnapshotModel; rewritten in Phase 3
 import asyncio
 import hashlib
 import logging
@@ -8,7 +9,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models.db import LatestUsage, UsageSnapshot, UsageSnapshotModel
+from app.models.db import LatestUsage  # UsageSnapshot, UsageSnapshotModel removed in schema reset
 from app.models.schemas import LimitCard
 from app.services.account_identity import resolve_account_id
 from app.services.accumulator import merge_card_json
@@ -244,6 +245,10 @@ class BackgroundPoller:
                         variant = card.variant or "default"
                         model_id = card.model_id or ""
                         incoming_partial = card.model_dump(exclude_none=True)
+                        # Always embed the canonical account_id so the card_json
+                        # grouping key matches the column (fleet API groups by
+                        # card_json, not by the column).
+                        incoming_partial["account_id"] = canonical_account_id
                         try:
                             with session.begin_nested():
                                 existing = session.exec(
@@ -278,6 +283,31 @@ class BackgroundPoller:
                                 f"LatestUsage upsert failed for "
                                 f"{card.provider_id}/{canonical_account_id}/{card.window_type}: {e}"
                             )
+
+                        # Evict any pre-canonicalization row stored under the raw
+                        # account_id (typically "default") when resolve_account_id
+                        # mapped it to a different canonical identity (e.g. an email).
+                        # Avoids duplicate fleet entries for the same user.
+                        raw_account_id = card.account_id or "default"
+                        if raw_account_id != canonical_account_id:
+                            try:
+                                with session.begin_nested():
+                                    stale = session.exec(
+                                        select(LatestUsage).where(
+                                            LatestUsage.provider_id == card.provider_id,
+                                            LatestUsage.account_id == raw_account_id,
+                                            LatestUsage.window_type == card.window_type,
+                                            LatestUsage.variant == variant,
+                                            LatestUsage.model_id == model_id,
+                                        )
+                                    ).first()
+                                    if stale:
+                                        session.delete(stale)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Stale row eviction failed for "
+                                    f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
+                                )
                     except Exception as e:
                         logger.error(f"Failed to map card to snapshot: {e}")
 

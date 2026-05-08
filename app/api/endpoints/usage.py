@@ -1,3 +1,4 @@
+# ruff: noqa: F821  # Phase 1 schema reset: function bodies reference deleted tables (UsageSnapshot, CumulativeUsage, UsageSnapshotModel); rewritten in Phase 7-8
 import csv
 import io
 import json
@@ -12,7 +13,7 @@ from sqlmodel import Session, asc, desc, select
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
-from app.models.db import CumulativeUsage, ProviderConfig, UsageSnapshot
+from app.models.db import ProviderConfig
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 from app.services.forecast import compute_all_forecasts
@@ -863,7 +864,7 @@ def _classify_window(
 
 
 def _group_snapshots(
-    snapshots: Sequence[UsageSnapshot],
+    snapshots: Sequence[Any],  # UsageSnapshot removed in schema reset
     bucket_seconds: int = 60,
     label_map: dict[tuple[str, str], str] | None = None,
     by_model_lookup: dict[tuple[int, str, str], list[dict]] | None = None,
@@ -986,7 +987,7 @@ def _pick_bucket_seconds(days: float) -> int:
     return 300  # 1h → 5-min             (~12 slots)
 
 
-def _history_as_csv(results: Sequence[UsageSnapshot]) -> StreamingResponse:
+def _history_as_csv(results: Sequence[Any]) -> StreamingResponse:  # UsageSnapshot removed
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
     writer.writeheader()

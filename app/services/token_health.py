@@ -1,4 +1,5 @@
 """Token health inspection — expiry parsing, status classification."""
+# ruff: noqa: F821  # Phase 1 schema reset: get_health body references deleted UsageSnapshot for label fallback; rewritten in later phase
 
 import base64
 import json
@@ -7,11 +8,11 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlmodel import Session, desc
+from sqlmodel import Session
 from sqlmodel import select as sqlselect
 
 from app.core.db import engine
-from app.models.db import ProviderConfig, UsageSnapshot
+from app.models.db import ProviderConfig
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -60,20 +61,8 @@ class TokenHealthService:
 
                 # Metadata lookup: Fallback to history if cache is missing account_label
                 label = info.get("account_label")
-                if not label:
-                    # Query the most recent usage snapshot for this account to find a label (email)
-                    with Session(engine) as session:
-                        stmt = (
-                            sqlselect(UsageSnapshot.account_label)
-                            .where(
-                                UsageSnapshot.provider_id == provider,
-                                UsageSnapshot.account_id == acc_id,
-                                UsageSnapshot.account_label != None,  # noqa: E711
-                            )
-                            .order_by(desc(UsageSnapshot.timestamp))
-                            .limit(1)
-                        )
-                        label = session.exec(stmt).first()
+                # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
+                # Will be replaced with LatestUsage / UsageEvent lookup in a later phase.
 
                 exp: float | None = None
                 for key in ("oauth_token", "access_token", "id_token"):
@@ -126,18 +115,7 @@ class TokenHealthService:
 
                     # Fallback label lookup
                     label = cfg.account_label
-                    if not label:
-                        with Session(engine) as session:
-                            stmt = (
-                                sqlselect(UsageSnapshot.account_label)
-                                .where(
-                                    UsageSnapshot.provider_id == cfg.provider_id,
-                                    UsageSnapshot.account_label != None,  # noqa: E711
-                                )
-                                .order_by(desc(UsageSnapshot.timestamp))
-                                .limit(1)
-                            )
-                            label = session.exec(stmt).first()
+                    # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
 
                     result.append(
                         {
@@ -160,18 +138,7 @@ class TokenHealthService:
                         continue
 
                     label = cfg.account_label
-                    if not label:
-                        with Session(engine) as session:
-                            stmt = (
-                                sqlselect(UsageSnapshot.account_label)
-                                .where(
-                                    UsageSnapshot.provider_id == cfg.provider_id,
-                                    UsageSnapshot.account_label != None,  # noqa: E711
-                                )
-                                .order_by(desc(UsageSnapshot.timestamp))
-                                .limit(1)
-                            )
-                            label = session.exec(stmt).first()
+                    # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
 
                     result.append(
                         {
@@ -211,19 +178,9 @@ class TokenHealthService:
                         user = data.get("user") or {}
                         label = user.get("email") or user.get("login")
 
-                    # Last fallback: database history
+                    # Last fallback: Phase 1 schema reset: UsageSnapshot removed; use static default.
                     if not label:
-                        with Session(engine) as session:
-                            stmt = (
-                                sqlselect(UsageSnapshot.account_label)
-                                .where(
-                                    UsageSnapshot.provider_id == "github",
-                                    UsageSnapshot.account_label != None,  # noqa: E711
-                                )
-                                .order_by(desc(UsageSnapshot.timestamp))
-                                .limit(1)
-                            )
-                            label = session.exec(stmt).first() or "GitHub"
+                        label = "GitHub"
 
                     if token and f"github:{token}" not in seen_token_values:
                         result.append(

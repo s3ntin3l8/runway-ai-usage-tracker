@@ -1,10 +1,13 @@
+import asyncio
 import logging
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from app.core.config import (
@@ -16,7 +19,13 @@ from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
-from app.models.db import ProviderConfig, SystemConfig, WebhookConfig
+from app.models.db import (
+    LatestUsage,
+    ProviderConfig,
+    SidecarRegistry,
+    SystemConfig,
+    WebhookConfig,
+)
 from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
 from app.services.token_cache import token_cache
@@ -111,6 +120,61 @@ async def force_collect(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Force collect failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CleanupRequest(BaseModel):
+    clear_cache: bool = True
+    prune_snapshots_days: int | None = None
+    prune_cumulative_days: int | None = None
+    remove_inactive_sidecars_days: int | None = None
+
+
+@router.post("/cleanup")
+@limiter.limit("2/minute")
+async def cleanup_database(
+    request: Request,
+    body: CleanupRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Maintenance: cleanup stale usage records and inactive sidecars."""
+    results = {}
+
+    try:
+        # 1. Clear LatestUsage cache (Dashboard "ghost" cards)
+        if body.clear_cache:
+            res = session.exec(delete(LatestUsage))
+            results["cache_cleared"] = res.rowcount
+
+        # 2. UsageSnapshot table removed in event-sourced schema reset; prune is a no-op.
+        if body.prune_snapshots_days is not None:
+            results["snapshots_pruned"] = 0
+
+        # 3. CumulativeUsage table removed in event-sourced schema reset; prune is a no-op.
+        if body.prune_cumulative_days is not None:
+            results["cumulative_pruned"] = 0
+
+        # 4. Remove inactive sidecars
+        if body.remove_inactive_sidecars_days is not None:
+            threshold = datetime.now(UTC) - timedelta(days=body.remove_inactive_sidecars_days)
+            res = session.exec(delete(SidecarRegistry).where(SidecarRegistry.last_seen < threshold))
+            results["sidecars_removed"] = res.rowcount
+
+        session.commit()
+
+        if body.clear_cache:
+            # Trigger an immediate background poll to repopulate the cache
+            from app.services.poller import poller
+
+            poller.wake()
+            asyncio.create_task(poller.poll_now())
+            results["poll_triggered"] = True
+
+        return {"ok": True, "results": results}
+    except Exception as e:
+        logger.error(f"Database cleanup failed: {e}")
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
 
 
 @router.post("/wake")
