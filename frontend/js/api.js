@@ -24,6 +24,44 @@ export async function fetchUsageFleet() {
 }
 
 /**
+ * Fetch cumulative usage rolled up across sidecars per (provider_id, account_id).
+ * @returns {Promise<{cumulative: Array<CumulativeEntry>, generated_at: string}>}
+ */
+export async function fetchCumulative() {
+    const resp = await fetchWithAuth('/api/v1/usage/cumulative');
+    if (!resp.ok) throw new Error(`Failed to fetch cumulative usage: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function fetchEvents(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/events${qs ? '?' + qs : ''}`);
+    if (!resp.ok) throw new Error(`Failed to fetch events: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function fetchWindowHistory(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/window-history${qs ? '?' + qs : ''}`);
+    if (!resp.ok) throw new Error(`Failed to fetch window history: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function fetchHeatmap(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/heatmap${qs ? '?' + qs : ''}`);
+    if (!resp.ok) throw new Error(`Failed to fetch heatmap: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function fetchSessions(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/sessions${qs ? '?' + qs : ''}`);
+    if (!resp.ok) throw new Error(`Failed to fetch sessions: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+/**
  * Fetch all limits from the backend
  * @returns {Promise<{limits: Array<LimitCard>}>} Limits response
  * @throws {Error} Network, HTTP, or parsing errors with descriptive messages
