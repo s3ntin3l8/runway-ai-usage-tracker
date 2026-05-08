@@ -250,8 +250,65 @@ async def ingest_metrics(
     }
 
 
-def _reset_anchors_for_sidecar(session: Session) -> dict:  # noqa: ARG001
-    return {}  # Phase 6 wires this to authoritative scrape data
+def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
+    """Per-provider authoritative reset_at by window_type, for sidecar use.
+
+    Reads all LatestUsage rows with future reset_at and builds a dict of
+    the latest reset_at per (provider_id, window_type) pair. Filters to
+    only default variants (model_id="" and variant in ("", "default")).
+
+    Returns:
+        {
+          "anthropic": {
+            "session": "2026-05-08T18:00:00+00:00",
+            "weekly":  "2026-05-12T18:00:00+00:00"
+          },
+          ...
+        }
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from app.models.db import LatestUsage
+
+    rows = session.exec(select(LatestUsage)).all()
+    now = datetime.now(UTC)
+    anchors: dict[str, dict[str, str]] = {}
+
+    for r in rows:
+        # Skip variant-scoped rows (only include default variant)
+        if r.model_id and r.model_id != "":
+            continue
+        if r.variant not in ("", "default"):
+            continue
+
+        # Parse card_json
+        try:
+            card = json.loads(r.card_json) if r.card_json else {}
+        except json.JSONDecodeError:
+            continue
+
+        # Extract reset_at
+        reset_at = card.get("reset_at")
+        if not reset_at:
+            continue
+
+        # Parse datetime and check if it's in the future
+        try:
+            reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+
+        if reset_dt <= now:
+            continue
+
+        # Track the latest reset_at per (provider_id, window_type)
+        prov_anchors = anchors.setdefault(r.provider_id, {})
+        existing = prov_anchors.get(r.window_type)
+        if existing is None or reset_at > existing:
+            prov_anchors[r.window_type] = reset_at
+
+    return anchors
 
 
 @router.get("/sidecars")
