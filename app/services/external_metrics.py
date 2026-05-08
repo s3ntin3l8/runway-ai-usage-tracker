@@ -1,3 +1,9 @@
+# TODO(Phase 13): Remove this module when all providers emit raw events.
+# As of Phase 12, ExternalMetricService is still needed for:
+# - sidecar-pushed LimitCard payloads (anthropic, chatgpt, gemini enrichment fallback)
+# - OpenCode cross-host aggregation (get_opencode_aggregated)
+# - collector_manager.get_all_metrics (antigravity deduplication)
+# Full removal requires migrating those providers to push usage_events instead of cards.
 import asyncio
 import copy
 import json
@@ -292,6 +298,37 @@ class ExternalMetricService:
                         opencode_cards.append(card_copy)
 
         return self._aggregate_opencode_cards(opencode_cards)
+
+    async def get_provider_metrics(self, provider_id: str) -> list[dict[str, Any]]:
+        """
+        Get all metrics for a specific provider from all sidecar payloads.
+        Used by collectors for enrichment (tier 1 fallback).
+        """
+        results = []
+        now = datetime.now(UTC)
+
+        async with self._lock:
+            for provider_key, data in self.metrics.items():
+                ts = datetime.fromisoformat(data["timestamp"])
+                diff = now - ts
+                minutes = int(diff.total_seconds() / 60)
+                time_str = f"{minutes}m ago" if minutes > 0 else "just now"
+
+                for card in data.get("cards", []):
+                    if card.get("provider_id") == provider_id:
+                        card_copy = card.copy()
+
+                        # Ensure _enrichment_detail is present (legacy sidecar fallback)
+                        if not card_copy.get("_enrichment_detail"):
+                            card_copy["_enrichment_detail"] = card_copy.get("detail", "")
+
+                        # Append source info to detail if not already present
+                        detail = card_copy.get("detail", "")
+                        if "[Sidecar]" not in detail:
+                            card_copy["detail"] = f"{detail} · {time_str} [Sidecar]"
+
+                        results.append(card_copy)
+        return results
 
     async def get_all_metrics(self) -> list[dict[str, Any]]:
         all_cards: list[dict[str, Any]] = []
