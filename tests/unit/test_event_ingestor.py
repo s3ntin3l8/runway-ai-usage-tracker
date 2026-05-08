@@ -68,3 +68,32 @@ def test_ingest_updates_rollups():
     ).first()
     assert day_row.msgs == 2
     assert day_row.tokens_input == 200
+
+
+def test_ingest_uses_provided_cost_when_set():
+    """When push.cost_usd is not None, the server uses it directly."""
+    s = _seeded_session()
+    # Provide an explicit cost for an opencode event with no pricing row seeded
+    push = _make_push(
+        event_id="oc_001",
+        provider_id="opencode",
+        model_id="gpt-4o",
+        cost_usd=0.0088,
+    )
+    res = EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    assert res.events_inserted == 1
+    row = s.exec(select(UsageEvent).where(UsageEvent.event_id == "oc_001")).first()
+    assert row is not None
+    assert abs(row.cost_usd - 0.0088) < 1e-9
+
+
+def test_ingest_computes_cost_when_not_set():
+    """When push.cost_usd is None (default), cost is computed from the pricing table."""
+    s = _seeded_session()
+    # sonnet has a pricing row seeded; cost should be > 0
+    push = _make_push(event_id="msg_compute", cost_usd=None)
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    row = s.exec(select(UsageEvent).where(UsageEvent.event_id == "msg_compute")).first()
+    assert row is not None
+    # input=100 @ $3/Mtok + output=200 @ $15/Mtok = $0.0003 + $0.003 = $0.0033
+    assert row.cost_usd > 0

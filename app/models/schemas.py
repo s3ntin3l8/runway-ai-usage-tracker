@@ -95,8 +95,9 @@ class UsageEventPush(BaseModel):
     tool_calls: int = 0
     latency_ms: int | None = None
     raw_json: str | None = None
-    # cost_usd intentionally NOT pushed — server computes from pricing table
+    # cost_usd: set by providers that log it directly (e.g. OpenCode); None = server computes
     # sidecar_id intentionally NOT here — comes from IngestRequest.sidecar_id
+    cost_usd: float | None = None
 
 
 class IngestRequest(BaseModel):

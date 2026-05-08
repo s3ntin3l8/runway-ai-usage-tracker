@@ -39,17 +39,22 @@ class EventIngestor:
         result = IngestResult(events_received=len(pushes))
         for push in pushes:
             ts = datetime.fromisoformat(push.ts.replace("Z", "+00:00"))
-            cost = compute_event_cost(
-                self.session,
-                provider_id=push.provider_id,
-                model_id=push.model_id,
-                ts=ts,
-                tokens_input=push.tokens_input,
-                tokens_output=push.tokens_output,
-                tokens_cache_read=push.tokens_cache_read,
-                tokens_cache_create=push.tokens_cache_create,
-                tokens_reasoning=push.tokens_reasoning,
-            )
+            if push.cost_usd is not None:
+                # Provider supplied an authoritative cost (e.g. OpenCode logs it per message).
+                # Use it directly rather than re-computing from the pricing table.
+                cost = push.cost_usd
+            else:
+                cost = compute_event_cost(
+                    self.session,
+                    provider_id=push.provider_id,
+                    model_id=push.model_id,
+                    ts=ts,
+                    tokens_input=push.tokens_input,
+                    tokens_output=push.tokens_output,
+                    tokens_cache_read=push.tokens_cache_read,
+                    tokens_cache_create=push.tokens_cache_create,
+                    tokens_reasoning=push.tokens_reasoning,
+                )
             ev = UsageEvent(
                 provider_id=push.provider_id,
                 account_id=push.account_id,
