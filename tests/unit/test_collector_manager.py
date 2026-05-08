@@ -7,11 +7,10 @@ from app.services.collector_manager import CollectorManager
 
 @pytest.fixture
 def manager():
-    with patch("app.services.collector_manager.external_metric_service"):
-        m = CollectorManager()
-        # Reset state
-        m._collect_future = None
-        return m
+    m = CollectorManager()
+    # Reset state
+    m._collect_future = None
+    return m
 
 
 class TestCollectorManagerInitialization:
@@ -82,21 +81,13 @@ class TestCollectorManagerCollection:
 
         # Mock dependencies
         with patch.object(manager, "_sync_collectors", new_callable=AsyncMock):
-            # Mock external metrics
-            with patch(
-                "app.services.collector_manager.external_metric_service.get_all_metrics",
-                new_callable=AsyncMock,
-            ) as mock_external:
-                mock_external.return_value = [{"service_name": "Ext", "remaining": "OK"}]
+            # Run collection (external_metric_service removed; all data comes from collectors)
+            results = await manager.collect_all()
 
-                # Run collection
-                results = await manager.collect_all()
-
-                assert len(results) == 3
-                services = [r["service_name"] for r in results]
-                assert "S1" in services
-                assert "S2" in services
-                assert "Ext" in services
+            assert len(results) == 2
+            services = [r["service_name"] for r in results]
+            assert "S1" in services
+            assert "S2" in services
 
     @pytest.mark.asyncio
     async def test_collect_all_timeout(self, manager):

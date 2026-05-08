@@ -26,7 +26,6 @@ from app.services.collectors.ollama import OllamaCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.zai import ZaiCollector
-from app.services.external_metrics import external_metric_service
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
 
@@ -339,10 +338,6 @@ class CollectorManager:
                 continue
             if isinstance(res, list):
                 flattened.extend(res)
-
-        # Merge external metrics (Sidecars)
-        external_results = await external_metric_service.get_all_metrics()
-        flattened.extend(external_results)
 
         logger.info(
             f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts"
