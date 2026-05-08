@@ -1,6 +1,7 @@
 # app/services/poller.py
 import asyncio
 import hashlib
+import json
 import logging
 from collections import deque
 from datetime import UTC, datetime
@@ -13,8 +14,64 @@ from app.models.schemas import LimitCard
 from app.services.account_identity import resolve_account_id
 from app.services.accumulator import merge_card_json
 from app.services.collector_manager import manager
+from app.services.window_closer import WINDOW_DURATION, close_window
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_close_previous_window(
+    session: Session,
+    *,
+    existing: LatestUsage | None,
+    provider_id: str,
+    account_id: str,
+    window_type: str,
+    new_reset_at: datetime,
+) -> int:
+    """Detect if the previous window has closed and archive it into usage_windows.
+
+    Compares new_reset_at against the reset_at stored in existing.card_json.
+    If new_reset_at is strictly later (and window_type is a known duration),
+    calls close_window() to capture the just-closed window's final totals.
+
+    Returns the number of usage_windows rows inserted (0 if no window closed).
+
+    Window types not in WINDOW_DURATION (e.g. weekly_sonnet, weekly_design)
+    are intentionally skipped — they are covered as per-model rows inside the
+    standard weekly close, and we have no authoritative duration for them.
+    """
+    if existing is None or not existing.card_json:
+        return 0
+    if window_type not in WINDOW_DURATION:
+        return 0
+
+    try:
+        existing_data = json.loads(existing.card_json)
+        existing_reset_str = existing_data.get("reset_at")
+        if not existing_reset_str:
+            return 0
+
+        existing_reset_dt = datetime.fromisoformat(existing_reset_str.replace("Z", "+00:00"))
+
+        if new_reset_at <= existing_reset_dt:
+            return 0  # reset_at has not advanced — no window closed
+
+        # Previous window closed at existing_reset_dt
+        window_start = existing_reset_dt - WINDOW_DURATION[window_type]
+        return close_window(
+            session,
+            provider_id=provider_id,
+            account_id=account_id,
+            window_type=window_type,
+            window_start=window_start,
+            window_end=existing_reset_dt,
+            limit_value=existing_data.get("limit_value"),
+            pct_used=existing_data.get("pct_used"),
+        )
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        logger.debug(f"Window-close check skipped for {provider_id}/{account_id}: {e}")
+        return 0
+
 
 _SLEEP_INTERVAL = 7200  # 2 hours in seconds
 _DORMANT_THRESHOLD = 3  # consecutive identical polls before sleep
@@ -182,6 +239,28 @@ class BackgroundPoller:
                                         LatestUsage.model_id == model_id,
                                     )
                                 ).first()
+                                # Window-close detection: if reset_at has advanced,
+                                # archive the just-closed window before overwriting.
+                                if existing and card.reset_at:
+                                    try:
+                                        new_reset_dt = datetime.fromisoformat(
+                                            card.reset_at.replace("Z", "+00:00")
+                                            if isinstance(card.reset_at, str)
+                                            else card.reset_at.isoformat()
+                                        )
+                                        _maybe_close_previous_window(
+                                            session,
+                                            existing=existing,
+                                            provider_id=card.provider_id,
+                                            account_id=canonical_account_id,
+                                            window_type=card.window_type,
+                                            new_reset_at=new_reset_dt,
+                                        )
+                                    except Exception as exc:
+                                        logger.debug(
+                                            f"Window-close detection skipped for "
+                                            f"{card.provider_id}/{canonical_account_id}: {exc}"
+                                        )
                                 if existing:
                                     existing.card_json = merge_card_json(
                                         existing.card_json, incoming_partial
