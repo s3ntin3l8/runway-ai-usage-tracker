@@ -532,6 +532,41 @@ def test_ag_parse_lsp_response_survives_bad_reset_time():
     assert cards[0]["provider_id"] == "antigravity"
 
 
+def test_ag_parse_lsp_response_parses_iso_reset_time():
+    """LSP returns resetTime as ISO 8601 strings (not just Unix timestamps)."""
+    mod = _load_sidecar_module()
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "iso-model",
+                        "modelOrAlias": "iso-model",
+                        "quotaInfo": {
+                            "remainingFraction": 0.5,
+                            "resetTime": "2026-05-09T13:03:17Z",
+                        },
+                    },
+                    {
+                        "label": "unix-model",
+                        "modelOrAlias": "unix-model",
+                        "quotaInfo": {"remainingFraction": 0.5, "resetTime": 9999999999},
+                    },
+                ]
+            },
+            "userTier": {"availableCredits": []},
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 2
+    assert cards[0]["reset_at"] == "2026-05-09T13:03:17+00:00"
+    assert cards[1]["reset_at"] is not None  # Unix timestamp still parses
+
+
 def test_ag_parse_lsp_response_falls_back_to_label_for_placeholder_model():
     """When modelOrAlias is an internal MODEL_* id (string OR dict), fall back to label."""
     mod = _load_sidecar_module()

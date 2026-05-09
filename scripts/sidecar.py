@@ -2501,15 +2501,18 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
             candidate = None
         model_id = candidate or label
         rem_pct = float(rem_frac) * 100
+        # resetTime can be either a Unix timestamp (int/float) or an ISO 8601
+        # string like "2026-05-09T13:03:17Z" — the LSP has returned both.
         reset_ts = quota.get("resetTime")
-        try:
-            reset_dt = (
-                datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
-                if reset_ts is not None
-                else None
-            )
-        except Exception:
-            reset_dt = None
+        reset_dt = None
+        if reset_ts is not None:
+            try:
+                reset_dt = datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
+            except (TypeError, ValueError):
+                try:
+                    reset_dt = datetime.datetime.fromisoformat(str(reset_ts).replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    reset_dt = None
         reset_at = reset_dt.isoformat() if reset_dt else None
         results.append(
             {
