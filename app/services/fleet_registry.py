@@ -22,6 +22,40 @@ class FleetRegistryService:
         # The flag is consumed (cleared) the first time the sidecar polls after it is set.
         self._pending_triggers: set[str] = set()
 
+        # In-memory tracking of the last time each sidecar was asked to poll a specific provider.
+        # Key: sidecar_id -> dict(provider_id -> unix_timestamp)
+        self._last_provider_polls: dict[str, dict[str, float]] = {}
+
+    def get_due_providers(
+        self, sidecar_id: str, enabled_providers: list[tuple[str, int]]
+    ) -> tuple[list[str], bool]:
+        """
+        Compare current time against last poll history to see which providers are due.
+        enabled_providers: list of (provider_id, interval_seconds)
+        Returns (list_of_due_providers, trigger_consumed_bool)
+        """
+        import time
+
+        now = time.time()
+        due = []
+        sidecar_history = self._last_provider_polls.setdefault(sidecar_id, {})
+        trigger_consumed = self.consume_pending_trigger(sidecar_id)
+
+        # Special case: if a global trigger is pending, poll everything
+        if trigger_consumed:
+            for p_id, _ in enabled_providers:
+                due.append(p_id)
+                sidecar_history[p_id] = now
+            return due, trigger_consumed
+
+        for p_id, interval in enabled_providers:
+            last = sidecar_history.get(p_id, 0.0)
+            if now - last >= interval:
+                due.append(p_id)
+                sidecar_history[p_id] = now
+
+        return due, trigger_consumed
+
     def set_pending_trigger(self, sidecar_id: str) -> None:
         """Schedule an immediate collection cycle for the given sidecar."""
         self._pending_triggers.add(sidecar_id)
