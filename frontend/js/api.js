@@ -213,11 +213,13 @@ export async function deleteSidecarAPI(sidecarId) {
     return await resp.json();
 }
 
-export async function triggerSidecarCollectAPI(sidecarId) {
-    const resp = await fetchWithAuth(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/trigger`, {
-        method: 'POST',
-    });
-    if (!resp.ok) throw new Error(`Failed to trigger sidecar: HTTP ${resp.status}`);
+export async function setSidecarEnabledAPI(sidecarId, enabled) {
+    const action = enabled ? 'resume' : 'pause';
+    const resp = await fetchWithAuth(
+        `/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/${action}`,
+        { method: 'POST' },
+    );
+    if (!resp.ok) throw new Error(`Failed to ${action} sidecar: HTTP ${resp.status}`);
     return await resp.json();
 }
 

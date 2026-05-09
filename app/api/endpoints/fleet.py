@@ -223,27 +223,35 @@ async def ingest_metrics(
     # Logic: Centralized orchestration based on UI-configured intervals.
     poll_providers: list[str] = []
     trigger: bool = False
+    sys_cfg = session.exec(select(SystemConfig)).first()
+    sidecar_interval = (
+        sys_cfg.default_sidecar_interval_seconds if sys_cfg else None
+    ) or 900  # Fallback to 15 mins
+    collection_enabled = True
     if request.sidecar_id:
-        # Fetch configurations to determine intervals
-        sys_cfg = session.exec(select(SystemConfig)).first()
-        global_interval = (
-            sys_cfg.default_poll_interval_seconds if sys_cfg else None
-        ) or 1800  # Fallback to 30 mins
+        # Honor per-sidecar pause: paused sidecars still check in but receive
+        # no poll instructions, and their pending-trigger flag is preserved
+        # so a resume can still deliver it.
+        sc_row = session.get(SidecarRegistry, request.sidecar_id)
+        if sc_row is not None and not sc_row.collection_enabled:
+            collection_enabled = False
+        else:
+            global_interval = (sys_cfg.default_poll_interval_seconds if sys_cfg else None) or 900
 
-        enabled_provider_rows = session.exec(
-            select(ProviderConfig).where(ProviderConfig.enabled)
-        ).all()
+            enabled_provider_rows = session.exec(
+                select(ProviderConfig).where(ProviderConfig.enabled)
+            ).all()
 
-        provider_intervals = [
-            (row.provider_id, row.poll_interval_seconds or global_interval)
-            for row in enabled_provider_rows
-        ]
+            provider_intervals = [
+                (row.provider_id, row.poll_interval_seconds or global_interval)
+                for row in enabled_provider_rows
+            ]
 
-        poll_providers, trigger = fleet_registry.get_due_providers(
-            request.sidecar_id, provider_intervals
-        )
-        if poll_providers:
-            logger.info(f"Instructing sidecar '{request.sidecar_id}' to poll: {poll_providers}")
+            poll_providers, trigger = fleet_registry.get_due_providers(
+                request.sidecar_id, provider_intervals
+            )
+            if poll_providers:
+                logger.info(f"Instructing sidecar '{request.sidecar_id}' to poll: {poll_providers}")
 
     return {
         "status": "ok",
@@ -256,6 +264,8 @@ async def ingest_metrics(
         "windows_closed": ingest_result.windows_closed if ingest_result else 0,
         "poll_providers": poll_providers,
         "trigger": trigger,
+        "sidecar_interval_seconds": sidecar_interval,
+        "collection_enabled": collection_enabled,
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
     }
 
@@ -379,24 +389,44 @@ async def delete_sidecar(
     return {"status": "deleted", "sidecar_id": sidecar_id}
 
 
-@router.post("/sidecars/{sidecar_id}/trigger")
+def _set_sidecar_collection_enabled(
+    sidecar_id: str, enabled: bool, session: Session
+) -> SidecarRegistry:
+    row = session.get(SidecarRegistry, sidecar_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    row.collection_enabled = enabled
+    session.commit()
+    session.refresh(row)
+    logger.info(f"Sidecar '{sidecar_id}' collection_enabled set to {enabled}")
+    return row
+
+
+@router.post("/sidecars/{sidecar_id}/pause")
 @limiter.limit("10/minute")
-async def trigger_sidecar_collect(
+async def pause_sidecar(
     request: Request,
     sidecar_id: str,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Request an immediate collection cycle on the named sidecar.
+    """Pause collection on the named sidecar. The sidecar continues to check
+    in but receives no poll instructions until resumed."""
+    _set_sidecar_collection_enabled(sidecar_id, False, session)
+    return {"status": "paused", "sidecar_id": sidecar_id, "collection_enabled": False}
 
-    The trigger is delivered the next time the sidecar posts an ingest request.
-    Returns 404 if the sidecar is not registered.
-    """
-    row = session.get(SidecarRegistry, sidecar_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
-    fleet_registry.set_pending_trigger(sidecar_id)
-    return {"status": "trigger_queued", "sidecar_id": sidecar_id}
+
+@router.post("/sidecars/{sidecar_id}/resume")
+@limiter.limit("10/minute")
+async def resume_sidecar(
+    request: Request,
+    sidecar_id: str,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Resume collection on the named sidecar."""
+    _set_sidecar_collection_enabled(sidecar_id, True, session)
+    return {"status": "resumed", "sidecar_id": sidecar_id, "collection_enabled": True}
 
 
 @router.get("/config")

@@ -95,22 +95,36 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
 @router.post("/force-collect")
 @limiter.limit("6/minute")
 async def force_collect(request: Request) -> dict[str, Any]:
-    """Trigger an immediate collection cycle and update the registry."""
+    """Trigger an immediate collection cycle and update the registry.
+
+    Also fans out a pending trigger to every registered sidecar so the next
+    sidecar check-in collects everything. Sidecars that are paused
+    (collection_enabled=False) are skipped — pausing means "ignore refresh
+    requests too" until the user explicitly resumes.
+    """
     from sqlmodel import Session, select
 
     from app.core.db import engine
-    from app.models.db import LatestUsage
+    from app.models.db import LatestUsage, SidecarRegistry
+    from app.services.fleet_registry import fleet_registry
     from app.services.poller import poller
 
     try:
         poller.wake()  # reset dormancy before polling
         await poller.poll_now()
-        # poll_now() upserts the freshly collected cards into LatestUsage.
-        # Count what's there to confirm to the caller how many cards the
-        # dashboard will now show.
+
+        sidecars_triggered = 0
         with Session(engine) as session:
+            for sc in session.exec(select(SidecarRegistry)).all():
+                if sc.collection_enabled:
+                    fleet_registry.set_pending_trigger(sc.sidecar_id)
+                    sidecars_triggered += 1
             cards = session.exec(select(LatestUsage)).all()
-        return {"ok": True, "cards": len(cards)}
+        return {
+            "ok": True,
+            "cards": len(cards),
+            "sidecars_triggered": sidecars_triggered,
+        }
     except Exception as e:
         logger.error(f"Force collect failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -448,6 +462,7 @@ _PROVIDER_ICONS: dict[str, str] = {
 class _AppConfigUpdate(BaseModel):
     browser_preference: str | None = None
     default_poll_interval_seconds: int | None = None  # 0 = clear override
+    default_sidecar_interval_seconds: int | None = None  # 0 = clear override
 
 
 class _DashboardLayout(BaseModel):
@@ -677,6 +692,11 @@ async def upsert_provider_config(
     except Exception as e:
         logger.warning(f"Failed to trigger sync after config update for {provider_id}: {e}")
 
+    # Wake poller so a per-provider interval change applies on the next tick.
+    from app.services.poller import poller
+
+    poller.wake()
+
     return {"status": "saved"}
 
 
@@ -689,6 +709,7 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "browser_preference": (cfg.browser_preference if cfg else None)
         or settings.BROWSER_PREFERENCE,
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
+        "default_sidecar_interval_seconds": cfg.default_sidecar_interval_seconds if cfg else None,
     }
 
 
@@ -711,7 +732,19 @@ async def upsert_app_config(
         cfg.default_poll_interval_seconds = (
             body.default_poll_interval_seconds if body.default_poll_interval_seconds > 0 else None
         )
+    if body.default_sidecar_interval_seconds is not None:
+        cfg.default_sidecar_interval_seconds = (
+            body.default_sidecar_interval_seconds
+            if body.default_sidecar_interval_seconds > 0
+            else None
+        )
     session.commit()
+
+    # Wake poller so the new interval applies on the next tick rather than
+    # waiting out the current sleep.
+    from app.services.poller import poller
+
+    poller.wake()
     return {"status": "saved"}
 
 

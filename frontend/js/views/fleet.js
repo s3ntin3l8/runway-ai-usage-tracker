@@ -1,4 +1,4 @@
-import { fetchFleet, patchSidecar, deleteSidecarAPI, triggerSidecarCollectAPI } from '../api.js';
+import { fetchFleet, patchSidecar, deleteSidecarAPI, setSidecarEnabledAPI } from '../api.js';
 import { buildFleetView } from '../components.js';
 
 function escapeHTML(str) {
@@ -54,32 +54,45 @@ export async function deleteSidecar(sidecarId) {
     }
 }
 
-export async function triggerSidecarCollect(sidecarId) {
-    const card = document.querySelector(`[data-sidecar="${CSS.escape(sidecarId)}"]`);
-    const btn = card?.querySelector('button[title^="Run Now"]');
+export async function toggleSidecarEnabled(sidecarId, currentlyEnabled) {
+    // currentlyEnabled is the state BEFORE the click — clicking flips it.
+    const willEnable = !currentlyEnabled;
+    const verb = willEnable ? 'resume' : 'pause';
+    const desc = willEnable
+        ? `Resume collection on "${sidecarId}"?`
+        : `Stop collection on "${sidecarId}"?\n\nThe sidecar will keep checking in but won't collect from any providers until you resume it.`;
+    if (!confirm(desc)) return;
 
-    const SVG_PLAY = btn?.innerHTML ?? '';
+    const card = document.querySelector(`[data-sidecar="${CSS.escape(sidecarId)}"]`);
+    const btn = card?.querySelector('button[data-sidecar-toggle]');
+    const originalHTML = btn?.innerHTML ?? '';
+
     const SVG_SPIN = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin .7s linear infinite"><circle cx="12" cy="12" r="10" stroke-opacity=".25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
     const SVG_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
     const SVG_ERR   = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
-    function setBtnState(svg, cls) {
+    function setBtnState(svg, cls, disabled) {
         if (!btn) return;
         btn.innerHTML = svg;
         btn.className = btn.className.replace(/\btext-good-c\b|\btext-crit-c\b/g, '').trim();
         if (cls) btn.classList.add(cls);
-        btn.disabled = cls === null; // null = loading
+        btn.disabled = !!disabled;
     }
 
-    setBtnState(SVG_SPIN, null); // loading: spinner + disabled
+    setBtnState(SVG_SPIN, '', true);
 
     try {
-        await triggerSidecarCollectAPI(sidecarId);
-        setBtnState(SVG_CHECK, 'text-good-c');
-        setTimeout(() => setBtnState(SVG_PLAY, ''), 1800);
+        await setSidecarEnabledAPI(sidecarId, willEnable);
+        setBtnState(SVG_CHECK, 'text-good-c', true);
+        // Reload the fleet to render the new steady-state icon (pause vs play)
+        setTimeout(() => loadFleetView(), 1200);
     } catch (err) {
-        setBtnState(SVG_ERR, 'text-crit-c');
-        setTimeout(() => setBtnState(SVG_PLAY, ''), 2500);
+        setBtnState(SVG_ERR, 'text-crit-c', false);
+        setTimeout(() => {
+            if (btn) btn.innerHTML = originalHTML;
+            setBtnState(originalHTML, '', false);
+        }, 2500);
+        alert(`Failed to ${verb} sidecar: ` + err.message);
     }
 }
 

@@ -155,6 +155,7 @@ class FleetRegistryService:
             "ingest_count": row.ingest_count,
             "sidecar_version": row.sidecar_version,
             "os_platform": row.os_platform,
+            "collection_enabled": row.collection_enabled,
             "stale": stale,
             "stale_threshold_minutes": _STALE_THRESHOLD_MINUTES,
             "recent_logs": json.loads(row.recent_logs) if row.recent_logs else [],

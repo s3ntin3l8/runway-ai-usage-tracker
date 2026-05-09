@@ -39,7 +39,7 @@ __REGISTRY__ = {}
 # --- Configuration ---
 
 DEFAULT_CONFIG = {
-    "interval_seconds": 1800,
+    "interval_seconds": 900,
     "providers": ["all"],
     "retry_attempts": 3,
     "retry_backoff_seconds": 5,
@@ -109,7 +109,7 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
         template = {
             "api_url": "http://your-server:8765",
             "api_key": "your-secret-key",
-            "interval_seconds": 1800,
+            "interval_seconds": 900,
             "providers": ["all"],
             "retry_attempts": 3,
             "retry_backoff_seconds": 5,
@@ -1218,7 +1218,7 @@ def main():
 
     api_url = config["api_url"]
     api_key = config["api_key"]
-    interval = config.get("interval_seconds", 1800)
+    interval = config.get("interval_seconds", 900)
 
     logging.info(f"Sidecar started for {api_url} (Interval: {interval}s)")
 
@@ -1247,6 +1247,16 @@ def main():
 
                 if success:
                     logging.info(f"Successfully sent {len(metrics)} metrics")
+                    # Honor server-pushed cycle interval so the dashboard's
+                    # Sidecar Interval setting takes effect without editing
+                    # config.json on every host.
+                    if isinstance(result, dict):
+                        srv_iv = result.get("sidecar_interval_seconds")
+                        if isinstance(srv_iv, int) and srv_iv > 0 and srv_iv != interval:
+                            logging.info(
+                                f"Sidecar interval changed by server: {interval}s -> {srv_iv}s"
+                            )
+                            interval = srv_iv
                 else:
                     # Check for clock skew error (400 timestamp_expired)
                     if (
