@@ -1,10 +1,17 @@
-# Collection Logic - NOT IMPLEMENTED YET
-
-> ⚠️ **This document describes the planned collection strategy. Implementation is pending.**
+# Collection Logic
 
 ## Overview
 
 The collection system uses a bucket-based approach: strategies are categorized by the type of data they provide, collected in phases, and merged into a single card per provider.
+
+For providers that emit per-message logs (Claude, Codex, Gemini, OpenCode), the
+sidecar additionally extracts events into `usage_events` and pushes them via
+`/api/v1/fleet/ingest`. The card produced by the strategy pipeline carries the
+authoritative quota gauge (`pct_used`, `limit_value`, `reset_at`); per-model and
+per-sidecar splits are derived on demand from `usage_events` by the
+`/api/v1/usage/fleet` endpoint's `window_aggregations` field. See the
+[event-sourced data model spec](superpowers/specs/2026-05-08-event-sourced-usage-data-model.md)
+for the full event flow.
 
 ## Strategy Types
 

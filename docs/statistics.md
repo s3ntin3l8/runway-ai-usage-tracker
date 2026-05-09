@@ -11,7 +11,7 @@ The `data_source` label identifies **how** the usage data was obtained from the 
 | :--- | :--- | :--- | :--- |
 | **`api`** | Primary | Official/Public API endpoint or OAuth-authenticated service. | `anthropic_oauth`, `gemini_api`, `github`, `openrouter` |
 | **`web`** | Secondary | Web-mimicking calls or scraping using browser cookies. | `chatgpt` (wham/usage), `ollama` (scraping), `kimi_coding` |
-| **`local`** | Tertiary | Reading local logs, CLI output, or local application databases. | `claude_local` (statusline), `opencode_db`, `antigravity_lsp` |
+| **`local`** | Tertiary | Reading local logs, CLI output, or local application databases. | `claude_local` (statusline), `opencode_db`, sidecar event extractors (Claude/Codex/Gemini/OpenCode JSONL/SQLite) |
 
 ### Fallback Logic
 Most providers follow an `api` → `web` → `local` fallback chain. This ensures the dashboard always shows the most accurate data available given the current authentication state.
@@ -44,9 +44,9 @@ The `input_source` label identifies **where** the credentials/data came from.
 
 | Label | Description |
 | :--- | :--- |
-| **`manual`** | Entered by the user directly into the Runway Settings UI. |
+| **`config`** | Entered by the user directly into the Runway Settings UI (stored in DB). |
 | **`server`** | Discovered by the local server (Environment variables, `.env` file, or local config discovery like `~/.config/gh`). |
-| **`sidecar`** | Forwarded from a remote sidecar (Remote host logs or browser extensions). |
+| **`sidecar`** | Forwarded from a remote sidecar (remote host logs, browser cookies, IDE/file introspection). |
 
 ---
 
@@ -58,7 +58,7 @@ A single usage card emitted by a collector might look like this:
   "service": "Claude 3.5 Sonnet",
   "remaining": "85%",
   "data_source": "api",      // Obtained via official OAuth API
-  "input_source": "manual",  // User pasted the token in settings
+  "input_source": "config",  // User pasted the token in settings (stored in DB)
   "updated_at": "2026-04-20T14:20:00Z"
 }
 ```

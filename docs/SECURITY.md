@@ -29,7 +29,7 @@ pre-commit run --all-files  # Optional: Test on existing files
 
 ## 🛰️ Ingestion API Security (Sidecars)
 
-In Multi-Host or Docker modes, sidecars send metrics and tokens via `POST /api/ingest`. To prevent replay attacks and token theft, Runway uses **HMAC-SHA256 Signing**:
+In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message events via `POST /api/v1/fleet/ingest`. To prevent replay attacks and token theft, Runway uses **HMAC-SHA256 Signing**:
 
 1. **Shared Secret**: The `INGEST_API_KEY` (from `.env`) is the HMAC secret.
 2. **Signature Generation**: 

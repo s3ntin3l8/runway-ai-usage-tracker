@@ -93,7 +93,9 @@ python3 scripts/sidecar.py --daemon
 - **Offline Queue:** Caches metrics locally when server unreachable
 - **Retry Logic:** Exponential backoff for failed pushes
 - **PID File:** Prevents multiple daemon instances
-- **14 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2, Antigravity
+- **13 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2 (Antigravity is sidecar-only — see [collector doc](collectors/antigravity.md))
+- **Event Batching:** Per-message events (Claude, Codex, Gemini, OpenCode) shipped in 1000-event batches
+- **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account)
 - **HMAC-SHA256 Signing:** Secure payload verification
 
 ## Configuration
@@ -234,7 +236,7 @@ launchctl start com.runway.sidecar
 | **MiniMax** | API key | `MINIMAX_API_KEY` |
 | **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |
 | **Kimi K2** | API key | `KIMI_K2_API_KEY` |
-| **Antigravity** | LSP probe / JSON file | LSP process (running IDE) or `~/.antigravity/state/quota.json` |
+| **Antigravity** | LSP probe / JSON file (sidecar-only) | LSP process (running IDE) or `~/.local/share/antigravity/state/quota.json` |
 
 ## Deployment Modes
 
@@ -293,11 +295,11 @@ Example queue file:
 ```
 
 **Flow:**
-1. Sidecar extracts tokens from local files/keychain
+1. Sidecar extracts tokens, cards, and per-message events from local files/keychain/IDE logs
 2. Signs payload with `api_key` using HMAC-SHA256
-3. Sends to server via `POST /api/ingest`
-4. Server verifies signature, stores tokens in memory cache (30-min TTL)
-5. Server makes API calls using cached tokens
+3. Sends to server via `POST /api/v1/fleet/ingest`
+4. Server verifies signature, stores tokens in memory cache (30-min TTL), upserts cards into `latest_usage`, and ingests events into `usage_events` (deduped by `(provider_id, account_id, event_id)`)
+5. Server makes any required API calls using cached tokens
 
 **Security:**
 - Tokens stored in memory only (no disk persistence on server)
@@ -355,4 +357,4 @@ python3 scripts/sidecar.py --daemon
 
 See [Collector Docs](../docs/collectors/) for provider-specific setup details.
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-05-09*

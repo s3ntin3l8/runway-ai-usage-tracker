@@ -23,6 +23,23 @@ When adding new card fields, update both `LimitCard` in `app/models/schemas.py` 
 - `msgs`: int
 - `pct_used`: float
 
+## Data Model
+Runway is **event-sourced**. The authoritative table is `usage_events` — one row per assistant message — and everything else is a derived view.
+
+| Table | Role |
+|-------|------|
+| `usage_events` | Per-message immutable events. Deduped by `(provider_id, account_id, event_id)`. `kind="message"` for billable activity, `kind="error"` for provider failures. |
+| `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
+| `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
+| `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |
+| `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
+
+**Ingest path:** Sidecar batches up to 1000 events per push to `POST /api/v1/fleet/ingest` (HMAC-signed). Server runs `EventIngestor`, which deduplicates by `event_id`, computes cost via `cost_calculator`, updates rollups, and triggers `window_closer._maybe_close_previous_window` on quota-window boundaries.
+
+**Read paths:** `/api/v1/usage/{cumulative,events,window-history,heatmap,sessions,cost-forecast,anomalies}` query rollups + events. `/api/v1/usage/fleet` returns live cards plus `window_aggregations.longest` — per-model + per-sidecar splits aligned to the provider's longest active window (Claude weekly, Gemini daily, etc.) computed on demand from `usage_events`.
+
+**Account identity:** `app/services/account_identity.py:resolve_account_id` — email > UUID > SHA256 hash > `"default"`. Sidecar identity is the hostname; never part of unique constraints.
+
 ## CI/CD
 Pipeline runs on push/PR to `main` and on version tags (`v*`):
 - **lint-python**: ruff, mypy, detect-secrets, pip-audit

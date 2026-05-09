@@ -29,7 +29,7 @@ Running on single machine with coding tools?
 | **MiniMax** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
 | **Ollama** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Cookie extraction needs host access |
 | **Kimi K2** | ✅ Full | ✅ Full | ✅ Full | API key works everywhere |
-| **Antigravity** | ✅ Full | ⚠️ Sidecar | ⚠️ Sidecar | Sidecar reads local JSON |
+| **Antigravity** | ⚠️ Sidecar | ⚠️ Sidecar | ⚠️ Sidecar | Sidecar-only — server has no antigravity collector |
 
 **Legend:**
 - ✅ **Full**: Works without sidecar
@@ -197,4 +197,4 @@ Runway uses **SmartCollector** for intelligent caching:
 
 See [Sidecar Guide](sidecar.md) for detailed sidecar configuration.
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-05-09*

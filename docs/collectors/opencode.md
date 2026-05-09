@@ -34,8 +34,11 @@ The OpenCode collector supports the following authentication methods:
 **Auth:** Chrome `session` cookie (web)
 **Response:** JavaScript with regex-parsable usage data
 
-### Secondary: Sidecar Aggregation
-Aggregates data from multiple hosts via `opencode-<hostname>` providers.
+### Secondary: Sidecar Events
+Per-message events extracted from `~/.local/share/opencode/opencode.db` on each host
+are pushed by the sidecar and ingested into `usage_events`. The dashboard derives
+per-model and per-sidecar splits from those events via `usage_period_rollup` and the
+`/api/v1/usage/fleet` `window_aggregations` field.
 
 ### Tier 2: local (SQLite DB)
 **Location:** `~/.local/share/opencode/opencode.db`
@@ -159,7 +162,8 @@ The `auth` cookie was sent to OpenCode but not recognised. Causes:
 |------|---------|
 | `app/services/collectors/opencode.py` | Main collector |
 | `app/core/browser_cookies.py` | Cookie extraction |
-| `app/services/external_metrics.py` | Sidecar aggregation |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Sidecar event extractor (reads `opencode.db`) |
+| `app/services/event_ingestor.py` | Server-side event ingestion (deduped by `event_id`) |
 
 ## References
 
