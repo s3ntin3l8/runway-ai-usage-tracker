@@ -1635,7 +1635,8 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const tier = _firstNonEmpty(allCards.map(c => c.tier));
     const planText = tier || (isPayg ? 'PAYG' : '');
 
-    const sidecarCount = Object.keys(contributions).length;
+    const cardSidecars = new Set(allCards.map(c => c.sidecar_id).filter(Boolean));
+    const sidecarCount = new Set([...Object.keys(contributions), ...cardSidecars]).size;
     const dataSource = critical.data_source || '';
     const inputSource = critical.input_source || '';
     const authorityLabel = _authorityLabel(dataSource, inputSource);

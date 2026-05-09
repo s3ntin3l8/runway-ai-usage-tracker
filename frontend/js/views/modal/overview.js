@@ -127,8 +127,10 @@ function _buildModelMix(entry, cumData) {
 }
 
 /**
- * Build sidecar rows from entry.sidecar_contributions.
- * Returns array of { id, name, os, delta, deltaRaw, cost, costRaw, status, ago, spark }.
+ * Build sidecar rows from entry.sidecar_contributions, augmented with any
+ * sidecars that own a card in the entry but emit no usage events (e.g.
+ * antigravity is quota-only — no rollup contributions, but cards still
+ * carry a sidecar_id).
  */
 function _buildSidecarRows(entry) {
     const contributions = entry.sidecar_contributions || {};
@@ -145,6 +147,24 @@ function _buildSidecarRows(entry) {
             cost: _fmtCost(stats.cost_usd || 0),
             status: 'good',
             ago: stats.last_seen ? _fmtAgo(stats.last_seen) : '—',
+        });
+    }
+    const seen = new Set(rows.map(r => r.id));
+    const cardSources = [entry.critical_gauge, ...(entry.secondary_limits || [])];
+    for (const c of cardSources) {
+        const sid = c?.sidecar_id;
+        if (!sid || seen.has(sid)) continue;
+        seen.add(sid);
+        rows.push({
+            id: sid,
+            name: sid,
+            os: '',
+            deltaRaw: 0,
+            delta: '—',
+            costRaw: 0,
+            cost: '—',
+            status: 'good',
+            ago: c?.updated_at ? _fmtAgo(c.updated_at) : '—',
         });
     }
     rows.sort((a, b) => b.deltaRaw - a.deltaRaw);

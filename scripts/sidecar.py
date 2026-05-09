@@ -2485,14 +2485,16 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         if rem_frac is None:
             continue
         label = cfg.get("label", "Model")
-        # Antigravity's LSP sometimes returns modelOrAlias as a dict
-        # (e.g. {"model": "MODEL_PLACEHOLDER_M36"}) for newer model entries.
-        # Pydantic on the server requires model_id: str | None, so coerce.
+        # Antigravity's LSP returns modelOrAlias as a dict for newer entries
+        # (e.g. {"model": "MODEL_PLACEHOLDER_M36"}). The placeholder isn't a real
+        # model id — fall back to the human-readable label, which carries the
+        # actual product name (e.g. "Gemini 3.1 Pro (Low)").
         raw_model = cfg.get("modelOrAlias", label)
         if isinstance(raw_model, dict):
-            model_id = (
-                raw_model.get("model") or raw_model.get("name") or raw_model.get("alias") or label
-            )
+            candidate = raw_model.get("model") or raw_model.get("name") or raw_model.get("alias")
+            if not candidate or str(candidate).startswith("MODEL_PLACEHOLDER"):
+                candidate = None
+            model_id = candidate or label
         else:
             model_id = raw_model
         rem_pct = float(rem_frac) * 100
@@ -2516,7 +2518,8 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "pace": "Continuous",
                 "health": "good" if rem_pct > 30 else "warning",
                 "detail": f"{plan} | {email} [LSP]",
-                "data_source": "lsp",
+                "data_source": "local",
+                "input_source": "sidecar",
                 "provider_id": "antigravity",
                 "account_id": email or "default",
                 "account_label": email or None,
@@ -2548,7 +2551,8 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "pace": "N/A",
                 "health": health,
                 "detail": f"{display} | {email} [LSP]",
-                "data_source": "lsp",
+                "data_source": "local",
+                "input_source": "sidecar",
                 "provider_id": "antigravity",
                 "account_id": email or "default",
                 "account_label": email or None,

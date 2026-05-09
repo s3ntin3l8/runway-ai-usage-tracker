@@ -532,6 +532,68 @@ def test_ag_parse_lsp_response_survives_bad_reset_time():
     assert cards[0]["provider_id"] == "antigravity"
 
 
+def test_ag_parse_lsp_response_falls_back_to_label_for_placeholder_model():
+    """When modelOrAlias.model is MODEL_PLACEHOLDER_*, model_id should fall back to label."""
+    mod = _load_sidecar_module()
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "Gemini 3.1 Pro (Low)",
+                        "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M36"},
+                        "quotaInfo": {"remainingFraction": 1.0, "resetTime": 9999999999},
+                    },
+                    {
+                        "label": "Real Model",
+                        "modelOrAlias": {"model": "actual-model-id"},
+                        "quotaInfo": {"remainingFraction": 1.0, "resetTime": 9999999999},
+                    },
+                ]
+            },
+            "userTier": {"availableCredits": []},
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 2
+    assert cards[0]["model_id"] == "Gemini 3.1 Pro (Low)"  # fell back to label
+    assert cards[1]["model_id"] == "actual-model-id"  # real id passed through
+
+
+def test_ag_parse_lsp_response_marks_local_sidecar_origin():
+    """LSP cards must carry data_source='local' and input_source='sidecar'."""
+    mod = _load_sidecar_module()
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "any-model",
+                        "modelOrAlias": "any-model",
+                        "quotaInfo": {"remainingFraction": 0.5, "resetTime": 9999999999},
+                    }
+                ]
+            },
+            "userTier": {
+                "availableCredits": [{"creditType": "ANTHROPIC_CREDIT", "creditAmount": "100"}]
+            },
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 2
+    for card in cards:
+        assert card["data_source"] == "local"
+        assert card["input_source"] == "sidecar"
+
+
 def test_ag_parse_lsp_response_credit_card():
     """Sidecar _ag_parse_lsp_response produces correct fields for credit card."""
     mod = _load_sidecar_module()
