@@ -35,6 +35,13 @@ from pathlib import Path
 from typing import Any
 from urllib import error, request
 
+# When invoked as `python scripts/sidecar.py`, Python sets sys.path[0] to
+# scripts/, so `from scripts.sidecar_pkg.*` (used for event extractor lazy
+# imports below) cannot resolve. Prepend the repo root so the package is found.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 # --- INJECTED REGISTRY ---
 __REGISTRY__ = {
     "providers": {
@@ -2877,30 +2884,53 @@ class DaemonRunner:
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version", "unknown")
 
-            # Prepare payload (might be empty heartbeat if no metrics/events and no providers requested)
-            payload = {
-                "provider": f"sidecar-{get_hostname()}",
-                "metrics": metrics,
-                "events": events,
-                "sidecar_id": get_hostname(),
-                "sidecar_version": sidecar_version,
-                "os_platform": os_platform,
-                "collection_errors": collection_errors,
-                "last_log_lines": _tail_log(20) if not providers else [],
-            }
-
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event)
 
-            # Send payload (metrics or heartbeat)
-            success, result, code = http_post_signed_with_retry(
-                f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
-                payload,
-                api_key,
-                max_attempts=self._config.get("retry_attempts", 3),
-                backoff_seconds=self._config.get("retry_backoff_seconds", 5),
-                stop_event=self._stop_event,
+            # Spec §7.3: cap each POST at 1000 events. Bootstrap (90-day backfill)
+            # commonly produces 5k–50k events; a single payload would exceed the
+            # server's 8 MB body limit. Send the first batch with metrics +
+            # heartbeat fields; subsequent batches are events-only.
+            EVENT_BATCH_SIZE = 1000
+            event_batches = (
+                [events[i : i + EVENT_BATCH_SIZE] for i in range(0, len(events), EVENT_BATCH_SIZE)]
+                if events
+                else [[]]
             )
+
+            success = True
+            result: Any = None
+            code: int = 0
+            ingest_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
+            for batch_idx, event_batch in enumerate(event_batches):
+                first_batch = batch_idx == 0
+                payload = {
+                    "provider": f"sidecar-{get_hostname()}",
+                    "metrics": metrics if first_batch else [],
+                    "events": event_batch,
+                    "sidecar_id": get_hostname(),
+                    "sidecar_version": sidecar_version,
+                    "os_platform": os_platform,
+                    "collection_errors": collection_errors if first_batch else 0,
+                    "last_log_lines": (_tail_log(20) if not providers else [])
+                    if first_batch
+                    else [],
+                }
+                success, result, code = http_post_signed_with_retry(
+                    ingest_url,
+                    payload,
+                    api_key,
+                    max_attempts=self._config.get("retry_attempts", 3),
+                    backoff_seconds=self._config.get("retry_backoff_seconds", 5),
+                    stop_event=self._stop_event,
+                )
+                if not success:
+                    break  # don't keep firing batches if the server is rejecting them
+                if len(event_batches) > 1:
+                    logging.info(
+                        f"  sent batch {batch_idx + 1}/{len(event_batches)} "
+                        f"({len(event_batch)} events)"
+                    )
 
             with self._lock:
                 self.last_cycle_at = time.time()
