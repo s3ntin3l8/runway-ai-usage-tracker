@@ -1615,127 +1615,603 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
  * @param {Map}    forecastMap       - Map<seriesKey, ForecastEntry> for glide path
  * @returns {string} HTML
  */
-export function buildFleetCommanderCard(entry, forecastMap) {
+export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const critical = entry.critical_gauge;
     if (!critical) return '';
 
-    // Reuse the existing card renderer for the critical gauge — it already does
-    // glide path + velocity card + forecast stripe.
-    const fKey = _forecastSeriesKey(critical);
-    const fe = forecastMap?.get?.(fKey);
-    const criticalCard = buildHorizonCard(critical, fe);
-
     const secondary = entry.secondary_limits || [];
     const contributions = entry.sidecar_contributions || {};
+    const allCards = [critical, ...secondary];
 
-    const ledRow = secondary.length ? _buildStatusLEDRow(secondary) : '';
-    const fuelDump = _buildFuelDumpBar(contributions);
-    const wingmanRow = _buildWingmanPodsRow(secondary, contributions);
+    // Quota-bearing cards (with pct_used or limit_value) become "pools".
+    // Token-only enrichment cards are kept aside for the per-model strip and totals.
+    const quotaCards = allCards.filter(c => _hasQuotaSignal(c));
+    const isPayg = critical.is_unlimited || (!critical.limit_value && quotaCards.length === 0);
 
-    const groupId = `fleet-${escapeHTMLAttr(entry.provider_id)}-${escapeHTMLAttr(entry.account_id || 'default')}`;
+    const providerId = entry.provider_id || '';
+    const accountId = entry.account_id || '';
+    const provLabel = providerDisplayLabel(providerId);
+    const accountLabel = critical.account_label || accountId || 'default';
+    const tier = _firstNonEmpty(allCards.map(c => c.tier));
+    const planText = tier || (isPayg ? 'PAYG' : '');
 
-    return `<div class="fleet-commander" data-group-id="${groupId}"
-                 data-provider-id="${escapeHTMLAttr(entry.provider_id)}"
-                 data-account-id="${escapeHTMLAttr(entry.account_id || '')}">
-        ${criticalCard}
-        ${ledRow}
-        ${fuelDump}
-        ${wingmanRow}
+    const sidecarCount = Object.keys(contributions).length;
+    const dataSource = critical.data_source || '';
+    const inputSource = critical.input_source || '';
+    const authorityLabel = _authorityLabel(dataSource, inputSource);
+
+    const cumulative = cumulativeMap?.get?.(`${providerId}|${accountId}`) || null;
+
+    const railHtml = _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, sidecarCount);
+    const mainHtml = quotaCards.length > 1
+        ? _fcPoolStack(quotaCards, forecastMap)
+        : _fcCriticalGauge(critical, forecastMap);
+
+    // Per-model and fuel-dump: prefer server-aggregated window_aggregations.longest
+    // which covers the provider's actual quota window (weekly, daily, etc.).
+    const winAgg = entry.window_aggregations?.longest || null;
+
+    // Per-model and fuel-dump source from the longest-window pool's default card —
+    // the canonical "all-models" view for that account (e.g. weekly/default for Claude).
+    const primaryCard = _pickPrimaryPoolCard(allCards) || critical;
+    const modelStripHtml = _fcModelsStrip(primaryCard, winAgg);
+    const fuelDumpHtml = _fcFuelDump(primaryCard, contributions, winAgg);
+    const cumeHtml = _fcCume(cumulative, isPayg);
+    const podsHtml = _fcPods(secondary, contributions, primaryCard, winAgg);
+
+    const cKey = `${providerId}|${accountId}`;
+
+    return `<article class="glass card fc"
+            data-prov="${escapeHTMLAttr(providerId)}"
+            data-acc="${escapeHTMLAttr(accountId)}"
+            data-card-key="${escapeHTMLAttr(cKey)}">
+        ${railHtml}
+        <div class="fc-main">
+            ${mainHtml}
+            ${modelStripHtml}
+            ${fuelDumpHtml}
+        </div>
+        ${cumeHtml}
+        ${podsHtml}
+    </article>`;
+}
+
+function _hasQuotaSignal(card) {
+    if (card.is_unlimited) return false;
+    if (card.pct_used != null) return true;
+    if (card.used_value != null && card.limit_value) return true;
+    return false;
+}
+
+function _firstNonEmpty(values) {
+    for (const v of values) if (v) return v;
+    return '';
+}
+
+function _authorityLabel(dataSource, inputSource) {
+    const ds = (dataSource || '').toLowerCase();
+    const isApi = ds === 'api' || ds === 'oauth';
+    if (isApi) return 'AUTHORITATIVE · API';
+    if (ds === 'web') return 'WEB · SCRAPED';
+    if (ds === 'local' || (inputSource || '').toLowerCase() === 'sidecar') return 'LOCAL · SIDECAR';
+    return 'UNKNOWN';
+}
+
+function _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, sidecarCount) {
+    const initial = (provLabel || '?').trim().charAt(0).toUpperCase();
+    const provClass = providerId ? `c-${escapeHTMLAttr(providerId)}` : '';
+    const planPill = planText
+        ? `<span class="pill"><b>${escapeHTML(planText)}</b></span>`
+        : '';
+    const sidecarPill = `<span class="pill"><b>${sidecarCount}</b>sidecar${sidecarCount === 1 ? '' : 's'}</span>`;
+    return `<div class="fc-rail">
+        <div class="who">
+            <div class="plogo ${provClass}">${escapeHTML(initial)}</div>
+            <div class="stack">
+                <div class="pname">${escapeHTML(provLabel)}</div>
+                <div class="pacc">${escapeHTML(accountLabel)}</div>
+            </div>
+        </div>
+        <span class="auth"><span class="d"></span>${escapeHTML(authorityLabel)}</span>
+        <div class="meta-row">${planPill}${sidecarPill}</div>
     </div>`;
 }
 
-/**
- * Status LED row — one colored dot per secondary limit.
- * Spec §5.1: green <70%, yellow <90%, red ≥90%.
- */
-function _buildStatusLEDRow(secondary) {
-    const dots = secondary.map(card => {
-        const pct = card.pct_used != null ? card.pct_used
-            : (card.used_value != null && card.limit_value ? card.used_value / card.limit_value * 100 : null);
-        let cls = 'led led-off';
-        let label = card.service_name || card.window_type || '';
-        if (pct != null) {
-            if (pct >= 90) cls = 'led led-crit';
-            else if (pct >= 70) cls = 'led led-warn';
-            else cls = 'led led-good';
-        } else if (card.is_unlimited) {
-            cls = 'led led-unlimited';
-        }
-        const tipPct = pct != null ? `${Math.round(pct)}% used` : (card.is_unlimited ? 'unlimited' : 'no data');
-        return `<span class="${cls}" data-tip="${escapeHTMLAttr(label)} · ${escapeHTMLAttr(tipPct)}"></span>`;
-    }).join('');
-    return `<div class="led-row" aria-label="Secondary quotas">${dots}</div>`;
+const _FC_WINDOW_LABELS = {
+    session: '5h rolling',
+    daily:   '24h rolling',
+    weekly:  '7d rolling',
+    monthly: 'monthly',
+    rolling: 'rolling',
+};
+
+function _fcWindowLabel(card) {
+    const w = (card.window_type || '').toLowerCase();
+    return _FC_WINDOW_LABELS[w] || w || 'rolling';
 }
 
+function _poolKindAndScope(card) {
+    const variant = (card.variant || 'default').toLowerCase();
+    const modelId = card.model_id || '';
+    if (variant !== 'default' || modelId) {
+        const scope = (modelId || variant).toString();
+        return { kind: 'model', scope: `${scope.charAt(0).toUpperCase()}${scope.slice(1)} only` };
+    }
+    return { kind: 'shared', scope: 'All models' };
+}
+
+function _poolPct(card) {
+    if (card.pct_used != null) return Math.max(0, Math.min(100, Math.round(card.pct_used)));
+    if (card.used_value != null && card.limit_value) {
+        return Math.max(0, Math.min(100, Math.round((card.used_value / card.limit_value) * 100)));
+    }
+    return 0;
+}
+
+function _glidePathPct(card) {
+    if (!card.reset_at || !card.window_type || card.window_type === 'unknown') return null;
+    const reset = new Date(card.reset_at);
+    const now = new Date();
+    const durations = { session: 5*3600000, daily: 86400000, weekly: 604800000, monthly: 2592000000 };
+    const windowMs = durations[card.window_type];
+    if (!windowMs) return null;
+    const elapsed = windowMs - (reset - now);
+    return Math.max(0, Math.min(100, (elapsed / windowMs) * 100));
+}
+
+function _poolStatus(usedPct) {
+    if (usedPct >= 90) return 'crit';
+    if (usedPct >= 70) return 'warn';
+    return 'good';
+}
+
+function _poolLabel(card) {
+    const w = (card.window_type || '').toLowerCase();
+    const variant = (card.variant || 'default').toLowerCase();
+    const wTitle = w ? w.charAt(0).toUpperCase() + w.slice(1) : 'Limit';
+    if (variant !== 'default' && variant !== 'unknown') {
+        const vLabel = card.model_id || variant;
+        return `${wTitle} ${vLabel.charAt(0).toUpperCase()}${vLabel.slice(1)}`;
+    }
+    return wTitle;
+}
+
+function _resetText(card) {
+    return card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : '—';
+}
+
+function _fcPoolStack(quotaCards, _forecastMap) {
+    const pools = quotaCards.map(card => ({
+        card,
+        used: _poolPct(card),
+        glide: _glidePathPct(card),
+        label: _poolLabel(card),
+        ...(_poolKindAndScope(card)),
+    })).sort((a, b) => b.used - a.used);
+
+    const head = pools[0];
+    const headStatus = _poolStatus(head.used);
+
+    const rows = pools.map((p, i) => {
+        const status = _poolStatus(p.used);
+        const isHead = i === 0;
+        const glideHtml = p.glide != null
+            ? `<div class="pglide" style="left:${p.glide.toFixed(1)}%" title="glide-path target"></div>`
+            : '';
+        return `<div class="fc-pool-row h-${status} ${status === 'crit' ? 'crit-row' : ''}">
+            <span class="pidx">${String(i + 1).padStart(2, '0')}</span>
+            <div class="pmid">
+                <div class="phead">
+                    <span class="plab">${escapeHTML(p.label)}</span>
+                    <span class="pscope">${escapeHTML(p.scope)} · ${escapeHTML(_fcWindowLabel(p.card))}</span>
+                    <span class="pbadge ${p.kind}">${p.kind === 'shared' ? 'Shared' : 'Model'}</span>
+                </div>
+                <div class="pmeter">
+                    <div class="pused" style="width:${p.used}%"></div>
+                    ${glideHtml}
+                </div>
+            </div>
+            <div class="pright">
+                <span class="ppct">${p.used}<em>%</em></span>
+                <span class="preset">resets <b>${escapeHTML(_resetText(p.card))}</b></span>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div>
+        <div class="fc-pools-head">
+            <span class="label">Quota pools · ${pools.length}</span>
+            <span class="meta">most constraining <b>${escapeHTML(head.label)}</b> · ${head.used}%</span>
+        </div>
+        <div class="fc-pools-stack">${rows}</div>
+    </div>`;
+}
+
+function _fcCriticalGauge(card, _forecastMap) {
+    if (card.is_unlimited || (!card.limit_value && card.pct_used == null)) {
+        return _fcVelocity(card);
+    }
+    const used = _poolPct(card);
+    const glide = _glidePathPct(card);
+    const status = _poolStatus(used);
+    const ahead = glide != null && used > glide + 4;
+    const behind = glide != null && used < glide - 4;
+    const usedAbs = card.used_value != null
+        ? `${_formatTokenShort(card.used_value)} ${card.unit_type || ''}`
+        : `${used}%`;
+    const aheadHtml = glide == null ? ''
+        : ahead ? `<span class="ahead">↑ ${Math.round(used - glide)}% ahead of pace</span>`
+        : behind ? `<span class="ontrack">✓ ${Math.round(glide - used)}% under pace</span>`
+        : `<span class="ontrack">✓ on glide path</span>`;
+    const glideHtml = glide != null
+        ? `<div class="glide" style="left:${glide.toFixed(1)}%" title="ideal pace by elapsed time"></div>`
+        : '';
+    const glideTarget = glide != null
+        ? `<span>glide-path target <b>${Math.round(glide)}%</b></span>`
+        : '';
+    return `<div>
+        <div class="fc-gauge-head">
+            <span class="label">Critical gauge · most restrictive</span>
+            <span class="name">${escapeHTML(card.service_name || _poolLabel(card))}</span>
+            <span class="reset">resets <b>${escapeHTML(_resetText(card))}</b></span>
+        </div>
+        <div class="fc-gauge h-${status} ${ahead ? 'behind' : ''}" style="margin-top:8px">
+            <div class="ticks"></div>
+            <div class="used" style="width:${used}%"></div>
+            ${glideHtml}
+            <div class="pct-label">${used}%</div>
+        </div>
+        <div class="fc-gauge-foot" style="margin-top:6px">
+            <span><b>${escapeHTML(usedAbs)}</b> used</span>
+            ${glideTarget}
+            ${aheadHtml}
+        </div>
+    </div>`;
+}
+
+function _fcVelocity(card) {
+    const spend = card.used_value != null
+        ? `$${Number(card.used_value).toFixed(2)}`
+        : '—';
+    return `<div class="fc-velo">
+        <span class="payg-tag">PAYG · No quota</span>
+        <div class="cell">
+            <div class="k">Current spend</div>
+            <div class="v">${escapeHTML(spend)}</div>
+            <div class="s">${card.unit_type ? `<b>${escapeHTML(card.unit_type)}</b>` : 'rolling'}</div>
+        </div>
+        <div class="cell">
+            <div class="k">Tokens</div>
+            <div class="v">${card.token_usage?.total ? _formatTokenShort(card.token_usage.total) : '—'}</div>
+            <div class="s">total</div>
+        </div>
+        <div class="cell forecast">
+            <div class="k">Forecast · EoM</div>
+            <div class="v">—</div>
+            <div class="s">no quota ceiling</div>
+        </div>
+    </div>`;
+}
+
+const _MODEL_HUES = {
+    sonnet: 28, opus: 280, haiku: 200, design: 320,
+    gpt: 160, chatgpt: 160, codex: 60,
+    gemini: 220, flash: 200, pro: 220, 'flash-lite': 180,
+    glm: 200, default: 60,
+};
+
+function _modelHue(name) {
+    const n = (name || '').toLowerCase();
+    for (const k of Object.keys(_MODEL_HUES)) {
+        if (n.includes(k)) return _MODEL_HUES[k];
+    }
+    return _MODEL_HUES.default;
+}
+
+// Window ranking: longer windows win as the canonical pool view.
+const _WINDOW_RANK = {
+    monthly: 5, prepaid: 5, biweekly: 4, weekly: 4, daily: 3, session: 2, rolling: 1, unknown: 0,
+};
+
 /**
- * Fuel Dump bar — horizontal segmented bar showing each sidecar's share of
- * the current-month token burn. Click toggles the Wingman Pods row.
- * Spec §5.2: "mini-bar indicating exactly which Sidecar contributed".
+ * Pick the card that best represents the longest pool window for an account:
+ * variant="default", model_id="" (i.e. all-models view), longest window_type, with
+ * the most token data. Returns null if no candidate has token_usage.
  */
-function _buildFuelDumpBar(contributions) {
-    const entries = Object.entries(contributions || {});
-    if (!entries.length) {
-        return `<div class="fuel-dump-empty" data-tip="No sidecar telemetry yet">— no sidecar telemetry —</div>`;
+function _pickPrimaryPoolCard(allCards) {
+    const candidates = allCards.filter(c => {
+        const v = (c.variant || 'default').toLowerCase();
+        const m = (c.model_id || '').toLowerCase();
+        return v === 'default' && (!m || m === 'default');
+    });
+    if (!candidates.length) return null;
+    const score = c => {
+        const w = (c.window_type || '').toLowerCase();
+        const total = Number(c.token_usage?.total ?? 0);
+        const hasModels = c.by_model && Object.keys(c.by_model).length > 0 ? 1 : 0;
+        return [(_WINDOW_RANK[w] ?? 0), hasModels, total];
+    };
+    let best = candidates[0];
+    let bestScore = score(best);
+    for (const c of candidates.slice(1)) {
+        const s = score(c);
+        for (let i = 0; i < s.length; i++) {
+            if (s[i] > bestScore[i]) { best = c; bestScore = s; break; }
+            if (s[i] < bestScore[i]) break;
+        }
+    }
+    return best;
+}
+
+function _fcModelsStrip(primaryCard, winAgg) {
+    // Prefer server-aggregated window data; fall back to card's by_model.
+    const winByModel = winAgg?.by_model && Object.keys(winAgg.by_model).length > 0
+        ? winAgg.by_model : null;
+
+    let entries;
+    if (winByModel) {
+        // winAgg entries have flat tokens_input/output/cache_read/cache_create/reasoning
+        entries = Object.entries(winByModel).map(([name, data]) => ({
+            name,
+            tokens: (Number(data?.tokens_input ?? 0)
+                + Number(data?.tokens_output ?? 0)
+                + Number(data?.tokens_cache_read ?? 0)
+                + Number(data?.tokens_cache_create ?? 0)
+                + Number(data?.tokens_reasoning ?? 0)),
+        })).filter(e => e.tokens > 0);
+    } else {
+        const bm = primaryCard?.by_model || {};
+        entries = Object.entries(bm).map(([name, data]) => ({
+            name,
+            tokens: Number(data?.tokens?.total ?? data?.tokens ?? data?.total ?? 0),
+        })).filter(e => e.tokens > 0);
     }
 
-    // Sum tokens_input across sidecars; fall back to "total" or 0
-    const valueOf = ([_, units]) =>
-        Number(units?.tokens_input ?? units?.tokens_total ?? units?.total ?? 0);
-    const total = entries.reduce((sum, e) => sum + valueOf(e), 0) || 1;
+    if (entries.length === 0) return '';
 
-    const segments = entries
-        .map(e => ({ sidecar: e[0], value: valueOf(e) }))
-        .sort((a, b) => b.value - a.value)
-        .map(s => {
-            const pct = (s.value / total) * 100;
-            const widthPct = Math.max(2, pct).toFixed(2); // floor at 2% so 0-burn sidecars stay visible
-            const tip = `${s.sidecar}: ${_formatTokenShort(s.value)} (${pct.toFixed(0)}%)`;
-            return `<span class="fuel-dump-segment" style="width:${widthPct}%;"
-                          data-sidecar="${escapeHTMLAttr(s.sidecar)}"
-                          data-tip="${escapeHTMLAttr(tip)}"></span>`;
-        })
-        .join('');
+    const total = entries.reduce((s, e) => s + e.tokens, 0) || 1;
+    entries.sort((a, b) => b.tokens - a.tokens);
 
-    return `<button type="button" class="fuel-dump-bar" aria-expanded="false"
-                    aria-label="Per-sidecar token contribution. Click to expand pods.">
-        <span class="fuel-dump-label">FUEL DUMP</span>
-        <span class="fuel-dump-track">${segments}</span>
-    </button>`;
-}
-
-/**
- * Wingman Pods row — collapsible, holds one mini-card per sidecar.
- */
-function _buildWingmanPodsRow(secondaryCards, contributions) {
-    const sidecars = Object.keys(contributions || {});
-    if (!sidecars.length) return '';
-
-    const pods = sidecars.map(sid => {
-        const units = contributions[sid] || {};
-        const tokens = Number(units.tokens_input ?? units.tokens_total ?? 0);
-        const cost = Number(units.cost_usd ?? 0);
-
-        // Find matching card for this sidecar (if any) to show service name
-        const matchingCard = secondaryCards.find(c => c.sidecar_id === sid);
-        const subtitle = matchingCard?.service_name || sid;
-
-        const tokenLine = tokens > 0
-            ? `<div class="pod-metric">${_formatTokenShort(tokens)} <span class="pod-unit">tokens</span></div>`
-            : '';
-        const costLine = cost > 0
-            ? `<div class="pod-metric">$${cost.toFixed(2)} <span class="pod-unit">spend</span></div>`
-            : '';
-        const empty = !tokens && !cost ? `<div class="pod-empty">no telemetry</div>` : '';
-
-        return `<article class="wingman-pod" data-sidecar="${escapeHTMLAttr(sid)}">
-            <div class="pod-head">
-                <span class="pod-sidecar">${escapeHTML(sid)}</span>
-                <span class="pod-sub">${escapeHTML(subtitle)}</span>
-            </div>
-            ${tokenLine}${costLine}${empty}
-        </article>`;
+    const bar = entries.map(e => {
+        const share = (e.tokens / total) * 100;
+        const hue = _modelHue(e.name);
+        return `<i style="flex:${share.toFixed(2)};background:oklch(0.62 0.16 ${hue})"
+                   title="${escapeHTMLAttr(e.name)} · ${_formatTokenShort(e.tokens)} · ${share.toFixed(0)}%"></i>`;
     }).join('');
 
-    return `<div class="wingman-row" hidden>${pods}</div>`;
+    const list = entries.map(e => {
+        const share = Math.round((e.tokens / total) * 100);
+        const hue = _modelHue(e.name);
+        return `<span class="it">
+            <span class="sw" style="background:oklch(0.62 0.16 ${hue})"></span>
+            <span class="nm">${escapeHTML(e.name)}</span>
+            <span class="tk">${_formatTokenShort(e.tokens)}</span>
+            <span class="pc">${share}%</span>
+        </span>`;
+    }).join('');
+
+    const periodLabel = winByModel && winAgg?.window_type
+        ? `Per-model contribution · this ${winAgg.window_type}`
+        : 'Per-model contribution';
+
+    return `<div class="fc-models-strip">
+        <div class="h">
+            <span class="label">${periodLabel}</span>
+            <span class="note">no individual ceiling · feeds pools above</span>
+        </div>
+        <div class="fc-models-bar">${bar}</div>
+        <div class="fc-models-list">${list}</div>
+    </div>`;
+}
+
+function _fcFuelDump(primaryCard, contributions, winAgg) {
+    // Prefer window_aggregations for both total and per-sidecar amounts.
+    const winByAgg = winAgg?.by_sidecar && Object.keys(winAgg.by_sidecar).length > 0
+        ? winAgg.by_sidecar : null;
+
+    const windowTotal = winAgg?.token_usage?.total != null
+        ? Number(winAgg.token_usage.total)
+        : Number(primaryCard?.token_usage?.total ?? 0);
+
+    let segs;
+    if (winByAgg) {
+        // Use per-sidecar totals directly from the window aggregation.
+        const _winSideTok = d => (Number(d?.tokens_input ?? 0) + Number(d?.tokens_output ?? 0)
+            + Number(d?.tokens_cache_read ?? 0) + Number(d?.tokens_cache_create ?? 0)
+            + Number(d?.tokens_reasoning ?? 0));
+        segs = Object.entries(winByAgg)
+            .map(([sid, data]) => ({ sid, value: _winSideTok(data) }))
+            .sort((a, b) => b.value - a.value);
+    } else {
+        const entries = Object.entries(contributions || {});
+        if (!entries.length || !windowTotal) {
+            return `<div class="fc-dump">
+                <div class="fc-dump-head">
+                    <span>Fuel-dump · sidecar contribution</span>
+                    <span class="total">${windowTotal ? '+' + _formatTokenShort(windowTotal) : '— no sidecar telemetry —'}</span>
+                    ${entries.length ? '<span class="toggle" data-toggle="pods">▾ wingmen</span>' : ''}
+                </div>
+            </div>`;
+        }
+        // Per-sidecar weights from cumulative_usage (month). We don't have per-window
+        // per-sidecar data, so we use month ratios to apportion the windowed total
+        // across sidecars — accurate when one sidecar dominates, approximate otherwise.
+        const _tokensOf = units =>
+            Number(units?.tokens_input ?? units?.tokens_total ?? units?.total ?? 0);
+        const weights = entries.map(([sid, units]) => ({ sid, w: _tokensOf(units) }));
+        const sumW = weights.reduce((s, x) => s + x.w, 0);
+        segs = weights.map(({ sid, w }) => ({
+            sid,
+            value: sumW ? windowTotal * (w / sumW) : windowTotal / weights.length,
+        })).sort((a, b) => b.value - a.value);
+    }
+
+    if (!segs.length || !windowTotal) {
+        return `<div class="fc-dump">
+            <div class="fc-dump-head">
+                <span>Fuel-dump · sidecar contribution</span>
+                <span class="total">— no sidecar telemetry —</span>
+            </div>
+        </div>`;
+    }
+
+    const totalText = `+${_formatTokenShort(windowTotal)}`;
+
+    const dumpBar = segs.map((s, i) => {
+        const pct = Math.max(4, (s.value / windowTotal) * 100);
+        const hue = (i * 47 + 60) % 360;
+        const short = (s.sid || '').split(/[-.]/)[0];
+        return `<i style="flex:${pct.toFixed(2)};background:oklch(0.62 0.15 ${hue} / 0.55);color:oklch(0.95 0.02 ${hue})"
+                   title="${escapeHTMLAttr(s.sid)} · ${_formatTokenShort(s.value)}">
+            <span style="opacity:.9">${escapeHTML(short)}</span>
+        </i>`;
+    }).join('');
+
+    return `<div class="fc-dump">
+        <div class="fc-dump-head">
+            <span>Fuel-dump · sidecar contribution</span>
+            <span class="total">${escapeHTML(totalText)}</span>
+            <span class="toggle" data-toggle="pods">▾ wingmen</span>
+        </div>
+        <div class="fc-dump-bar">${dumpBar}</div>
+    </div>`;
+}
+
+function _bucketTokens(bucket) {
+    if (!bucket || typeof bucket !== 'object') return 0;
+    if (bucket.tokens_total != null) return Number(bucket.tokens_total);
+    let sum = 0;
+    for (const [k, v] of Object.entries(bucket)) {
+        if (k.startsWith('tokens_') && typeof v === 'number') sum += v;
+    }
+    return sum;
+}
+
+function _bucketCost(bucket) {
+    if (!bucket || typeof bucket !== 'object') return 0;
+    return Number(bucket.cost_usd ?? 0);
+}
+
+function _formatCost(usd) {
+    if (!usd) return '';
+    if (usd >= 1000) return `$${(usd / 1000).toFixed(1)}K`;
+    if (usd >= 100)  return `$${usd.toFixed(0)}`;
+    return `$${usd.toFixed(2)}`;
+}
+
+function _fcCume(cumulative, _isPayg) {
+    if (!cumulative) {
+        return `<div class="fc-cume">
+            <div class="row">
+                <span class="label">No cumulative data</span>
+                <span class="sub">awaiting sidecar deltas</span>
+            </div>
+        </div>`;
+    }
+
+    const now = new Date();
+    const yearKey = `year_${now.getUTCFullYear()}`;
+    const monthKey = `month_${now.toISOString().slice(0, 7)}`;
+
+    const month = cumulative[monthKey] || {};
+    const year = cumulative[yearKey] || {};
+    const lifetime = cumulative.lifetime || {};
+
+    const monthTok = _bucketTokens(month);
+    const yearTok = _bucketTokens(year);
+    const lifeTok = _bucketTokens(lifetime);
+
+    const monthCost = _bucketCost(month);
+    const yearCost = _bucketCost(year);
+    const lifeCost = _bucketCost(lifetime);
+
+    return `<div class="fc-cume">
+        <div class="row">
+            <span class="label">This period</span>
+            <span class="v">${monthTok ? _formatTokenShort(monthTok) : '—'}<em>${monthTok ? 'tok' : ''}</em></span>
+            <span class="sub">${escapeHTML(_formatCost(monthCost))}</span>
+        </div>
+        <hr/>
+        <div class="row">
+            <span class="label">Yearly · ${now.getUTCFullYear()}</span>
+            <span class="v" style="font-size:16px">${yearTok ? _formatTokenShort(yearTok) : '—'}</span>
+            <span class="sub">${escapeHTML(_formatCost(yearCost))}</span>
+        </div>
+        <div class="row">
+            <span class="label">Lifetime</span>
+            <span class="v" style="font-size:16px">${lifeTok ? _formatTokenShort(lifeTok) : '—'}</span>
+            <span class="sub">${escapeHTML(_formatCost(lifeCost))}</span>
+        </div>
+    </div>`;
+}
+
+function _osGlyph(label) {
+    const s = (label || '').toLowerCase();
+    if (s.includes('mac') || s.includes('darwin')) return '';
+    if (s.includes('linux')) return '🐧';
+    if (s.includes('win'))   return '⊞';
+    if (s.includes('ipad') || s.includes('ios'))    return '◌';
+    return '⌂';
+}
+
+function _fcPods(secondaryCards, contributions, primaryCard, winAgg) {
+    // Prefer window_aggregations.by_sidecar for per-pod token amounts.
+    const winByAgg = winAgg?.by_sidecar && Object.keys(winAgg.by_sidecar).length > 0
+        ? winAgg.by_sidecar : null;
+
+    // Collect sidecar IDs from whichever source has data.
+    const sids = winByAgg
+        ? Object.keys(winByAgg)
+        : Object.keys(contributions || {});
+    if (!sids.length) return '';
+
+    const _winSideTok = d => (Number(d?.tokens_input ?? 0) + Number(d?.tokens_output ?? 0)
+        + Number(d?.tokens_cache_read ?? 0) + Number(d?.tokens_cache_create ?? 0)
+        + Number(d?.tokens_reasoning ?? 0));
+
+    // Legacy path: use month-ratio apportionment when no winAgg by_sidecar.
+    const windowTotal = Number(primaryCard?.token_usage?.total ?? 0);
+    const _tokensOf = units => Number(units?.tokens_input ?? units?.tokens_total ?? 0);
+    const sumW = winByAgg ? 0 : sids.reduce((s, sid) => s + _tokensOf(contributions[sid] || {}), 0);
+
+    const pods = sids.map(sid => {
+        let windowed, cost;
+        if (winByAgg) {
+            const data = winByAgg[sid] || {};
+            windowed = _winSideTok(data);
+            cost = Number(data.cost_usd ?? 0);
+        } else {
+            const units = contributions[sid] || {};
+            const monthTokens = _tokensOf(units);
+            windowed = windowTotal && sumW ? windowTotal * (monthTokens / sumW) : monthTokens;
+            cost = Number(units.cost_usd ?? 0);
+        }
+        const matching = secondaryCards.find(c => c.sidecar_id === sid);
+        const sname = matching?.service_name || sid;
+
+        const deltaText = windowed ? `+${_formatTokenShort(windowed)}` : '—';
+        const costText = cost ? `$${cost.toFixed(2)}` : '—';
+
+        return `<div class="pod" data-sidecar="${escapeHTMLAttr(sid)}">
+            <div class="h">
+                <span class="hdot"></span>
+                <span class="os">${_osGlyph(sname)}</span>
+                <span class="name">${escapeHTML(sid)}</span>
+            </div>
+            <div class="stats">
+                <span class="delta">${escapeHTML(deltaText)}</span>
+                <span>cost <b>${escapeHTML(costText)}</b></span>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div class="fc-pods">
+        <div class="fc-pods-head">
+            <span class="t"><b>WINGMEN</b>${sids.length} sidecar${sids.length === 1 ? '' : 's'} feeding this account</span>
+            <span class="ln"></span>
+            <span class="t" style="color:var(--text-dim)">delta this period · since last push</span>
+        </div>
+        <div class="fc-pods-grid">${pods}</div>
+    </div>`;
 }
 
