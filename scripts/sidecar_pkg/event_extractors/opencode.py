@@ -108,9 +108,17 @@ def parse_opencode_events(
         # Use the row's id (stable primary key) as event_id
         event_id = msg_id or f"opencode|{session_id or 'unknown'}|ts_{time_created_ms}"
 
+        # OpenCode tags messages with providerID = "opencode-go" (paid tier)
+        # or "opencode" (free models). Split them so the dashboard renders
+        # two fleet entries — paid usage on the OpenCode card (which carries
+        # the Go quota gauges from the web scraper) and free usage on a
+        # separate OpenCode Free card.
+        oc_provider_id = data.get("providerID") or ""
+        runway_provider_id = "opencode-free" if oc_provider_id == "opencode" else "opencode"
+
         events.append(
             UsageEventPush(
-                provider_id="opencode",
+                provider_id=runway_provider_id,
                 account_id=account_id,
                 event_id=event_id,
                 ts=ts.isoformat(),

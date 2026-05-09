@@ -90,6 +90,35 @@ async def fetch_fleet_view(
             continue
         groups.setdefault((pid, aid), []).append(c)
 
+    # Synthesize fleet entries for (provider_id, account_id) pairs that have
+    # ingested events but no LatestUsage card — typical case is OpenCode Free,
+    # where the sidecar pushes events tagged provider_id="opencode-free" but
+    # there's no quota-bearing card to scrape. Render as PAYG-style entries.
+    events_pairs = session.exec(
+        select(UsagePeriodRollup.provider_id, UsagePeriodRollup.account_id)
+        .where(UsagePeriodRollup.period_type == "lifetime")
+        .distinct()
+    ).all()
+    for pid, aid in events_pairs:
+        if not pid:
+            continue
+        if (pid, aid) in groups:
+            continue
+        synthetic = {
+            "provider_id": pid,
+            "account_id": aid,
+            "service_name": pid.replace("-", " ").title(),
+            "icon": "⚡" if pid.startswith("opencode") else "✦",
+            "variant": "default",
+            "model_id": "",
+            "window_type": "lifetime",
+            "is_unlimited": True,
+            "data_source": "local",
+            "input_source": "sidecar",
+            "account_label": aid,
+        }
+        groups[(pid, aid)] = [synthetic]
+
     now = datetime.now(UTC)
     # Per-sidecar contribution lookup from usage_period_rollup (current month)
     month_key = now.strftime("%Y-%m")

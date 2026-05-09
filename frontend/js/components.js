@@ -1655,8 +1655,8 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     // Per-model and fuel-dump source from the longest-window pool's default card —
     // the canonical "all-models" view for that account (e.g. weekly/default for Claude).
     const primaryCard = _pickPrimaryPoolCard(allCards) || critical;
-    const modelStripHtml = _fcModelsStrip(primaryCard, winAgg);
-    const fuelDumpHtml = _fcFuelDump(primaryCard, contributions, winAgg);
+    const modelStripHtml = _fcModelsStrip(primaryCard, winAgg, cumulative);
+    const fuelDumpHtml = _fcFuelDump(primaryCard, contributions, winAgg, cumulative);
     const cumeHtml = _fcCume(cumulative, isPayg);
     const podsHtml = _fcPods(secondary, contributions, primaryCard, winAgg);
 
@@ -1948,14 +1948,31 @@ function _pickPrimaryPoolCard(allCards) {
     return best;
 }
 
-function _fcModelsStrip(primaryCard, winAgg) {
-    // Prefer server-aggregated window data; fall back to card's by_model.
+function _fcModelsStrip(primaryCard, winAgg, cumulative) {
+    // Source order: calendar-month rollup → window aggregation → card's by_model.
+    // Calendar-month aligns with the modal's "Model mix · this month" view and
+    // doesn't go nearly empty when a provider's billing window has just reset
+    // (e.g. OpenCode monthly).
+    const monthKey = `month_${new Date().toISOString().slice(0, 7)}`;
+    const monthByModel = cumulative?.[monthKey]?.by_model
+        && Object.keys(cumulative[monthKey].by_model).length > 0
+        ? cumulative[monthKey].by_model : null;
     const winByModel = winAgg?.by_model && Object.keys(winAgg.by_model).length > 0
         ? winAgg.by_model : null;
 
     let entries;
-    if (winByModel) {
-        // winAgg entries have flat tokens_input/output/cache_read/cache_create/reasoning
+    let periodLabel;
+    if (monthByModel) {
+        entries = Object.entries(monthByModel).map(([name, data]) => ({
+            name,
+            tokens: (Number(data?.tokens_input ?? 0)
+                + Number(data?.tokens_output ?? 0)
+                + Number(data?.tokens_cache_read ?? 0)
+                + Number(data?.tokens_cache_create ?? 0)
+                + Number(data?.tokens_reasoning ?? 0)),
+        })).filter(e => e.tokens > 0);
+        periodLabel = 'Per-model contribution · this month';
+    } else if (winByModel) {
         entries = Object.entries(winByModel).map(([name, data]) => ({
             name,
             tokens: (Number(data?.tokens_input ?? 0)
@@ -1964,12 +1981,16 @@ function _fcModelsStrip(primaryCard, winAgg) {
                 + Number(data?.tokens_cache_create ?? 0)
                 + Number(data?.tokens_reasoning ?? 0)),
         })).filter(e => e.tokens > 0);
+        periodLabel = winAgg?.window_type
+            ? `Per-model contribution · this ${winAgg.window_type}`
+            : 'Per-model contribution';
     } else {
         const bm = primaryCard?.by_model || {};
         entries = Object.entries(bm).map(([name, data]) => ({
             name,
             tokens: Number(data?.tokens?.total ?? data?.tokens ?? data?.total ?? 0),
         })).filter(e => e.tokens > 0);
+        periodLabel = 'Per-model contribution';
     }
 
     if (entries.length === 0) return '';
@@ -1995,10 +2016,6 @@ function _fcModelsStrip(primaryCard, winAgg) {
         </span>`;
     }).join('');
 
-    const periodLabel = winByModel && winAgg?.window_type
-        ? `Per-model contribution · this ${winAgg.window_type}`
-        : 'Per-model contribution';
-
     return `<div class="fc-models-strip">
         <div class="h">
             <span class="label">${periodLabel}</span>
@@ -2009,23 +2026,41 @@ function _fcModelsStrip(primaryCard, winAgg) {
     </div>`;
 }
 
-function _fcFuelDump(primaryCard, contributions, winAgg) {
-    // Prefer window_aggregations for both total and per-sidecar amounts.
+function _fcFuelDump(primaryCard, contributions, winAgg, cumulative) {
+    // Source order matches _fcModelsStrip: calendar-month → window aggregation → contributions.
+    const monthKey = `month_${new Date().toISOString().slice(0, 7)}`;
+    const monthBySidecar = cumulative?.[monthKey]?.by_sidecar
+        && Object.keys(cumulative[monthKey].by_sidecar).length > 0
+        ? cumulative[monthKey].by_sidecar : null;
+    const monthTotal = monthBySidecar
+        ? Number(cumulative[monthKey]?.tokens_input ?? 0)
+            + Number(cumulative[monthKey]?.tokens_output ?? 0)
+            + Number(cumulative[monthKey]?.tokens_cache_read ?? 0)
+            + Number(cumulative[monthKey]?.tokens_cache_create ?? 0)
+            + Number(cumulative[monthKey]?.tokens_reasoning ?? 0)
+        : 0;
     const winByAgg = winAgg?.by_sidecar && Object.keys(winAgg.by_sidecar).length > 0
         ? winAgg.by_sidecar : null;
 
-    const windowTotal = winAgg?.token_usage?.total != null
-        ? Number(winAgg.token_usage.total)
-        : Number(primaryCard?.token_usage?.total ?? 0);
+    const windowTotal = monthBySidecar
+        ? monthTotal
+        : winAgg?.token_usage?.total != null
+            ? Number(winAgg.token_usage.total)
+            : Number(primaryCard?.token_usage?.total ?? 0);
+
+    const _sumTokenFields = d => (Number(d?.tokens_input ?? 0) + Number(d?.tokens_output ?? 0)
+        + Number(d?.tokens_cache_read ?? 0) + Number(d?.tokens_cache_create ?? 0)
+        + Number(d?.tokens_reasoning ?? 0));
 
     let segs;
-    if (winByAgg) {
-        // Use per-sidecar totals directly from the window aggregation.
-        const _winSideTok = d => (Number(d?.tokens_input ?? 0) + Number(d?.tokens_output ?? 0)
-            + Number(d?.tokens_cache_read ?? 0) + Number(d?.tokens_cache_create ?? 0)
-            + Number(d?.tokens_reasoning ?? 0));
+    if (monthBySidecar) {
+        segs = Object.entries(monthBySidecar)
+            .map(([sid, data]) => ({ sid, value: _sumTokenFields(data) }))
+            .filter(s => s.value > 0)
+            .sort((a, b) => b.value - a.value);
+    } else if (winByAgg) {
         segs = Object.entries(winByAgg)
-            .map(([sid, data]) => ({ sid, value: _winSideTok(data) }))
+            .map(([sid, data]) => ({ sid, value: _sumTokenFields(data) }))
             .sort((a, b) => b.value - a.value);
     } else {
         const entries = Object.entries(contributions || {});
