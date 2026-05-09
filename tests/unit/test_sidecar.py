@@ -533,7 +533,7 @@ def test_ag_parse_lsp_response_survives_bad_reset_time():
 
 
 def test_ag_parse_lsp_response_falls_back_to_label_for_placeholder_model():
-    """When modelOrAlias.model is MODEL_PLACEHOLDER_*, model_id should fall back to label."""
+    """When modelOrAlias is an internal MODEL_* id (string OR dict), fall back to label."""
     mod = _load_sidecar_module()
 
     data = {
@@ -548,8 +548,13 @@ def test_ag_parse_lsp_response_falls_back_to_label_for_placeholder_model():
                         "quotaInfo": {"remainingFraction": 1.0, "resetTime": 9999999999},
                     },
                     {
+                        "label": "GPT-OSS 120B (Medium)",
+                        "modelOrAlias": "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+                        "quotaInfo": {"remainingFraction": 1.0, "resetTime": 9999999999},
+                    },
+                    {
                         "label": "Real Model",
-                        "modelOrAlias": {"model": "actual-model-id"},
+                        "modelOrAlias": "claude-sonnet-4-5",
                         "quotaInfo": {"remainingFraction": 1.0, "resetTime": 9999999999},
                     },
                 ]
@@ -559,9 +564,10 @@ def test_ag_parse_lsp_response_falls_back_to_label_for_placeholder_model():
     }
 
     cards = mod._ag_parse_lsp_response(data, "🛸")
-    assert len(cards) == 2
-    assert cards[0]["model_id"] == "Gemini 3.1 Pro (Low)"  # fell back to label
-    assert cards[1]["model_id"] == "actual-model-id"  # real id passed through
+    assert len(cards) == 3
+    assert cards[0]["model_id"] == "Gemini 3.1 Pro (Low)"  # dict placeholder → label
+    assert cards[1]["model_id"] == "GPT-OSS 120B (Medium)"  # string placeholder → label
+    assert cards[2]["model_id"] == "claude-sonnet-4-5"  # real id passed through
 
 
 def test_ag_parse_lsp_response_marks_local_sidecar_origin():
