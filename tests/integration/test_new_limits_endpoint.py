@@ -2,11 +2,14 @@
 import json
 import os
 import tempfile
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, select
-from app.models.db import LatestUsage
+from sqlmodel import Session, SQLModel, create_engine
+
 from app.main import app
+from app.models.db import LatestUsage
+
 
 @pytest.fixture(name="session")
 def session_fixture():
@@ -22,6 +25,7 @@ def session_fixture():
     if os.path.exists(db_path):
         os.remove(db_path)
 
+
 def test_fetch_limits_from_db(session: Session):
     # Setup test data in DB
     card_data = {
@@ -31,7 +35,7 @@ def test_fetch_limits_from_db(session: Session):
         "icon": "❓",
         "remaining": "100",
         "unit": "tokens",
-        "health": "good"
+        "health": "good",
     }
     record = LatestUsage(
         provider_id="test",
@@ -39,26 +43,29 @@ def test_fetch_limits_from_db(session: Session):
         sidecar_id="local",
         window_type="monthly",
         variant="default",
-        card_json=json.dumps(card_data)
+        card_json=json.dumps(card_data),
     )
     session.add(record)
     session.commit()
 
     # The get_session dependency needs to be overridden to use our test session
     from app.core.db import get_session
+
     app.dependency_overrides[get_session] = lambda: session
 
     client = TestClient(app)
     response = client.get("/api/v1/usage/limits")
-    
+
     # Clean up override
     app.dependency_overrides.clear()
-    
+
     assert response.status_code == 200
     data = response.json()
     assert "limits" in data
-    
+
     # Find our test service in the response
-    test_service = next((item for item in data["limits"] if item.get("service_name") == "TestService"), None)
+    test_service = next(
+        (item for item in data["limits"] if item.get("service_name") == "TestService"), None
+    )
     assert test_service is not None
     assert test_service["service_name"] == "TestService"
