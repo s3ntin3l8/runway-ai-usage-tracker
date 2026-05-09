@@ -38,11 +38,6 @@ class GeminiCollector(
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "api": ("API (api)", "_strategy_api_wrap"),
-        "sidecar": (
-            "Sidecar Enrichment",
-            "_strategy_sidecar_enrich",
-            {"enrich": True},
-        ),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -92,10 +87,6 @@ class GeminiCollector(
     async def _strategy_api_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Dispatch wrapper: API (OAuth) strategy."""
         return await self._collect_via_api(client)
-
-    async def _strategy_sidecar_enrich(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Sidecar enrichment: LatestUsage rows from prior scrapes serve as natural fallback."""
-        return []
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card context when the API strategy fails."""
