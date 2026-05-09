@@ -1369,6 +1369,76 @@ class TestGeminiCollector:
         # Should return empty list or fallback to logs
         assert isinstance(result, list)
 
+    @pytest.mark.asyncio
+    async def test_collect_prefers_bucket_with_quota_over_fraction_only(self, mock_http_client):
+        """When two buckets map to the same model class (e.g. preview + GA pro),
+        the dedup must keep the one carrying concrete quotaLimit/quotaRemaining,
+        not the fraction-only one that happened to come first in the response.
+        """
+        collector = GeminiCollector()
+
+        tier_response = MagicMock(spec=httpx.Response)
+        tier_response.status_code = 200
+        tier_response.json.return_value = {
+            "currentTier": {"id": "g1-pro-tier", "name": "Pro"},
+            "cloudaicompanionProject": "test-project-123",
+        }
+
+        # Preview bucket (fraction-only, no quotaLimit) appears FIRST.
+        # GA bucket (with quotaLimit) appears SECOND.
+        # Both map to model_class="pro".
+        quota_response = MagicMock(spec=httpx.Response)
+        quota_response.status_code = 200
+        quota_response.json.return_value = {
+            "buckets": [
+                {
+                    "modelId": "gemini-2.5-pro-preview",
+                    "remainingFraction": 1.0,
+                    "resetTime": "2025-04-08T00:00:00Z",
+                },
+                {
+                    "modelId": "gemini-2.5-pro",
+                    "remainingFraction": 0.65,
+                    "resetTime": "2025-04-08T00:00:00Z",
+                    "quotaLimit": 5000,
+                    "quotaRemaining": 3250,
+                    "tokenType": "REQUEST",
+                },
+            ]
+        }
+
+        async def mock_request(*args, **kwargs):
+            if "loadCodeAssist" in args[1]:
+                return tier_response
+            return quota_response
+
+        mock_http_client.request = mock_request
+
+        with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
+            mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
+            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
+
+            with (
+                patch(
+                    "builtins.open",
+                    mock_open(
+                        read_data=json.dumps(
+                            {"access_token": "token", "expiry_date": 9999999999999}
+                        )
+                    ),
+                ),
+                patch("app.services.collectors.oauth_base.os.path.exists", return_value=True),
+            ):
+                result = await collector.collect(mock_http_client)
+
+        # Exactly one Pro card; the GA bucket (with quotaLimit) wins
+        pro_cards = [c for c in result if c.get("model_id") == "pro"]
+        assert len(pro_cards) == 1
+        pro = pro_cards[0]
+        assert pro["limit_value"] == 5000.0
+        assert pro["used_value"] == 1750.0  # 5000 - 3250
+        assert "3,250 / 5,000 request left" in pro["detail"]
+
 
 class TestGitHubCollector:
     """Test suite for GitHub Copilot collector."""

@@ -138,6 +138,17 @@ class GeminiApiMixin:
             results = []
             seen_classes = set()
 
+            # Multiple buckets can map to the same model class (e.g. both
+            # "gemini-2.5-pro" and "gemini-2.5-pro-preview" → "pro"). The API
+            # often returns the preview variant first with a null quotaLimit
+            # (fraction-only) and the GA variant later with concrete numbers.
+            # Stable-sort so quota-bearing buckets come first; the dedup below
+            # then keeps the variant that carries actual numbers.
+            buckets = sorted(
+                buckets,
+                key=lambda b: 0 if b.get("quotaLimit") is not None else 1,
+            )
+
             for bucket in buckets:
                 raw_model = bucket.get("modelId", "Unknown")
                 model_class = self._map_model_to_class(raw_model)
