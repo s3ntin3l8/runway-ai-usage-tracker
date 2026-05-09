@@ -37,11 +37,6 @@ class AnthropicCollector(
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "oauth": ("OAuth API (api)", "_strategy_oauth_wrap"),
         "web": ("Web API (web)", "_strategy_web_wrap"),
-        "sidecar": (
-            "Sidecar Enrichment",
-            "_strategy_sidecar_enrich",
-            {"enrich": True},
-        ),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -199,10 +194,6 @@ class AnthropicCollector(
         if token.startswith("sk-ant-sid") or "sessionKey=" in token:
             return []
         return await self._get_claude_oauth(client, token)
-
-    async def _strategy_sidecar_enrich(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Sidecar enrichment: LatestUsage rows from prior scrapes serve as natural fallback."""
-        return []
 
     def _capture_primary_metadata(self, primary: list[dict[str, Any]]) -> None:
         """
