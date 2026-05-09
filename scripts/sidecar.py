@@ -2485,18 +2485,21 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         if rem_frac is None:
             continue
         label = cfg.get("label", "Model")
-        # Antigravity's LSP returns modelOrAlias as a dict for newer entries
-        # (e.g. {"model": "MODEL_PLACEHOLDER_M36"}). The placeholder isn't a real
-        # model id — fall back to the human-readable label, which carries the
-        # actual product name (e.g. "Gemini 3.1 Pro (Low)").
+        # Antigravity's LSP returns modelOrAlias either as a string
+        # (e.g. "MODEL_PLACEHOLDER_M36", "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+        # "claude-sonnet-4-5-20251001") or as a dict {"model": "<id>"}. Internal
+        # ids follow the convention `MODEL_*` (ALL_CAPS); real model ids are
+        # lowercase-with-dashes. Fall back to the human-readable label
+        # (e.g. "Gemini 3.1 Pro (Low)") when the candidate is an internal id.
         raw_model = cfg.get("modelOrAlias", label)
-        if isinstance(raw_model, dict):
-            candidate = raw_model.get("model") or raw_model.get("name") or raw_model.get("alias")
-            if not candidate or str(candidate).startswith("MODEL_PLACEHOLDER"):
-                candidate = None
-            model_id = candidate or label
-        else:
-            model_id = raw_model
+        candidate = (
+            raw_model.get("model") or raw_model.get("name") or raw_model.get("alias")
+            if isinstance(raw_model, dict)
+            else raw_model
+        )
+        if not candidate or str(candidate).startswith("MODEL_"):
+            candidate = None
+        model_id = candidate or label
         rem_pct = float(rem_frac) * 100
         reset_ts = quota.get("resetTime")
         try:
