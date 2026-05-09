@@ -1785,10 +1785,17 @@ def _ag_find_ports_windows(pid: int) -> list[int]:
 
 
 def _ag_find_ports_unix(pid: int) -> list[int]:
-    """Find listening TCP ports for PID on macOS/Linux via lsof."""
+    """Find listening TCP ports for PID on macOS/Linux via lsof.
+
+    `-a` is critical: lsof joins selection flags with OR by default, so
+    without it the output includes every TCP listening socket on the
+    machine (e.g. the Runway server itself) — the LSP probe would then
+    POST to those ports and the server logs would fill with 404s for
+    /exa.language_server_pb.LanguageServerService/GetUserStatus.
+    """
     try:
         result = subprocess.run(
-            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-p", str(pid)],
+            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", str(pid)],
             capture_output=True,
             text=True,
             timeout=10,

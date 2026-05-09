@@ -469,6 +469,33 @@ def _load_sidecar_module():
     return mod
 
 
+def test_ag_find_ports_unix_uses_a_flag_for_and_semantics():
+    """lsof joins -i and -p with OR by default; -a flips to AND. Without -a,
+    the regex would scrape every TCP listening socket on the box (e.g. the
+    Runway server itself) and the LSP probe would POST to all of them.
+    """
+    from unittest.mock import patch
+
+    mod = _load_sidecar_module()
+
+    captured_args: list[list[str]] = []
+
+    class _FakeResult:
+        stdout = ""
+
+    def _fake_run(args, **kwargs):
+        captured_args.append(list(args))
+        return _FakeResult()
+
+    with patch("subprocess.run", side_effect=_fake_run):
+        mod._ag_find_ports_unix(12345)
+
+    assert captured_args, "_ag_find_ports_unix did not invoke subprocess.run"
+    args = captured_args[0]
+    assert args[0] == "lsof"
+    assert "-a" in args, f"-a flag missing from lsof args: {args}"
+
+
 def test_ag_parse_lsp_response_model_card():
     """Sidecar _ag_parse_lsp_response produces correct fields for model quota card."""
     mod = _load_sidecar_module()
