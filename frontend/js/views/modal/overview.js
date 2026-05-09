@@ -413,7 +413,7 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentEvents) {
     <!-- MODEL MIX -->
     <div class="m-block">
         <div class="head">
-            <h4>Model mix · this period</h4>
+            <h4>Model mix · this month</h4>
             <span class="meta">${_esc(monthTok)} total</span>
         </div>
         <div class="m-mix">
