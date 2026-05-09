@@ -250,13 +250,6 @@ __REGISTRY__ = {
                     "name": "auth",
                     "mapping": {"value": "cookie_session"},
                 },
-                {
-                    "type": "opencode_enrichment",
-                    "paths": [
-                        "~/.local/share/opencode/opencode.db",
-                        "{{DATA_DIR:opencode}}/opencode.db",
-                    ],
-                },
             ],
         },
         "antigravity": {

@@ -761,7 +761,7 @@ class OpenCodeCollector(BaseCollector):
                     "account_label": email,
                     "reset_at": reset_at.isoformat(),
                     "window_type": window_type,
-                    "provider_id": "opencode-go",
+                    "provider_id": "opencode",
                     "tier": "Go",
                     "data_source": self.DATA_SOURCE_WEB,
                     "input_source": input_source,

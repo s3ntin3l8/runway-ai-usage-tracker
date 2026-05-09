@@ -454,3 +454,72 @@ def test_fleet_window_aggregations_empty_when_no_eligible_card(session: Session)
     entry = resp.json()["fleet"][0]
     assert "window_aggregations" in entry
     assert entry["window_aggregations"] == {}
+
+
+def test_fleet_window_aggregations_falls_back_to_model_card(session: Session):
+    """When no model-agnostic card exists, _longest_window_card falls back to a
+    model-specific card so per-model breakdown still populates. Reproduces the
+    Gemini case (each model has its own daily quota; no overall card).
+    """
+    reset_at = datetime(2026, 5, 12, 18, 0, 0, tzinfo=UTC)
+    mid_window = datetime(2026, 5, 12, 6, 0, 0, tzinfo=UTC)
+
+    # Two per-model cards, no aggregate card with model_id=""
+    _seed_card_with_reset(
+        session,
+        provider_id="gemini",
+        account_id="u@x.com",
+        window_type="daily",
+        model_id="flash",
+        pct_used=15.0,
+        reset_at=reset_at.isoformat(),
+    )
+    _seed_card_with_reset(
+        session,
+        provider_id="gemini",
+        account_id="u@x.com",
+        window_type="daily",
+        model_id="pro",
+        pct_used=42.0,
+        reset_at=reset_at.isoformat(),
+    )
+
+    # Events that should aggregate inside the daily window
+    _seed_event(
+        session,
+        "ev-flash-1",
+        mid_window,
+        provider_id="gemini",
+        account_id="u@x.com",
+        model_id="flash",
+        tokens_input=100,
+        tokens_output=50,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+        cost_usd=0.005,
+    )
+    _seed_event(
+        session,
+        "ev-pro-1",
+        mid_window,
+        provider_id="gemini",
+        account_id="u@x.com",
+        model_id="pro",
+        tokens_input=200,
+        tokens_output=80,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+        cost_usd=0.02,
+    )
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+
+    entry = next(e for e in resp.json()["fleet"] if e["provider_id"] == "gemini")
+    longest = entry["window_aggregations"]["longest"]
+    assert longest["window_type"] == "daily"
+    assert set(longest["by_model"].keys()) == {"flash", "pro"}
+    assert longest["by_model"]["flash"]["tokens_input"] == 100
+    assert longest["by_model"]["pro"]["tokens_input"] == 200

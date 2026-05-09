@@ -1724,9 +1724,9 @@ function _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, 
 
 const _FC_WINDOW_LABELS = {
     session: '5h rolling',
-    daily:   '24h rolling',
-    weekly:  '7d rolling',
-    monthly: 'monthly',
+    daily:   '24h fixed',
+    weekly:  '7d fixed',
+    monthly: '30d fixed',
     rolling: 'rolling',
 };
 

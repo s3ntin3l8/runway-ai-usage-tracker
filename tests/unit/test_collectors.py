@@ -2421,7 +2421,7 @@ class TestOpenCodeCollector:
         session = by_wt["session"]
         assert session["used_value"] == 3.0  # 25% of $12
         assert session["remaining"] == "$9.00"
-        assert session["provider_id"] == "opencode-go"
+        assert session["provider_id"] == "opencode"
         assert session["input_source"] == "server"
 
         weekly = by_wt["weekly"]

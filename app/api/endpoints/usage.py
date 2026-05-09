@@ -151,25 +151,31 @@ async def fetch_fleet_view(
 
 
 def _longest_window_card(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Pick the default, model-agnostic card with the highest-ranking window that has reset_at.
+    """Pick the default-variant card with the highest-ranking window that has reset_at.
 
-    Considers only cards where variant='default' and model_id is empty.
-    Returns None if no eligible card exists.
+    Prefers a model-agnostic card (model_id empty / "default") so the window's
+    boundary is shared across all models. Falls back to model-specific cards
+    when no aggregate card is emitted — this is the Gemini case, where each
+    model has its own daily quota and no overall card exists. The picked card
+    only supplies the (window_type, reset_at) anchor; query_window_aggregation
+    still groups events by model_id, so the response carries a real by_model
+    map regardless of which card was chosen.
     """
-    best: dict[str, Any] | None = None
-    best_rank = -1
-    for c in cards:
-        variant = c.get("variant", "default")
-        model_id = (c.get("model_id") or "").lower()
-        if variant != "default" or (model_id and model_id != "default"):
-            continue
-        if not c.get("reset_at"):
-            continue
-        wt = (c.get("window_type") or "").lower()
-        rank = WINDOW_RANK.get(wt, -1)
-        if rank > best_rank:
-            best, best_rank = c, rank
-    return best
+    candidates = [
+        c for c in cards if c.get("variant", "default") == "default" and c.get("reset_at")
+    ]
+    if not candidates:
+        return None
+
+    def _is_aggregate(c: dict[str, Any]) -> bool:
+        mid = (c.get("model_id") or "").lower()
+        return not mid or mid == "default"
+
+    pool = [c for c in candidates if _is_aggregate(c)] or candidates
+    return max(
+        pool,
+        key=lambda c: WINDOW_RANK.get((c.get("window_type") or "").lower(), -1),
+    )
 
 
 def _pick_critical_card(cards: list[dict[str, Any]]) -> dict[str, Any]:
