@@ -45,18 +45,18 @@ class CollectorManager:
         self._sync_lock = asyncio.Lock()
         # Registry of available collector classes and their default settings
         self.collector_registry = {
-            "anthropic": (AnthropicCollector, "Claude (Anthropic)", 300),
+            "anthropic": (AnthropicCollector, "Claude (Anthropic)", 900),
             "gemini": (GeminiCollector, "Gemini", 900),
             "github": (GitHubCollector, "GitHub Copilot", 900),
-            "chatgpt": (ChatGPTCollector, "ChatGPT", 300),
-            "opencode": (OpenCodeCollector, "OpenCode", 60),
+            "chatgpt": (ChatGPTCollector, "ChatGPT", 900),
+            "opencode": (OpenCodeCollector, "OpenCode", 900),
             "zai": (ZaiCollector, "zAI", 900),
             "kimi_api": (KimiApiCollector, "Kimi API", 900),
             "kimi_coding": (KimiCodingCollector, "Kimi Coding", 900),
             "kimi_k2": (KimiK2Collector, "Kimi K2", 900),
             "openrouter": (OpenRouterCollector, "OpenRouter", 900),
             "minimax": (MiniMaxCollector, "MiniMax", 900),
-            "ollama": (OllamaCollector, "Ollama Cloud", 300),
+            "ollama": (OllamaCollector, "Ollama Cloud", 900),
         }
 
         # Active collectors keyed by "provider_id:account_id"

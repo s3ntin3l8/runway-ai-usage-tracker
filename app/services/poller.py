@@ -74,6 +74,7 @@ def _maybe_close_previous_window(
 
 _SLEEP_INTERVAL = 7200  # 2 hours in seconds
 _DORMANT_THRESHOLD = 3  # consecutive identical polls before sleep
+_FLOOR_SECONDS = 30  # minimum poller tick to prevent pathological config values
 
 
 class BackgroundPoller:
@@ -84,6 +85,37 @@ class BackgroundPoller:
         self._running = False
         self._snapshot_hashes: dict[str, deque] = {}  # key → deque(maxlen=3) of SHA hex digests
         self._wake_event = asyncio.Event()
+
+    def _compute_effective_interval(self) -> int:
+        """Tick rate = max(floor, min(global_default, *enabled_per_provider_overrides)).
+
+        Returns the smallest interval the poller needs to wake on so that no
+        configured interval is silently ignored. Per-collector TTLs (set on
+        SmartCollector.ttl) then gate which collectors actually re-fetch on
+        each tick.
+        """
+        from sqlmodel import select as sqlselect
+
+        from app.models.db import ProviderConfig, SystemConfig
+
+        try:
+            with Session(engine) as s:
+                sys_cfg = s.exec(sqlselect(SystemConfig)).first()
+                global_interval = (
+                    sys_cfg.default_poll_interval_seconds
+                    if sys_cfg and sys_cfg.default_poll_interval_seconds
+                    else self._base_interval
+                )
+                overrides = [
+                    r.poll_interval_seconds
+                    for r in s.exec(sqlselect(ProviderConfig).where(ProviderConfig.enabled)).all()
+                    if r.poll_interval_seconds
+                ]
+                candidates = [global_interval, *overrides]
+                return max(_FLOOR_SECONDS, min(candidates))
+        except Exception as e:
+            logger.debug(f"Could not compute effective interval, using base: {e}")
+            return self._base_interval
 
     def start(self):
         """Start the background polling task."""
@@ -108,7 +140,10 @@ class BackgroundPoller:
 
     async def _run_loop(self):
         while self._running:
-            # Re-read interval in case it changed during sleep
+            # When not dormant, refresh interval from DB so config edits apply
+            # on the next tick without a server restart.
+            if self._interval != _SLEEP_INTERVAL:
+                self._interval = self._compute_effective_interval()
             interval = self._interval
 
             # Wait for either the interval to pass or a manual 'wake' event
@@ -169,9 +204,9 @@ class BackgroundPoller:
             len(dq) >= 2 and dq[-1] != dq[-2] for dq in self._snapshot_hashes.values()
         )
         if any_changed:
-            if self._interval != self._base_interval:
+            if self._interval == _SLEEP_INTERVAL:
                 logger.info("Activity detected — resuming normal polling interval")
-                self._interval = self._base_interval
+                self._interval = self._compute_effective_interval()
                 self._snapshot_hashes.clear()
             return
 
@@ -180,15 +215,15 @@ class BackgroundPoller:
             len(dq) == _DORMANT_THRESHOLD and len(set(dq)) == 1
             for dq in self._snapshot_hashes.values()
         )
-        if all_dormant and self._interval == self._base_interval:
+        if all_dormant and self._interval != _SLEEP_INTERVAL:
             logger.info("No quota activity detected — entering sleep mode (2h interval)")
             self._interval = _SLEEP_INTERVAL
 
     def wake(self):
         """Reset dormancy state and restore normal polling interval immediately."""
-        if self._interval != self._base_interval:
+        if self._interval == _SLEEP_INTERVAL:
             logger.info("Manual wake: restoring normal poll interval")
-            self._interval = self._base_interval
+            self._interval = self._compute_effective_interval()
         self._snapshot_hashes.clear()
         self._wake_event.set()  # interrupt the _run_loop wait
 

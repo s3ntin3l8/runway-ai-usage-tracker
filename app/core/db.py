@@ -39,6 +39,10 @@ def init_db():
     SQLModel.metadata.create_all(engine)
     logger.info(f"Database initialized at {settings.DATABASE_PATH}")
 
+    # Add columns introduced after initial schema (SQLite create_all doesn't ALTER)
+    with engine.connect() as conn:
+        _add_columns_if_missing(conn)
+
     from app.services.pricing_seed import seed_pricing_table
 
     with Session(engine) as session:
@@ -49,6 +53,32 @@ def init_db():
     # Performance indexes (idempotent)
     with engine.connect() as conn:
         _create_performance_indexes(conn)
+
+
+_DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
+    # (table, column, sql_type_with_default)
+    ("system_config", "default_sidecar_interval_seconds", "INTEGER"),
+    ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+]
+
+
+def _add_columns_if_missing(conn) -> None:
+    """Idempotently ALTER TABLE ... ADD COLUMN for fields that postdate
+    initial schema creation. SQLModel.create_all() only creates new tables
+    on existing SQLite databases — it never adds new columns.
+    """
+    from sqlalchemy import text
+
+    for table, column, sql_type in _DEFERRED_COLUMNS:
+        try:
+            cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            if column in cols:
+                continue
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+            conn.commit()
+            logger.info(f"Migrated: added {table}.{column}")
+        except Exception as e:
+            logger.warning(f"Could not add column {table}.{column}: {e}")
 
 
 def _create_performance_indexes(conn):

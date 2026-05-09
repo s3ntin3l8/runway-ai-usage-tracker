@@ -318,7 +318,7 @@ __REGISTRY__ = {
 # --- Configuration ---
 
 DEFAULT_CONFIG = {
-    "interval_seconds": 1800,
+    "interval_seconds": 900,
     "providers": ["all"],
     "retry_attempts": 3,
     "retry_backoff_seconds": 5,
@@ -408,7 +408,7 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
         template = {
             "api_url": "http://your-server:8765",
             "api_key": "your-secret-key",
-            "interval_seconds": 1800,
+            "interval_seconds": 900,
             "providers": ["all"],
             "retry_attempts": 3,
             "retry_backoff_seconds": 5,
@@ -2174,8 +2174,8 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
-        # Heartbeat interval: frequent check-ins for server orchestration
-        self._interval: int = config.get("interval_seconds", 60)
+        # Cycle interval: how often the sidecar collects + pushes to the server
+        self._interval: int = config.get("interval_seconds", 900)
         self.on_status_change = on_status_change
 
         # Readable state attributes
@@ -2346,6 +2346,18 @@ class DaemonRunner:
                     if reset_anchors:
                         logging.debug(f"Server reset_anchors: {reset_anchors}")
 
+                    # Server-pushed cycle interval. Apply on the next sleep so
+                    # the user can change cadence from the dashboard without
+                    # editing config.json on every host.
+                    server_interval = result.get("sidecar_interval_seconds")
+                    if isinstance(server_interval, int) and server_interval > 0:
+                        if server_interval != self._interval:
+                            logging.info(
+                                f"Sidecar interval changed by server: "
+                                f"{self._interval}s -> {server_interval}s"
+                            )
+                            self._interval = server_interval
+
                     # 1. Manual trigger (Global refresh) - Highest precedence
                     if result.get("trigger"):
                         logging.info(
@@ -2498,7 +2510,7 @@ def main():
     atexit.register(cleanup)
 
     api_url = config["api_url"]
-    interval = config.get("interval_seconds", 1800)
+    interval = config.get("interval_seconds", 900)
 
     logging.info(f"Sidecar started for {api_url} (Interval: {interval}s)")
 

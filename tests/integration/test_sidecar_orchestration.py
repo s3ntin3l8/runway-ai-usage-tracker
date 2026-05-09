@@ -89,11 +89,11 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     assert resp.status_code == 200
     assert resp.json()["poll_providers"] == ["anthropic"]
 
-    # 5. Manual Trigger: should return ALL enabled providers and trigger=True
-    resp = client.post(
-        "/api/v1/fleet/sidecars/test-sidecar/trigger", headers={"X-API-Key": "test-key"}
-    )
-    assert resp.status_code == 200
+    # 5. Manual Trigger: should return ALL enabled providers and trigger=True.
+    # The dashboard's "Refresh" button fans this out via /system/force-collect,
+    # which calls fleet_registry.set_pending_trigger for every registered
+    # sidecar. We exercise the same internal hook directly here.
+    fleet_registry.set_pending_trigger("test-sidecar")
 
     body, headers = get_signed_payload(payload, "test-key")
     resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)

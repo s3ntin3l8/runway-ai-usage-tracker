@@ -708,8 +708,12 @@ async function renderSystemSection(pane) {
         const [s, cfg] = await Promise.all([fetchSettings(), fetchAppConfig()]);
         const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
         const globalPollVal = cfg.default_poll_interval_seconds ?? '';
+        const sidecarIvVal = cfg.default_sidecar_interval_seconds ?? '';
         const pollSelectOpts = POLL_OPTIONS.map(o =>
             `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`
+        ).join('');
+        const sidecarSelectOpts = POLL_OPTIONS.map(o =>
+            `<option value="${o.value}" ${sidecarIvVal === o.value ? 'selected' : ''}>${o.label}</option>`
         ).join('');
 
         pane.innerHTML = `<div class="settings-panel glass">
@@ -751,6 +755,19 @@ async function renderSystemSection(pane) {
                 </div>
                 <div class="sys-row">
                     <div>
+                        <div class="sys-k">Sidecar Interval</div>
+                        <div class="sys-s">How often each remote sidecar checks in and collects. Pushed to sidecars on next ingest — no per-host config edits needed.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="field-sidecar-iv" class="inp" style="width:auto;">
+                            <option value="" ${!sidecarIvVal ? 'selected' : ''}>Default</option>
+                            ${sidecarSelectOpts}
+                        </select>
+                        <button id="save-sidecar-iv-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
+                    </div>
+                </div>
+                <div class="sys-row">
+                    <div>
                         <div class="sys-k">Browser Preference</div>
                         <div class="sys-s">Cookie-auth order for Claude web, ChatGPT, Ollama… (e.g. safari,chrome,firefox)</div>
                     </div>
@@ -771,6 +788,19 @@ async function renderSystemSection(pane) {
             this.textContent = 'Saving…'; this.disabled = true;
             try {
                 await putAppConfig({ default_poll_interval_seconds: val });
+                this.textContent = 'Saved';
+                setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
+            } catch {
+                this.textContent = 'Error'; this.disabled = false;
+            }
+        });
+
+        pane.querySelector('#save-sidecar-iv-btn')?.addEventListener('click', async function () {
+            const select = pane.querySelector('#field-sidecar-iv');
+            const val = select?.value ? parseInt(select.value, 10) : 0;
+            this.textContent = 'Saving…'; this.disabled = true;
+            try {
+                await putAppConfig({ default_sidecar_interval_seconds: val });
                 this.textContent = 'Saved';
                 setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
             } catch {

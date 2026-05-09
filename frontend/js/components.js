@@ -925,12 +925,21 @@ export function buildFleetView(sidecars) {
                     </div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                    <button onclick="window.triggerSidecarCollect('${escapeHTMLAttr(s.sidecar_id)}')"
-                            class="icon-btn w-7 h-7 flex items-center justify-center transition-all"
-                            style="color:var(--text-dim);"
-                            title="Run Now — trigger immediate collection">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                    </button>
+                    ${(() => {
+                        const enabled = s.collection_enabled !== false;
+                        const iconSvg = enabled
+                            ? '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
+                            : '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+                        const title = enabled
+                            ? 'Pause collection on this sidecar'
+                            : 'Resume collection on this sidecar';
+                        const color = enabled ? 'var(--text-dim)' : 'var(--accent)';
+                        return `<button onclick="window.toggleSidecarEnabled('${escapeHTMLAttr(s.sidecar_id)}', ${enabled})"
+                                data-sidecar-toggle
+                                class="icon-btn w-7 h-7 flex items-center justify-center transition-all"
+                                style="color:${color};"
+                                title="${title}">${iconSvg}</button>`;
+                    })()}
                     <button onclick="window.deleteSidecar('${escapeHTMLAttr(s.sidecar_id)}')"
                             class="icon-btn w-7 h-7 flex items-center justify-center transition-all"
                             style="color:var(--text-dim);"

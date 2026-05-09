@@ -6,7 +6,7 @@ import { buildGitHubOAuthModal, buildFleetView, buildTokenHealthPanel, escapeHTM
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
 import { loadSettingsView, renderProvidersSection, refreshToken, deleteToken } from './views/settings.js';
-import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar, triggerSidecarCollect } from './views/fleet.js';
+import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar, toggleSidecarEnabled } from './views/fleet.js';
 import { loadForecastView, initForecastView } from './views/forecast.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
 
@@ -515,6 +515,30 @@ function closeModal() {
     document.body.style.overflow = '';
 }
 
+function showFlashMessage(text, ms = 3000) {
+    const id = 'runway-flash-msg';
+    document.getElementById(id)?.remove();
+    const el = document.createElement('div');
+    el.id = id;
+    el.textContent = text;
+    Object.assign(el.style, {
+        position: 'fixed', top: '64px', right: '20px', zIndex: '9999',
+        padding: '8px 14px', fontSize: '11px', fontWeight: '600',
+        letterSpacing: '0.06em', textTransform: 'uppercase',
+        background: 'var(--surface-2)', color: 'var(--ink)',
+        border: '1px solid var(--accent)', borderRadius: '4px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+        opacity: '0', transition: 'opacity 200ms ease',
+        pointerEvents: 'none', maxWidth: '360px',
+    });
+    document.body.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = '1'; });
+    setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 250);
+    }, ms);
+}
+
 window.forceRefresh = async function() {
     const btn = document.getElementById('refresh-btn');
     const icon = document.getElementById('refresh-icon');
@@ -525,8 +549,10 @@ window.forceRefresh = async function() {
     // (collect_all returns cached data in <100ms when providers are within TTL)
     const minVisible = new Promise(r => setTimeout(r, 1500));
 
+    let triggered = 0;
     try {
-        await forceCollect();
+        const res = await forceCollect();
+        triggered = res?.sidecars_triggered ?? 0;
     } catch (e) {
         console.warn('Force collect error (server may be restarting):', e.message);
     }
@@ -534,6 +560,12 @@ window.forceRefresh = async function() {
 
     if (btn) btn.disabled = false;
     if (icon) icon.classList.remove('animate-spin');
+
+    if (triggered > 0) {
+        showFlashMessage(
+            `Refreshed · ${triggered} sidecar${triggered === 1 ? '' : 's'} notified for next check-in`
+        );
+    }
 };
 
 // Cleanup on page unload
@@ -740,7 +772,7 @@ window.switchView = switchView;
 window.editSidecarName = editSidecarName;
 window.addSidecarTag = addSidecarTag;
 window.deleteSidecar = deleteSidecar;
-window.triggerSidecarCollect = triggerSidecarCollect;
+window.toggleSidecarEnabled = toggleSidecarEnabled;
 window.setFilterDimension = setFilterDimension;
 window.setFilter = setFilter;
 window.setHistoryDays = setHistoryDays;
