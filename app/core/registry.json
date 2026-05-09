@@ -23,7 +23,9 @@
           "mapping": {
             "claudeAiOauth.accessToken": "oauth_token",
             "claudeAiOauth.refreshToken": "refresh_token",
-            "claudeAiOauth.clientId": "client_id"
+            "claudeAiOauth.clientId": "client_id",
+            "oauthAccount.emailAddress|oauthAccount.email": "account_id",
+            "oauthAccount.email|oauthAccount.emailAddress": "account_label"
           }
         },
         {
@@ -33,7 +35,9 @@
           "mapping": {
             "claudeAiOauth.accessToken": "oauth_token",
             "claudeAiOauth.refreshToken": "refresh_token",
-            "claudeAiOauth.clientId": "client_id"
+            "claudeAiOauth.clientId": "client_id",
+            "oauthAccount.emailAddress|oauthAccount.email": "account_id",
+            "oauthAccount.email|oauthAccount.emailAddress": "account_label"
           }
         },
         {
@@ -115,7 +119,10 @@
             "{{CONFIG_DIR:gh}}/hosts.yml"
           ],
           "format": "yaml",
-          "mapping": { "github.com.oauth_token": "api_key" }
+          "mapping": {
+            "github.com.oauth_token": "api_key",
+            "github.com.user": "account_id"
+          }
         },
         {
           "type": "windows_credential",
@@ -140,7 +147,9 @@
           "mapping": {
             "access_token": "oauth_token",
             "client_id": "client_id",
-            "clientId": "client_id"
+            "clientId": "client_id",
+            "email": "account_id",
+            "account_label": "account_label"
           }
         }
       ]
@@ -165,7 +174,10 @@
             "{{CONFIG_DIR:codex}}/auth.json"
           ],
           "format": "json",
-          "mapping": { "tokens.access_token": "oauth_token" }
+          "mapping": {
+            "tokens.access_token": "oauth_token",
+            "tokens.account_id": "account_id"
+          }
         },
         {
           "type": "cookie",

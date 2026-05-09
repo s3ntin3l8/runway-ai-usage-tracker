@@ -874,7 +874,16 @@ class GenericCollector:
 
     @staticmethod
     def get_nested(data: Any, key_path: str) -> Any:
-        """Get nested value from dict using dot notation or list of keys."""
+        """Get nested value from dict using dot notation or list of keys.
+        Supports fallback syntax using '|' (e.g. 'pathA|pathB').
+        """
+        if isinstance(key_path, str) and "|" in key_path:
+            for path in key_path.split("|"):
+                val = GenericCollector.get_nested(data, path)
+                if val:
+                    return val
+            return None
+
         if isinstance(key_path, str):
             keys = key_path.split(".")
         else:
@@ -1156,6 +1165,16 @@ class GenericCollector:
                     "metadata": {**tokens, "provider_id": provider_id},
                 }
             )
+
+        # Post-process: propagate discovered account identity to all cards
+        acc_id = tokens.get("account_id")
+        acc_label = tokens.get("account_label")
+        if acc_id or acc_label:
+            for card in results:
+                if acc_id and not card.get("account_id"):
+                    card["account_id"] = acc_id
+                if acc_label and not card.get("account_label"):
+                    card["account_label"] = acc_label
 
         return results
 
