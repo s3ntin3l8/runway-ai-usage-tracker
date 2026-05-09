@@ -136,3 +136,32 @@ class TestCardMerge:
         state = merge_card_json(state, {"data_source": "local"})
         state = merge_card_json(state, {"data_source": "web"})
         assert json.loads(state)["data_source"] == "web,local"
+
+    def test_unit_mismatch_protects_quota_fields(self):
+        # A local token enrichment must not overwrite percent-based quota data.
+        existing = json.dumps(
+            {
+                "unit_type": "percent",
+                "used_value": 14.0,
+                "limit_value": 100.0,
+                "pct_used": None,
+                "data_source": "web",
+                "token_usage": None,
+            }
+        )
+        incoming = {
+            "unit_type": "tokens",
+            "used_value": 30473683.0,
+            "limit_value": None,
+            "data_source": "local",
+            "token_usage": {"total": 30473683},
+        }
+        result = merge_card_json(existing, incoming)
+        parsed = json.loads(result)
+        # Quota fields must be preserved from the percent-unit source
+        assert parsed["unit_type"] == "percent"
+        assert parsed["used_value"] == 14.0
+        assert parsed["limit_value"] == 100.0
+        # Non-quota enrichment fields should be merged normally
+        assert parsed["token_usage"]["total"] == 30473683
+        assert parsed["data_source"] == "web,local"
