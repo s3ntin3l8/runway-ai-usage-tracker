@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -18,6 +19,15 @@ from app.core.db import init_db
 from app.core.rate_limit import limiter
 from app.services.collector_manager import manager
 from app.services.poller import poller
+
+# Propagate the resolved display tz into the process so log %(asctime)s and
+# any libc-backed time formatting render in the user's local zone. Pydantic
+# Settings reads TZ from .env into settings.env_timezone but does not export
+# it to os.environ — do that here, then refresh libc's tz cache.
+if settings.env_timezone:
+    os.environ["TZ"] = settings.env_timezone
+if hasattr(time, "tzset"):
+    time.tzset()
 
 # Configure logging
 logging.basicConfig(

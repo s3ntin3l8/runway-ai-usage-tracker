@@ -152,6 +152,13 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
 
 def setup_logging(log_level: str, file_enabled: bool) -> None:
     """Configure logging with console and optional file output."""
+    # Respect TZ env var so log timestamps render in the user's local zone
+    # rather than the host default. `make sidecar` exports .env into the
+    # process env, so TZ propagates from there; in Docker the container env
+    # provides it; on a bare invocation, the OS-level TZ wins.
+    if hasattr(time, "tzset"):
+        time.tzset()
+
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
 
     if file_enabled:
