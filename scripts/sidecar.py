@@ -1281,6 +1281,11 @@ def _codex_account_email() -> str:
     return "default"
 
 
+# Global state for server-provided identity mapping and reset anchors
+_ACCOUNT_IDENTITIES: dict[str, str] = {}
+_GLOBAL_RESET_ANCHORS: dict[str, dict[str, str]] = {}
+
+
 def _opencode_account_email(db_path: Path | None) -> str:
     """Read email from the OpenCode SQLite `account` table; returns 'default' if unavailable.
 
@@ -1288,23 +1293,32 @@ def _opencode_account_email(db_path: Path | None) -> str:
     email as account_id keeps sidecar-pushed events aligned with the cards
     emitted by the server's web collector.
     """
-    if db_path is None or not db_path.exists():
-        env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
-        return env_label or "default"
-    try:
-        conn = sqlite3.connect(str(db_path))
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT email FROM account LIMIT 1")
-            row = cur.fetchone()
-            if row and row[0]:
-                return str(row[0])
-        finally:
-            conn.close()
-    except Exception:
-        pass
+    # 1. Try server-provided identity hint (propagated from server web scraper)
+    ident = _ACCOUNT_IDENTITIES.get("opencode")
+    if ident:
+        return ident
+
+    # 2. Try environment variable
     env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
-    return env_label or "default"
+    if env_label:
+        return env_label
+
+    # 3. Fallback to local DB
+    if db_path is not None and db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT email FROM account LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]:
+                    return str(row[0])
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    return "default"
 
 
 # --- Generic Collector Engine ---
@@ -2366,9 +2380,18 @@ class DaemonRunner:
                 self._fire_status_change()
 
                 if isinstance(result, dict):
+                    # Store server-provided identity hints (for anonymous collectors)
+                    identities = result.get("identities")
+                    if identities:
+                        global _ACCOUNT_IDENTITIES
+                        _ACCOUNT_IDENTITIES.update(identities)
+                        logging.debug(f"Server provided identities: {identities}")
+
                     # Log reset_anchors for visibility (Phase 6)
                     reset_anchors = result.get("reset_anchors")
                     if reset_anchors:
+                        global _GLOBAL_RESET_ANCHORS
+                        _GLOBAL_RESET_ANCHORS.update(reset_anchors)
                         logging.debug(f"Server reset_anchors: {reset_anchors}")
 
                     # The server is the cadence authority. Each ingest response
