@@ -319,6 +319,7 @@ __REGISTRY__ = {
 
 DEFAULT_CONFIG = {
     "interval_seconds": 900,
+    "heartbeat_seconds": 60,
     "providers": ["all"],
     "retry_attempts": 3,
     "retry_backoff_seconds": 5,
@@ -409,6 +410,7 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
             "api_url": "http://your-server:8765",
             "api_key": "your-secret-key",
             "interval_seconds": 900,
+            "heartbeat_seconds": 60,
             "providers": ["all"],
             "retry_attempts": 3,
             "retry_backoff_seconds": 5,
@@ -2069,10 +2071,15 @@ def run_collection(
     all_events: list[dict[str, Any]] = []
     error_count = 0
 
-    if providers:
-        enabled_providers = providers
-    else:
+    if providers is None:
+        # No instructions yet (cold start) — collect everything enabled in config
         enabled_providers = config.get("providers", ["all"])
+    elif not providers:
+        # Empty list = pure heartbeat. Skip collection; the caller still pushes
+        # an empty payload to /fleet/ingest so the server can deliver triggers.
+        return [], [], 0
+    else:
+        enabled_providers = providers
 
     registry_providers = __REGISTRY__.get("providers", {})
     bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
@@ -2181,7 +2188,16 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
-        # Cycle interval: how often the sidecar collects + pushes to the server
+        # Heartbeat: how often the sidecar pings the server for instructions.
+        # The server (via /fleet/ingest's poll_providers field) is the cadence
+        # authority — it tells the sidecar which providers are due. A short
+        # heartbeat keeps refresh-button latency low; per-provider poll
+        # intervals (set in the dashboard) decide how often each provider is
+        # actually scraped.
+        self._heartbeat: int = config.get("heartbeat_seconds", 60)
+        # Retained for backward compat — older code paths read this. With the
+        # heartbeat-driven model, the cadence is server-controlled, so this
+        # value is no longer the primary loop period.
         self._interval: int = config.get("interval_seconds", 900)
         self.on_status_change = on_status_change
 
@@ -2250,10 +2266,12 @@ class DaemonRunner:
         api_key = self._config["api_key"]
 
         try:
-            if providers:
-                logging.info(f"Starting targeted collection for: {providers}...")
+            if providers is None:
+                logging.info("Starting full collection cycle...")
+            elif not providers:
+                logging.debug("Heartbeat — pinging server for instructions")
             else:
-                logging.info("Starting heartbeat/collection cycle...")
+                logging.info(f"Starting targeted collection for: {providers}...")
 
             metrics, events, collection_errors = run_collection(self._config, providers=providers)
 
@@ -2353,33 +2371,24 @@ class DaemonRunner:
                     if reset_anchors:
                         logging.debug(f"Server reset_anchors: {reset_anchors}")
 
-                    # Server-pushed cycle interval. Apply on the next sleep so
-                    # the user can change cadence from the dashboard without
-                    # editing config.json on every host.
-                    server_interval = result.get("sidecar_interval_seconds")
-                    if isinstance(server_interval, int) and server_interval > 0:
-                        if server_interval != self._interval:
-                            logging.info(
-                                f"Sidecar interval changed by server: "
-                                f"{self._interval}s -> {server_interval}s"
-                            )
-                            self._interval = server_interval
-
-                    # 1. Manual trigger (Global refresh) - Highest precedence
+                    # The server is the cadence authority. Each ingest response
+                    # tells the sidecar exactly which providers to collect on
+                    # the *next* heartbeat tick:
+                    #   - trigger=true       → collect everything (refresh button)
+                    #   - poll_providers=[…] → collect just those (per-provider due)
+                    #   - poll_providers=[]  → pure heartbeat, no collection
                     if result.get("trigger"):
                         logging.info(
-                            "Remote trigger received — scheduling immediate follow-up (Global Refresh)"
+                            "Remote trigger received — collecting everything on next heartbeat"
                         )
-                        self._next_poll_providers = None
+                        self._next_poll_providers = None  # None = full collection
                         self._trigger_event.set()
-
-                    # 2. Targeted polling instructions (Orchestration)
                     else:
                         poll_providers = result.get("poll_providers")
-                        if poll_providers:
-                            logging.info(f"Server requested targeted poll: {poll_providers}")
+                        if poll_providers is not None:
                             self._next_poll_providers = poll_providers
-                            self._trigger_event.set()
+                            if poll_providers:
+                                logging.info(f"Server requested targeted poll: {poll_providers}")
 
                 return True
 
@@ -2477,25 +2486,31 @@ class DaemonRunner:
         self._trigger_event.clear()
 
     def _loop(self) -> None:
-        """Background thread: run collection cycles until stopped."""
+        """Background thread: heartbeat the server until stopped.
+
+        Each iteration is short (default 60s). What runs on each heartbeat
+        is decided by the server's previous /fleet/ingest response:
+          * None  → cold-start full collection
+          * []    → heartbeat only (push empty payload, get instructions back)
+          * [p1…] → collect just those providers (per-provider cadence due)
+          * trigger=true also resets to None and wakes the sleep early.
+        """
         while not self._stop_event.is_set():
             if self._paused:
                 # While paused, sleep in short bursts so stop() is responsive
                 self._stop_event.wait(timeout=1)
                 continue
 
-            # Check for specific poll instructions
             with self._lock:
                 providers = self._next_poll_providers
-                self._next_poll_providers = None
 
             self.run_once(providers=providers)
 
             if self._stop_event.is_set():
                 break
 
-            # Wait for the next interval, waking early on stop or remote trigger
-            self._interruptible_sleep(self._interval)
+            # Short heartbeat sleep — wakes early on stop or remote trigger.
+            self._interruptible_sleep(self._heartbeat)
 
         logging.info("DaemonRunner loop exited.")
 

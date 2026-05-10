@@ -463,7 +463,6 @@ _PROVIDER_ICONS: dict[str, str] = {
 class _AppConfigUpdate(BaseModel):
     browser_preference: str | None = None
     default_poll_interval_seconds: int | None = None  # 0 = clear override
-    default_sidecar_interval_seconds: int | None = None  # 0 = clear override
     # IANA tz name (e.g. "Europe/Berlin"); "" or null = clear override (use TZ env / browser detect)
     user_timezone: str | None = None
 
@@ -712,7 +711,6 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "browser_preference": (cfg.browser_preference if cfg else None)
         or settings.BROWSER_PREFERENCE,
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
-        "default_sidecar_interval_seconds": cfg.default_sidecar_interval_seconds if cfg else None,
         "user_timezone": cfg.user_timezone if cfg else None,
         "env_timezone": settings.env_timezone,
     }
@@ -736,12 +734,6 @@ async def upsert_app_config(
     if body.default_poll_interval_seconds is not None:
         cfg.default_poll_interval_seconds = (
             body.default_poll_interval_seconds if body.default_poll_interval_seconds > 0 else None
-        )
-    if body.default_sidecar_interval_seconds is not None:
-        cfg.default_sidecar_interval_seconds = (
-            body.default_sidecar_interval_seconds
-            if body.default_sidecar_interval_seconds > 0
-            else None
         )
     if body.user_timezone is not None:
         if body.user_timezone == "":

@@ -57,7 +57,6 @@ def init_db():
 
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, sql_type_with_default)
-    ("system_config", "default_sidecar_interval_seconds", "INTEGER"),
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("system_config", "user_timezone", "VARCHAR"),
 ]

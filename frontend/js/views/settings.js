@@ -730,7 +730,6 @@ async function renderSystemSection(pane) {
         const [s, cfg] = await Promise.all([fetchSettings(), fetchAppConfig()]);
         const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
         const globalPollVal = cfg.default_poll_interval_seconds ?? '';
-        const sidecarIvVal = cfg.default_sidecar_interval_seconds ?? '';
         const userTz = cfg.user_timezone || '';
         const envTz = cfg.env_timezone || '';
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -745,9 +744,6 @@ async function renderSystemSection(pane) {
             : `Auto (browser: ${escapeHTML(browserTz)})`;
         const pollSelectOpts = POLL_OPTIONS.map(o =>
             `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`
-        ).join('');
-        const sidecarSelectOpts = POLL_OPTIONS.map(o =>
-            `<option value="${o.value}" ${sidecarIvVal === o.value ? 'selected' : ''}>${o.label}</option>`
         ).join('');
 
         pane.innerHTML = `<div class="settings-panel glass">
@@ -777,7 +773,7 @@ async function renderSystemSection(pane) {
                 <div class="sys-row">
                     <div>
                         <div class="sys-k">Default Poll Interval</div>
-                        <div class="sys-s">Applies to all providers; per-provider overrides take precedence</div>
+                        <div class="sys-s">Applies to all providers; per-provider overrides take precedence. Sidecars heartbeat every 60 s and obey this cadence too.</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <select id="field-global-poll" class="inp" style="width:auto;">
@@ -785,19 +781,6 @@ async function renderSystemSection(pane) {
                             ${pollSelectOpts}
                         </select>
                         <button id="save-global-poll-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
-                    </div>
-                </div>
-                <div class="sys-row">
-                    <div>
-                        <div class="sys-k">Sidecar Interval</div>
-                        <div class="sys-s">How often each remote sidecar checks in and collects. Pushed to sidecars on next ingest — no per-host config edits needed.</div>
-                    </div>
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <select id="field-sidecar-iv" class="inp" style="width:auto;">
-                            <option value="" ${!sidecarIvVal ? 'selected' : ''}>Default</option>
-                            ${sidecarSelectOpts}
-                        </select>
-                        <button id="save-sidecar-iv-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
                     </div>
                 </div>
                 <div class="sys-row">
@@ -835,19 +818,6 @@ async function renderSystemSection(pane) {
             this.textContent = 'Saving…'; this.disabled = true;
             try {
                 await putAppConfig({ default_poll_interval_seconds: val });
-                this.textContent = 'Saved';
-                setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
-            } catch {
-                this.textContent = 'Error'; this.disabled = false;
-            }
-        });
-
-        pane.querySelector('#save-sidecar-iv-btn')?.addEventListener('click', async function () {
-            const select = pane.querySelector('#field-sidecar-iv');
-            const val = select?.value ? parseInt(select.value, 10) : 0;
-            this.textContent = 'Saving…'; this.disabled = true;
-            try {
-                await putAppConfig({ default_sidecar_interval_seconds: val });
                 this.textContent = 'Saved';
                 setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
             } catch {

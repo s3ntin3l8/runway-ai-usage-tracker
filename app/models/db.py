@@ -124,7 +124,6 @@ class SystemConfig(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     browser_preference: str | None = None  # e.g. "safari,chrome,firefox"
     default_poll_interval_seconds: int | None = None  # None = use per-collector default TTL
-    default_sidecar_interval_seconds: int | None = None  # None = use sidecar's bundled default
     dashboard_layout_json: str | None = None
     user_timezone: str | None = (
         None  # IANA name, e.g. "Europe/Berlin"; None = use TZ env / browser detect

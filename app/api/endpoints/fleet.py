@@ -220,13 +220,12 @@ async def ingest_metrics(
             ingest_result = None
 
     # Determine which providers this sidecar should poll right now.
-    # Logic: Centralized orchestration based on UI-configured intervals.
+    # The server is the cadence authority — sidecars heartbeat frequently and
+    # collect only what we tell them via poll_providers (per-provider intervals
+    # gate this server-side via fleet_registry.get_due_providers).
     poll_providers: list[str] = []
     trigger: bool = False
     sys_cfg = session.exec(select(SystemConfig)).first()
-    sidecar_interval = (
-        sys_cfg.default_sidecar_interval_seconds if sys_cfg else None
-    ) or 900  # Fallback to 15 mins
     collection_enabled = True
     if request.sidecar_id:
         # Honor per-sidecar pause: paused sidecars still check in but receive
@@ -264,7 +263,6 @@ async def ingest_metrics(
         "windows_closed": ingest_result.windows_closed if ingest_result else 0,
         "poll_providers": poll_providers,
         "trigger": trigger,
-        "sidecar_interval_seconds": sidecar_interval,
         "collection_enabled": collection_enabled,
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
     }

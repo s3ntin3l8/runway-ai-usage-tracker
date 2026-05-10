@@ -1254,16 +1254,6 @@ def main():
 
                 if success:
                     logging.info(f"Successfully sent {len(metrics)} metrics")
-                    # Honor server-pushed cycle interval so the dashboard's
-                    # Sidecar Interval setting takes effect without editing
-                    # config.json on every host.
-                    if isinstance(result, dict):
-                        srv_iv = result.get("sidecar_interval_seconds")
-                        if isinstance(srv_iv, int) and srv_iv > 0 and srv_iv != interval:
-                            logging.info(
-                                f"Sidecar interval changed by server: {interval}s -> {srv_iv}s"
-                            )
-                            interval = srv_iv
                 else:
                     # Check for clock skew error (400 timestamp_expired)
                     if (
