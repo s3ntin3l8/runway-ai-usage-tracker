@@ -30,6 +30,7 @@ WINDOW_DURATIONS: dict[str, timedelta] = {
     "weekly": timedelta(days=7),
     "biweekly": timedelta(days=14),
     "monthly": timedelta(days=30),
+    "rolling": timedelta(days=30),
 }
 
 # Minimum number of distinct hourly buckets before we trust a slope.
@@ -150,58 +151,85 @@ def _fetch_hourly_buckets(
     return result
 
 
-def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
-    """Compute a linear-regression forecast for one LimitCard.
+def _resolve_window(card: LimitCard) -> tuple[datetime, datetime, float] | None:
+    """Parse reset_at and compute (window_start, reset_at_dt, total_window_secs).
 
-    Returns None when:
-    - card is unlimited
-    - limit_value is None or <= 0
-    - unit_type is not 'tokens' (non-token forecasting deferred)
-    - reset_at is missing or unparseable
-    - unit == 'pay-as-you-go'
-    - window_type is not in WINDOW_DURATIONS
+    Returns None if reset_at is missing/unparseable or window_type is unknown.
+    Handles rolling window_type with a 30-day default.
     """
-    if card.is_unlimited:
-        return None
-    if card.limit_value is None or card.limit_value <= 0:
-        return None
     if not card.reset_at:
         return None
-    if card.unit == "pay-as-you-go":
+    effective_window_type = card.window_type
+    if effective_window_type == "rolling":
+        effective_window_type = "monthly"
+    if effective_window_type not in WINDOW_DURATIONS:
         return None
-    if card.window_type not in WINDOW_DURATIONS:
-        return None
-    # Only forecast token-denominated cards. Percent/currency cards need a
-    # different approach (current value already in the right unit); deferred.
-    if card.unit_type not in ("tokens", "generic"):
-        return None
-
     try:
         reset_at_dt = datetime.fromisoformat(card.reset_at)
         if reset_at_dt.tzinfo is None:
             reset_at_dt = reset_at_dt.replace(tzinfo=UTC)
     except (ValueError, TypeError):
         return None
-
-    now = datetime.now(UTC)
-    window_duration = WINDOW_DURATIONS[card.window_type]
+    window_duration = WINDOW_DURATIONS[effective_window_type]
     window_start = reset_at_dt - window_duration
-
-    # For rolling windows where reset_at is in the past or very near now,
-    # use now as the anchor so window_start doesn't drift into the future.
+    now = datetime.now(UTC)
     if window_start > now:
         window_start = now - window_duration
+    total_window_secs = (reset_at_dt - window_start).total_seconds()
+    return window_start, reset_at_dt, total_window_secs
 
-    forecast_target_dt = reset_at_dt
 
-    # Confidence: fraction of window elapsed (0.0 = just started, 1.0 = at reset)
-    total_window_secs = (forecast_target_dt - window_start).total_seconds()
+def _confidence_and_elapsed(
+    window_start: datetime, total_window_secs: float
+) -> tuple[float, float]:
+    """Return (confidence, elapsed_secs) for a window."""
+    now = datetime.now(UTC)
     elapsed_secs = (now - window_start).total_seconds()
     confidence = max(
         0.0, min(1.0, elapsed_secs / total_window_secs if total_window_secs > 0 else 0.0)
     )
+    return confidence, elapsed_secs
 
-    # Fetch hourly event aggregates within the window
+
+def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
+    """Dispatch to the appropriate forecast method based on unit_type."""
+    if card.is_unlimited:
+        return None
+    if card.limit_value is None or card.limit_value <= 0:
+        # Allow percent cards with limit_value=100 to pass
+        if card.unit_type != "percent":
+            return None
+    if not card.reset_at:
+        return None
+    if card.unit == "pay-as-you-go":
+        return None
+    # Normalize singular 'token' to 'tokens'
+    effective_unit_type = card.unit_type
+    if effective_unit_type == "token":
+        effective_unit_type = "tokens"
+
+    if effective_unit_type in ("percent",):
+        return _compute_percent_forecast(card, session, effective_unit_type)
+    if effective_unit_type in ("currency", "credits"):
+        return _compute_currency_forecast(card, session)
+    if effective_unit_type in ("tokens", "generic"):
+        return _compute_token_forecast(card, session)
+    # Unsupported unit types (requests, minutes, etc.) — insufficient data
+    return None
+
+
+def _compute_token_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
+    """Original linear-regression forecast for token-denominated cards."""
+    result = _resolve_window(card)
+    if result is None:
+        return None
+    window_start, reset_at_dt, total_window_secs = result
+    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs)
+
+    if card.limit_value is None or card.limit_value <= 0:
+        return None
+
+    now = datetime.now(UTC)
     buckets = _fetch_hourly_buckets(
         session,
         provider_id=card.provider_id or "",
@@ -221,10 +249,6 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         now_pct = None
 
     if len(buckets) < MIN_BUCKETS_FOR_TREND:
-        logger.debug(
-            f"Forecast insufficient for {card.service_name}: "
-            f"{len(buckets)} hourly buckets (need {MIN_BUCKETS_FOR_TREND})"
-        )
         return _make_entry(
             card=card,
             status="insufficient_data",
@@ -235,7 +259,6 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
             now_pct=now_pct,
         )
 
-    # Build (elapsed_seconds_from_window_start, cumulative_pct) series
     cumulative_tokens = 0
     xs: list[float] = []
     ys: list[float] = []
@@ -259,17 +282,13 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         )
 
     slope, intercept = fit.slope, fit.intercept
-
-    # Project to reset time
-    reset_elapsed = (forecast_target_dt - window_start).total_seconds()
+    reset_elapsed = (reset_at_dt - window_start).total_seconds()
     projected_pct = intercept + slope * reset_elapsed
 
-    # Clamp: projection must not be less than current pct
     current_pct = ys[-1] if ys else (now_pct or 0.0)
     projected_pct = max(projected_pct, current_pct)
     projected_used = projected_pct / 100.0 * card.limit_value
 
-    # Stability check: if projected growth < epsilon vs. current, report stable
     is_stable = now_pct is not None and (projected_pct - now_pct) < STABLE_PCT_EPSILON
     if is_stable or (now_pct is not None and now_pct >= 99.9):
         is_exhausted = now_pct is not None and now_pct >= 99.9
@@ -285,17 +304,13 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
             projected_pct=100.0 if is_exhausted else now_pct,
         )
 
-    # Compute exact limit-hit time
     projected_limit_hit_at: str | None = None
     if projected_pct >= 100:
         if slope > 0 and (now_pct is None or now_pct < 99.9):
-            # target_pct = slope * elapsed + intercept → elapsed = (100 - intercept) / slope
             hit_elapsed = (100.0 - intercept) / slope
             hit_ts = window_start + timedelta(seconds=hit_elapsed)
             if hit_ts > now:
                 projected_limit_hit_at = hit_ts.isoformat()
-
-        # Cap the visual projection at 100%
         projected_pct = 100.0
         projected_used = card.limit_value
 
@@ -311,6 +326,304 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         status=status,
         window_start=window_start,
         samples_used=len(buckets),
+        confidence=confidence,
+        now_used=now_used,
+        now_pct=now_pct,
+        projected_used=projected_used,
+        projected_pct=projected_pct,
+        projected_limit_hit_at=projected_limit_hit_at,
+    )
+
+
+def _compute_percent_forecast(
+    card: LimitCard, session: Session, effective_unit_type: str
+) -> ForecastEntry | None:
+    """Forecast for percent-denominated cards (unit_type='percent').
+
+    Uses the card's own pct_used as 'now' position, then derives a consumption
+    rate from hourly token usage events to project forward. For percent cards,
+    we know the current gauge position and the limit (usually 100%). We
+    extrapolate by computing how fast tokens are burning relative to the window.
+    """
+    result = _resolve_window(card)
+    if result is None:
+        return None
+    window_start, reset_at_dt, total_window_secs = result
+    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs)
+
+    now = datetime.now(UTC)
+
+    # Derive now_pct from the card
+    now_pct: float | None = None
+    if card.pct_used is not None:
+        now_pct = card.pct_used
+    elif card.used_value is not None and card.limit_value and card.limit_value > 0:
+        now_pct = card.used_value / card.limit_value * 100
+    elif card.used_value is not None:
+        now_pct = card.used_value  # already a percentage when limit=100
+
+    now_used = card.used_value
+
+    # Get hourly token consumption within this window
+    buckets = _fetch_hourly_buckets(
+        session,
+        provider_id=card.provider_id or "",
+        account_id=card.account_id or "",
+        model_id=card.model_id,
+        since=window_start,
+        until=now,
+    )
+
+    if len(buckets) < MIN_BUCKETS_FOR_TREND or now_pct is None:
+        return _make_entry(
+            card=card,
+            status="insufficient_data",
+            window_start=window_start,
+            samples_used=len(buckets),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+        )
+
+    # Build a cumulative token series and convert to pct_used trajectory
+    # We know pct_used at "now" from the card. We can infer how much
+    # of the window's limit each hour of token usage represents.
+    cumulative_tokens = 0
+    xs: list[float] = []
+    ys: list[float] = []
+    total_tokens_in_window = sum(toks for _, toks in buckets)
+    if total_tokens_in_window == 0:
+        return _make_entry(
+            card=card,
+            status="stable",
+            window_start=window_start,
+            samples_used=len(buckets),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+            projected_used=now_used,
+            projected_pct=now_pct,
+        )
+
+    # Tokens per percentage point = total_tokens / pct_change_covered
+    # If we're at pct_used now, total_tokens maps to pct_used pct points
+    token_per_pct = total_tokens_in_window / now_pct if now_pct > 0 else 1.0
+
+    for bucket_ts, toks in buckets:
+        cumulative_tokens += toks
+        elapsed = (bucket_ts - window_start).total_seconds()
+        pct = cumulative_tokens / token_per_pct if token_per_pct > 0 else 0.0
+        xs.append(elapsed)
+        ys.append(pct)
+
+    fit = _fit_linear(xs, ys)
+    if fit is None:
+        # With only 2 points, just extrapolate linearly
+        return _make_entry(
+            card=card,
+            status="insufficient_data",
+            window_start=window_start,
+            samples_used=len(buckets),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+        )
+
+    slope, intercept = fit.slope, fit.intercept
+    reset_elapsed = total_window_secs
+    projected_pct = intercept + slope * reset_elapsed
+    current_pct = ys[-1] if ys else (now_pct or 0.0)
+    projected_pct = max(projected_pct, current_pct)
+
+    limit_value = card.limit_value or 100.0
+    projected_used = projected_pct / 100.0 * limit_value
+
+    is_stable = now_pct is not None and (projected_pct - now_pct) < STABLE_PCT_EPSILON
+    if is_stable or (now_pct is not None and now_pct >= 99.9):
+        is_exhausted = now_pct is not None and now_pct >= 99.9
+        return _make_entry(
+            card=card,
+            status="exhausted" if is_exhausted else "stable",
+            window_start=window_start,
+            samples_used=len(buckets),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+            projected_used=limit_value if is_exhausted else projected_used,
+            projected_pct=100.0 if is_exhausted else now_pct,
+        )
+
+    projected_limit_hit_at: str | None = None
+    if projected_pct >= 100:
+        if slope > 0 and (now_pct is None or now_pct < 99.9):
+            hit_elapsed = (100.0 - intercept) / slope
+            hit_ts = window_start + timedelta(seconds=hit_elapsed)
+            if hit_ts > now:
+                projected_limit_hit_at = hit_ts.isoformat()
+        projected_pct = 100.0
+        projected_used = limit_value
+
+    if projected_pct >= 100 or projected_limit_hit_at:
+        status = "risk"
+    elif projected_pct >= 80:
+        status = "warn"
+    else:
+        status = "ok"
+
+    return _make_entry(
+        card=card,
+        status=status,
+        window_start=window_start,
+        samples_used=len(buckets),
+        confidence=confidence,
+        now_used=now_used,
+        now_pct=now_pct,
+        projected_used=projected_used,
+        projected_pct=projected_pct,
+        projected_limit_hit_at=projected_limit_hit_at,
+    )
+
+
+def _compute_currency_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
+    """Forecast for currency-denominated cards (unit_type='currency' or 'credits').
+
+    Uses daily cost_usd from period rollups to project spending trajectory.
+    """
+    result = _resolve_window(card)
+    if result is None:
+        return None
+    window_start, reset_at_dt, total_window_secs = result
+    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs)
+
+    now = datetime.now(UTC)
+
+    now_pct: float | None = None
+    if card.pct_used is not None:
+        now_pct = card.pct_used
+    elif card.used_value is not None and card.limit_value and card.limit_value > 0:
+        now_pct = card.used_value / card.limit_value * 100
+    now_used = card.used_value
+    limit_value = card.limit_value
+
+    if limit_value is None or limit_value <= 0:
+        return _make_entry(
+            card=card,
+            status="insufficient_data",
+            window_start=window_start,
+            samples_used=0,
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+        )
+
+    # Fetch daily cost rollups within the window
+    from sqlalchemy import text
+
+    since_key = window_start.strftime("%Y-%m-%d")
+    sql = text("""
+        SELECT
+            period_key,
+            SUM(cost_usd) AS daily_cost,
+            SUM(tokens_input + tokens_output + tokens_cache_read
+                 + tokens_cache_create + tokens_reasoning) AS daily_tokens
+        FROM usage_period_rollup
+        WHERE period_type = 'day'
+          AND model_id = ''
+          AND sidecar_id = ''
+          AND period_key >= :since_key
+          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (:account_id IS NULL OR account_id = :account_id)
+        GROUP BY period_key
+        ORDER BY period_key ASC
+    """)
+    params = {
+        "since_key": since_key,
+        "provider_id": card.provider_id or "",
+        "account_id": card.account_id or "",
+    }
+    rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
+
+    if len(rows) < MIN_BUCKETS_FOR_TREND:
+        return _make_entry(
+            card=card,
+            status="insufficient_data",
+            window_start=window_start,
+            samples_used=len(rows),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+        )
+
+    # Build (elapsed_seconds, pct_used) series from cumulative cost
+    cumulative_cost = 0.0
+    xs: list[float] = []
+    ys: list[float] = []
+    for row in rows:
+        period_key, daily_cost, daily_tokens = row
+        cumulative_cost += float(daily_cost or 0)
+        day_ts = datetime.strptime(str(period_key), "%Y-%m-%d").replace(tzinfo=UTC)
+        elapsed = (day_ts - window_start).total_seconds()
+        pct = cumulative_cost / limit_value * 100
+        xs.append(elapsed)
+        ys.append(pct)
+
+    fit = _fit_linear(xs, ys)
+    if fit is None:
+        return _make_entry(
+            card=card,
+            status="insufficient_data",
+            window_start=window_start,
+            samples_used=len(rows),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+        )
+
+    slope, intercept = fit.slope, fit.intercept
+    reset_elapsed = total_window_secs
+    projected_pct = intercept + slope * reset_elapsed
+
+    current_pct = ys[-1] if ys else (now_pct or 0.0)
+    projected_pct = max(projected_pct, current_pct)
+    projected_used = projected_pct / 100.0 * limit_value
+
+    is_stable = now_pct is not None and (projected_pct - now_pct) < STABLE_PCT_EPSILON
+    if is_stable or (now_pct is not None and now_pct >= 99.9):
+        is_exhausted = now_pct is not None and now_pct >= 99.9
+        return _make_entry(
+            card=card,
+            status="exhausted" if is_exhausted else "stable",
+            window_start=window_start,
+            samples_used=len(rows),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+            projected_used=limit_value if is_exhausted else projected_used,
+            projected_pct=100.0 if is_exhausted else now_pct,
+        )
+
+    projected_limit_hit_at: str | None = None
+    if projected_pct >= 100:
+        if slope > 0 and (now_pct is None or now_pct < 99.9):
+            hit_elapsed = (100.0 - intercept) / slope
+            hit_ts = window_start + timedelta(seconds=hit_elapsed)
+            if hit_ts > now:
+                projected_limit_hit_at = hit_ts.isoformat()
+        projected_pct = 100.0
+        projected_used = limit_value
+
+    if projected_pct >= 100 or projected_limit_hit_at:
+        status = "risk"
+    elif projected_pct >= 80:
+        status = "warn"
+    else:
+        status = "ok"
+
+    return _make_entry(
+        card=card,
+        status=status,
+        window_start=window_start,
+        samples_used=len(rows),
         confidence=confidence,
         now_used=now_used,
         now_pct=now_pct,

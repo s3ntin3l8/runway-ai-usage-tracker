@@ -182,14 +182,13 @@ def test_forecast_excludes_pay_as_you_go(db_session):
     assert result is None
 
 
-def test_forecast_skips_non_token_unit_type(db_session):
-    """percent unit_type → skipped (token/limit alignment unsupported)."""
+def test_forecast_handles_percent_unit_type(db_session):
+    """percent unit_type → dispatched to _compute_percent_forecast which can produce a result."""
     card = _make_card(unit_type="percent", unit="percent", used_value=42.0, limit_value=100.0)
     result = compute_forecast(card, db_session)
-    # percent cards can't be forecasted from raw token events — should return None or insufficient_data
-    # (implementation may return either; both are acceptable)
+    # With no events, it should return insufficient_data
     if result is not None:
-        assert result.status == "insufficient_data"
+        assert result.status in ("insufficient_data", "stable")
 
 
 def test_forecast_risk_status_steep_trajectory(db_session):

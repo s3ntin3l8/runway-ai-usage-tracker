@@ -14,6 +14,9 @@ from app.services.event_query import (
     query_cost_forecast,
     query_events,
     query_heatmap,
+    query_history_deltas,
+    query_history_grouped,
+    query_history_raw,
     query_sessions,
     query_window_aggregation,
     query_window_history,
@@ -423,16 +426,21 @@ async def get_usage_history(
     account_id: str | None = None,
     days: float = Query(default=1.0, ge=0.01, le=90.0),
     limit: int = Query(default=500, ge=1, le=2000),
-    export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
 ):
-    """Fetch usage history snapshots. Use format=csv for a downloadable CSV.
+    """Fetch usage history snapshots grouped by time bucket and provider.
 
-    Uses SQL GROUP BY for aggregation - dramatically faster than Python-side processing.
+    Returns {averages: [...], peaks: [...]} where each entry has timestamp,
+    provider_id, account_id, account_label, and a windows array with per-window
+    and per-model breakdowns.
     """
-    # Phase 7 will rewire from usage_period_rollup / UsageEvent tables.
-    # UsageSnapshot was removed in the Phase 1 schema reset.
-    return {"averages": [], "peaks": []}
+    return query_history_grouped(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+        limit=limit,
+    )
 
 
 @router.get("/history/raw")
@@ -447,17 +455,17 @@ async def get_usage_history_raw(
 ):
     """Fetch pre-bucketed usage history for chart rendering.
 
-    Snapshots are grouped into time buckets (granularity determined by the
-    requested window) so that the chart always receives ~50 data points per
-    time range regardless of how many raw polls exist in the DB.  Each
-    returned row carries both the avg and the peak (max_used_value) for its
-    bucket, enabling the BAND mode shaded-area display.
-
-    Uses SQL GROUP BY for aggregation - dramatically faster than Python-side processing.
+    Returns a flat list of time-series points with token_usage, cost, and
+    card metadata. Bucketing granularity: <=1d → 15-min, <=7d → hourly,
+    >7d → daily.
     """
-    # Phase 7 will rewire from usage_period_rollup / UsageEvent tables.
-    # UsageSnapshot was removed in the Phase 1 schema reset.
-    return []
+    return query_history_raw(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+        limit=limit,
+    )
 
 
 @router.get("/history/deltas")
@@ -469,26 +477,18 @@ async def get_usage_history_deltas(
     days: float = Query(default=1.0, ge=0.01, le=90.0),
     session: Session = Depends(get_session),
 ):
-    """Fetch raw snapshots and compute positive deltas per series.
+    """Compute actual consumption deltas from usage_events.
 
-    Unlike /history/raw (which buckets and averages), this endpoint returns
-    the *actual consumption* within the period by walking each time-series
-    chronologically and summing only positive deltas.
-
-    To improve fidelity, it employs a 'high-water mark' with glitch filtering:
-    - Minor drops (>50% of previous peak) are ignored as transient API glitches.
-    - Substantial drops (<50% of previous peak) are treated as periodic counter resets.
+    Returns token_delta_total, cost_delta_total, provider_token_deltas,
+    critical_series_count, and series_sampled. Since this uses event-sourced
+    data (not gauge readings), no glitch filtering is needed.
     """
-    # Phase 7 will rewire from usage_period_rollup / UsageEvent tables.
-    # UsageSnapshot was removed in the Phase 1 schema reset.
-    return {
-        "token_delta_total": 0.0,
-        "cost_delta_total": 0.0,
-        "provider_token_deltas": {},
-        "critical_series_count": 0,
-        "series_sampled": False,
-        "series": [],
-    }
+    return query_history_deltas(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+    )
 
 
 @router.get("/events")
