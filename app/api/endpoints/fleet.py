@@ -264,8 +264,30 @@ async def ingest_metrics(
         "poll_providers": poll_providers,
         "trigger": trigger,
         "collection_enabled": collection_enabled,
+        "identities": _get_active_identities(session),  # For sidecar identity propagation
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
     }
+
+
+def _get_active_identities(session: Session) -> dict[str, str]:
+    """Map provider_id to the most recent 'real' account_id seen in LatestUsage.
+
+    Used by sidecars to discover their identity when local logs are anonymous.
+    """
+    from app.models.db import LatestUsage
+
+    rows = session.exec(
+        select(LatestUsage.provider_id, LatestUsage.account_id)
+        .where(LatestUsage.account_id != "default")
+        .where(col(LatestUsage.account_id).is_not(None))
+        .order_by(col(LatestUsage.updated_at).desc())
+    ).all()
+
+    identities = {}
+    for pid, aid in rows:
+        if pid not in identities:
+            identities[pid] = aid
+    return identities
 
 
 def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:

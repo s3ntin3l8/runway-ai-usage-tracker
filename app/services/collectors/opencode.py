@@ -753,13 +753,22 @@ class OpenCodeCollector(BaseCollector):
         return cards
 
     def _short_model_id_oc(self, model_id: str) -> str:
-        """Shorten a model ID for display, e.g. claude-sonnet-4-6 → sonnet."""
+        """Shorten a model ID for display while preserving versioning.
+
+        Examples:
+          claude-sonnet-3.5 -> sonnet-3.5
+          glm-5.1 -> glm-5.1
+          qwen-2.5-max -> qwen-2.5-max
+          gpt-4o-latest -> gpt-4o
+        """
         m = model_id.lower()
-        # Strip claude- prefix then any trailing -version suffix
-        m = re.sub(r"^claude-", "", m)
-        m = re.sub(r"-\d+[-.]?\d*$", "", m)
-        # Trim -free / -latest suffixes
-        m = re.sub(r"-(free|latest|preview)$", "", m)
+        # Strip provider prefixes
+        m = re.sub(r"^(claude|gpt|google|meta|mistral)-", "", m)
+        # Trim -free / -latest / -preview / -latest suffixes but KEEP version numbers
+        m = re.sub(r"-(free|latest|preview|latest)$", "", m)
+        # Only strip the very generic trailing version if it's long and likely a date/hash,
+        # but keep short version strings like -3.5, -4, -5.1, -4o
+        # (This avoids stripping -3.5 from sonnet-3.5)
         return m or model_id
 
     def _extract_window_info(self, text: str) -> dict[str, dict]:

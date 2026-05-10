@@ -6,7 +6,7 @@ PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 
-.PHONY: help install install-hooks dev run sidecar test test-cov lint format css watch secrets clean
+.PHONY: help install install-hooks dev dev-all run sidecar test test-cov lint format css watch secrets clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -26,6 +26,9 @@ dev: ## Run development server (hot reload, port 8765)
 	$(VENV)/bin/uvicorn app.main:app --reload \
 	  --host "$${APP_HOST:-127.0.0.1}" \
 	  --port "$${APP_PORT:-8765}"
+
+dev-all: ## Run dev server and sidecar together (Ctrl-C stops both)
+	$(MAKE) -j2 dev sidecar
 
 run: ## Run production server
 	$(PYTHON) -m app.main
