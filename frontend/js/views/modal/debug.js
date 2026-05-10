@@ -127,8 +127,7 @@ export function buildDebugPane(entry, tokenHealth) {
     let tokenHealthHtml = '';
     if (tokenHealth && tokenHealth.tokens && tokenHealth.tokens.length) {
         const myTokens = tokenHealth.tokens.filter(t =>
-            (!t.provider || t.provider === providerId) &&
-            (!t.account_id || t.account_id === accountId)
+            !t.provider || t.provider === providerId
         );
         if (myTokens.length) {
             tokenHealthHtml = myTokens.map(t => {

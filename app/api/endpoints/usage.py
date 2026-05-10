@@ -154,8 +154,20 @@ async def fetch_fleet_view(
 
     fleet = []
     for (pid, aid), gcards in sorted(groups.items()):
-        critical = _pick_critical_card(gcards)
-        secondary = [c for c in gcards if c is not critical]
+        critical_orig = _pick_critical_card(gcards)
+        sc = manager.smart_collectors.get(f"{pid}:{aid}") or manager.smart_collectors.get(
+            f"{pid}:default"
+        )
+        if sc and sc.last_success_time:
+            fetched_at = datetime.fromtimestamp(sc.last_success_time, tz=UTC).isoformat()
+            next_poll_at = datetime.fromtimestamp(sc.last_success_time + sc.ttl, tz=UTC).isoformat()
+            critical = dict(critical_orig)
+            critical["fetched_at"] = fetched_at
+            critical["next_poll_at"] = next_poll_at
+            critical["cache_ttl_seconds"] = sc.ttl
+        else:
+            critical = critical_orig
+        secondary = [c for c in gcards if c is not critical_orig]
 
         # Pick the longest-window default card that has a reset_at, then
         # compute a live aggregation over usage_events for that window.
