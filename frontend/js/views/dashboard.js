@@ -587,6 +587,7 @@ export function initDashboardView() {
     const sections = document.getElementById('dashboard-sections');
     if (sections) {
         sections.addEventListener('click', e => {
+            if (STATE.editMode) return;
             // Check if we clicked a Fleet Commander card (.fc)
             const fcCard = e.target.closest('article.fc');
             if (fcCard) {
