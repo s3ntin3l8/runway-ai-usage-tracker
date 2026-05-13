@@ -1816,10 +1816,12 @@ function _fcPoolStack(quotaCards, _forecastMap) {
             : '';
         const glideAhead = p.glide != null && p.used > p.glide + 4;
         const glideBehind = p.glide != null && p.used < p.glide - 4;
-        const glideStatusHtml = p.glide == null ? ''
-            : glideAhead ? `<span class="pglide-status ahead">↑ ${Math.round(p.used - p.glide)}% ahead</span>`
-            : glideBehind ? `<span class="pglide-status ontrack">✓ ${Math.round(p.glide - p.used)}% under</span>`
-            : `<span class="pglide-status ontrack">✓ on pace</span>`;
+        const glideFootHtml = p.glide == null ? ''
+            : `<div class="pfoot">glide-path target <b>${Math.round(p.glide)}%</b>${
+                glideAhead ? ` <span class="ahead">↑ ${Math.round(p.used - p.glide)}% ahead of pace</span>`
+                : glideBehind ? ` <span class="ontrack">✓ ${Math.round(p.glide - p.used)}% under pace</span>`
+                : ` <span class="ontrack">✓ on glide path</span>`
+            }</div>`;
         return `<div class="fc-pool-row h-${status} ${status === 'crit' ? 'crit-row' : ''}">
             <span class="pidx">${String(i + 1).padStart(2, '0')}</span>
             <div class="pmid">
@@ -1832,11 +1834,11 @@ function _fcPoolStack(quotaCards, _forecastMap) {
                     <div class="pused" style="width:${p.used}%"></div>
                     ${glideHtml}
                 </div>
+                ${glideFootHtml}
             </div>
             <div class="pright">
                 <span class="ppct">${p.used}<em>%</em></span>
                 <span class="preset">resets <b>${escapeHTML(_resetText(p.card))}</b></span>
-                ${glideStatusHtml}
             </div>
         </div>`;
     }).join('');
