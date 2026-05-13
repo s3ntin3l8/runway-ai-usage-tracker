@@ -799,7 +799,7 @@ async function renderSystemSection(pane) {
                         <div class="sys-s">How timestamps render in the dashboard (heatmap, recent events, sessions, history). Falls back to <code style="background:var(--surface-2);padding:1px 4px;color:var(--accent);">TZ</code> env var, then your browser zone.</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <select id="field-user-tz" class="inp" style="width:auto;">
+                        <select id="field-user-tz" class="inp" style="flex:1;min-width:0;">
                             <option value="" ${!userTz ? 'selected' : ''}>${autoLabel}</option>
                             ${tzOpts}
                         </select>
