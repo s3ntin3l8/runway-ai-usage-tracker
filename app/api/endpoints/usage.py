@@ -11,15 +11,16 @@ from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 from app.services.event_query import (
     query_anomalies,
+    query_chart,
     query_cost_forecast,
     query_events,
     query_heatmap,
     query_history_deltas,
-    query_history_grouped,
-    query_history_raw,
     query_sessions,
     query_window_aggregation,
+    query_window_detail,
     query_window_history,
+    query_windows,
 )
 from app.services.forecast import compute_all_forecasts
 
@@ -418,53 +419,76 @@ async def get_usage_forecast(
     return compute_all_forecasts(cards, session)
 
 
-@router.get("/history")
+@router.get("/history/windows")
 @limiter.limit("10/minute")
-async def get_usage_history(
+async def get_history_windows(
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
-    days: float = Query(default=1.0, ge=0.01, le=90.0),
-    limit: int = Query(default=500, ge=1, le=2000),
+    days: float = Query(default=30.0, ge=0.01, le=365.0),
+    window_type: str | None = None,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
-    """Fetch usage history snapshots grouped by time bucket and provider.
-
-    Returns {averages: [...], peaks: [...]} where each entry has timestamp,
-    provider_id, account_id, account_label, and a windows array with per-window
-    and per-model breakdowns.
-    """
-    return query_history_grouped(
+    """Paginated list of quota windows (closed + open), newest first."""
+    return query_windows(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
+        window_type=window_type,
+        page=page,
         limit=limit,
     )
 
 
-@router.get("/history/raw")
+@router.get("/history/chart")
 @limiter.limit("30/minute")
-async def get_usage_history_raw(
+async def get_history_chart(
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
-    days: float = Query(default=1.0, ge=0.01, le=90.0),
-    limit: int = Query(default=500, ge=1, le=2000),
+    days: float = Query(default=30.0, ge=0.01, le=365.0),
+    metric: str = Query(default="percent", pattern="^(percent|tokens|cost)$"),
+    split_model_for: str | None = None,
     session: Session = Depends(get_session),
 ):
-    """Fetch pre-bucketed usage history for chart rendering.
-
-    Returns a flat list of time-series points with token_usage, cost, and
-    card metadata. Bucketing granularity: <=1d → 15-min, <=7d → hourly,
-    >7d → daily.
-    """
-    return query_history_raw(
+    """Chart data: percent → fill curves; tokens/cost → daily bars."""
+    return query_chart(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
-        limit=limit,
+        metric=metric,
+        split_model_for=split_model_for,
+    )
+
+
+@router.get("/history/window-detail")
+@limiter.limit("30/minute")
+async def get_history_window_detail(
+    request: Request,
+    provider_id: str,
+    account_id: str,
+    window_type: str,
+    window_start: str,
+    window_end: str,
+    session: Session = Depends(get_session),
+):
+    """Fill-up series and by-model breakdown for one expanded window."""
+    try:
+        ws = datetime.fromisoformat(window_start.replace("Z", "+00:00").replace(" ", "+"))
+        we = datetime.fromisoformat(window_end.replace("Z", "+00:00").replace(" ", "+"))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="window_start/window_end must be ISO datetime")
+    return query_window_detail(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        window_type=window_type,
+        window_start=ws,
+        window_end=we,
     )
 
 
