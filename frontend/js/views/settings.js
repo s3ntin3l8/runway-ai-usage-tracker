@@ -760,7 +760,7 @@ async function renderSystemSection(pane) {
                 </div>
                 <div class="sys-row">
                     <div><div class="sys-k">Host / Port</div></div>
-                    <span style="font-size:12px;color:var(--ink);">${escapeHTML(s.app_host)}:${s.app_port}</span>
+                    <span style="font:400 12px var(--sans);color:var(--ink);">${escapeHTML(s.app_host)}:${s.app_port}</span>
                 </div>
                 <div class="sys-row">
                     <div><div class="sys-k">Database Encryption</div></div>
@@ -789,7 +789,7 @@ async function renderSystemSection(pane) {
                         <div class="sys-s">Cookie-auth order for Claude web, ChatGPT, Ollama… (e.g. safari,chrome,firefox)</div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <input id="field-browser-pref" type="text" value="${browserPref}" class="inp" placeholder="safari,chrome,chromium,edge,firefox">
+                        <input id="field-browser-pref" type="text" value="${browserPref}" class="inp" style="flex:1;min-width:0;" placeholder="safari,chrome,chromium,edge,firefox">
                         <button id="save-browser-pref-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
                     </div>
                 </div>

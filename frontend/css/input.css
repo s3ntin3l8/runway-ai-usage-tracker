@@ -1779,7 +1779,7 @@ header.top .icon-btn[aria-pressed="true"] {
 .sys-grid { display: grid; gap: 0; }
 .sys-row {
     display: grid;
-    grid-template-columns: 1fr 240px;
+    grid-template-columns: 1fr 280px;
     gap: 20px; align-items: center;
     padding: 14px 4px;
     border-bottom: 1px solid var(--hairline);
