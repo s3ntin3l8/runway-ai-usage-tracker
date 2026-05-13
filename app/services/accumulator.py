@@ -226,8 +226,17 @@ def upsert_latest_usage(
                 f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
             )
 
-    # Append quota snapshot for % used history (only when quota data is present)
-    if card.pct_used is not None:
+    # Append quota snapshot for % used history (only when quota data is present).
+    # Derive pct_used from used_value when unit_type=percent (e.g. Claude web scraper)
+    # or from used_value/limit_value ratio when both are present.
+    effective_pct = card.pct_used
+    if effective_pct is None and card.used_value is not None:
+        if card.unit_type == "percent":
+            effective_pct = card.used_value
+        elif card.limit_value and card.limit_value > 0:
+            effective_pct = (card.used_value / card.limit_value) * 100.0
+
+    if effective_pct is not None:
         reset_at_dt = None
         if card.reset_at:
             try:
@@ -244,6 +253,6 @@ def upsert_latest_usage(
             account_id=canonical_account_id,
             window_type=card.window_type,
             model_id=model_id,
-            pct_used=card.pct_used,
+            pct_used=effective_pct,
             reset_at=reset_at_dt,
         )

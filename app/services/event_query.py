@@ -1309,8 +1309,50 @@ def query_windows(
     if window_type and window_type != "all":
         stmt = stmt.where(UsageWindow.window_type == window_type)
 
+    def _derive_pct(card_dict: dict) -> float | None:
+        """Derive a pct_used value from a card dict (used_value + unit_type fallback)."""
+        pct = card_dict.get("pct_used")
+        if pct is not None:
+            return pct
+        used = card_dict.get("used_value")
+        if used is None:
+            return None
+        if card_dict.get("unit_type") == "percent":
+            return float(used)
+        lim = card_dict.get("limit_value")
+        if lim and lim > 0:
+            return (used / lim) * 100.0
+        return None
+
+    # Deduplicate closed windows: usage_windows has microsecond-distinct rows for the
+    # same logical window (each poll slightly adjusts window_end). Keep the row with the
+    # highest token count per (provider, account, window_type, date(window_end)).
+    seen_closed: dict[tuple, int] = {}  # key → best tokens_total
+    raw_closed = session.exec(stmt).all()
+    dedup_closed: dict[tuple, object] = {}
+    for w in raw_closed:
+        day_key = (
+            w.provider_id,
+            w.account_id,
+            w.window_type,
+            str(w.window_end)[:10],  # YYYY-MM-DD, ignores microsecond drift
+        )
+        total_toks = (
+            w.tokens_input
+            + w.tokens_output
+            + w.tokens_cache_read
+            + w.tokens_cache_create
+            + w.tokens_reasoning
+        )
+        if day_key not in seen_closed or total_toks > seen_closed[day_key]:
+            seen_closed[day_key] = total_toks
+            dedup_closed[day_key] = w
+
     rows: list[dict] = []
-    for w in session.exec(stmt).all():
+    for w in dedup_closed.values():
+        total_toks = seen_closed[
+            (w.provider_id, w.account_id, w.window_type, str(w.window_end)[:10])
+        ]
         rows.append(
             {
                 "provider_id": w.provider_id,
@@ -1324,13 +1366,7 @@ def query_windows(
                 "pct_used": w.pct_used,
                 "limit_value": w.limit_value,
                 "unit_type": "tokens",
-                "tokens_total": (
-                    w.tokens_input
-                    + w.tokens_output
-                    + w.tokens_cache_read
-                    + w.tokens_cache_create
-                    + w.tokens_reasoning
-                ),
+                "tokens_total": total_toks,
                 "cost_usd": w.cost_usd,
                 "msgs": w.msgs,
                 "top_model": None,
@@ -1363,7 +1399,7 @@ def query_windows(
                 "window_start": None,
                 "window_end": reset_at,
                 "is_open": True,
-                "pct_used": card.get("pct_used"),
+                "pct_used": _derive_pct(card),
                 "limit_value": card.get("limit_value"),
                 "unit_type": card.get("unit_type", "tokens"),
                 "tokens_total": token_usage.get("total"),
@@ -1394,6 +1430,7 @@ def query_chart(
     metric=tokens   → daily bars from usage_period_rollup.
     metric=cost     → daily bars (value=cost_usd) from usage_period_rollup.
     """
+    import json as _json
     from datetime import UTC, datetime, timedelta
 
     from sqlmodel import select
@@ -1432,6 +1469,54 @@ def query_chart(
                     "points": [],
                 }
             series_map[key]["points"].append({"ts": s.ts.isoformat(), "pct_used": s.pct_used})
+
+        # Seed any provider/window_type that has current pct_used data in latest_usage
+        # but no snapshots yet (e.g. first run after schema migration).
+        from app.models.db import LatestUsage
+
+        lu_all = session.exec(select(LatestUsage).where(LatestUsage.model_id == "")).all()
+        now_iso = datetime.now(UTC).isoformat()
+        for lu in lu_all:
+            if provider_id and lu.provider_id != provider_id:
+                continue
+            if account_id and lu.account_id != account_id:
+                continue
+            try:
+                card = _json.loads(lu.card_json)
+            except Exception:
+                continue
+            # Derive pct_used (same logic as accumulator)
+            pct: float | None = card.get("pct_used")
+            if pct is None:
+                used = card.get("used_value")
+                if used is not None:
+                    if card.get("unit_type") == "percent":
+                        pct = float(used)
+                    else:
+                        lim = card.get("limit_value")
+                        if lim and lim > 0:
+                            pct = (used / lim) * 100.0
+            if pct is None:
+                continue
+            wt = lu.window_type
+            use_model = (
+                lu.model_id if (split_model_for and lu.provider_id == split_model_for) else ""
+            )
+            key = f"{lu.provider_id}::{wt}::{use_model}"
+            if key not in series_map:
+                label = f"{lu.provider_id.capitalize()} · {wt.capitalize()}"
+                series_map[key] = {
+                    "key": key,
+                    "provider_id": lu.provider_id,
+                    "window_type": wt,
+                    "model_id": use_model,
+                    "label": label,
+                    "color_hint": lu.provider_id,
+                    "points": [],
+                }
+            # Only add seed point if this series has no snapshot yet (avoid duplicating last value)
+            if not series_map[key]["points"]:
+                series_map[key]["points"].append({"ts": now_iso, "pct_used": pct})
 
         return {"series": list(series_map.values())}
 
