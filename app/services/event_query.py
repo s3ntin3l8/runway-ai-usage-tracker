@@ -1632,20 +1632,36 @@ def query_window_detail(
         .order_by(QuotaSnapshot.ts)
     ).all()
 
-    # Group by model_id; within each group deduplicate to one snapshot per calendar day.
-    by_model_snaps: dict[str, dict[str, object]] = {}
+    # Deduplicate snapshots to a reasonable number of points per window type.
+    # Polls fire every ~30s so raw data is very dense; we bucket to avoid
+    # returning hundreds of identical rows.
+    #   session  → 30-min buckets  (a few-hour window → ~6–12 pts)
+    #   daily    → 1-hour buckets  (24h window → ≤24 pts)
+    #   weekly   → 6-hour buckets  (7d window → ≤28 pts)
+    #   monthly+ → 1-day buckets   (30d window → ≤30 pts)
+    _bucket_seconds = {
+        "session": 1800,
+        "daily": 3600,
+        "weekly": 21600,
+    }.get(window_type, 86400)
+
+    def _bucket_key(ts: "datetime") -> int:
+        epoch = int(ts.timestamp())
+        return epoch - (epoch % _bucket_seconds)
+
+    by_model_snaps: dict[str, dict[int, object]] = {}
     for s in snaps:
         mid = s.model_id or ""
         if mid not in by_model_snaps:
             by_model_snaps[mid] = {}
-        day = s.ts.strftime("%Y-%m-%d")
-        by_model_snaps[mid][day] = s
+        bk = _bucket_key(s.ts)
+        by_model_snaps[mid][bk] = s  # last snapshot in each bucket wins
 
     fill_by_model = []
-    for mid, day_map in sorted(by_model_snaps.items()):
+    for mid, bk_map in sorted(by_model_snaps.items()):
         series = [
             {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
-            for s in sorted(day_map.values(), key=lambda x: x.ts)
+            for s in sorted(bk_map.values(), key=lambda x: x.ts)
         ]
         fill_by_model.append({"model_id": mid, "series": series})
 
