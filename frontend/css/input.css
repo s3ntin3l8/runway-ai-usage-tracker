@@ -2854,7 +2854,7 @@ l-table td.num {
 .hw-pager button:disabled { opacity: .4; cursor: default; }
 .hw-fill-model-label { font-size: 10px; color: var(--ink-3); letter-spacing: .06em; text-transform: uppercase; margin: 8px 0 2px; }
 .hw-model-cell { color: var(--ink-3); font-size: 0.78rem; white-space: nowrap; }
-.hw-ts-cell { white-space: nowrap; font-size: 0.82rem; }
+.hw-ts-cell { white-space: nowrap; font-size: 0.82rem; width: 1%; }
 .hw-delta-cell { white-space: nowrap; text-align: right; }
 .hw-delta { font-size: 0.82rem; color: var(--ink-3); }
 .hw-delta-up { color: #c0392b; }
