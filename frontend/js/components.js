@@ -1654,9 +1654,10 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const cumulative = cumulativeMap?.get?.(`${providerId}|${accountId}`) || null;
 
     const railHtml = _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, sidecarCount);
-    const mainHtml = quotaCards.length > 1
-        ? _fcPoolStack(quotaCards, forecastMap)
-        : _fcCriticalGauge(critical, forecastMap);
+    const isVeloCard = critical.is_unlimited || (!critical.limit_value && critical.pct_used == null);
+    const mainHtml = isVeloCard
+        ? _fcVelocity(critical)
+        : _fcPoolStack(quotaCards, forecastMap);
 
     // Per-model and fuel-dump: prefer server-aggregated window_aggregations.longest
     // which covers the provider's actual quota window (weekly, daily, etc.).
