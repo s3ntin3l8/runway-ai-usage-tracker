@@ -1597,11 +1597,28 @@ def query_window_detail(
     window_type: str,
     window_start: "datetime",
     window_end: "datetime",
+    days: float | None = None,
 ) -> dict:
-    """Return fill_series (quota_snapshots) and by_model (rollup) for one window."""
+    """Return fill_by_model (quota_snapshots per model) and by_model (rollup) for one window.
+
+    fill_by_model is a list of {model_id, series: [{ts, pct_used}]}, one entry per distinct
+    model_id in quota_snapshots.  Providers with a single all-up quota (model_id="") produce
+    one entry with model_id=""; providers with per-model quotas (e.g. Gemini flash/pro) produce
+    one entry per model.  The frontend labels entries with model_id if multiple exist.
+
+    When `days` is provided the snapshot lookup window is additionally clamped to
+    `now - days` so the fill series matches the chart's visible time range.
+    """
+    from datetime import UTC, datetime, timedelta
+
     from sqlmodel import select
 
     from app.models.db import QuotaSnapshot, UsagePeriodRollup
+
+    snap_start = window_start
+    if days is not None:
+        since = datetime.now(UTC) - timedelta(days=days)
+        snap_start = max(snap_start, since)
 
     snaps = session.exec(
         select(QuotaSnapshot)
@@ -1609,21 +1626,40 @@ def query_window_detail(
             QuotaSnapshot.provider_id == provider_id,
             QuotaSnapshot.account_id == account_id,
             QuotaSnapshot.window_type == window_type,
-            QuotaSnapshot.model_id == "",
-            QuotaSnapshot.ts >= window_start,
+            QuotaSnapshot.ts >= snap_start,
             QuotaSnapshot.ts <= window_end,
         )
         .order_by(QuotaSnapshot.ts)
     ).all()
 
-    # Deduplicate: keep last snapshot per calendar day (polls fire every ~30s, all same value)
-    day_map: dict[str, object] = {}
+    # Group by model_id; within each group deduplicate to one snapshot per calendar day.
+    by_model_snaps: dict[str, dict[str, object]] = {}
     for s in snaps:
-        day_map[s.ts.strftime("%Y-%m-%d")] = s
-    fill_series = [
-        {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
-        for s in sorted(day_map.values(), key=lambda x: x.ts)
-    ]
+        mid = s.model_id or ""
+        if mid not in by_model_snaps:
+            by_model_snaps[mid] = {}
+        day = s.ts.strftime("%Y-%m-%d")
+        by_model_snaps[mid][day] = s
+
+    fill_by_model = []
+    for mid, day_map in sorted(by_model_snaps.items()):
+        series = [
+            {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
+            for s in sorted(day_map.values(), key=lambda x: x.ts)
+        ]
+        fill_by_model.append({"model_id": mid, "series": series})
+
+    # Keep fill_series as a backwards-compat alias: all-up (model_id="") if present,
+    # otherwise the first model's series.
+    if "" in by_model_snaps:
+        fill_series = [
+            {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
+            for s in sorted(by_model_snaps[""].values(), key=lambda x: x.ts)
+        ]
+    elif fill_by_model:
+        fill_series = fill_by_model[0]["series"]
+    else:
+        fill_series = []
 
     start_key = window_start.strftime("%Y-%m-%d")
     end_key = window_end.strftime("%Y-%m-%d")
@@ -1656,4 +1692,4 @@ def query_window_detail(
         model_agg[m]["msgs"] += r.msgs
 
     by_model = sorted(model_agg.values(), key=lambda x: x["tokens"], reverse=True)
-    return {"fill_series": fill_series, "by_model": by_model}
+    return {"fill_series": fill_series, "fill_by_model": fill_by_model, "by_model": by_model}

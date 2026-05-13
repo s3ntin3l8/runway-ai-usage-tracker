@@ -129,6 +129,7 @@ async function fetchWindowDetail(provId, acctId, windowType, windowStart, window
         window_type: windowType,
         window_start: windowStart,
         window_end: windowEnd,
+        days: historyState.days,
     });
     const r = await fetch(`/api/v1/usage/history/window-detail?${params}`);
     if (!r.ok) throw new Error(`window-detail ${r.status}`);
@@ -489,20 +490,37 @@ export async function toggleWindowExpand(row, idx) {
 }
 
 function renderWindowDetailHTML(detail) {
-    const hasFill = (detail.fill_series || []).length > 0;
+    const fillByModel = detail.fill_by_model || [];
+    const hasFill = fillByModel.some(m => m.series && m.series.length > 0);
     const hasModels = (detail.by_model || []).length > 0;
     if (!hasFill && !hasModels) return null;  // caller will suppress the expand row
 
-    // Deduplicate fill_series: keep last snapshot per calendar day
-    const dayMap = new Map();
-    for (const p of (detail.fill_series || [])) {
-        const day = p.ts.slice(0, 10); // YYYY-MM-DD
-        dayMap.set(day, p);
+    const multiModel = fillByModel.filter(m => m.series && m.series.length > 0).length > 1;
+
+    function buildFillTable(series) {
+        return series.map(p => {
+            const date = new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            return `<tr><td>${date}</td><td>${p.pct_used != null ? p.pct_used.toFixed(1) + '%' : '—'}</td></tr>`;
+        }).join('');
     }
-    const fillRows = [...dayMap.values()].map(p => {
-        const date = new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        return `<tr><td>${date}</td><td>${p.pct_used != null ? p.pct_used.toFixed(1) + '%' : '—'}</td></tr>`;
-    }).join('');
+
+    let fillSection = '';
+    if (hasFill) {
+        const tables = fillByModel
+            .filter(m => m.series && m.series.length > 0)
+            .map(m => {
+                const label = multiModel && m.model_id ? `<p class="hw-fill-model-label">${escHtml(m.model_id)}</p>` : '';
+                return `${label}<table class="hw-detail-table">
+                  <thead><tr><th>TIME</th><th>% USED</th></tr></thead>
+                  <tbody>${buildFillTable(m.series)}</tbody>
+                </table>`;
+            }).join('');
+        fillSection = `
+      <div>
+        <p class="hw-detail-label">HOW IT FILLED UP</p>
+        ${tables}
+      </div>`;
+    }
 
     const totalTokens = (detail.by_model || []).reduce((s, m) => s + (m.tokens || 0), 0);
     const modelRows = (detail.by_model || []).map(m => {
@@ -518,15 +536,6 @@ function renderWindowDetailHTML(detail) {
           <td>${m.msgs || 0}</td>
         </tr>`;
     }).join('');
-
-    const fillSection = fillRows ? `
-      <div>
-        <p class="hw-detail-label">HOW IT FILLED UP</p>
-        <table class="hw-detail-table">
-          <thead><tr><th>DATE</th><th>% USED</th></tr></thead>
-          <tbody>${fillRows}</tbody>
-        </table>
-      </div>` : '';
 
     const modelSection = modelRows ? `
       <div>

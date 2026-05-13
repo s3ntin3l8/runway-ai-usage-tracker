@@ -474,6 +474,7 @@ async def get_history_window_detail(
     window_type: str,
     window_start: str,
     window_end: str,
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
     session: Session = Depends(get_session),
 ):
     """Fill-up series and by-model breakdown for one expanded window."""
@@ -489,6 +490,7 @@ async def get_history_window_detail(
         window_type=window_type,
         window_start=ws,
         window_end=we,
+        days=days,
     )
 
 
