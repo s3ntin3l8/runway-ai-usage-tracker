@@ -1373,6 +1373,10 @@ def query_windows(
             }
         )
 
+    # Track which (provider, account, window_type) combos have an open window so we
+    # can suppress the corresponding closed window (avoids duplicates for today).
+    open_keys: set[tuple] = set()
+
     lu_stmt = select(LatestUsage).where(LatestUsage.model_id == "")
     if provider_id:
         lu_stmt = lu_stmt.where(LatestUsage.provider_id == provider_id)
@@ -1388,10 +1392,22 @@ def query_windows(
         if window_type and window_type not in {"all", wt}:
             continue
         reset_at = card.get("reset_at")
+
+        # Apply the days filter to open windows: skip if reset_at is older than `since`.
+        # Windows with no reset_at are always current (e.g. session-scoped).
+        if reset_at:
+            try:
+                reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                if reset_dt < since:
+                    continue
+            except Exception:
+                pass
+
         token_usage = card.get("token_usage") or {}
         base_name = card.get("service_name", lu.provider_id.capitalize())
         variant = lu.variant if lu.variant and lu.variant != "default" else None
         service_name = f"{base_name} · {variant}" if variant else base_name
+        open_keys.add((lu.provider_id, lu.account_id, wt))
         rows.append(
             {
                 "provider_id": lu.provider_id,
@@ -1411,6 +1427,14 @@ def query_windows(
                 "top_model": None,
             }
         )
+
+    # Drop closed windows that are superseded by an open window for the same
+    # (provider, account, window_type) — they represent the same current window.
+    rows = [
+        r
+        for r in rows
+        if r["is_open"] or (r["provider_id"], r["account_id"], r["window_type"]) not in open_keys
+    ]
 
     rows.sort(key=lambda r: r.get("window_end") or "9999", reverse=True)
     total = len(rows)

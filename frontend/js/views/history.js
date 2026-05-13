@@ -360,20 +360,18 @@ function renderWindowTable() {
         const period = formatWindowPeriod(w);
         const fillBar = renderFillBar(w.pct_used, w.is_open);
         const mainVal = formatWindowMetric(w, historyState.metric);
-        const liveBadge = w.is_open ? '<span class="hw-live-badge">LIVE</span>' : '';
+        const liveBadge = w.is_open ? ' <span class="hw-live-badge">LIVE</span>' : '';
 
         return `<tr class="hw-row" onclick="toggleWindowExpand(this, ${idx})">
           <td class="hw-expand-btn">▶</td>
-          <td class="hw-window-cell">
-            <span class="hw-window-badge">${escHtml(w.window_type)}</span>
-            ${escHtml(w.service_name || w.provider_id)} ${liveBadge}
-          </td>
+          <td class="hw-type-cell"><span class="hw-window-badge">${escHtml(w.window_type)}</span></td>
+          <td class="hw-provider-cell">${escHtml(w.service_name || w.provider_id)}${liveBadge}</td>
           <td>${escHtml(w.account_label || w.account_id)}</td>
           <td>${period}</td>
           <td class="hw-metric-cell">${fillBar}${escHtml(mainVal)}</td>
         </tr>
         <tr class="hw-detail-row" id="hw-detail-${idx}" style="display:none">
-          <td colspan="5"><div class="hw-detail-inner" id="hw-detail-content-${idx}">Loading…</div></td>
+          <td colspan="6"><div class="hw-detail-inner" id="hw-detail-content-${idx}">Loading…</div></td>
         </tr>`;
     }).join('');
 
@@ -383,7 +381,7 @@ function renderWindowTable() {
     container.innerHTML = `
       <table class="hw-table">
         <thead><tr>
-          <th></th><th>WINDOW</th><th>ACCOUNT</th><th>PERIOD</th><th>${metricHeader}</th>
+          <th></th><th>TYPE</th><th>PROVIDER</th><th>ACCOUNT</th><th>PERIOD</th><th>${metricHeader}</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>

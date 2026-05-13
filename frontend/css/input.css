@@ -2820,3 +2820,28 @@ l-table td.num {
 
 /* cost bars */
 .m-cost-block svg text { font-family: var(--font-family-mono); }
+
+/* ── History window table ───────────────────────────────────────────────── */
+.hw-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.hw-table thead th { padding: 6px 10px; text-align: left; font-size: 10px; letter-spacing: .06em; color: var(--ink-3); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.hw-row { cursor: pointer; border-bottom: 1px solid var(--border); transition: background .1s; }
+.hw-row:hover td { background: var(--bg-hover, rgba(0,0,0,0.03)); }
+.hw-table td { padding: 8px 10px; vertical-align: middle; }
+.hw-expand-btn { width: 24px; font-size: 10px; color: var(--ink-3); user-select: none; }
+.hw-type-cell { white-space: nowrap; width: 80px; }
+.hw-provider-cell { font-weight: 500; }
+.hw-window-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
+.hw-live-badge { font-size: 9px; padding: 1px 6px; background: #27ae60; color: #fff; border-radius: 3px; vertical-align: middle; letter-spacing: .04em; }
+.hw-metric-cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hw-fill-bar { flex-shrink: 0; }
+.hw-detail-row td { padding: 0; }
+.hw-detail-inner { padding: 16px 24px; background: var(--bg-dim, rgba(0,0,0,0.02)); border-bottom: 1px solid var(--border); }
+.hw-detail-panels { display: flex; gap: 32px; flex-wrap: wrap; }
+.hw-detail-section { flex: 1; min-width: 220px; }
+.hw-detail-section h4 { font-size: 10px; letter-spacing: .08em; color: var(--ink-3); margin: 0 0 8px; }
+.hw-sub-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.hw-sub-table th { font-size: 10px; letter-spacing: .05em; color: var(--ink-3); padding: 3px 6px; text-align: left; border-bottom: 1px solid var(--border); }
+.hw-sub-table td { padding: 4px 6px; border-bottom: 1px solid var(--border-faint, rgba(0,0,0,0.06)); font-variant-numeric: tabular-nums; }
+.hw-pager { display: flex; align-items: center; gap: 8px; padding: 10px 0; font-size: 12px; color: var(--ink-3); }
+.hw-pager button { font-size: 11px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 3px; background: none; color: var(--ink); cursor: pointer; }
+.hw-pager button:disabled { opacity: .4; cursor: default; }

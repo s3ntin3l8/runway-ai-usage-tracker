@@ -420,7 +420,7 @@ async def get_usage_forecast(
 
 
 @router.get("/history/windows")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def get_history_windows(
     request: Request,
     provider_id: str | None = None,
