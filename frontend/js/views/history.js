@@ -1,99 +1,21 @@
-import { fetchHistory, fetchHistoryRaw, fetchHistoryDeltas } from '../api.js';
-import { buildProviderSparklineStrip } from '../components.js';
-import { updateCharts, destroyCharts } from '../charts.js';
+import { fetchHistoryDeltas } from '../api.js';
 import { STATE } from '../state.js';
-import { formatLocalDateTime } from '../utils/tz.js';
 
 const historyState = {
     days: 1,
-    activeProviders: null, // Set of provider IDs (null = all)
-    metric: 'percent',
-    windowFilter: 'all',
-    showPeaks: false,
+    activeProviders: null,       // Set of provider_ids, or null = all
+    metric: 'percent',           // 'percent' | 'tokens' | 'cost'
+    windowFilter: 'all',         // 'all' | 'session' | 'daily' | 'weekly' | 'monthly'
     page: 1,
+    splitModelFor: null,         // provider_id being drilled, or null
+    _windowsCache: null,
+    _chartCache: null,
+    _deltasCache: null,
 };
-let _historyCache = [];
-let _historyRawCache = [];
-let _deltasCache = null;
 
-const _expandedRows = new Set(); // Set of row index strings
-
-function toggleExpandRow(rowIndex) {
-    const el = document.getElementById(`ht-detail-${rowIndex}`);
-    const btn = document.getElementById(`ht-expand-${rowIndex}`);
-    if (!el || !btn) return;
-    const isOpen = el.classList.contains('open');
-    if (isOpen) {
-        el.classList.remove('open');
-        btn.classList.remove('expanded');
-        _expandedRows.delete(rowIndex);
-    } else {
-        el.classList.add('open');
-        btn.classList.add('expanded');
-        _expandedRows.add(rowIndex);
-    }
-}
-
-function computePrimaryValue(row, metric) {
-    const windows = row.windows || [];
-    if (windows.length === 0) return null;
-
-    if (metric === 'percent') {
-        const pcts = windows.map(w => {
-            if (w.unit === 'percent') return w.value;
-            if (w.limit && w.limit > 0) return (w.value / w.limit) * 100;
-            return null;
-        }).filter(v => v != null);
-        return pcts.length > 0 ? Math.max(...pcts) : null;
-    }
-
-    if (metric === 'tokens') {
-        const total = windows.reduce((sum, w) => sum + (w.token_usage?.total || 0), 0);
-        return total > 0 ? total : null;
-    }
-
-    if (metric === 'cost') {
-        const total = windows
-            .filter(w => w.unit === 'currency')
-            .reduce((sum, w) => sum + (w.value || 0), 0);
-        return total > 0 ? total : null;
-    }
-
-    return null;
-}
-
-function primaryColumnHeader(metric) {
-    if (metric === 'percent') return 'Used %';
-    if (metric === 'tokens') return 'Tokens';
-    if (metric === 'cost') return 'Cost';
-    return 'Value';
-}
-
-// History cache for stale-while-revalidate pattern
-const CACHE_TTL_MS = 30_000;
-const _historyCacheStore = new Map();
-
-function getCacheKey(params) {
-    return `${params.provider_id || 'all'}:${params.days}:${params.limit || 500}`;
-}
-
-export async function fetchHistoryCached(params) {
-    const key = getCacheKey(params);
-    const now = Date.now();
-    const cached = _historyCacheStore.get(key);
-    
-    if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
-        return cached.data;
-    }
-    
-    const data = await fetchHistory(params);
-    _historyCacheStore.set(key, { data, timestamp: now });
-    return data;
-}
-
-export function clearHistoryCache() {
-    _historyCacheStore.clear();
-}
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -101,9 +23,16 @@ function escapeHTML(str) {
     return str.replace(/[&<>"']/g, m => map[m]);
 }
 
+// Short alias for use in template literals
+const escHtml = escapeHTML;
+
 export function getHistoryState() {
     return historyState;
 }
+
+// ---------------------------------------------------------------------------
+// Control setters
+// ---------------------------------------------------------------------------
 
 export function setHistoryDays(days) {
     historyState.days = days;
@@ -128,7 +57,12 @@ export function setHistoryMetric(metric) {
     document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.metric === metric);
     });
-    renderHistoryFromCache();
+    // Table re-renders from cache; chart needs re-fetch (metric is API param)
+    renderWindowTable();
+    fetchHistoryChart().then(data => {
+        historyState._chartCache = data;
+        renderHistoryChart();
+    }).catch(e => console.warn('chart re-fetch failed', e));
 }
 
 export function setHistoryWindow(windowType) {
@@ -137,15 +71,7 @@ export function setHistoryWindow(windowType) {
     document.querySelectorAll('#history-window-btns .toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.window === windowType);
     });
-    renderHistoryFromCache();
-}
-
-export function setHistoryPeak(enabled) {
-    historyState.showPeaks = enabled;
-    document.querySelectorAll('#history-peak-btns .toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.peak === String(enabled));
-    });
-    renderHistoryFromCache();
+    loadHistoryView();
 }
 
 export function toggleHistoryProvider(pid) {
@@ -159,72 +85,65 @@ export function toggleHistoryProvider(pid) {
         historyState.activeProviders.add(pid);
     }
     updateCsvHref();
-    renderHistoryFromCache();
+    loadHistoryView();
 }
 
 export function setHistoryProvidersAll() {
     historyState.activeProviders = null;
     historyState.page = 1;
     updateCsvHref();
-    renderHistoryFromCache();
+    loadHistoryView();
 }
 
 export function setHistoryProvidersNone() {
-    historyState.activeProviders = new Set(); // empty set = nothing visible
+    historyState.activeProviders = new Set();
     historyState.page = 1;
     updateCsvHref();
-    renderHistoryFromCache();
+    loadHistoryView();
 }
 
-function buildHistorySummary(rawHistory, filteredProviders, metric, days) {
-    if (!rawHistory || rawHistory.length === 0) return '';
-    let rows = rawHistory;
-    if (filteredProviders) rows = rows.filter(r => filteredProviders.has(r.provider_id));
-    if (rows.length === 0) return '';
+// ---------------------------------------------------------------------------
+// Fetch functions
+// ---------------------------------------------------------------------------
 
-    const daysLabel = days >= 30 ? '30D' : days >= 7 ? '7D' : days >= 1 ? '24H' : '6H';
-    const providerCount = new Set(rows.map(r => r.provider_id)).size;
+async function fetchHistoryWindows() {
+    const params = new URLSearchParams({ days: historyState.days, page: historyState.page, limit: 50 });
+    if (historyState.activeProviders?.size === 1)
+        params.set('provider_id', [...historyState.activeProviders][0]);
+    if (historyState.windowFilter !== 'all')
+        params.set('window_type', historyState.windowFilter);
+    const r = await fetch(`/api/v1/usage/history/windows?${params}`);
+    if (!r.ok) throw new Error(`windows ${r.status}`);
+    return r.json();
+}
 
-    if (metric === 'tokens') {
-        const tokenRows = rows.filter(r => r.token_usage?.total != null).map(r => r.token_usage.total);
-        if (tokenRows.length === 0) return '';
-        const total = tokenRows.reduce((s, v) => s + v, 0);
-        const avg = total / tokenRows.length;
-        const peak = Math.max(...tokenRows);
-        return `Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${Math.round(avg).toLocaleString()} tokens · peak ${Math.round(peak).toLocaleString()} tokens · total ${Math.round(total).toLocaleString()}`;
-    }
+async function fetchHistoryChart() {
+    const params = new URLSearchParams({ days: historyState.days, metric: historyState.metric });
+    if (historyState.activeProviders?.size === 1)
+        params.set('provider_id', [...historyState.activeProviders][0]);
+    if (historyState.splitModelFor)
+        params.set('split_model_for', historyState.splitModelFor);
+    const r = await fetch(`/api/v1/usage/history/chart?${params}`);
+    if (!r.ok) throw new Error(`chart ${r.status}`);
+    return r.json();
+}
 
-    if (metric === 'cost') {
-        const costRows = rows.filter(r => r.unit_type === 'currency' && r.used_value != null).map(r => r.used_value);
-        if (costRows.length === 0) return '';
-        const total = costRows.reduce((s, v) => s + v, 0);
-        return `Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · total $${total.toFixed(2)}`;
-    }
-
-    // Compute from percent-compatible rows only
-    const pctRows = rows.filter(r => {
-        if (r.used_value == null) return false;
-        return r.unit_type === 'percent' || (r.limit_value > 0);
-    }).map(r => {
-        return r.unit_type === 'percent' ? r.used_value : (r.used_value / r.limit_value) * 100;
+async function fetchWindowDetail(provId, acctId, windowType, windowStart, windowEnd) {
+    const params = new URLSearchParams({
+        provider_id: provId,
+        account_id: acctId,
+        window_type: windowType,
+        window_start: windowStart,
+        window_end: windowEnd,
     });
-
-    if (pctRows.length === 0) return '';
-
-    const avg = pctRows.reduce((s, v) => s + v, 0) / pctRows.length;
-    const peak = Math.max(...pctRows);
-    const critCount = rawHistory.filter(r => {
-        if (r.used_value == null) return false;
-        if (r.unit_type === 'percent') return r.used_value >= 90;
-        if (r.limit_value > 0) return (r.used_value / r.limit_value) >= 0.9;
-        return false;
-    }).length;
-
-    let parts = [`Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${avg.toFixed(1)}% · peak ${peak.toFixed(1)}%`];
-    if (critCount > 0) parts.push(`${critCount} crit events`);
-
-    return parts.join(' · ');
+    const r = await fetch(`/api/v1/usage/history/window-detail?${params}`);
+    if (!r.ok) throw new Error(`window-detail ${r.status}`);
+    return r.json();
 }
+
+// ---------------------------------------------------------------------------
+// Misc helpers
+// ---------------------------------------------------------------------------
 
 function updateCsvHref() {
     const btn = document.getElementById('csv-download-btn');
@@ -236,107 +155,14 @@ function updateCsvHref() {
     btn.href = `/api/v1/usage/history?${params.toString()}`;
 }
 
-function formatValue(value, unit) {
-    if (value === null || value === undefined) return '—';
-    const unitStr = unit || '';
-    if (unitStr === 'percent') return `${value.toFixed(1)}%`;
-    if (unitStr === 'currency') return `$${value.toFixed(2)}`;
-    if (unitStr === 'tokens') return Math.round(value).toLocaleString();
-    if (unitStr === 'requests') return `${value.toLocaleString()} requests`;
-    return `${value.toLocaleString()}${unitStr}`;
-}
-
-const MODEL_LABEL_OVERRIDES = {
-    sonnet: 'sonnet',
-    opus: 'opus',
-    design: 'design',
-};
-
-function friendlyWindowLabel(entry) {
-    if (entry?.model_id) {
-        if (MODEL_LABEL_OVERRIDES[entry.model_id]) return MODEL_LABEL_OVERRIDES[entry.model_id];
-        return entry.model_id;
-    }
-    const w = entry?.window || entry?.category;
-    if (!w) return '—';
-    return w.replace(/^seven_day_/, '').replace(/_/g, ' ');
-}
-
-function renderWindowsTable(row, metric) {
-    const windows = row.windows || [];
-    if (windows.length === 0) return '';
-
-    const hasCost = windows.some(w => w.unit === 'currency');
-    const hasTokens = windows.some(w => w.token_usage?.total != null);
-    const hasMsgs = windows.some(w => w.msgs != null);
-
-    let html = '<div class="ht-section-title">Windows & Breakdowns</div>';
-    html += '<table class="ht-detail-table"><thead><tr>';
-    html += '<th>Window</th><th>Model</th>';
-    html += '<th class="num">Used %</th>';
-    if (hasTokens) html += '<th class="num">Tokens</th>';
-    if (hasCost) html += '<th class="num">Cost</th>';
-    if (hasMsgs) html += '<th class="num">Msgs</th>';
-    html += '</tr></thead><tbody>';
-
-    windows.forEach(w => {
-        const windowLabel = escapeHTML(w.window);
-        const modelLabel = w.model_id ? escapeHTML(friendlyWindowLabel({ model_id: w.model_id })) : '—';
-
-        let pct = '—';
-        if (w.unit === 'percent') {
-            pct = formatValue(w.value, 'percent');
-        } else if (w.limit && w.limit > 0) {
-            pct = formatValue((w.value / w.limit) * 100, 'percent');
-        }
-
-        const tokens = w.token_usage?.total != null ? formatValue(w.token_usage.total, 'tokens') : '—';
-        const cost = w.unit === 'currency' && w.value != null ? formatValue(w.value, 'currency') : '—';
-        const msgs = w.msgs != null ? w.msgs.toLocaleString() : '—';
-
-        // Primary window row
-        html += `<tr class="ht-window-primary">`;
-        html += `<td>${windowLabel}</td>`;
-        html += `<td>${modelLabel}</td>`;
-        html += `<td class="num">${pct}</td>`;
-        if (hasTokens) html += `<td class="num">${tokens}</td>`;
-        if (hasCost) html += `<td class="num">${cost}</td>`;
-        if (hasMsgs) html += `<td class="num">${msgs}</td>`;
-        html += `</tr>`;
-
-        // If this window has its own model breakdown, render it indented
-        if (w.by_model && Object.keys(w.by_model).length > 0) {
-            const models = Object.values(w.by_model);
-            models.forEach(m => {
-                html += `<tr class="ht-window-model-breakdown">`;
-                html += `<td colspan="2" class="ht-model-name">└ ${escapeHTML(m.model_id)}</td>`;
-                html += `<td></td>`; // Empty pct
-                if (hasTokens) {
-                    html += `<td class="num">${m.tokens_total != null ? formatValue(m.tokens_total, 'tokens') : '—'}</td>`;
-                }
-                if (hasCost) {
-                    html += `<td class="num">${m.cost != null ? formatValue(m.cost, 'currency') : '—'}</td>`;
-                }
-                if (hasMsgs) {
-                    html += `<td class="num">${m.msgs != null ? m.msgs.toLocaleString() : '—'}</td>`;
-                }
-                html += `</tr>`;
-            });
-        }
-    });
-
-    html += '</tbody></table>';
-    return html;
-}
-
-function seriesKey(r) {
-    return `${r.provider_id || ''}|${r.account_id || ''}|${r.window_type || ''}|${r.model_id || ''}|${r.unit_type || ''}`;
-}
+// ---------------------------------------------------------------------------
+// Summary tiles (uses deltas data)
+// ---------------------------------------------------------------------------
 
 function groupBySeries(rows) {
     const groups = new Map();
     rows.forEach(r => {
-        const key = seriesKey(r);
+        const key = `${r.provider_id || ''}|${r.account_id || ''}|${r.window_type || ''}|${r.model_id || ''}|${r.unit_type || ''}`;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(r);
     });
@@ -347,25 +173,13 @@ function groupBySeries(rows) {
 function positiveTokenDeltas(seriesRows) {
     if (seriesRows.length === 0) return 0;
     let total = 0;
-    let firstVal = seriesRows[0].token_usage?.total ?? seriesRows[0].used_value ?? 0;
-    let maxSeen = firstVal;
+    let maxSeen = seriesRows[0].token_usage?.total ?? seriesRows[0].used_value ?? 0;
     const GLITCH_THRESHOLD = 0.5;
-
     for (let i = 1; i < seriesRows.length; i++) {
         const curr = seriesRows[i].token_usage?.total ?? seriesRows[i].used_value ?? 0;
-        
-        // Baseline read: if we were at 0 and jump to a value, treat as baseline
-        if (maxSeen === 0 && curr > 0) {
-            maxSeen = curr;
-            continue;
-        }
-
-        if (curr > maxSeen) {
-            total += curr - maxSeen;
-            maxSeen = curr;
-        } else if (curr < maxSeen * GLITCH_THRESHOLD) {
-            maxSeen = curr;
-        }
+        if (maxSeen === 0 && curr > 0) { maxSeen = curr; continue; }
+        if (curr > maxSeen) { total += curr - maxSeen; maxSeen = curr; }
+        else if (curr < maxSeen * GLITCH_THRESHOLD) { maxSeen = curr; }
     }
     return total;
 }
@@ -373,25 +187,13 @@ function positiveTokenDeltas(seriesRows) {
 function positiveCurrencyDeltas(seriesRows) {
     if (seriesRows.length === 0) return 0;
     let total = 0;
-    let firstVal = seriesRows[0].used_value ?? 0;
-    let maxSeen = firstVal;
+    let maxSeen = seriesRows[0].used_value ?? 0;
     const GLITCH_THRESHOLD = 0.5;
-
     for (let i = 1; i < seriesRows.length; i++) {
         const curr = seriesRows[i].used_value ?? 0;
-
-        // Baseline read: if we were at 0 and jump to a value, treat as baseline
-        if (maxSeen === 0 && curr > 0) {
-            maxSeen = curr;
-            continue;
-        }
-
-        if (curr > maxSeen) {
-            total += curr - maxSeen;
-            maxSeen = curr;
-        } else if (curr < maxSeen * GLITCH_THRESHOLD) {
-            maxSeen = curr;
-        }
+        if (maxSeen === 0 && curr > 0) { maxSeen = curr; continue; }
+        if (curr > maxSeen) { total += curr - maxSeen; maxSeen = curr; }
+        else if (curr < maxSeen * GLITCH_THRESHOLD) { maxSeen = curr; }
     }
     return total;
 }
@@ -405,11 +207,11 @@ function hasCriticalReading(seriesRows) {
     });
 }
 
-function renderHistoryTiles(rawHistory, metric, days, deltas) {
+function renderHistoryTiles(deltas) {
     const container = document.getElementById('history-tiles');
     if (!container) return;
 
-    const minutes = days * 24 * 60;
+    const minutes = historyState.days * 24 * 60;
     const providerNames = {
         claude: 'Claude', chatgpt: 'ChatGPT', gemini: 'Gemini',
         copilot: 'Copilot', opencode: 'Opencode', zai: 'Z.AI',
@@ -418,9 +220,6 @@ function renderHistoryTiles(rawHistory, metric, days, deltas) {
         github: 'Copilot',
     };
 
-    // ------------------------------------------------------------------
-    // Prefer server-computed deltas; fall back to client-side computation
-    // ------------------------------------------------------------------
     let totalTokenDelta = 0;
     let totalCostDelta = 0;
     let providerTokenDeltas = {};
@@ -433,57 +232,6 @@ function renderHistoryTiles(rawHistory, metric, days, deltas) {
         providerTokenDeltas = deltas.provider_token_deltas || {};
         critSeries = deltas.critical_series_count || 0;
         sampled = deltas.series_sampled || false;
-    } else {
-        // Client-side fallback (for when deltas endpoint fails or is absent)
-        let rows = rawHistory || [];
-        if (historyState.activeProviders) {
-            rows = rows.filter(r => historyState.activeProviders.has(r.provider_id));
-        }
-        if (rows.length === 0) {
-            container.innerHTML = '<div class="hud-panel tile" style="grid-column:1/-1;"><div class="t-kicker">No data</div><div class="t-val">—</div></div>';
-            return;
-        }
-        const series = groupBySeries(rows);
-        const seriesDeltas = new Map();
-
-        series.forEach((arr, key) => {
-            const tokenDelta = positiveTokenDeltas(arr);
-            const costDelta = arr[0]?.unit_type === 'currency' ? positiveCurrencyDeltas(arr) : 0;
-            const critical = hasCriticalReading(arr);
-            const r = arr[0];
-
-            seriesDeltas.set(key, {
-                tokenDelta,
-                costDelta,
-                critical,
-                providerId: r.provider_id,
-                accountId: r.account_id,
-                windowType: r.window_type,
-                modelId: r.model_id,
-                unitType: r.unit_type,
-            });
-        });
-
-        // Hierarchy Filter (Prevent double-counting)
-        const hierarchyGroups = new Map();
-        seriesDeltas.forEach((d, key) => {
-            const hKey = `${d.providerId}|${d.accountId}|${d.windowType}|${d.unitType}`;
-            if (!hierarchyGroups.has(hKey)) hierarchyGroups.set(hKey, []);
-            hierarchyGroups.get(hKey).push(key);
-        });
-
-        hierarchyGroups.forEach((keys, hKey) => {
-            const modelKeys = keys.filter(k => seriesDeltas.get(k).modelId != null);
-            const selectedKeys = modelKeys.length > 0 ? modelKeys : keys;
-
-            selectedKeys.forEach(k => {
-                const d = seriesDeltas.get(k);
-                totalTokenDelta += d.tokenDelta;
-                totalCostDelta += d.costDelta;
-                providerTokenDeltas[d.providerId] = (providerTokenDeltas[d.providerId] || 0) + d.tokenDelta;
-                if (d.critical) critSeries++;
-            });
-        });
     }
 
     if (totalTokenDelta === 0 && totalCostDelta === 0 && critSeries === 0 && Object.keys(providerTokenDeltas).length === 0) {
@@ -499,55 +247,25 @@ function renderHistoryTiles(rawHistory, metric, days, deltas) {
         burnLabel = `${(burnRate / 1000).toFixed(1)}<span>k tok/min</span>`;
     }
 
-    // Sparkline: always computed client-side from rawHistory for visual shape
-    let sparklineSvg = '';
-    if (rawHistory && rawHistory.length > 1) {
-        const bucketCount = 12;
-        const sorted = [...rawHistory].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        const timeSpan = new Date(sorted[sorted.length - 1].timestamp) - new Date(sorted[0].timestamp);
-        const bucketMs = timeSpan / bucketCount || 1;
-        const buckets = new Array(bucketCount).fill(0);
-        sorted.forEach(r => {
-            const t = new Date(r.timestamp) - new Date(sorted[0].timestamp);
-            const idx = Math.min(bucketCount - 1, Math.floor(t / bucketMs));
-            buckets[idx] += (r.token_usage?.total || 0);
-        });
-        const maxBucket = Math.max(...buckets, 1);
-        const w = 120, h = 28;
-        const step = w / (bucketCount - 1);
-        const points = buckets.map((v, i) => {
-            const x = i * step;
-            const y = h - (v / maxBucket) * h;
-            return `${x.toFixed(1)},${y.toFixed(1)}`;
-        }).join(' ');
-        sparklineSvg = `<svg viewBox="0 0 ${w} ${h}" class="t-spark" preserveAspectRatio="none"><polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="1.6"/></svg>`;
-    }
-
-    // Hottest provider
     const providerEntries = Object.entries(providerTokenDeltas).sort((a, b) => b[1] - a[1]);
     const [hotProvider, hotTokens] = providerEntries[0] || ['—', 0];
     const hotShare = totalTokenDelta > 0 ? Math.round((hotTokens / totalTokenDelta) * 100) : 0;
     const hotName = providerNames[hotProvider] || hotProvider;
 
     let html = '';
-
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Burn rate · avg</div>
         <div class="t-val">${burnLabel}</div>
-        ${sparklineSvg}
     </div>`;
-
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Est. cost · period</div>
         <div class="t-val">$${totalCostDelta.toFixed(2)}<span>spent</span></div>
     </div>`;
-
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Hottest provider</div>
-        <div class="t-val" style="font-size:22px">${escapeHTML(hotName)}</div>
+        <div class="t-val" style="font-size:22px">${escHtml(hotName)}</div>
         <div class="t-sub"><b>${Math.round(hotTokens).toLocaleString()} tok</b> · ${hotShare}% share</div>
     </div>`;
-
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Critical events</div>
         <div class="t-val">${critSeries}<span>series</span>${sampled ? ' <span style="font-size:11px;color:var(--text-dim)">*</span>' : ''}</div>
@@ -557,183 +275,341 @@ function renderHistoryTiles(rawHistory, metric, days, deltas) {
     container.innerHTML = html;
 }
 
-export function renderHistoryFromCache(skipChartUpdate = false) {
-    const history = _historyCache;
-    const rawHistory = _historyRawCache || [];
-    const stripEl = document.getElementById('history-sparkline-strip');
+// ---------------------------------------------------------------------------
+// Chart rendering
+// ---------------------------------------------------------------------------
 
-    // Update aggregate summary
-    const summaryEl = document.getElementById('history-summary');
-    if (summaryEl) {
-        summaryEl.innerHTML = buildHistorySummary(rawHistory, historyState.activeProviders, historyState.metric, historyState.days);
+const CHART_COLORS = {
+    anthropic: '#d4a017', gemini: '#4a9eff', chatgpt: '#10a37f',
+    opencode: '#7c5cbf', openai: '#10a37f', claude: '#d4a017',
+};
+function chartColor(key) { return CHART_COLORS[key] || '#888'; }
+
+function renderHistoryChart() {
+    const wrap = document.getElementById('chart-wrap');
+    if (!wrap) return;
+    const cache = historyState._chartCache;
+    if (!cache) { wrap.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
+
+    if (historyState.metric === 'percent') {
+        renderFillCurveChart(wrap, cache.series || []);
+    } else {
+        renderDailyBarChart(wrap, cache.bars || []);
     }
+}
 
-    // Update summary tiles
-    renderHistoryTiles(rawHistory, historyState.metric, historyState.days, _deltasCache);
-
-    // Render cross-view filter pill
-    renderHistoryFilterPill();
-
-    // Build sparklines from RAW data for chart (each provider+service+window as separate line)
-    const sparklineData = [];
-    rawHistory.forEach(row => {
-        const metric = historyState.metric;
-        let value = row.used_value;
-        let unit_type = row.unit_type;
-
-        if (metric === 'percent') {
-            if (row.unit_type === 'percent') {
-                value = row.used_value;
-            } else if (row.limit_value && row.limit_value > 0) {
-                value = (row.used_value / row.limit_value) * 100;
-                unit_type = 'percent';
-            } else {
-                return;
-            }
-        } else if (metric === 'tokens') {
-            // Use token_usage.total from backend (new format)
-            if (row.token_usage?.total != null) {
-                value = row.token_usage.total;
-                unit_type = 'tokens';
-            } else if (row.unit_type === 'tokens') {
-                value = row.used_value;
-            } else {
-                return;
-            }
-        } else if (metric === 'cost') {
-            if (row.unit_type !== 'currency') return;
-        }
-
-        if (value == null) return;
-        sparklineData.push({
-            provider_id: row.provider_id,
-            service_name: row.service_name,
-            timestamp: row.timestamp,
-            used_value: value,
-            limit_value: row.limit_value,
-            unit_type: unit_type,
-            window_type: row.window_type,
-            token_usage: row.token_usage,
-        });
-    });
-    if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
-
-    // Update charts with the same adapted data, filtered by active providers
-    if (!skipChartUpdate) {
-        const chartData = historyState.activeProviders
-            ? sparklineData.filter(s => historyState.activeProviders.has(s.provider_id))
-            : sparklineData;
-        updateCharts(chartData, historyState.metric, historyState.days, historyState.windowFilter, historyState.showPeaks);
-    }
-
-    const container = document.getElementById('history-content');
-    if (!history || history.length === 0) {
-        container.innerHTML = '<p class="ht-empty">No history data found.</p>';
+function renderFillCurveChart(panel, series) {
+    if (!series.length) {
+        panel.innerHTML = '<p class="ht-empty">No quota data for selected range.</p>';
         return;
     }
 
-    // Filter by provider if active
-    let filtered = history;
-    if (historyState.activeProviders) {
-        filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
+    const allTs = [...new Set(series.flatMap(s => s.points.map(p => p.ts)))].sort();
+    if (!allTs.length) { panel.innerHTML = '<p class="ht-empty">No data.</p>'; return; }
+
+    const W = panel.offsetWidth || 800, H = 200;
+    const PAD = { top: 10, right: 20, bottom: 30, left: 40 };
+    const chartW = W - PAD.left - PAD.right;
+    const chartH = H - PAD.top - PAD.bottom;
+
+    const tMin = new Date(allTs[0]).getTime();
+    const tMax = new Date(allTs[allTs.length - 1]).getTime();
+    const xScale = t => tMax === tMin ? PAD.left : PAD.left + ((new Date(t).getTime() - tMin) / (tMax - tMin)) * chartW;
+    const yScale = pct => PAD.top + chartH - (pct / 100) * chartH;
+
+    let svgPaths = '';
+    let legendItems = '';
+
+    for (const s of series) {
+        if (!s.points.length) continue;
+        const col = chartColor(s.provider_id);
+        const pts = s.points.map(p => `${xScale(p.ts).toFixed(1)},${yScale(p.pct_used).toFixed(1)}`).join(' ');
+        const strokeW = s.model_id ? '1.5' : '2';
+        const dash = s.model_id ? 'stroke-dasharray="4,2"' : '';
+        svgPaths += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="${strokeW}" ${dash} opacity="0.85"/>`;
+
+        const isExpanded = historyState.splitModelFor === s.provider_id;
+        legendItems += `<span class="hw-legend-chip ${isExpanded ? 'hw-legend-expanded' : ''}"
+          style="--chip-color:${col}"
+          onclick="toggleChartModelSplit('${escHtml(s.provider_id)}')"
+        >${escHtml(s.label)}</span>`;
     }
 
-    // Filter: keep rows that have at least one window with data for the active metric
-    const metric = historyState.metric;
-    let tableData = filtered.filter(s => {
-        const windows = s.windows || [];
-        if (windows.length === 0) return false;
-        if (metric === 'percent') {
-            return windows.some(w => w.unit === 'percent' || (w.limit && w.limit > 0));
+    let yLabels = '';
+    for (const pct of [0, 25, 50, 75, 100]) {
+        const y = yScale(pct).toFixed(1);
+        yLabels += `<text x="${PAD.left - 5}" y="${y}" text-anchor="end" font-size="10" fill="#888">${pct}%</text>
+        <line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(128,128,128,0.2)" stroke-width="1"/>`;
+    }
+
+    panel.innerHTML = `
+      <div class="hw-legend">${legendItems}</div>
+      <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}">
+        ${yLabels}${svgPaths}
+      </svg>`;
+}
+
+function renderDailyBarChart(panel, bars) {
+    if (!bars.length) {
+        panel.innerHTML = '<p class="ht-empty">No data for selected range.</p>';
+        return;
+    }
+
+    const W = panel.offsetWidth || 800, H = 200;
+    const PAD = { top: 10, right: 20, bottom: 30, left: 60 };
+    const chartW = W - PAD.left - PAD.right;
+    const chartH = H - PAD.top - PAD.bottom;
+    const barW = Math.max(4, Math.min(40, chartW / bars.length - 2));
+
+    const maxVal = Math.max(...bars.map(b => b.segments.reduce((s, seg) => s + (seg.value || 0), 0)));
+    if (!maxVal) { panel.innerHTML = '<p class="ht-empty">No data.</p>'; return; }
+
+    const yScale = v => PAD.top + chartH - (v / maxVal) * chartH;
+    const isCost = historyState.metric === 'cost';
+    const fmt = v => isCost
+        ? `$${v.toFixed(2)}`
+        : v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}k` : String(Math.round(v));
+
+    const xStep = chartW / bars.length;
+    let rects = '', xLabels = '';
+
+    bars.forEach((bar, i) => {
+        const x = PAD.left + i * xStep + xStep / 2 - barW / 2;
+        let stackY = PAD.top + chartH;
+        for (const seg of bar.segments) {
+            const h = ((seg.value || 0) / maxVal) * chartH;
+            stackY -= h;
+            rects += `<rect x="${x.toFixed(1)}" y="${stackY.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}"
+              fill="${chartColor(seg.provider_id)}" opacity="0.85">
+              <title>${escHtml(seg.label)}: ${fmt(seg.value)}</title></rect>`;
         }
-        if (metric === 'tokens') {
-            return windows.some(w => w.token_usage?.total != null || w.unit === 'tokens');
+        if (i % Math.max(1, Math.floor(bars.length / 8)) === 0) {
+            xLabels += `<text x="${(x + barW / 2).toFixed(1)}" y="${PAD.top + chartH + 14}" text-anchor="middle" font-size="9" fill="#888">${bar.date.slice(5)}</text>`;
         }
-        if (metric === 'cost') {
-            return windows.some(w => w.unit === 'currency');
-        }
-        return true;
     });
 
-    // Apply window filter (session/weekly/monthly)
-    if (historyState.windowFilter !== 'all') {
-        tableData = tableData.filter(s => {
-            const windows = s.windows || [];
-            return windows.some(w => w.category === historyState.windowFilter);
-        });
+    let yLabels = '';
+    for (const frac of [0, 0.5, 1]) {
+        const v = maxVal * frac;
+        const y = yScale(v).toFixed(1);
+        yLabels += `<text x="${PAD.left - 5}" y="${y}" text-anchor="end" font-size="10" fill="#888">${fmt(v)}</text>
+        <line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(128,128,128,0.2)" stroke-width="1"/>`;
     }
 
-    const totalItems = tableData.length;
-    const pageSize = 20;
-    const totalPages = Math.ceil(totalItems / pageSize);
-    const start = (historyState.page - 1) * pageSize;
-    const pageData = tableData.slice(start, start + pageSize);
+    const providers = [...new Set(bars.flatMap(b => b.segments.map(s => s.provider_id)))];
+    const legendItems = providers.map(p => {
+        const isExpanded = historyState.splitModelFor === p;
+        return `<span class="hw-legend-chip ${isExpanded ? 'hw-legend-expanded' : ''}"
+          style="--chip-color:${chartColor(p)}"
+          onclick="toggleChartModelSplit('${escHtml(p)}')"
+        >${escHtml(p.charAt(0).toUpperCase() + p.slice(1))}</span>`;
+    }).join('');
 
-    const daysLabel = historyState.days >= 30 ? '30d' : historyState.days >= 7 ? '7d' : historyState.days >= 1 ? '24h' : '6h';
+    panel.innerHTML = `
+      <div class="hw-legend">${legendItems}</div>
+      <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}">
+        ${yLabels}${rects}${xLabels}
+      </svg>`;
+}
+
+export function toggleChartModelSplit(providerId) {
+    historyState.splitModelFor = (historyState.splitModelFor === providerId) ? null : providerId;
+    fetchHistoryChart().then(data => {
+        historyState._chartCache = data;
+        renderHistoryChart();
+    }).catch(e => console.warn('chart drill-down failed', e));
+}
+
+// ---------------------------------------------------------------------------
+// Window table
+// ---------------------------------------------------------------------------
+
+function renderWindowTable() {
+    const container = document.getElementById('history-content');
+    if (!container) return;
+    const cache = historyState._windowsCache;
+    if (!cache) { container.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
+
+    const windows = cache.windows || [];
+    if (!windows.length) {
+        container.innerHTML = '<p class="ht-empty">No windows for selected range.</p>';
+        return;
+    }
+
+    const metricHeader = historyState.metric === 'percent' ? '% USED'
+        : historyState.metric === 'cost' ? 'COST' : 'TOKENS';
+
+    const rows = windows.map((w, idx) => {
+        const period = formatWindowPeriod(w);
+        const fillBar = renderFillBar(w.pct_used, w.is_open);
+        const mainVal = formatWindowMetric(w, historyState.metric);
+        const liveBadge = w.is_open ? '<span class="hw-live-badge">LIVE</span>' : '';
+
+        return `<tr class="hw-row" onclick="toggleWindowExpand(this, ${idx})">
+          <td class="hw-expand-btn">▶</td>
+          <td class="hw-window-cell">
+            <span class="hw-window-badge">${escHtml(w.window_type)}</span>
+            ${escHtml(w.service_name || w.provider_id)} ${liveBadge}
+          </td>
+          <td>${escHtml(w.account_label || w.account_id)}</td>
+          <td>${period}</td>
+          <td class="hw-metric-cell">${fillBar}${escHtml(mainVal)}</td>
+        </tr>
+        <tr class="hw-detail-row" id="hw-detail-${idx}" style="display:none">
+          <td colspan="5"><div class="hw-detail-inner" id="hw-detail-content-${idx}">Loading…</div></td>
+        </tr>`;
+    }).join('');
+
     const metaEl = document.getElementById('history-table-meta');
-    if (metaEl) metaEl.textContent = `${totalItems.toLocaleString()} rows · last ${daysLabel}`;
+    if (metaEl) metaEl.textContent = `${cache.total} windows · page ${cache.page}`;
 
-    const metricLabel = primaryColumnHeader(metric);
+    container.innerHTML = `
+      <table class="hw-table">
+        <thead><tr>
+          <th></th><th>WINDOW</th><th>ACCOUNT</th><th>PERIOD</th><th>${metricHeader}</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${renderHWPager(cache.total, cache.page)}`;
+}
 
-    let html = `<table>
-        <thead>
-            <tr>
-                <th></th>
-                <th>Time</th>
-                <th>Provider</th>
-                <th>Account</th>
-                <th class="num">${escapeHTML(metricLabel)}</th>
-            </tr>
-        </thead>
-        <tbody>`;
+function renderFillBar(pctUsed, isOpen) {
+    if (pctUsed == null) return '';
+    const pct = Math.min(100, Math.max(0, pctUsed));
+    const color = pct >= 80 ? '#c0392b' : pct >= 50 ? '#d4a017' : '#27ae60';
+    const dashStyle = isOpen ? 'stroke-dasharray="3,1"' : '';
+    return `<svg class="hw-fill-bar" width="60" height="10" viewBox="0 0 60 10">
+      <rect x="0" y="2" width="60" height="6" rx="2" fill="rgba(128,128,128,0.15)"/>
+      <rect x="0" y="2" width="${(pct * 0.6).toFixed(1)}" height="6" rx="2" fill="${color}" ${dashStyle}/>
+    </svg> `;
+}
 
-    pageData.forEach((s, idx) => {
-        const rowIndex = `${historyState.page}-${idx}`;
-        const date = formatLocalDateTime(s.timestamp, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const primary = computePrimaryValue(s, metric);
-        const primaryVal = primary != null ? formatValue(primary, metric === 'percent' ? 'percent' : metric === 'tokens' ? 'tokens' : 'currency') : '—';
-        const isExpanded = _expandedRows.has(rowIndex);
+function formatWindowPeriod(w) {
+    if (!w.window_start && !w.window_end) return '—';
+    const fmt = iso => iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '?';
+    if (w.is_open) return `${w.window_start ? fmt(w.window_start) : '…'} – now`;
+    return `${fmt(w.window_start)} – ${fmt(w.window_end)}`;
+}
 
-        // Collapsed row
-        html += `<tr>
-            <td style="width:24px;padding-right:0;">
-                <button id="ht-expand-${rowIndex}" class="ht-expand ${isExpanded ? 'expanded' : ''}" onclick="toggleExpandRow('${rowIndex}')">▶</button>
-            </td>
-            <td class="ht-time">${date}</td>
-            <td>${escapeHTML(s.provider_id || '—')}</td>
-            <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
-            <td class="num ht-bold">${primaryVal}</td>
-        </tr>`;
+function formatWindowMetric(w, metric) {
+    if (metric === 'percent') {
+        if (w.pct_used == null) return '—';
+        return `${w.pct_used.toFixed(1)}%`;
+    }
+    if (metric === 'cost') {
+        if (w.cost_usd == null) return '—';
+        return `$${w.cost_usd.toFixed(2)}`;
+    }
+    const t = w.tokens_total;
+    if (t == null) return '—';
+    return t >= 1e6 ? `${(t / 1e6).toFixed(1)}M` : t >= 1e3 ? `${(t / 1e3).toFixed(0)}k` : String(t);
+}
 
-        // Expanded detail row
-        html += `<tr id="ht-detail-${rowIndex}" class="ht-detail-row ${isExpanded ? 'open' : ''}">
-            <td colspan="5">
-                <div class="ht-detail-inner">
-                    ${renderWindowsTable(s, metric)}
-                </div>
-            </td>
-        </tr>`;
-    });
-    html += '</tbody></table>';
+function renderHWPager(total, page) {
+    const perPage = 50;
+    if (total <= perPage) return '';
+    const pages = Math.ceil(total / perPage);
+    return `<div class="ht-pager">
+      <div class="ht-pager-nav">
+        <button class="toggle-btn" ${page <= 1 ? 'disabled' : ''} onclick="hwGoPage(${page - 1})">← Prev</button>
+        <div class="ht-pager-num">${page}<span>/</span>${pages}</div>
+        <button class="toggle-btn" ${page >= pages ? 'disabled' : ''} onclick="hwGoPage(${page + 1})">Next →</button>
+      </div>
+    </div>`;
+}
 
-    if (totalPages > 1) {
-        html += `<div class="ht-pager">
-            <div class="ht-pager-info">Showing ${start + 1}–${Math.min(start + pageSize, totalItems)} of ${totalItems}</div>
-            <div class="ht-pager-nav">
-                <button class="toggle-btn" ${historyState.page <= 1 ? 'disabled' : ''} onclick="setHistoryPage(${historyState.page - 1})">Previous</button>
-                <div class="ht-pager-num">${historyState.page}<span>/</span>${totalPages}</div>
-                <button class="toggle-btn" ${historyState.page >= totalPages ? 'disabled' : ''} onclick="setHistoryPage(${historyState.page + 1})">Next</button>
-            </div>
-        </div>`;
+export function hwGoPage(p) {
+    historyState.page = p;
+    fetchHistoryWindows().then(data => {
+        historyState._windowsCache = data;
+        renderWindowTable();
+    }).catch(e => console.warn('page fetch failed', e));
+}
+
+// ---------------------------------------------------------------------------
+// Expand detail
+// ---------------------------------------------------------------------------
+
+export async function toggleWindowExpand(row, idx) {
+    const detailRow = document.getElementById(`hw-detail-${idx}`);
+    const expandBtn = row.querySelector('.hw-expand-btn');
+    if (!detailRow) return;
+
+    const isOpen = detailRow.style.display !== 'none';
+    if (isOpen) {
+        detailRow.style.display = 'none';
+        if (expandBtn) expandBtn.textContent = '▶';
+        return;
     }
 
-    container.innerHTML = html;
+    detailRow.style.display = '';
+    if (expandBtn) expandBtn.textContent = '▼';
+
+    const w = (historyState._windowsCache?.windows || [])[idx];
+    if (!w) return;
+
+    const contentEl = document.getElementById(`hw-detail-content-${idx}`);
+    if (!contentEl) return;
+    contentEl.textContent = 'Loading…';
+
+    try {
+        const windowEnd = w.window_end || new Date().toISOString();
+        const windowStart = w.window_start
+            || new Date(new Date(windowEnd).getTime() - 7 * 86400000).toISOString();
+        const detail = await fetchWindowDetail(
+            w.provider_id, w.account_id, w.window_type, windowStart, windowEnd
+        );
+        contentEl.innerHTML = renderWindowDetailHTML(detail, w);
+    } catch (e) {
+        contentEl.textContent = `Failed to load detail: ${e.message}`;
+    }
 }
 
-export function setHistoryPage(page) {
-    historyState.page = page;
-    renderHistoryFromCache(true);
+function renderWindowDetailHTML(detail) {
+    const fillRows = (detail.fill_series || []).map(p => {
+        const date = new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        return `<tr><td>${date}</td><td>${p.pct_used != null ? p.pct_used.toFixed(1) + '%' : '—'}</td></tr>`;
+    }).join('');
+
+    const totalTokens = (detail.by_model || []).reduce((s, m) => s + (m.tokens || 0), 0);
+    const modelRows = (detail.by_model || []).map(m => {
+        const share = totalTokens ? ((m.tokens / totalTokens) * 100).toFixed(0) + '%' : '—';
+        const tok = m.tokens >= 1e6
+            ? `${(m.tokens / 1e6).toFixed(1)}M`
+            : m.tokens >= 1e3 ? `${(m.tokens / 1e3).toFixed(0)}k` : String(m.tokens || 0);
+        return `<tr>
+          <td>${escHtml(m.model_id || '—')}</td>
+          <td>${share}</td>
+          <td>${tok}</td>
+          <td>$${(m.cost_usd || 0).toFixed(2)}</td>
+          <td>${m.msgs || 0}</td>
+        </tr>`;
+    }).join('');
+
+    const fillSection = fillRows ? `
+      <div>
+        <p class="hw-detail-label">HOW IT FILLED UP</p>
+        <table class="hw-detail-table">
+          <thead><tr><th>DATE</th><th>% USED</th></tr></thead>
+          <tbody>${fillRows}</tbody>
+        </table>
+      </div>` : '';
+
+    const modelSection = modelRows ? `
+      <div>
+        <p class="hw-detail-label">BY MODEL</p>
+        <table class="hw-detail-table">
+          <thead><tr><th>MODEL</th><th>SHARE</th><th>TOKENS</th><th>COST</th><th>MSGS</th></tr></thead>
+          <tbody>${modelRows}</tbody>
+        </table>
+      </div>` : '<p class="hw-detail-label" style="margin:8px 0;">No model breakdown available.</p>';
+
+    return `<div class="hw-detail-panels">${fillSection}${modelSection}</div>`;
 }
+
+// ---------------------------------------------------------------------------
+// Filter pill
+// ---------------------------------------------------------------------------
 
 function renderHistoryFilterPill() {
     const pillEl = document.getElementById('history-filter-pill');
@@ -746,49 +622,56 @@ function renderHistoryFilterPill() {
     }
     pillEl.classList.remove('hidden');
     pillEl.innerHTML = `<span class="pill" style="cursor:default;border-style:dashed;">filter</span>
-        <span class="pill pill-active" style="margin-left:4px;">${escapeHTML(f.value)}</span>
-        <button class="pill" onclick="clearHistoryFilter()" style="margin-left:4px;">✕ clear</button>`;
+      <span class="pill pill-active" style="margin-left:4px;">${escHtml(f.value)}</span>
+      <button class="pill" onclick="clearHistoryFilter()" style="margin-left:4px;">✕ clear</button>`;
 }
 
 export function clearHistoryFilter() {
     STATE.activeFilter = null;
     localStorage.removeItem('runway_active_filter');
-    renderHistoryFromCache();
+    loadHistoryView();
+}
+
+// ---------------------------------------------------------------------------
+// Main orchestrator
+// ---------------------------------------------------------------------------
+
+export function renderHistoryFromCache() {
+    renderHistoryTiles(historyState._deltasCache);
+    renderHistoryFilterPill();
+    renderHistoryChart();
+    renderWindowTable();
 }
 
 export async function loadHistoryView() {
     updateCsvHref();
     const container = document.getElementById('history-content');
-    if (container) container.innerHTML = '<p class="ht-empty">Loading history…</p>';
+    if (container) container.innerHTML = '<p class="ht-empty">Loading…</p>';
+    const wrap = document.getElementById('chart-wrap');
+    if (wrap) wrap.innerHTML = '<p class="ht-empty">Loading…</p>';
 
-    // Apply cross-view filter: if a provider_id filter is active from the dashboard, pre-select it
+    // Apply cross-view filter
     const f = STATE.activeFilter;
     if (f && f.dimension === 'provider_id' && f.value) {
         historyState.activeProviders = new Set([f.value]);
     }
 
     try {
-        // Fetch grouped data for table, raw data for chart, and deltas for tiles
-        const [response, rawResponse, deltasResponse] = await Promise.all([
-            fetchHistoryCached({ days: historyState.days, limit: 1000 }),
-            fetchHistoryRaw({ days: historyState.days, limit: 1000 }).catch(rawErr => {
-                console.warn('Failed to fetch raw history for chart:', rawErr);
-                return [];
-            }),
-            fetchHistoryDeltas({ days: historyState.days }).catch(deltasErr => {
-                console.warn('Failed to fetch history deltas:', deltasErr);
+        const [windows, chart, deltas] = await Promise.all([
+            fetchHistoryWindows(),
+            fetchHistoryChart(),
+            fetchHistoryDeltas({ days: historyState.days }).catch(e => {
+                console.warn('deltas fetch failed', e);
                 return null;
             }),
         ]);
-
-        _historyCache = response?.averages || [];
-        _historyRawCache = rawResponse || [];
-        _deltasCache = deltasResponse;
-
+        historyState._windowsCache = windows;
+        historyState._chartCache = chart;
+        historyState._deltasCache = deltas;
         renderHistoryFromCache();
-    } catch (err) {
-        destroyCharts();
-        if (container) container.innerHTML = `<p class="ht-empty" style="color:var(--crit);">Failed to load history: ${escapeHTML(err.message)}</p>`;
+    } catch (e) {
+        console.error('history load failed', e);
+        if (container) container.innerHTML = `<p class="ht-empty" style="color:var(--crit);">Failed to load: ${escHtml(e.message)}</p>`;
     }
 }
 
@@ -797,11 +680,11 @@ export function initHistoryView() {
     window.setHistoryRange = setHistoryRange;
     window.setHistoryMetric = setHistoryMetric;
     window.setHistoryWindow = setHistoryWindow;
-    window.setHistoryPeak = setHistoryPeak;
     window.toggleHistoryProvider = toggleHistoryProvider;
     window.setHistoryProvidersAll = setHistoryProvidersAll;
     window.setHistoryProvidersNone = setHistoryProvidersNone;
-    window.setHistoryPage = setHistoryPage;
     window.clearHistoryFilter = clearHistoryFilter;
-    window.toggleExpandRow = toggleExpandRow;
+    window.toggleWindowExpand = toggleWindowExpand;
+    window.toggleChartModelSplit = toggleChartModelSplit;
+    window.hwGoPage = hwGoPage;
 }
