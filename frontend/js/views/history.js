@@ -2,6 +2,7 @@ import { fetchHistoryDeltas } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
+import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
 
 const historyState = {
     days: 1,
@@ -402,7 +403,7 @@ function renderFillBar(pctUsed, isOpen) {
 
 function formatWindowPeriod(w) {
     if (!w.window_start && !w.window_end) return '—';
-    const fmt = iso => iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '?';
+    const fmt = iso => iso ? formatLocalDate(iso) : '?';
     if (w.is_open) return `${w.window_start ? fmt(w.window_start) : '…'} – now`;
     return `${fmt(w.window_start)} – ${fmt(w.window_end)}`;
 }
@@ -499,7 +500,7 @@ function renderWindowDetailHTML(detail) {
 
     function buildFillTable(series) {
         return series.map(p => {
-            const date = new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const date = formatLocalDateTime(p.ts, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
             return `<tr><td>${date}</td><td>${p.pct_used != null ? p.pct_used.toFixed(1) + '%' : '—'}</td></tr>`;
         }).join('');
     }
