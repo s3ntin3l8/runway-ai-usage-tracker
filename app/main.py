@@ -5,18 +5,20 @@ import sys
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlmodel import Session, select
 from starlette.responses import Response
 
 from app.api.routes import router as api_router
 from app.core.config import settings
-from app.core.db import init_db
+from app.core.db import get_session, init_db
 from app.core.rate_limit import limiter
+from app.models.db import SystemConfig
 from app.services.collector_manager import manager
 from app.services.poller import poller
 
@@ -132,13 +134,25 @@ async def favicon():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard():
+async def dashboard(db: Session = Depends(get_session)):
     """Serve the main dashboard page, always reading from disk."""
     index_file = os.path.join(frontend_path, "index.html")
     if not os.path.exists(index_file):
         return HTMLResponse("<h1>Frontend index.html not found!</h1>", status_code=404)
     with open(index_file) as f:
         content = f.read()
+
+    # Inject timezone config synchronously so getUserTz() works before any
+    # async fetch completes — avoids charts rendering in UTC on first load.
+    cfg = db.exec(select(SystemConfig)).first()
+    user_tz = (cfg.user_timezone if cfg else None) or ""
+    env_tz = settings.env_timezone or ""
+    tz_script = (
+        f"<script>window.runwayConfig="
+        f'{{"user_timezone":{user_tz!r},"env_timezone":{env_tz!r}}};</script>'
+    )
+    content = content.replace("</head>", f"{tz_script}</head>", 1)
+
     return HTMLResponse(
         content=content,
         headers={
