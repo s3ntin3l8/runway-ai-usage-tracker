@@ -131,11 +131,12 @@ function _buildSessionsHtml(sessions) {
         const cost = s.cost_usd ? _fmtCost(s.cost_usd) : '';
         const val  = [tok, cost].filter(Boolean).join(' · ') || '—';
 
-        const tok_in  = s.tokens_input  ? _fmtTokens(s.tokens_input)  + ' in'    : '';
-        const tok_out = s.tokens_output ? _fmtTokens(s.tokens_output) + ' out'   : '';
-        const tok_cch = s.tokens_cache  ? _fmtTokens(s.tokens_cache)  + ' cache' : '';
-        const hit_pct = s.cache_hit_pct > 0 ? `hit ${s.cache_hit_pct}%` : '';
-        const detail  = [tok_in, tok_out, tok_cch, hit_pct].filter(Boolean).join(' · ');
+        const tok_in    = s.tokens_input        ? _fmtTokens(s.tokens_input)        + ' in'    : '';
+        const tok_out   = s.tokens_output       ? _fmtTokens(s.tokens_output)       + ' out'   : '';
+        const tok_read  = s.tokens_cache_read   ? _fmtTokens(s.tokens_cache_read)   + ' read'  : '';
+        const tok_write = s.tokens_cache_create ? _fmtTokens(s.tokens_cache_create) + ' write' : '';
+        const cch_pct   = s.cache_pct > 0 ? `cache ${s.cache_pct}%` : '';
+        const detail    = [tok_in, tok_out, tok_read, tok_write, cch_pct].filter(Boolean).join(' · ');
 
         const cls = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
         return `<div class="m-event ${cls}">
