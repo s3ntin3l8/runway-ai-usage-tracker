@@ -378,9 +378,9 @@ def query_sessions(
         cache_read = int(row.tokens_cache_read or 0)
         cache_create = int(row.tokens_cache_create or 0)
         tokens_reasoning = int(row.tokens_reasoning or 0)
+        tokens_total = int(row.tokens_total or 0)
         tokens_cache = cache_read + cache_create
-        prompt_total = tokens_input + cache_read
-        cache_hit_pct = round(cache_read / prompt_total * 100) if prompt_total > 0 else 0
+        cache_pct = round(tokens_cache / tokens_total * 100) if tokens_total > 0 else 0
 
         results.append(
             {
@@ -390,12 +390,14 @@ def query_sessions(
                 "duration_seconds": duration,
                 "msgs": int(row.msgs),
                 "models": models,
-                "tokens_total": int(row.tokens_total or 0),
+                "tokens_total": tokens_total,
                 "tokens_input": tokens_input,
                 "tokens_output": tokens_output,
+                "tokens_cache_read": cache_read,
+                "tokens_cache_create": cache_create,
                 "tokens_cache": tokens_cache,
                 "tokens_reasoning": tokens_reasoning,
-                "cache_hit_pct": cache_hit_pct,
+                "cache_pct": cache_pct,
                 "cost_usd": float(row.cost_usd or 0.0),
                 "sidecar_id": row.sidecar_id,
             }

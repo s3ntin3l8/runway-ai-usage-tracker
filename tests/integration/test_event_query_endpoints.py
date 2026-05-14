@@ -730,11 +730,14 @@ class TestSessionsEndpoint:
         assert s["tokens_input"] == 1500
         assert s["tokens_output"] == 600
         assert s["tokens_cache"] == 350  # 200+50+100+0
+        assert s["tokens_cache_read"] == 300   # 200+100
+        assert s["tokens_cache_create"] == 50  # 50+0
 
-    def test_sessions_cache_hit_pct(self, session):
+    def test_sessions_cache_pct(self, session):
         now = datetime.now(UTC)
-        # 800 input + 200 cache_read → hit pct = 200/(800+200) = 20%
-        # cache_create=150 is excluded from denominator, pinning the formula
+        # tokens: input=800, output=300, cache_read=200, cache_create=150
+        # tokens_total = 800+300+200+150 = 1450
+        # cache_pct = round((200+150) / 1450 * 100) = round(24.1) = 24
         session.add(_event(
             event_id="c1", session_id="cache-sess", ts=now,
             tokens_input=800, tokens_output=300,
@@ -748,9 +751,11 @@ class TestSessionsEndpoint:
         )
         assert r.status_code == 200
         s = r.json()["sessions"][0]
-        assert s["cache_hit_pct"] == 20
+        assert s["cache_pct"] == 24
+        assert s["tokens_cache_read"] == 200
+        assert s["tokens_cache_create"] == 150
 
-    def test_sessions_cache_hit_pct_zero_when_no_cache(self, session):
+    def test_sessions_cache_pct_zero_when_no_cache(self, session):
         now = datetime.now(UTC)
         session.add(_event(
             event_id="nc1", session_id="no-cache", ts=now,
@@ -765,7 +770,7 @@ class TestSessionsEndpoint:
         )
         assert r.status_code == 200
         s = r.json()["sessions"][0]
-        assert s["cache_hit_pct"] == 0
+        assert s["cache_pct"] == 0
 
     def test_sessions_includes_reasoning_tokens(self, session):
         now = datetime.now(UTC)
