@@ -788,3 +788,51 @@ class TestSessionsEndpoint:
         s = r.json()["sessions"][0]
         assert s["tokens_reasoning"] == 100
         assert s["tokens_total"] == s["tokens_input"] + s["tokens_output"] + s["tokens_cache"] + s["tokens_reasoning"]
+
+    def test_sessions_sort_by_recent_orders_by_ts_end(self, session):
+        now = datetime.now(UTC)
+        # old session has far more tokens but an earlier ts_end
+        session.add(
+            _event(
+                event_id="old1",
+                session_id="old-sess",
+                ts=now - timedelta(hours=2),
+                tokens_input=5000,
+                tokens_output=2000,
+            )
+        )
+        # new session has fewer tokens but is more recent
+        session.add(
+            _event(
+                event_id="new1",
+                session_id="new-sess",
+                ts=now - timedelta(minutes=5),
+                tokens_input=100,
+                tokens_output=50,
+            )
+        )
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "sort_by": "recent",
+            },
+        )
+        assert r.status_code == 200
+        sessions = r.json()["sessions"]
+        assert sessions[0]["session_id"] == "new-sess"
+        assert sessions[1]["session_id"] == "old-sess"
+
+    def test_sessions_invalid_sort_by_rejected(self, session):
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "sort_by": "evil; DROP TABLE",
+            },
+        )
+        assert r.status_code == 422
