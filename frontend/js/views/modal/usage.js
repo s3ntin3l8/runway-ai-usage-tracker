@@ -108,45 +108,48 @@ function _buildHeatGrid(rawCells, accentHue) {
     return { gridHtml, peakStr };
 }
 
+/** Build HTML for a single session card. Exported for use by other panes. */
+export function buildSessionCard(s) {
+    const start = formatLocalTime(s.ts_start);
+    const end   = s.ts_end ? formatLocalTime(s.ts_end) : '…';
+    const time  = `${start}–${end}`;
+
+    const modelLabel = s.models && s.models.length === 1
+        ? s.models[0]
+        : s.models && s.models.length > 1
+            ? `${s.models.length} models`
+            : 'unknown';
+    const dur   = _fmtDuration(s.duration_seconds || 0);
+    const turns = s.msgs ? `${s.msgs} turns` : '';
+    const desc  = [modelLabel, dur, turns].filter(Boolean).join(' · ');
+
+    const tok  = s.tokens_total ? _fmtTokens(s.tokens_total) + ' tok' : '';
+    const cost = s.cost_usd ? _fmtCost(s.cost_usd) : '';
+    const val  = [tok, cost].filter(Boolean).join(' · ') || '—';
+
+    const tok_in    = s.tokens_input        ? _fmtTokens(s.tokens_input)        + ' in'    : '';
+    const tok_out   = s.tokens_output       ? _fmtTokens(s.tokens_output)       + ' out'   : '';
+    const tok_read  = s.tokens_cache_read   ? _fmtTokens(s.tokens_cache_read)   + ' read'  : '';
+    const tok_write = s.tokens_cache_create ? _fmtTokens(s.tokens_cache_create) + ' write' : '';
+    const cch_pct   = s.cache_pct > 0 ? `cache ${s.cache_pct}%` : '';
+    const detail    = [tok_in, tok_out, tok_read, tok_write, cch_pct].filter(Boolean).join(' · ');
+
+    const cls = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
+    return `<div class="m-event ${cls}">
+        <span class="t">${_esc(time)}</span>
+        <span class="dot"></span>
+        <span class="msg">${_esc(desc)}</span>
+        <span class="v">${_esc(val)}</span>
+        ${detail ? `<span class="m-detail">${_esc(detail)}</span>` : ''}
+    </div>`;
+}
+
 /** Build top sessions HTML from sessions array. */
 function _buildSessionsHtml(sessions) {
     if (!sessions || !sessions.length) {
         return '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No sessions yet</span><span class="v"></span></div>';
     }
-    return sessions.slice(0, 8).map(s => {
-        const start = formatLocalTime(s.ts_start);
-        const end   = s.ts_end ? formatLocalTime(s.ts_end) : '…';
-        const time  = `${start}–${end}`;
-
-        const modelLabel = s.models && s.models.length === 1
-            ? s.models[0]
-            : s.models && s.models.length > 1
-                ? `${s.models.length} models`
-                : 'unknown';
-        const dur   = _fmtDuration(s.duration_seconds || 0);
-        const turns = s.msgs ? `${s.msgs} turns` : '';
-        const desc  = [modelLabel, dur, turns].filter(Boolean).join(' · ');
-
-        const tok  = s.tokens_total ? _fmtTokens(s.tokens_total) + ' tok' : '';
-        const cost = s.cost_usd ? _fmtCost(s.cost_usd) : '';
-        const val  = [tok, cost].filter(Boolean).join(' · ') || '—';
-
-        const tok_in    = s.tokens_input        ? _fmtTokens(s.tokens_input)        + ' in'    : '';
-        const tok_out   = s.tokens_output       ? _fmtTokens(s.tokens_output)       + ' out'   : '';
-        const tok_read  = s.tokens_cache_read   ? _fmtTokens(s.tokens_cache_read)   + ' read'  : '';
-        const tok_write = s.tokens_cache_create ? _fmtTokens(s.tokens_cache_create) + ' write' : '';
-        const cch_pct   = s.cache_pct > 0 ? `cache ${s.cache_pct}%` : '';
-        const detail    = [tok_in, tok_out, tok_read, tok_write, cch_pct].filter(Boolean).join(' · ');
-
-        const cls = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
-        return `<div class="m-event ${cls}">
-            <span class="t">${_esc(time)}</span>
-            <span class="dot"></span>
-            <span class="msg">${_esc(desc)}</span>
-            <span class="v">${_esc(val)}</span>
-            ${detail ? `<span class="m-detail">${_esc(detail)}</span>` : ''}
-        </div>`;
-    }).join('');
+    return sessions.slice(0, 8).map(buildSessionCard).join('');
 }
 
 /**
