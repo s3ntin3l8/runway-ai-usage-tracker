@@ -86,6 +86,7 @@ class UsageEventPush(BaseModel):
     ts: str  # ISO-8601 (UTC) of the actual event
     model_id: str | None = None
     session_id: str | None = None
+    subagent_type: str | None = None  # "Explore" | "Plan" | None for main thread
     tokens_input: int = 0
     tokens_output: int = 0
     tokens_cache_read: int = 0

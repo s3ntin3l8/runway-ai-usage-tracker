@@ -120,7 +120,10 @@ export function buildSessionCard(s) {
             ? `${s.models.length} models`
             : 'unknown';
     const dur   = _fmtDuration(s.duration_seconds || 0);
-    const turns = s.msgs ? `${s.msgs} turns` : '';
+    const subN  = s.subagent_msgs || 0;
+    const turns = s.msgs
+        ? (subN > 0 ? `${s.msgs} turns (${subN} via subagent)` : `${s.msgs} turns`)
+        : '';
     const desc  = [modelLabel, dur, turns].filter(Boolean).join(' · ');
 
     const tok  = s.tokens_total ? _fmtTokens(s.tokens_total) + ' tok' : '';
@@ -134,6 +137,13 @@ export function buildSessionCard(s) {
     const cch_pct   = s.cache_pct > 0 ? `cache ${s.cache_pct}%` : '';
     const detail    = [tok_in, tok_out, tok_read, tok_write, cch_pct].filter(Boolean).join(' · ');
 
+    const subagents = Array.isArray(s.subagents) ? s.subagents : [];
+    const subagentLine = subagents.length
+        ? '↳ ' + subagents.map(a =>
+            `${a.type} × ${a.turns} · ${_fmtTokens(a.tokens_total)} tok · ${_fmtCost(a.cost_usd)}`
+        ).join('   ')
+        : '';
+
     const cls = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
     return `<div class="m-event ${cls}">
         <span class="t">${_esc(time)}</span>
@@ -141,6 +151,7 @@ export function buildSessionCard(s) {
         <span class="msg">${_esc(desc)}</span>
         <span class="v">${_esc(val)}</span>
         ${detail ? `<span class="m-detail">${_esc(detail)}</span>` : ''}
+        ${subagentLine ? `<span class="m-subagents">${_esc(subagentLine)}</span>` : ''}
     </div>`;
 }
 

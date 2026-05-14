@@ -4,6 +4,9 @@ from pathlib import Path
 from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sample.jsonl"
+SIDECHAIN_FIXTURE = (
+    Path(__file__).parent.parent / "fixtures" / "anthropic-sidechain-sample.jsonl"
+)
 
 
 def test_extracts_assistant_messages_only():
@@ -68,3 +71,26 @@ def test_session_id_from_log():
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
     assert all(e.session_id == "sess1" for e in evts)
+
+
+def test_main_thread_event_has_no_subagent_type():
+    evts = parse_anthropic_events(
+        [SIDECHAIN_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    main = next(e for e in evts if e.event_id.startswith("msg_main_1"))
+    assert main.subagent_type is None
+
+
+def test_sidechain_event_captures_attribution_agent():
+    evts = parse_anthropic_events(
+        [SIDECHAIN_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    by_type = {e.subagent_type for e in evts}
+    assert by_type == {None, "Explore", "Plan"}
+    explore = next(e for e in evts if e.subagent_type == "Explore")
+    assert explore.session_id == "parent_sess"
+    assert explore.model_id == "opus"
