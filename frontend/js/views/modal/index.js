@@ -8,7 +8,7 @@
  * The modal markup is injected into #provider-modal (added to index.html).
  */
 
-import { fetchEvents, fetchHeatmap, fetchSessions } from '../../api.js';
+import { fetchHeatmap, fetchSessions } from '../../api.js';
 import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
@@ -82,13 +82,13 @@ async function _renderPane(tab) {
                     _modalCache.heatmap = hd.cells || [];
                 } catch { _modalCache.heatmap = []; }
             }
-            if (!_modalCache.events) {
+            if (!_modalCache.recentSessions) {
                 try {
-                    const ed = await fetchEvents({ provider_id: providerId, account_id: accountId, limit: 10, order: 'desc' });
-                    _modalCache.events = ed.events || [];
-                } catch { _modalCache.events = []; }
+                    const sd = await fetchSessions({ provider_id: providerId, account_id: accountId, limit: 3, sort_by: 'recent' });
+                    _modalCache.recentSessions = sd.sessions || [];
+                } catch { _modalCache.recentSessions = []; }
             }
-            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.events);
+            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions);
             wireOverviewSparkTabs(_modalCache.heatmap);
 
         } else if (tab === 'usage') {
