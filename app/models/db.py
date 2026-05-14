@@ -192,6 +192,7 @@ class UsageEvent(SQLModel, table=True):
     )  # "message" | "error" | reserved: "reset", "anomaly"
     model_id: str | None = None  # normalized: sonnet, opus, gpt-5, ...
     session_id: str | None = None  # provider's conversation/session id
+    subagent_type: str | None = Field(default=None, index=True)  # "Explore" | "Plan" | None for main thread
     tokens_input: int = Field(default=0)  # non-cached prompt tokens
     tokens_output: int = Field(default=0)  # completion tokens
     tokens_cache_read: int = Field(default=0)  # free reads

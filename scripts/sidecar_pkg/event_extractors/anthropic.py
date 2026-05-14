@@ -81,6 +81,10 @@ def parse_anthropic_events(
                         1 for c in content if isinstance(c, dict) and c.get("type") == "tool_use"
                     )
 
+                    subagent_type = (
+                        e.get("attributionAgent") if e.get("isSidechain") else None
+                    )
+
                     events.append(
                         UsageEventPush(
                             provider_id="anthropic",
@@ -89,6 +93,7 @@ def parse_anthropic_events(
                             ts=ts.isoformat(),
                             model_id=_normalize_anthropic_model(msg.get("model", "")),
                             session_id=e.get("sessionId"),
+                            subagent_type=subagent_type,
                             tokens_input=int(usage.get("input_tokens", 0)),
                             tokens_output=int(usage.get("output_tokens", 0)),
                             tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),

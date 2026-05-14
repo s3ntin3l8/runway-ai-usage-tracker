@@ -86,6 +86,7 @@ class EventIngestor:
                 kind=push.kind,
                 model_id=push.model_id,
                 session_id=push.session_id,
+                subagent_type=push.subagent_type,
                 tokens_input=push.tokens_input,
                 tokens_output=push.tokens_output,
                 tokens_cache_read=push.tokens_cache_read,

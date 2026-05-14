@@ -2819,6 +2819,7 @@ l-table td.num {
 .m-event .msg { color: var(--ink); }
 .m-event .v { color: var(--ink-3); font-size: 10px; }
 .m-event .m-detail { grid-column: 1 / -1; color: var(--ink-3); font-size: 10px; padding-top: 2px; }
+.m-event .m-subagents { grid-column: 1 / -1; color: var(--ink-3); font-size: 10px; padding-top: 1px; opacity: 0.75; }
 
 /* sparkline tabs */
 .m-spark { padding: 14px; box-shadow: inset 0 0 0 1px var(--hairline-2); }

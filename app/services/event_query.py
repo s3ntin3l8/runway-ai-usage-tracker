@@ -343,7 +343,8 @@ def query_sessions(
             SUM(tokens_reasoning)                              AS tokens_reasoning,
             SUM(cost_usd)                                      AS cost_usd,
             MAX(sidecar_id)                                    AS sidecar_id,
-            GROUP_CONCAT(DISTINCT model_id)                    AS models_csv
+            GROUP_CONCAT(DISTINCT model_id)                    AS models_csv,
+            SUM(CASE WHEN subagent_type IS NOT NULL THEN 1 ELSE 0 END) AS subagent_msgs
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
@@ -352,6 +353,25 @@ def query_sessions(
         GROUP BY session_id
         ORDER BY {order_clause}
         LIMIT :limit
+        """
+    )
+
+    subagent_sql = text(
+        """
+        SELECT
+            subagent_type,
+            COUNT(*)                                            AS turns,
+            SUM(tokens_input + tokens_output
+                + tokens_cache_read + tokens_cache_create
+                + tokens_reasoning)                             AS tokens_total,
+            SUM(cost_usd)                                       AS cost_usd
+        FROM usage_events
+        WHERE provider_id = :provider_id
+          AND account_id  = :account_id
+          AND session_id  = :session_id
+          AND subagent_type IS NOT NULL
+        GROUP BY subagent_type
+        ORDER BY turns DESC
         """
     )
 
@@ -385,6 +405,27 @@ def query_sessions(
         tokens_cache = cache_read + cache_create
         cache_pct = round(tokens_cache / tokens_total * 100) if tokens_total > 0 else 0
 
+        subagent_msgs = int(row.subagent_msgs or 0)
+        subagents: list[dict[str, Any]] = []
+        if subagent_msgs > 0:
+            sa_rows = session.exec(  # type: ignore[call-overload]
+                subagent_sql,
+                params={
+                    "provider_id": provider_id,
+                    "account_id": account_id,
+                    "session_id": row.session_id,
+                },
+            ).all()
+            subagents = [
+                {
+                    "type": sa.subagent_type,
+                    "turns": int(sa.turns or 0),
+                    "tokens_total": int(sa.tokens_total or 0),
+                    "cost_usd": float(sa.cost_usd or 0.0),
+                }
+                for sa in sa_rows
+            ]
+
         results.append(
             {
                 "session_id": row.session_id,
@@ -403,6 +444,8 @@ def query_sessions(
                 "cache_pct": cache_pct,
                 "cost_usd": float(row.cost_usd or 0.0),
                 "sidecar_id": row.sidecar_id,
+                "subagent_msgs": subagent_msgs,
+                "subagents": subagents,
             }
         )
 

@@ -60,6 +60,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, sql_type_with_default)
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("system_config", "user_timezone", "VARCHAR"),
+    ("usage_events", "subagent_type", "VARCHAR"),
 ]
 
 
