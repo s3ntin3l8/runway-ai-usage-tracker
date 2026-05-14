@@ -337,6 +337,7 @@ def query_sessions(
             SUM(tokens_output)                                 AS tokens_output,
             SUM(tokens_cache_read)                             AS tokens_cache_read,
             SUM(tokens_cache_create)                           AS tokens_cache_create,
+            SUM(tokens_reasoning)                              AS tokens_reasoning,
             SUM(cost_usd)                                      AS cost_usd,
             MAX(sidecar_id)                                    AS sidecar_id,
             GROUP_CONCAT(DISTINCT model_id)                    AS models_csv
@@ -376,6 +377,7 @@ def query_sessions(
         tokens_output = int(row.tokens_output or 0)
         cache_read = int(row.tokens_cache_read or 0)
         cache_create = int(row.tokens_cache_create or 0)
+        tokens_reasoning = int(row.tokens_reasoning or 0)
         tokens_cache = cache_read + cache_create
         prompt_total = tokens_input + cache_read
         cache_hit_pct = round(cache_read / prompt_total * 100) if prompt_total > 0 else 0
@@ -392,6 +394,7 @@ def query_sessions(
                 "tokens_input": tokens_input,
                 "tokens_output": tokens_output,
                 "tokens_cache": tokens_cache,
+                "tokens_reasoning": tokens_reasoning,
                 "cache_hit_pct": cache_hit_pct,
                 "cost_usd": float(row.cost_usd or 0.0),
                 "sidecar_id": row.sidecar_id,

@@ -734,10 +734,11 @@ class TestSessionsEndpoint:
     def test_sessions_cache_hit_pct(self, session):
         now = datetime.now(UTC)
         # 800 input + 200 cache_read → hit pct = 200/(800+200) = 20%
+        # cache_create=150 is excluded from denominator, pinning the formula
         session.add(_event(
             event_id="c1", session_id="cache-sess", ts=now,
             tokens_input=800, tokens_output=300,
-            tokens_cache_read=200, tokens_cache_create=0,
+            tokens_cache_read=200, tokens_cache_create=150,
         ))
         session.commit()
 
@@ -765,3 +766,20 @@ class TestSessionsEndpoint:
         assert r.status_code == 200
         s = r.json()["sessions"][0]
         assert s["cache_hit_pct"] == 0
+
+    def test_sessions_includes_reasoning_tokens(self, session):
+        now = datetime.now(UTC)
+        session.add(_event(
+            event_id="r1", session_id="reason-sess", ts=now,
+            tokens_input=500, tokens_output=200, tokens_reasoning=100,
+        ))
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200
+        s = r.json()["sessions"][0]
+        assert s["tokens_reasoning"] == 100
+        assert s["tokens_total"] == s["tokens_input"] + s["tokens_output"] + s["tokens_cache"] + s["tokens_reasoning"]
