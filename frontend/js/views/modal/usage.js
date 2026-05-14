@@ -31,6 +31,14 @@ function _fmtCost(usd) {
     return '$' + usd.toFixed(2);
 }
 
+function _fmtDuration(sec) {
+    if (!sec || sec < 60) return '<1 min';
+    if (sec < 3600) return `${Math.round(sec / 60)} min`;
+    const h = Math.floor(sec / 3600);
+    const m = Math.round((sec % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 /** Build a throughput sparkline SVG from heatmap cells. */
 function _buildSparkSvg(cells, range) {
     if (!cells || !cells.length) {
@@ -106,22 +114,36 @@ function _buildSessionsHtml(sessions) {
         return '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No sessions yet</span><span class="v"></span></div>';
     }
     return sessions.slice(0, 8).map(s => {
-        const start = formatLocalTime(s.started_at);
-        const end   = s.ended_at ? formatLocalTime(s.ended_at) : '…';
-        const time = `${start}–${end}`;
-        const model = s.model_id || '';
-        const sid   = s.session_id ? s.session_id.slice(0, 8) : (s.id || '');
-        const turns = s.msg_count ? `${s.msg_count} turns` : '';
-        const desc  = [model, turns, sid].filter(Boolean).join(' · ');
-        const tok   = s.tokens_total ? _fmtTokens(s.tokens_total) + ' tok' : '';
-        const cost  = s.cost_usd ? _fmtCost(s.cost_usd) : '';
-        const val   = [tok, cost].filter(Boolean).join(' · ') || '—';
-        const cls   = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
+        const start = formatLocalTime(s.ts_start);
+        const end   = s.ts_end ? formatLocalTime(s.ts_end) : '…';
+        const time  = `${start}–${end}`;
+
+        const modelLabel = s.models && s.models.length === 1
+            ? s.models[0]
+            : s.models && s.models.length > 1
+                ? `${s.models.length} models`
+                : 'unknown';
+        const dur   = _fmtDuration(s.duration_seconds || 0);
+        const turns = s.msgs ? `${s.msgs} turns` : '';
+        const desc  = [modelLabel, dur, turns].filter(Boolean).join(' · ');
+
+        const tok  = s.tokens_total ? _fmtTokens(s.tokens_total) + ' tok' : '';
+        const cost = s.cost_usd ? _fmtCost(s.cost_usd) : '';
+        const val  = [tok, cost].filter(Boolean).join(' · ') || '—';
+
+        const tok_in  = s.tokens_input  ? _fmtTokens(s.tokens_input)  + ' in'    : '';
+        const tok_out = s.tokens_output ? _fmtTokens(s.tokens_output) + ' out'   : '';
+        const tok_cch = s.tokens_cache  ? _fmtTokens(s.tokens_cache)  + ' cache' : '';
+        const hit_pct = s.cache_hit_pct > 0 ? `hit ${s.cache_hit_pct}%` : '';
+        const detail  = [tok_in, tok_out, tok_cch, hit_pct].filter(Boolean).join(' · ');
+
+        const cls = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
         return `<div class="m-event ${cls}">
             <span class="t">${_esc(time)}</span>
             <span class="dot"></span>
             <span class="msg">${_esc(desc)}</span>
             <span class="v">${_esc(val)}</span>
+            ${detail ? `<span class="m-detail">${_esc(detail)}</span>` : ''}
         </div>`;
     }).join('');
 }
