@@ -314,7 +314,8 @@ def query_sessions(
     """Return top-N sessions by total tokens, newest first within the window.
 
     Each row includes ts_start, ts_end, duration_seconds, msgs, models[],
-    tokens_total, cost_usd, sidecar_id.
+    tokens_total, tokens_input, tokens_output, tokens_cache, cache_hit_pct,
+    cost_usd, sidecar_id.
 
     Events with NULL session_id are excluded.
     """
@@ -332,6 +333,10 @@ def query_sessions(
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                            AS tokens_total,
+            SUM(tokens_input)                                  AS tokens_input,
+            SUM(tokens_output)                                 AS tokens_output,
+            SUM(tokens_cache_read)                             AS tokens_cache_read,
+            SUM(tokens_cache_create)                           AS tokens_cache_create,
             SUM(cost_usd)                                      AS cost_usd,
             MAX(sidecar_id)                                    AS sidecar_id,
             GROUP_CONCAT(DISTINCT model_id)                    AS models_csv
@@ -367,6 +372,14 @@ def query_sessions(
         if row.models_csv:
             models = [m for m in row.models_csv.split(",") if m]
 
+        tokens_input = int(row.tokens_input or 0)
+        tokens_output = int(row.tokens_output or 0)
+        cache_read = int(row.tokens_cache_read or 0)
+        cache_create = int(row.tokens_cache_create or 0)
+        tokens_cache = cache_read + cache_create
+        prompt_total = tokens_input + cache_read
+        cache_hit_pct = round(cache_read / prompt_total * 100) if prompt_total > 0 else 0
+
         results.append(
             {
                 "session_id": row.session_id,
@@ -376,6 +389,10 @@ def query_sessions(
                 "msgs": int(row.msgs),
                 "models": models,
                 "tokens_total": int(row.tokens_total or 0),
+                "tokens_input": tokens_input,
+                "tokens_output": tokens_output,
+                "tokens_cache": tokens_cache,
+                "cache_hit_pct": cache_hit_pct,
                 "cost_usd": float(row.cost_usd or 0.0),
                 "sidecar_id": row.sidecar_id,
             }

@@ -706,3 +706,62 @@ class TestSessionsEndpoint:
         assert r.status_code == 200
         sess = r.json()["sessions"][0]
         assert sess["duration_seconds"] == 2191
+
+    def test_sessions_includes_token_breakdown(self, session):
+        now = datetime.now(UTC)
+        session.add(_event(
+            event_id="e1", session_id="s1", ts=now,
+            tokens_input=1000, tokens_output=400,
+            tokens_cache_read=200, tokens_cache_create=50,
+        ))
+        session.add(_event(
+            event_id="e2", session_id="s1", ts=now - timedelta(minutes=1),
+            tokens_input=500, tokens_output=200,
+            tokens_cache_read=100, tokens_cache_create=0,
+        ))
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200
+        s = r.json()["sessions"][0]
+        assert s["tokens_input"] == 1500
+        assert s["tokens_output"] == 600
+        assert s["tokens_cache"] == 350  # 200+50+100+0
+
+    def test_sessions_cache_hit_pct(self, session):
+        now = datetime.now(UTC)
+        # 800 input + 200 cache_read → hit pct = 200/(800+200) = 20%
+        session.add(_event(
+            event_id="c1", session_id="cache-sess", ts=now,
+            tokens_input=800, tokens_output=300,
+            tokens_cache_read=200, tokens_cache_create=0,
+        ))
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200
+        s = r.json()["sessions"][0]
+        assert s["cache_hit_pct"] == 20
+
+    def test_sessions_cache_hit_pct_zero_when_no_cache(self, session):
+        now = datetime.now(UTC)
+        session.add(_event(
+            event_id="nc1", session_id="no-cache", ts=now,
+            tokens_input=500, tokens_output=200,
+            tokens_cache_read=0, tokens_cache_create=0,
+        ))
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200
+        s = r.json()["sessions"][0]
+        assert s["cache_hit_pct"] == 0
