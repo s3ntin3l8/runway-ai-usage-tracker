@@ -310,6 +310,7 @@ def query_sessions(
     account_id: str,
     since: datetime | None = None,
     limit: int = 20,
+    sort_by: str = "tokens",
 ) -> list[dict[str, Any]]:
     """Return top-N sessions by total tokens, newest first within the window.
 
@@ -322,9 +323,11 @@ def query_sessions(
     if since is None:
         since = datetime.now(UTC) - timedelta(days=7)
 
+    order_clause = "ts_end DESC" if sort_by == "recent" else "tokens_total DESC"
+
     # Main aggregation query
     agg_sql = text(
-        """
+        f"""
         SELECT
             session_id,
             MIN(ts)                                            AS ts_start,
@@ -347,7 +350,7 @@ def query_sessions(
           AND session_id IS NOT NULL
           AND ts >= :since
         GROUP BY session_id
-        ORDER BY tokens_total DESC
+        ORDER BY {order_clause}
         LIMIT :limit
         """
     )

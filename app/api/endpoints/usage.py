@@ -1,6 +1,6 @@
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, select
@@ -654,12 +654,14 @@ async def get_usage_sessions(
     account_id: str = Query(...),
     since: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
+    sort_by: Literal["tokens", "recent"] = Query(default="tokens"),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Top-N sessions by token total within the requested time window.
+    """Top-N sessions within the requested time window.
 
     Defaults to the last 7 days when 'since' is not provided. Events
-    without a session_id are excluded. Returned in descending token order.
+    without a session_id are excluded.
+    sort_by='tokens' (default) orders by token total desc; 'recent' orders by ts_end desc.
     """
     since_dt: datetime | None = None
     if since:
@@ -671,6 +673,7 @@ async def get_usage_sessions(
         account_id=account_id,
         since=since_dt,
         limit=limit,
+        sort_by=sort_by,
     )
     return {"sessions": sessions}
 
