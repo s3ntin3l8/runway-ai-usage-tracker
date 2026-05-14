@@ -2,14 +2,15 @@
  * Overview pane builder for the provider detail modal.
  *
  * Data sources:
- *   - entry   : fleet entry (critical_gauge, secondary_limits, sidecar_contributions)
- *   - cumData : fetchCumulative() row for this account, from STATE.cumulativeMap
- *   - heatmap : fetchHeatmap() response (for sparkline rendering)
- *   - events  : fetchEvents() response (recent events log)
+ *   - entry          : fleet entry (critical_gauge, secondary_limits, sidecar_contributions)
+ *   - cumData        : fetchCumulative() row for this account, from STATE.cumulativeMap
+ *   - heatmap        : fetchHeatmap() response (for sparkline rendering)
+ *   - recentSessions : fetchSessions({sort_by:'recent'}) response (3 most recent sessions)
  */
 
 import { providerDisplayLabel } from '../../components.js';
 import { formatLocalTime } from '../../utils/tz.js';
+import { buildSessionCard } from './usage.js';
 
 function _esc(str) {
     if (!str) return '';
@@ -243,26 +244,29 @@ function _buildSparkSvg(cells, range) {
 }
 
 /**
- * Build the recent events log HTML from usage events array.
+ * Build the recent sessions section from sessions array.
+ * Returns { cardsHtml, meta } where meta is the aggregate summary string.
  */
-function _buildEventsLog(events) {
-    if (!events || !events.length) {
-        return '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No recent events</span><span class="v"></span></div>';
+function _buildRecentSessions(sessions) {
+    if (!sessions || !sessions.length) {
+        return {
+            cardsHtml: '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No recent sessions</span><span class="v"></span></div>',
+            meta: '—',
+        };
     }
-    return events.slice(0, 10).map(ev => {
-        const ts = formatLocalTime(ev.ts);
-        const model = ev.model_id || ev.model || '';
-        const toks = ev.tokens_total ? _fmtTokens(ev.tokens_total) + ' tok' : '';
-        const cost = ev.cost_usd ? _fmtCost(ev.cost_usd) : '';
-        const val = [toks, cost].filter(Boolean).join(' · ') || '—';
-        const msgParts = [model, ev.session_id ? 'sess:' + ev.session_id.slice(0, 8) : ''].filter(Boolean);
-        return `<div class="m-event good">
-            <span class="t">${_esc(ts)}</span>
-            <span class="dot"></span>
-            <span class="msg">${_esc(msgParts.join(' · ') || 'event')}</span>
-            <span class="v">${_esc(val)}</span>
-        </div>`;
-    }).join('');
+    const totalTok  = sessions.reduce((a, s) => a + (s.tokens_total || 0), 0);
+    const totalCost = sessions.reduce((a, s) => a + (s.cost_usd || 0), 0);
+    const avgCache  = Math.round(
+        sessions.reduce((a, s) => a + (s.cache_pct || 0), 0) / sessions.length
+    );
+    const meta = [
+        `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`,
+        totalTok  ? _fmtTokens(totalTok) + ' tok' : null,
+        totalCost ? _fmtCost(totalCost)  : null,
+        avgCache > 0 ? `${avgCache}% cached` : null,
+    ].filter(Boolean).join(' · ');
+
+    return { cardsHtml: sessions.map(buildSessionCard).join(''), meta };
 }
 
 /**
@@ -301,7 +305,7 @@ function _bucketTotalTokens(bucket) {
  * @param {Array} recentEvents - Array of usage event objects
  * @returns {string} HTML string
  */
-export function buildOverviewPane(entry, cumData, heatmapCells, recentEvents) {
+export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions) {
     const critical = entry.critical_gauge || {};
     const allCards = [critical, ...(entry.secondary_limits || [])].filter(Boolean);
     const isPayg = critical.is_unlimited || (!critical.limit_value && !critical.pct_used);
@@ -418,8 +422,7 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentEvents) {
     // Sparkline
     const sparkHtml = _buildSparkSvg(heatmapCells, '24h');
 
-    // Events log
-    const eventsHtml = _buildEventsLog(recentEvents);
+    const { cardsHtml: sessionCardsHtml, meta: sessionsMeta } = _buildRecentSessions(recentSessions);
 
     return `
     <!-- HERO -->
@@ -512,14 +515,14 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentEvents) {
         ${sparkHtml}
     </div>
 
-    <!-- EVENTS LOG -->
+    <!-- RECENT SESSIONS -->
     <div class="m-block">
         <div class="head">
-            <h4>Recent events</h4>
-            <span class="meta">last 10</span>
+            <h4>Recent sessions</h4>
+            <span class="meta">${_esc(sessionsMeta)}</span>
         </div>
         <div class="m-events">
-            ${eventsHtml}
+            ${sessionCardsHtml}
         </div>
     </div>
     `;
