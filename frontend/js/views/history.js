@@ -73,16 +73,31 @@ export function setHistoryWindow(windowType) {
 
 export function toggleHistoryProvider(pid) {
     historyState.page = 1;
+    const known = _knownProviderIds();
     if (!historyState.activeProviders) {
-        historyState.activeProviders = new Set([pid]);
+        historyState.activeProviders = new Set(known);
+        historyState.activeProviders.delete(pid);
     } else if (historyState.activeProviders.has(pid)) {
         historyState.activeProviders.delete(pid);
-        if (historyState.activeProviders.size === 0) historyState.activeProviders = null;
     } else {
         historyState.activeProviders.add(pid);
     }
+    if (known.length > 0 && known.every(p => historyState.activeProviders.has(p))) {
+        historyState.activeProviders = null;
+    }
     updateCsvHref();
     loadHistoryView();
+}
+
+function _knownProviderIds() {
+    const cache = historyState._chartCache;
+    if (!cache) return [];
+    const ids = new Set();
+    for (const s of (cache.series || [])) if (s.provider_id) ids.add(s.provider_id);
+    for (const bar of (cache.bars || []))
+        for (const seg of (bar.segments || []))
+            if (seg.provider_id) ids.add(seg.provider_id);
+    return [...ids];
 }
 
 export function setHistoryProvidersAll() {
@@ -116,8 +131,8 @@ async function fetchHistorySnapshots() {
 
 async function fetchHistoryChart() {
     const params = new URLSearchParams({ days: historyState.days, metric: historyState.metric });
-    if (historyState.activeProviders?.size === 1)
-        params.set('provider_id', [...historyState.activeProviders][0]);
+    // Never filter by provider at API level — chart cache must contain all providers
+    // so the sparkline strip can always render every pill (client-side filtering handles the chart).
     const r = await fetch(`/api/v1/usage/history/chart?${params}`);
     if (!r.ok) throw new Error(`chart ${r.status}`);
     return r.json();

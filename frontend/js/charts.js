@@ -6,6 +6,7 @@ import { getUserTz } from './utils/tz.js';
 
 let _chart = null;
 let _echarts = null;
+let _legendState = {};
 
 // Registered once at module load; stays alive for the lifetime of the page.
 window.addEventListener('resize', () => _chart && _chart.resize());
@@ -221,17 +222,17 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
     // First pass: averages (always shown)
     const avgSeries = seriesKeys.map(key => {
-        const [pid, name, wtype, variant, modelId] = key.split('|');
+        const [pid, , wtype, variant, modelId] = key.split('|');
         const subParts = [];
         if (variant) subParts.push(variant);
         if (modelId) subParts.push(modelId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
         if (wtype && wtype !== 'unknown' && wtype !== 'rolling') subParts.push(wtype.charAt(0).toUpperCase() + wtype.slice(1));
-        const displayName = subParts.length ? `${name} · ${subParts.join(' · ')}` : name;
+        const displayName = subParts.join(' · ');
         if (providerCounts[pid] === undefined) providerCounts[pid] = 0;
         const style = getSeriesStyle(pid, providerCounts[pid]++);
 
         return {
-            name: `${pid.toUpperCase()}: ${displayName}`,
+            name: displayName ? `${pid.toUpperCase()}: ${displayName}` : pid.toUpperCase(),
             type: 'line',
             smooth: true,
             symbol: 'circle',
@@ -361,17 +362,15 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 }
             },
             legend: {
-                type: 'scroll',
-                bottom: 10,
-                textStyle: { color: cTextDim, fontSize: 10, fontFamily: 'B612 Mono, monospace' },
-                pageTextStyle: { color: cTextDim },
-                icon: 'rect'
+                show: false,
+                data: series.map(s => s.name),
+                selected: { ..._legendState }
             },
             grid: {
                 top: 40,
                 left: 60,
                 right: 30,
-                bottom: 110,
+                bottom: 50,
                 containLabel: true
             },
             xAxis: {
@@ -394,7 +393,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 { type: 'inside', start: 0, end: 100 },
                 {
                     type: 'slider',
-                    bottom: 45,
+                    bottom: 10,
                     height: 20,
                     borderColor: 'transparent',
                     fillerColor: `${cAccentCl}1a`,
@@ -413,9 +412,36 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         
         _chart.setOption(option, true);  // true = notMerge: replace all series/axes cleanly
 
+        // Prune stale legend state entries, then render the HTML legend.
+        const names = new Set(series.map(s => s.name));
+        for (const k of Object.keys(_legendState)) if (!names.has(k)) delete _legendState[k];
+        _renderHtmlLegend(series);
+
     } catch (err) {
         console.error('Failed to init ECharts:', err);
         emptyEl.textContent = 'Failed to load chart. Please refresh.';
         emptyEl?.classList.remove("hidden");
     }
+}
+
+function _renderHtmlLegend(series) {
+    const host = document.getElementById('chart-legend');
+    if (!host) return;
+    host.innerHTML = series
+        .filter(s => s.name && s.legendHoverLink !== false)
+        .map(s => {
+            const on = _legendState[s.name] !== false;
+            const color = s.itemStyle?.color || '#64748b';
+            const safeName = s.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+            return `<span class="chart-legend-item${on ? '' : ' muted'}" data-name="${safeName}">` +
+                `<span class="chart-legend-swatch" style="background:${color}"></span>${safeName}</span>`;
+        }).join('');
+    host.onclick = (e) => {
+        const item = e.target.closest('.chart-legend-item');
+        if (!item || !_chart) return;
+        const name = item.dataset.name;
+        _legendState[name] = _legendState[name] === false;
+        item.classList.toggle('muted', _legendState[name] === false);
+        _chart.setOption({ legend: { selected: { ..._legendState } } });
+    };
 }
