@@ -1397,7 +1397,7 @@ def query_windows(
     # highest token count per (provider, account, window_type, date(window_end)).
     seen_closed: dict[tuple, int] = {}  # key → best tokens_total
     raw_closed = session.exec(stmt).all()
-    dedup_closed: dict[tuple, object] = {}
+    dedup_closed: dict[tuple, UsageWindow] = {}
     for w in raw_closed:
         day_key = (
             w.provider_id,
@@ -1545,7 +1545,7 @@ def query_snapshots(
         stmt = stmt.where(QuotaSnapshot.window_type == window_type)
 
     # Ascending for delta computation; reversed at output time
-    stmt = stmt.order_by(QuotaSnapshot.ts.asc())
+    stmt = stmt.order_by(QuotaSnapshot.ts.asc())  # type: ignore[attr-defined]
     all_snaps = list(session.exec(stmt).all())
 
     # Build window-level token/cost lookup keyed by (provider, account, window_type, minute_bucket)
@@ -1637,8 +1637,8 @@ def query_snapshots(
     # Group into per-series lists and compute deltas
     series: dict[tuple, list] = {}
     for s in all_snaps:
-        key = (s.provider_id, s.account_id, s.window_type, s.model_id)
-        series.setdefault(key, []).append(s)
+        series_key = (s.provider_id, s.account_id, s.window_type, s.model_id)
+        series.setdefault(series_key, []).append(s)
 
     rows: list[dict] = []
     for (pid, aid, wt, mid), snaps in series.items():
@@ -1715,14 +1715,14 @@ def query_chart(
     if metric == "percent":
         stmt = select(QuotaSnapshot).where(
             QuotaSnapshot.ts >= since,
-            QuotaSnapshot.pct_used.isnot(None),
+            QuotaSnapshot.pct_used.isnot(None),  # type: ignore[union-attr]
         )
         if provider_id:
             stmt = stmt.where(QuotaSnapshot.provider_id == provider_id)
         if account_id:
             stmt = stmt.where(QuotaSnapshot.account_id == account_id)
 
-        snaps = session.exec(stmt.order_by(QuotaSnapshot.ts)).all()
+        snaps = session.exec(stmt.order_by(QuotaSnapshot.ts)).all()  # type: ignore[arg-type]
 
         series_map: dict[str, dict] = {}
         for s in snaps:
@@ -1797,17 +1797,17 @@ def query_chart(
     since_key = (
         since.strftime("%Y-%m-%dT%H") if period_type == "hour" else since.strftime("%Y-%m-%d")
     )
-    stmt = select(UsagePeriodRollup).where(
+    bar_stmt = select(UsagePeriodRollup).where(
         UsagePeriodRollup.period_type == period_type,
         UsagePeriodRollup.period_key >= since_key,
         UsagePeriodRollup.sidecar_id == "",
     )
     if provider_id:
-        stmt = stmt.where(UsagePeriodRollup.provider_id == provider_id)
+        bar_stmt = bar_stmt.where(UsagePeriodRollup.provider_id == provider_id)
     if account_id:
-        stmt = stmt.where(UsagePeriodRollup.account_id == account_id)
+        bar_stmt = bar_stmt.where(UsagePeriodRollup.account_id == account_id)
 
-    all_bar_rows = list(session.exec(stmt.order_by(UsagePeriodRollup.period_key)).all())
+    all_bar_rows = list(session.exec(bar_stmt.order_by(UsagePeriodRollup.period_key)).all())
     # Providers that have per-model rows for a given period — used to skip their aggregate row
     has_per_model: set[tuple[str, str]] = {
         (r.provider_id, r.period_key) for r in all_bar_rows if r.model_id != ""
@@ -1891,7 +1891,7 @@ def query_window_detail(
             QuotaSnapshot.ts >= snap_start,
             QuotaSnapshot.ts <= window_end,
         )
-        .order_by(QuotaSnapshot.ts)
+        .order_by(QuotaSnapshot.ts)  # type: ignore[arg-type]
     ).all()
 
     # Deduplicate snapshots to a reasonable number of points per window type.
@@ -1911,7 +1911,7 @@ def query_window_detail(
         epoch = int(ts.timestamp())
         return epoch - (epoch % _bucket_seconds)
 
-    by_model_snaps: dict[str, dict[int, object]] = {}
+    by_model_snaps: dict[str, dict[int, QuotaSnapshot]] = {}
     for s in snaps:
         mid = s.model_id or ""
         if mid not in by_model_snaps:
@@ -1941,7 +1941,7 @@ def query_window_detail(
             for s in sorted(by_model_snaps[""].values(), key=lambda x: x.ts)
         ]
     elif fill_by_model:
-        fill_series = fill_by_model[0]["series"]
+        fill_series = fill_by_model[0]["series"]  # type: ignore[assignment]
     else:
         fill_series = []
 
