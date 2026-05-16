@@ -6,7 +6,7 @@ aiosqlite>=0.20.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
 keyring>=24.0.0
-cryptography==46.0.7
+cryptography==48.0.0
 secretstorage>=3.3.0
 PyYAML>=6.0.0
 slowapi==0.1.9
