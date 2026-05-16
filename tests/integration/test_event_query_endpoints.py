@@ -709,16 +709,28 @@ class TestSessionsEndpoint:
 
     def test_sessions_includes_token_breakdown(self, session):
         now = datetime.now(UTC)
-        session.add(_event(
-            event_id="e1", session_id="s1", ts=now,
-            tokens_input=1000, tokens_output=400,
-            tokens_cache_read=200, tokens_cache_create=50,
-        ))
-        session.add(_event(
-            event_id="e2", session_id="s1", ts=now - timedelta(minutes=1),
-            tokens_input=500, tokens_output=200,
-            tokens_cache_read=100, tokens_cache_create=0,
-        ))
+        session.add(
+            _event(
+                event_id="e1",
+                session_id="s1",
+                ts=now,
+                tokens_input=1000,
+                tokens_output=400,
+                tokens_cache_read=200,
+                tokens_cache_create=50,
+            )
+        )
+        session.add(
+            _event(
+                event_id="e2",
+                session_id="s1",
+                ts=now - timedelta(minutes=1),
+                tokens_input=500,
+                tokens_output=200,
+                tokens_cache_read=100,
+                tokens_cache_create=0,
+            )
+        )
         session.commit()
 
         r = _client().get(
@@ -730,7 +742,7 @@ class TestSessionsEndpoint:
         assert s["tokens_input"] == 1500
         assert s["tokens_output"] == 600
         assert s["tokens_cache"] == 350  # 200+50+100+0
-        assert s["tokens_cache_read"] == 300   # 200+100
+        assert s["tokens_cache_read"] == 300  # 200+100
         assert s["tokens_cache_create"] == 50  # 50+0
 
     def test_sessions_cache_pct(self, session):
@@ -738,11 +750,17 @@ class TestSessionsEndpoint:
         # tokens: input=800, output=300, cache_read=200, cache_create=150
         # tokens_total = 800+300+200+150 = 1450
         # cache_pct = round((200+150) / 1450 * 100) = round(24.1) = 24
-        session.add(_event(
-            event_id="c1", session_id="cache-sess", ts=now,
-            tokens_input=800, tokens_output=300,
-            tokens_cache_read=200, tokens_cache_create=150,
-        ))
+        session.add(
+            _event(
+                event_id="c1",
+                session_id="cache-sess",
+                ts=now,
+                tokens_input=800,
+                tokens_output=300,
+                tokens_cache_read=200,
+                tokens_cache_create=150,
+            )
+        )
         session.commit()
 
         r = _client().get(
@@ -757,11 +775,17 @@ class TestSessionsEndpoint:
 
     def test_sessions_cache_pct_zero_when_no_cache(self, session):
         now = datetime.now(UTC)
-        session.add(_event(
-            event_id="nc1", session_id="no-cache", ts=now,
-            tokens_input=500, tokens_output=200,
-            tokens_cache_read=0, tokens_cache_create=0,
-        ))
+        session.add(
+            _event(
+                event_id="nc1",
+                session_id="no-cache",
+                ts=now,
+                tokens_input=500,
+                tokens_output=200,
+                tokens_cache_read=0,
+                tokens_cache_create=0,
+            )
+        )
         session.commit()
 
         r = _client().get(
@@ -774,10 +798,16 @@ class TestSessionsEndpoint:
 
     def test_sessions_includes_reasoning_tokens(self, session):
         now = datetime.now(UTC)
-        session.add(_event(
-            event_id="r1", session_id="reason-sess", ts=now,
-            tokens_input=500, tokens_output=200, tokens_reasoning=100,
-        ))
+        session.add(
+            _event(
+                event_id="r1",
+                session_id="reason-sess",
+                ts=now,
+                tokens_input=500,
+                tokens_output=200,
+                tokens_reasoning=100,
+            )
+        )
         session.commit()
 
         r = _client().get(
@@ -787,7 +817,10 @@ class TestSessionsEndpoint:
         assert r.status_code == 200
         s = r.json()["sessions"][0]
         assert s["tokens_reasoning"] == 100
-        assert s["tokens_total"] == s["tokens_input"] + s["tokens_output"] + s["tokens_cache"] + s["tokens_reasoning"]
+        assert (
+            s["tokens_total"]
+            == s["tokens_input"] + s["tokens_output"] + s["tokens_cache"] + s["tokens_reasoning"]
+        )
 
     def test_sessions_sort_by_recent_orders_by_ts_end(self, session):
         now = datetime.now(UTC)

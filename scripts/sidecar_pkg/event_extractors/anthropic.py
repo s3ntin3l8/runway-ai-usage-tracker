@@ -81,9 +81,7 @@ def parse_anthropic_events(
                         1 for c in content if isinstance(c, dict) and c.get("type") == "tool_use"
                     )
 
-                    subagent_type = (
-                        e.get("attributionAgent") if e.get("isSidechain") else None
-                    )
+                    subagent_type = e.get("attributionAgent") if e.get("isSidechain") else None
 
                     events.append(
                         UsageEventPush(

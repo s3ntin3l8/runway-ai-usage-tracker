@@ -234,8 +234,7 @@ def upsert_latest_usage(
     # Transient collection failures write an error placeholder with model_id=""
     # that would otherwise persist alongside healthy per-model cards indefinitely.
     is_error_incoming = (
-        incoming_partial.get("data_source") == "error"
-        or incoming_partial.get("remaining") == "ERR"
+        incoming_partial.get("data_source") == "error" or incoming_partial.get("remaining") == "ERR"
     )
     if not is_error_incoming and model_id != "":
         try:

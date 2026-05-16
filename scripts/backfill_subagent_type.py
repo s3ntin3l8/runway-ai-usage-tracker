@@ -37,10 +37,12 @@ def _candidate_dirs() -> list[Path]:
                 continue
             proj = os.path.join(p, "projects") if not p.endswith("/projects") else p
             dirs.append(proj)
-    dirs.extend([
-        os.path.expanduser("~/.claude/projects"),
-        os.path.expanduser("~/.config/claude/projects"),
-    ])
+    dirs.extend(
+        [
+            os.path.expanduser("~/.claude/projects"),
+            os.path.expanduser("~/.config/claude/projects"),
+        ]
+    )
     return [Path(d) for d in dirs if os.path.isdir(d)]
 
 

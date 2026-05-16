@@ -136,6 +136,7 @@ def test_phase_b_since_filter_skips_old_events():
     new_ev = _chatgpt_event(s, event_id="new", ts=datetime(2026, 5, 16, tzinfo=UTC), cost_usd=0.0)
 
     from datetime import date
+
     phase_b_recost(s, providers=["chatgpt"], since=date(2026, 1, 1), dry_run=False)
 
     s.refresh(old_ev)
@@ -154,6 +155,7 @@ def test_phase_c_rebuilds_rollup_with_new_cost():
     # Insert event with correct cost, then corrupt the rollup to simulate stale state.
     ev = _chatgpt_event(s, cost_usd=5.25)
     from app.services.period_rollups import update_rollups_for_event
+
     update_rollups_for_event(s, ev)
     rollup = s.exec(
         select(UsagePeriodRollup).where(
@@ -187,13 +189,12 @@ def test_phase_c_dry_run_leaves_rollup_intact():
     s = _make_session()
     ev = _chatgpt_event(s, cost_usd=5.25)
     from app.services.period_rollups import update_rollups_for_event
+
     update_rollups_for_event(s, ev)
 
     phase_c_rollups(s, providers=["chatgpt"], dry_run=True)
 
-    rows = s.exec(
-        select(UsagePeriodRollup).where(UsagePeriodRollup.provider_id == "chatgpt")
-    ).all()
+    rows = s.exec(select(UsagePeriodRollup).where(UsagePeriodRollup.provider_id == "chatgpt")).all()
     assert len(rows) > 0  # rollup still exists
 
 
@@ -209,8 +210,14 @@ def test_phase_d_rebuilds_window_with_updated_event_cost():
     # Create a closed window covering the event's timestamp
     ws = datetime(2026, 5, 16, 0, 0, 0, tzinfo=UTC)
     we = datetime(2026, 5, 23, 0, 0, 0, tzinfo=UTC)
-    close_window(s, provider_id="chatgpt", account_id="user@test.com",
-                 window_type="weekly", window_start=ws, window_end=we)
+    close_window(
+        s,
+        provider_id="chatgpt",
+        account_id="user@test.com",
+        window_type="weekly",
+        window_start=ws,
+        window_end=we,
+    )
     s.commit()
 
     # Now change the event cost and re-run phase D
@@ -237,8 +244,14 @@ def test_phase_d_dry_run_does_not_delete_windows():
     _chatgpt_event(s, cost_usd=5.25)
     ws = datetime(2026, 5, 16, 0, 0, 0, tzinfo=UTC)
     we = datetime(2026, 5, 23, 0, 0, 0, tzinfo=UTC)
-    close_window(s, provider_id="chatgpt", account_id="user@test.com",
-                 window_type="weekly", window_start=ws, window_end=we)
+    close_window(
+        s,
+        provider_id="chatgpt",
+        account_id="user@test.com",
+        window_type="weekly",
+        window_start=ws,
+        window_end=we,
+    )
     s.commit()
 
     phase_d_windows(s, providers=["chatgpt"], dry_run=True)

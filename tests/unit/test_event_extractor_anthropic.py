@@ -4,9 +4,7 @@ from pathlib import Path
 from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sample.jsonl"
-SIDECHAIN_FIXTURE = (
-    Path(__file__).parent.parent / "fixtures" / "anthropic-sidechain-sample.jsonl"
-)
+SIDECHAIN_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sidechain-sample.jsonl"
 
 
 def test_extracts_assistant_messages_only():
