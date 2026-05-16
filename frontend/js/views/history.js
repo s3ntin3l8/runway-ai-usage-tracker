@@ -305,7 +305,7 @@ function _barSnapshots(bars, metric) {
             rows.push({
                 provider_id: seg.provider_id,
                 service_name: seg.label,
-                timestamp: bar.date + 'T12:00:00Z',
+                timestamp: bar.ts || (bar.date + 'T12:00:00Z'),
                 used_value: seg.value,
                 limit_value: null,
                 unit_type: metric === 'cost' ? 'currency' : 'tokens',

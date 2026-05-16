@@ -199,6 +199,8 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     emptyEl?.classList.add("hidden");
     document.getElementById("chart-wrap")?.classList.remove("hidden");
 
+    const isBar = metric !== 'percent';
+    const summable = metric === 'tokens' || metric === 'cost';
     const bucketSeconds = pickBucketSeconds(days);
     const seriesKeys = extractSeriesKeys(filteredSnapshots);
     const buckets = bucketByMetric(filteredSnapshots, metric, bucketSeconds);
@@ -206,6 +208,22 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     // Get sorted bucket epochs for the X axis
     const bucketEpochs = Object.keys(buckets).map(Number).sort((a, b) => a - b);
     if (bucketEpochs.length === 0) {
+        emptyEl?.classList.remove("hidden");
+        document.getElementById("chart-wrap")?.classList.add("hidden");
+        return;
+    }
+
+    // Drop series whose value is zero (or null) across every visible bucket.
+    const nonZeroKeys = seriesKeys.filter(key => {
+        for (const ep of bucketEpochs) {
+            const b = buckets[ep]?.[key];
+            if (!b) continue;
+            const v = summable ? b.sum : b.sum / b.count;
+            if (v != null && v !== 0) return true;
+        }
+        return false;
+    });
+    if (nonZeroKeys.length === 0) {
         emptyEl?.classList.remove("hidden");
         document.getElementById("chart-wrap")?.classList.add("hidden");
         return;
@@ -221,7 +239,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     let series = [];
 
     // First pass: averages (always shown)
-    const avgSeries = seriesKeys.map(key => {
+    const avgSeries = nonZeroKeys.map(key => {
         const [pid, , wtype, variant, modelId] = key.split('|');
         const subParts = [];
         if (variant) subParts.push(variant);
@@ -231,8 +249,28 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         if (providerCounts[pid] === undefined) providerCounts[pid] = 0;
         const style = getSeriesStyle(pid, providerCounts[pid]++);
 
+        const seriesData = bucketEpochs.map(ep => {
+            const b = buckets[ep]?.[key];
+            if (!b) return null;
+            const v = summable ? b.sum : b.sum / b.count;
+            return parseFloat(v.toFixed(2));
+        });
+        const seriesName = displayName ? `${pid.toUpperCase()}: ${displayName}` : pid.toUpperCase();
+
+        if (isBar) {
+            return {
+                name: seriesName,
+                type: 'bar',
+                stack: 'providers',
+                barMaxWidth: 40,
+                itemStyle: { color: style.color },
+                data: seriesData,
+                emphasis: { focus: 'series' },
+                z: 2,
+            };
+        }
         return {
-            name: displayName ? `${pid.toUpperCase()}: ${displayName}` : pid.toUpperCase(),
+            name: seriesName,
             type: 'line',
             smooth: true,
             symbol: 'circle',
@@ -253,25 +291,22 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                     ]
                 }
             },
-            data: bucketEpochs.map(ep => {
-                const b = buckets[ep]?.[key];
-                return b ? parseFloat((b.sum / b.count).toFixed(2)) : null;
-            }),
+            data: seriesData,
             connectNulls: true,
             emphasis: {
                 focus: 'series',
                 lineStyle: { width: 3 }
             },
-            z: 2
+            z: 2,
         };
     });
 
     series = avgSeries;
 
     // BAND mode: render a single min-max shaded band per series (not doubled legend items)
-    if (showPeaks) {
+    if (showPeaks && !isBar) {
         const bandCounts = {};
-        const bandSeries = seriesKeys.flatMap(key => {
+        const bandSeries = nonZeroKeys.flatMap(key => {
             const [pid] = key.split('|');
             if (bandCounts[pid] === undefined) bandCounts[pid] = 0;
             const style = getSeriesStyle(pid, bandCounts[pid]++);
@@ -340,26 +375,43 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         const option = {
             backgroundColor: 'transparent',
             tooltip: {
-                trigger: 'item',
+                trigger: isBar ? 'axis' : 'item',
+                axisPointer: isBar ? { type: 'shadow' } : undefined,
                 backgroundColor: cSurface,
                 borderColor: cHairline,
                 borderWidth: 1,
                 padding: [10, 15],
                 textStyle: { color: cText, fontFamily: 'B612 Mono, monospace', fontSize: 11 },
-                formatter: (params) => {
-                    const unit = metric === 'percent' ? '%' : (metric === 'cost' ? ' USD' : '');
-                    const val = metric === 'percent'
-                        ? params.value.toFixed(1)
-                        : Number(params.value).toLocaleString();
-                    return `
-                        <div style="margin-bottom: 4px; color: ${cTextDim}; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${params.name}</div>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="display: inline-block; width: 6px; height: 6px; background-color: ${params.color}"></span>
-                            <span style="font-weight: 700; color: ${cText};">${params.seriesName}</span>
-                            <span style="margin-left: 12px; font-family: 'B612 Mono', monospace; color: ${cAccent};">${val}${unit}</span>
-                        </div>
-                    `;
-                }
+                formatter: isBar
+                    ? (paramsList) => {
+                        const unit = metric === 'cost' ? ' USD' : '';
+                        const bucketLabel = paramsList[0]?.name || '';
+                        const rows = paramsList
+                            .filter(p => p.value != null)
+                            .map(p => {
+                                const val = Number(p.value).toLocaleString();
+                                return `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">` +
+                                    `<span style="display:inline-block;width:6px;height:6px;background-color:${p.color}"></span>` +
+                                    `<span style="color:${cText};">${p.seriesName}</span>` +
+                                    `<span style="margin-left:auto;font-family:'B612 Mono',monospace;color:${cAccent};">${val}${unit}</span>` +
+                                    `</div>`;
+                            }).join('');
+                        return `<div style="margin-bottom:4px;color:${cTextDim};font-size:10px;text-transform:uppercase;letter-spacing:0.05em;">${bucketLabel}</div>${rows}`;
+                    }
+                    : (params) => {
+                        const unit = metric === 'percent' ? '%' : (metric === 'cost' ? ' USD' : '');
+                        const val = metric === 'percent'
+                            ? params.value.toFixed(1)
+                            : Number(params.value).toLocaleString();
+                        return `
+                            <div style="margin-bottom: 4px; color: ${cTextDim}; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;">${params.name}</div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="display: inline-block; width: 6px; height: 6px; background-color: ${params.color}"></span>
+                                <span style="font-weight: 700; color: ${cText};">${params.seriesName}</span>
+                                <span style="margin-left: 12px; font-family: 'B612 Mono', monospace; color: ${cAccent};">${val}${unit}</span>
+                            </div>
+                        `;
+                    }
             },
             legend: {
                 show: false,
@@ -375,7 +427,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             },
             xAxis: {
                 type: 'category',
-                boundaryGap: false,
+                boundaryGap: isBar,
                 data: xAxisData,
                 axisLabel: { color: cTextDim, fontSize: 9, margin: 15, fontFamily: 'B612 Mono, monospace' },
                 axisLine: { lineStyle: { color: cHairline } },

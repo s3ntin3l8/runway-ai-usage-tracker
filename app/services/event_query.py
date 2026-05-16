@@ -1792,10 +1792,14 @@ def query_chart(
 
         return {"series": list(series_map.values())}
 
-    # tokens or cost — daily bars
+    # tokens or cost — hourly bars for days<=7, daily bars otherwise
+    period_type = "hour" if days <= 7 else "day"
+    since_key = (
+        since.strftime("%Y-%m-%dT%H") if period_type == "hour" else since.strftime("%Y-%m-%d")
+    )
     stmt = select(UsagePeriodRollup).where(
-        UsagePeriodRollup.period_type == "day",
-        UsagePeriodRollup.period_key >= since.strftime("%Y-%m-%d"),
+        UsagePeriodRollup.period_type == period_type,
+        UsagePeriodRollup.period_key >= since_key,
         UsagePeriodRollup.sidecar_id == "",
     )
     if provider_id:
@@ -1804,7 +1808,7 @@ def query_chart(
         stmt = stmt.where(UsagePeriodRollup.account_id == account_id)
 
     all_bar_rows = list(session.exec(stmt.order_by(UsagePeriodRollup.period_key)).all())
-    # Providers that have per-model rows for a given date — used to skip their aggregate row
+    # Providers that have per-model rows for a given period — used to skip their aggregate row
     has_per_model: set[tuple[str, str]] = {
         (r.provider_id, r.period_key) for r in all_bar_rows if r.model_id != ""
     }
@@ -1815,9 +1819,9 @@ def query_chart(
             continue
 
         use_model = r.model_id
-        date = r.period_key
-        if date not in bars_map:
-            bars_map[date] = []
+        key = r.period_key
+        if key not in bars_map:
+            bars_map[key] = []
         value = (
             r.cost_usd
             if metric == "cost"
@@ -1830,11 +1834,20 @@ def query_chart(
         label = r.provider_id.capitalize()
         if use_model:
             label += f" · {use_model}"
-        bars_map[date].append(
+        bars_map[key].append(
             {"provider_id": r.provider_id, "model_id": use_model, "label": label, "value": value}
         )
 
-    bars = [{"date": d, "segments": segs} for d, segs in sorted(bars_map.items())]
+    bars = []
+    for key in sorted(bars_map.keys()):
+        ts = _parse_period_key(key, period_type)
+        bars.append(
+            {
+                "date": ts.strftime("%Y-%m-%d") if ts else key[:10],
+                "ts": iso_utc(ts) if ts else key + ":00:00+00:00",
+                "segments": bars_map[key],
+            }
+        )
     return {"bars": bars}
 
 

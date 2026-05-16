@@ -229,8 +229,8 @@ def test_query_chart_percent_returns_fill_curves(session):
     assert s["points"][0]["pct_used"] == 10.0
 
 
-def test_query_chart_tokens_returns_daily_bars(session):
-    """query_chart with metric=tokens reads from usage_period_rollup."""
+def test_query_chart_tokens_returns_hourly_bars(session):
+    """query_chart with metric=tokens uses hourly rollups for days<=7."""
     from app.models.db import UsagePeriodRollup
     from app.services.event_query import query_chart
 
@@ -239,8 +239,8 @@ def test_query_chart_tokens_returns_daily_bars(session):
         UsagePeriodRollup(
             provider_id="anthropic",
             account_id="user@example.com",
-            period_type="day",
-            period_key=(now - timedelta(days=1)).strftime("%Y-%m-%d"),
+            period_type="hour",
+            period_key=(now - timedelta(hours=2)).strftime("%Y-%m-%dT%H"),
             model_id="",
             sidecar_id="",
             tokens_input=300_000,
@@ -254,10 +254,44 @@ def test_query_chart_tokens_returns_daily_bars(session):
     result = query_chart(session, metric="tokens", days=7)
     assert "bars" in result
     assert len(result["bars"]) >= 1
-    day = result["bars"][0]
-    assert "date" in day
-    total = sum(s["value"] for s in day["segments"])
+    bar = result["bars"][0]
+    assert "date" in bar
+    assert "ts" in bar
+    total = sum(s["value"] for s in bar["segments"])
     assert total == 400_000
+
+
+def test_query_chart_tokens_hourly_for_short_window(session):
+    """query_chart for days=1 returns one bar per hourly rollup row (regression for 'only 2 bars' bug)."""
+    from app.models.db import UsagePeriodRollup
+    from app.services.event_query import query_chart
+
+    now = datetime.now(UTC)
+    for hours_ago in [1, 3, 5]:
+        session.add(
+            UsagePeriodRollup(
+                provider_id="anthropic",
+                account_id="user@example.com",
+                period_type="hour",
+                period_key=(now - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H"),
+                model_id="",
+                sidecar_id="",
+                tokens_input=10_000,
+                tokens_output=5_000,
+                cost_usd=0.10,
+                msgs=3,
+            )
+        )
+    session.commit()
+
+    result = query_chart(session, metric="tokens", days=1)
+    assert "bars" in result
+    assert len(result["bars"]) == 3
+    # Each bar must carry a full ISO timestamp
+    for bar in result["bars"]:
+        assert "ts" in bar
+        # ts should be parseable and not just a date
+        assert "T" in bar["ts"]
 
 
 # ---------------------------------------------------------------------------
