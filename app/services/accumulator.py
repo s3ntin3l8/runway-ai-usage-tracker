@@ -229,6 +229,39 @@ def upsert_latest_usage(
                 f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
             )
 
+    # Evict a stale aggregate error card (model_id="") when a fresh per-model
+    # card arrives for the same (provider, account, window_type, variant).
+    # Transient collection failures write an error placeholder with model_id=""
+    # that would otherwise persist alongside healthy per-model cards indefinitely.
+    is_error_incoming = (
+        incoming_partial.get("data_source") == "error"
+        or incoming_partial.get("remaining") == "ERR"
+    )
+    if not is_error_incoming and model_id != "":
+        try:
+            with session.begin_nested():
+                stale_error = session.exec(
+                    select(LatestUsage).where(
+                        LatestUsage.provider_id == card.provider_id,
+                        LatestUsage.account_id == canonical_account_id,
+                        LatestUsage.window_type == card.window_type,
+                        LatestUsage.variant == variant,
+                        LatestUsage.model_id == "",
+                    )
+                ).first()
+                if stale_error:
+                    stale_json = json.loads(stale_error.card_json or "{}")
+                    if (
+                        stale_json.get("data_source") == "error"
+                        or stale_json.get("remaining") == "ERR"
+                    ):
+                        session.delete(stale_error)
+        except Exception as e:
+            logger.warning(
+                f"Stale error card eviction failed for "
+                f"{card.provider_id}/{canonical_account_id}/{card.window_type}: {e}"
+            )
+
     # Append quota snapshot for % used history (only when quota data is present).
     # Derive pct_used from used_value when unit_type=percent (e.g. Claude web scraper)
     # or from used_value/limit_value ratio when both are present.
