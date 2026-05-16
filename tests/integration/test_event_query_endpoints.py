@@ -693,8 +693,8 @@ class TestSessionsEndpoint:
         assert sessions[0]["session_id"] == "real-session"
 
     def test_sessions_duration_seconds(self, session):
-        ts_start = datetime(2026, 5, 8, 14, 0, 0, tzinfo=UTC)
-        ts_end = datetime(2026, 5, 8, 14, 36, 31, tzinfo=UTC)  # 2191 seconds
+        ts_start = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)
+        ts_end = ts_start + timedelta(seconds=2191)  # 36m 31s
         session.add(_event(event_id="d1", session_id="dur-sess", ts=ts_start))
         session.add(_event(event_id="d2", session_id="dur-sess", ts=ts_end))
         session.commit()

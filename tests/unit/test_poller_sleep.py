@@ -99,7 +99,8 @@ async def test_wake_resets_interval_and_sets_event():
     p = BackgroundPoller(interval_seconds=900)
     p._interval = 7200  # simulate dormant state
 
-    p.wake()
+    with patch("app.services.poller.Session"):
+        p.wake()
 
     assert p._interval == p._base_interval
     assert p._wake_event.is_set()
