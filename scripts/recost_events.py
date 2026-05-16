@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -129,9 +129,7 @@ def phase_c_rollups(
         )
     else:
         del_stmt = delete(UsagePeriodRollup)
-        ev_stmt = (
-            select(UsageEvent).where(UsageEvent.kind == "message").order_by(UsageEvent.ts)
-        )
+        ev_stmt = select(UsageEvent).where(UsageEvent.kind == "message").order_by(UsageEvent.ts)
 
     events = session.exec(ev_stmt).all()
     print(f"Phase C — rebuilding rollups from {len(events):,} event(s)…", flush=True)
@@ -248,7 +246,7 @@ def main() -> int:
         "--since",
         metavar="YYYY-MM-DD",
         help="Only re-cost events on or after this date (Phase B). "
-             "Phases C and D always rebuild all events for the affected providers.",
+        "Phases C and D always rebuild all events for the affected providers.",
     )
     p.add_argument(
         "--dry-run",
