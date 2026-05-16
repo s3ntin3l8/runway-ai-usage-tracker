@@ -37,7 +37,7 @@ class CredentialProvider:
         current = data
         for k in key_path:
             if isinstance(current, dict):
-                current = current.get(k)
+                current = current.get(k)  # type: ignore[assignment]
             else:
                 return None
         return current
