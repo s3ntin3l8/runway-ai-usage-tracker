@@ -105,6 +105,37 @@ def test_two_events_same_period_increment():
     assert row.msgs == 2
 
 
+def test_engine_enables_wal_and_sets_busy_timeout(tmp_path):
+    """The "connect" event listener must enable WAL and busy_timeout on
+    every connection, before any transaction begins.
+
+    Regression test for a production incident: PRAGMA journal_mode=WAL was
+    being run via SQLAlchemy's execute() path, which wrapped it in BEGIN
+    IMMEDIATE — journal_mode silently no-ops inside a transaction, so WAL
+    was never enabled. Every read transaction then serialised through the
+    same lock as every write, and the dashboard timed out under fleet
+    contention.
+    """
+    db_path = tmp_path / "pragma_check.db"
+    url = f"sqlite:///{db_path}"
+    engine = create_engine(url, connect_args=SQLITE_CONNECT_ARGS)
+    configure_sqlite_engine(engine)
+
+    raw = engine.raw_connection()
+    try:
+        cur = raw.cursor()
+        cur.execute("PRAGMA journal_mode")
+        mode = cur.fetchone()[0]
+        cur.execute("PRAGMA busy_timeout")
+        busy_ms = cur.fetchone()[0]
+        cur.close()
+    finally:
+        raw.close()
+
+    assert mode == "wal", f"expected WAL journal mode, got {mode!r}"
+    assert busy_ms >= 30000, f"expected busy_timeout >= 30s, got {busy_ms}ms"
+
+
 def test_concurrent_rollup_updates_do_not_lose_increments(tmp_path):
     """Many threads incrementing the same rollup grain must produce a sum
     equal to the event count — no lost updates, no SQLite-locked failures.

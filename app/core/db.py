@@ -30,27 +30,41 @@ def configure_sqlite_engine(engine_) -> None:
     """Wire up the SQLAlchemy-recommended pattern for proper SQLite
     transaction semantics.
 
-    Python's sqlite3 driver in its default ("legacy") mode silently auto-commits
-    on certain statements (CREATE TABLE, etc.) and may not issue BEGIN for
-    plain INSERT, so SQLAlchemy's ROLLBACK has nothing to roll back. The
-    documented fix is: set the DBAPI connection to autocommit (None), then
-    have SQLAlchemy emit an explicit BEGIN at the start of each transaction.
-    The end result is that BEGIN / COMMIT / ROLLBACK / SAVEPOINT all work
-    as advertised — without this, partial-batch failures leak through.
+    Three things happen at connect time, in order:
+
+    1. `isolation_level=None` puts the DBAPI connection in autocommit so
+       SQLAlchemy controls BEGIN/COMMIT/ROLLBACK. Without this, Python's
+       sqlite3 silently auto-commits on certain statements and SQLAlchemy's
+       ROLLBACK has nothing to roll back — partial-batch failures leak.
+    2. WAL journal mode and synchronous=NORMAL are applied per-connection
+       before any transaction is open. WAL lets readers proceed alongside
+       a writer; without it, every read serialises through the same lock
+       as every write, and BEGIN times out under fleet contention.
+    3. The "begin" event emits plain `BEGIN` (DEFERRED). Combined with WAL
+       this is correct: writers serialise through SQLite's single writer
+       lock with busy_timeout retry, readers use snapshots and never
+       conflict. BEGIN IMMEDIATE would serialise reads as well — a 30s
+       timeout is not enough margin for a healthy dashboard polling loop.
     """
 
     @event.listens_for(engine_, "connect")
-    def _set_sqlite_autocommit(dbapi_conn, _conn_record):
+    def _on_connect(dbapi_conn, _conn_record):
         dbapi_conn.isolation_level = None
+        cursor = dbapi_conn.cursor()
+        try:
+            # `journal_mode=WAL` returns the journal mode actually in effect
+            # ("memory" for :memory: DBs, "wal" for files). Either way it's
+            # safe to set on every connect — it's a no-op once enabled.
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        except Exception as e:
+            logger.warning(f"Could not set SQLite concurrency pragmas: {e}")
+        finally:
+            cursor.close()
 
     @event.listens_for(engine_, "begin")
     def _emit_begin(conn):
-        # IMMEDIATE acquires the RESERVED lock at BEGIN time. The DEFERRED
-        # default upgrades on first write, which lets two concurrent writers
-        # both reach SHARED and then deadlock during upgrade — SQLite returns
-        # BUSY immediately without honoring busy_timeout. IMMEDIATE makes the
-        # second writer wait the full busy_timeout instead.
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        conn.exec_driver_sql("BEGIN")
 
 
 engine = create_engine(
@@ -76,10 +90,9 @@ def init_db():
         WebhookConfig,
     )
 
-    # WAL allows concurrent readers alongside a writer; synchronous=NORMAL
-    # is safe under WAL and substantially faster than the FULL default.
-    with engine.connect() as conn:
-        _enable_concurrency_pragmas(conn)
+    # Concurrency pragmas (WAL / synchronous=NORMAL) are applied per-connection
+    # in the "connect" event listener — they must run before any BEGIN, which
+    # rules out doing them through SQLAlchemy's normal execute path.
 
     SQLModel.metadata.create_all(engine)
     logger.info(f"Database initialized at {settings.DATABASE_PATH}")
@@ -106,32 +119,6 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("system_config", "user_timezone", "VARCHAR"),
     ("usage_events", "subagent_type", "VARCHAR"),
 ]
-
-
-def _enable_concurrency_pragmas(conn) -> None:
-    """Set WAL journal mode and NORMAL synchronous on the connection.
-
-    WAL lets readers and one writer proceed concurrently; the old rollback
-    journal serialised everything. synchronous=NORMAL is safe under WAL —
-    a crash can lose the last in-flight transaction but never corrupts the
-    DB — and is materially faster than FULL.
-
-    In-memory SQLite (used by tests) refuses journal_mode changes, so we
-    silently skip them there.
-    """
-    from sqlalchemy import text
-
-    if (
-        settings.DATABASE_URL.startswith("sqlite:///:memory:")
-        or settings.DATABASE_URL == "sqlite://"
-    ):
-        return
-    try:
-        conn.execute(text("PRAGMA journal_mode=WAL"))
-        conn.execute(text("PRAGMA synchronous=NORMAL"))
-        conn.commit()
-    except Exception as e:
-        logger.warning(f"Could not set concurrency pragmas: {e}")
 
 
 def _add_columns_if_missing(conn) -> None:
