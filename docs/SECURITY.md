@@ -37,6 +37,27 @@ In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message ev
    - The server verifies the signature matches and that the timestamp is within a 5-minute sliding window.
 3. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
 
+## 🚦 Multi-Host Startup Gates
+
+When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start unless three things are in place — HMAC alone is not enough confidentiality for sidecar payloads carrying OAuth tokens, cookies, and API keys.
+
+| Setting             | Required | Why |
+|---------------------|----------|-----|
+| `DB_ENCRYPTION_KEY` | yes      | Encrypts credentials at rest. |
+| `TLS_TERMINATED=1`  | yes      | Operator assertion that nginx / caddy / cloudflare / kube ingress terminates TLS in front of Runway. |
+| `CORS_ORIGINS=…`    | yes      | Explicit allow-list. The legacy `["*"]` fallback combined with `allow_credentials=True` is rejected by browsers. |
+
+These are fail-fast checks: a misconfigured deployment dies at import time with a clear `RuntimeError`, never silently exposing tokens over cleartext or serving with a broken CORS policy. Localhost binds are exempt by design — Runway's primary topology is "developer's laptop".
+
+## 🔒 Response Headers
+
+Every response carries a defence-in-depth header set:
+
+- `Content-Security-Policy`: `default-src 'self'`, with `'unsafe-inline'` for scripts and styles (required while `components.js` still emits inline `onclick="…"`), and the Google Fonts origins allow-listed. `frame-ancestors 'none'` blocks framing.
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY` (for older user agents that ignore `frame-ancestors`)
+- `Referrer-Policy: no-referrer`
+
 ## 🔄 Maintenance & Hygiene
 
 ### Credential Rotation

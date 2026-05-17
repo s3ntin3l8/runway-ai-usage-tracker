@@ -13,6 +13,16 @@ import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Force a localhost / un-secured configuration for tests, BEFORE any app
+# module is imported. config.py runs _validate_security_invariants at import
+# time, so an operator's .env that legitimately sets APP_HOST=0.0.0.0 would
+# otherwise refuse to load the test suite. Tests that want to exercise the
+# multi-host gates monkeypatch the live settings explicitly.
+os.environ["APP_HOST"] = "127.0.0.1"
+os.environ.pop("ADMIN_API_KEY", None)
+os.environ.pop("CORS_ORIGINS", None)
+os.environ.pop("TLS_TERMINATED", None)
+
 import httpx
 import pytest
 

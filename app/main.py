@@ -97,6 +97,35 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
 
+# Defence-in-depth security headers on every response. CSP is the meaningful
+# guard against the dashboard's `innerHTML` exposure: even if escapeHTML*
+# misses something, a CSP-blocked external <script> can't run. We keep
+# 'unsafe-inline' for now because components.js emits `onclick="..."` strings;
+# migrating those to addEventListener is a follow-up. fonts.googleapis.com
+# and fonts.gstatic.com are whitelisted to keep the existing B612 font load.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' data: https://fonts.gstatic.com; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def _add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
+
+
 # Global Exception Handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

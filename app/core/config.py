@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     # disabled (default). Without this, anyone could forge the header.
     TRUSTED_PROXY_IPS: str = ""
 
+    # Operator's assertion that something in front of the server (nginx,
+    # caddy, cloudflare, kube ingress, etc.) terminates TLS. Required to
+    # start when bound to a non-localhost interface — sidecar payloads
+    # carry OAuth tokens and cookies, and HMAC protects integrity but
+    # not confidentiality. Localhost binds don't need it.
+    TLS_TERMINATED: bool = False
+
     # OAuth credentials
     GEMINI_OAUTH_CLIENT_ID: str = ""
     GEMINI_OAUTH_CLIENT_SECRET: str = ""
@@ -193,43 +200,85 @@ class Settings(BaseSettings):
         origins = os.getenv("CORS_ORIGINS")
         if origins:
             return [o.strip() for o in origins.split(",")]
-        if self.APP_HOST not in ("127.0.0.1", "localhost"):
-            # Bound to all interfaces — allow all origins
-            return ["*"]
+        # Non-localhost without explicit CORS_ORIGINS is rejected by
+        # _validate_security_invariants at startup, so reaching this
+        # default means APP_HOST is local.
         return [
             f"http://localhost:{self.APP_PORT}",
             f"http://127.0.0.1:{self.APP_PORT}",
         ]
 
 
+def _validate_security_invariants(s: Settings) -> None:
+    """Refuse to start when production-mode preconditions aren't met.
+
+    "Production mode" = bound to a non-localhost interface. In that mode the
+    server is reachable from the network and ships secrets across the wire:
+
+    1. DB_ENCRYPTION_KEY must be set (otherwise OAuth tokens, cookies, and
+       ingest API keys sit in plaintext on disk).
+    2. TLS_TERMINATED must be asserted (otherwise sidecar payloads — tokens,
+       cookies — travel as cleartext on the wire).
+    3. CORS_ORIGINS must be explicitly set (the legacy fallback to ["*"]
+       combined with allow_credentials=True is rejected by browsers and
+       leaves the dashboard non-functional cross-origin).
+
+    Also: DB_ENCRYPTION_KEY is required whenever ADMIN_API_KEY is set, since
+    the admin endpoints mutate state secured by that key.
+
+    Raises RuntimeError when any precondition fails. Localhost binds are
+    exempt by design — Runway's primary topology is "developer's laptop"
+    and the gates would block that flow.
+    """
+    if s.ADMIN_API_KEY and not s.DB_ENCRYPTION_KEY:
+        logger.error(
+            "SECURITY ERROR: ADMIN_API_KEY is set while DB_ENCRYPTION_KEY is not configured."
+        )
+        raise RuntimeError("DB_ENCRYPTION_KEY must be set when ADMIN_API_KEY is configured")
+
+    if s.APP_HOST in ("127.0.0.1", "localhost", "::1"):
+        return  # localhost binds are exempt from the multi-host gates
+
+    if not s.DB_ENCRYPTION_KEY:
+        logger.error("SECURITY ERROR: Server bound to non-localhost without DB_ENCRYPTION_KEY.")
+        raise RuntimeError("DB_ENCRYPTION_KEY must be set when binding to non-localhost interfaces")
+    if not s.TLS_TERMINATED:
+        logger.error(
+            "SECURITY ERROR: Server bound to non-localhost without TLS_TERMINATED=1. "
+            "Sidecar payloads include tokens — they must not travel as cleartext."
+        )
+        raise RuntimeError(
+            "TLS termination must be asserted (set TLS_TERMINATED=1) when binding "
+            "to non-localhost interfaces. Front the server with nginx / caddy / "
+            "cloudflare / kube ingress and set the flag once TLS is in place."
+        )
+    if not os.getenv("CORS_ORIGINS"):
+        logger.error("SECURITY ERROR: Server bound to non-localhost without explicit CORS_ORIGINS.")
+        raise RuntimeError(
+            "CORS_ORIGINS must be set to an explicit comma-separated origin list when "
+            "binding to non-localhost interfaces. The default ['*'] is rejected by "
+            "browsers in combination with credentialed requests."
+        )
+
+
+def _warn_about_ingest_key(s: Settings) -> None:
+    if not s.INGEST_API_KEY:
+        logger.warning("=" * 60)
+        logger.warning(
+            "INGEST_API_KEY is not configured. The ingest endpoint is DISABLED until a non-empty key is provided."
+        )
+        logger.warning(
+            "Set INGEST_API_KEY environment variable to a strong secret to enable sidecar ingestion."
+        )
+        logger.warning("=" * 60)
+    elif s.INGEST_API_KEY_IS_INSECURE_DEFAULT:
+        logger.warning("=" * 60)
+        logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
+        logger.warning("The ingest endpoint is DISABLED until a custom key is set.")
+        logger.warning("Set INGEST_API_KEY environment variable to a strong secret.")
+        logger.warning("=" * 60)
+
+
 settings = Settings()
-
-# Security enforcement: require DB_ENCRYPTION_KEY when ADMIN_API_KEY is set or when binding to non-localhost
-if settings.ADMIN_API_KEY and not settings.DB_ENCRYPTION_KEY:
-    logger.error(
-        "SECURITY ERROR: ADMIN_API_KEY is set while DB_ENCRYPTION_KEY is not configured. Refusing to start."
-    )
-    raise RuntimeError("DB_ENCRYPTION_KEY must be set when ADMIN_API_KEY is configured")
-if settings.APP_HOST not in ("127.0.0.1", "localhost") and not settings.DB_ENCRYPTION_KEY:
-    logger.error(
-        "SECURITY ERROR: Server bound to non-localhost without DB_ENCRYPTION_KEY. Refusing to start."
-    )
-    raise RuntimeError("DB_ENCRYPTION_KEY must be set when binding to non-localhost interfaces")
-
-
-# Security check: Warn if using a missing or default ingest secret
-if not settings.INGEST_API_KEY:
-    logger.warning("=" * 60)
-    logger.warning(
-        "INGEST_API_KEY is not configured. The ingest endpoint is DISABLED until a non-empty key is provided."
-    )
-    logger.warning(
-        "Set INGEST_API_KEY environment variable to a strong secret to enable sidecar ingestion."
-    )
-    logger.warning("=" * 60)
-elif settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
-    logger.warning("=" * 60)
-    logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
-    logger.warning("The ingest endpoint is DISABLED until a custom key is set.")
-    logger.warning("Set INGEST_API_KEY environment variable to a strong secret.")
-    logger.warning("=" * 60)
+_validate_security_invariants(settings)
+_warn_about_ingest_key(settings)
