@@ -1,6 +1,7 @@
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
 from app.models.db import UsageEvent, UsagePeriodRollup
 from app.models.schemas import UsageEventPush
 from app.services.event_ingestor import EventIngestor
@@ -8,9 +9,8 @@ from app.services.pricing_seed import seed_pricing_table
 
 
 def _seeded_session():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args=SQLITE_CONNECT_ARGS, poolclass=StaticPool)
+    configure_sqlite_engine(engine)
     SQLModel.metadata.create_all(engine)
     s = Session(engine)
     seed_pricing_table(s)
@@ -97,3 +97,83 @@ def test_ingest_computes_cost_when_not_set():
     assert row is not None
     # input=100 @ $3/Mtok + output=200 @ $15/Mtok = $0.0003 + $0.003 = $0.0033
     assert row.cost_usd > 0
+
+
+def test_ingest_then_replay_is_idempotent():
+    """Replaying the exact same batch must not double-count anything.
+
+    Property: after ingest(B) then ingest(B) again, the count of usage_events
+    rows and the rollup sums are identical to a single ingest(B).
+    """
+    s = _seeded_session()
+    batch = [_make_push(event_id=f"msg_{i}") for i in range(100)]
+
+    # First ingest establishes the baseline.
+    EventIngestor(s).ingest(batch, sidecar_id="dev-01")
+    baseline_events = len(s.exec(select(UsageEvent)).all())
+    baseline_day = s.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.period_type == "day",
+            UsagePeriodRollup.period_key == "2026-05-08",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).first()
+    assert baseline_events == 100
+    assert baseline_day.msgs == 100
+
+    # Replay the same batch.
+    res = EventIngestor(s).ingest(batch, sidecar_id="dev-01")
+
+    # All 100 should be deduplicated; no new event rows, no rollup drift.
+    assert res.events_inserted == 0
+    assert res.events_duplicate == 100
+    assert len(s.exec(select(UsageEvent)).all()) == baseline_events
+    day = s.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.period_type == "day",
+            UsagePeriodRollup.period_key == "2026-05-08",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).first()
+    assert day.msgs == baseline_day.msgs
+    assert day.tokens_input == baseline_day.tokens_input
+    assert day.tokens_output == baseline_day.tokens_output
+
+
+def test_partial_batch_failure_rolls_back_all_rollups(monkeypatch):
+    """A mid-batch crash must leave neither events nor rollups partially persisted.
+
+    Event-sourcing invariant: rollups are a derived view of usage_events. If
+    the ingest transaction fails, neither side may be visible — otherwise
+    rollup recomputation from events disagrees with what's stored.
+    """
+    from app.services import event_ingestor as ingestor_mod
+
+    s = _seeded_session()
+    batch = [_make_push(event_id=f"msg_{i}") for i in range(100)]
+
+    real_update = ingestor_mod.update_rollups_for_event
+    calls = {"n": 0}
+
+    def boom(session, ev):
+        calls["n"] += 1
+        if calls["n"] == 50:
+            raise RuntimeError("simulated rollup failure on event 50")
+        return real_update(session, ev)
+
+    monkeypatch.setattr(ingestor_mod, "update_rollups_for_event", boom)
+
+    try:
+        EventIngestor(s).ingest(batch, sidecar_id="dev-01")
+    except RuntimeError:
+        pass
+
+    # Re-open the session view of the database. The failed ingest must not
+    # have left events 1..49 (or their rollups) visible.
+    s.rollback()
+    events = s.exec(select(UsageEvent)).all()
+    rollups = s.exec(select(UsagePeriodRollup)).all()
+    assert events == [], f"expected zero events, found {len(events)}"
+    assert rollups == [], f"expected zero rollups, found {len(rollups)}"

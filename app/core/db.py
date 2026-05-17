@@ -1,6 +1,7 @@
 import logging
 import os
 
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
@@ -15,11 +16,49 @@ if not os.path.exists(db_dir):
     except Exception as e:
         logger.error(f"Failed to create database directory {db_dir}: {e}")
 
+SQLITE_CONNECT_ARGS = {
+    # check_same_thread=False: required so FastAPI's worker threads can
+    # share the connection pool.
+    "check_same_thread": False,
+    # SQLite is single-writer; busy_timeout makes concurrent writers wait for
+    # the lock instead of failing immediately with "database is locked".
+    "timeout": 30.0,
+}
+
+
+def configure_sqlite_engine(engine_) -> None:
+    """Wire up the SQLAlchemy-recommended pattern for proper SQLite
+    transaction semantics.
+
+    Python's sqlite3 driver in its default ("legacy") mode silently auto-commits
+    on certain statements (CREATE TABLE, etc.) and may not issue BEGIN for
+    plain INSERT, so SQLAlchemy's ROLLBACK has nothing to roll back. The
+    documented fix is: set the DBAPI connection to autocommit (None), then
+    have SQLAlchemy emit an explicit BEGIN at the start of each transaction.
+    The end result is that BEGIN / COMMIT / ROLLBACK / SAVEPOINT all work
+    as advertised — without this, partial-batch failures leak through.
+    """
+
+    @event.listens_for(engine_, "connect")
+    def _set_sqlite_autocommit(dbapi_conn, _conn_record):
+        dbapi_conn.isolation_level = None
+
+    @event.listens_for(engine_, "begin")
+    def _emit_begin(conn):
+        # IMMEDIATE acquires the RESERVED lock at BEGIN time. The DEFERRED
+        # default upgrades on first write, which lets two concurrent writers
+        # both reach SHARED and then deadlock during upgrade — SQLite returns
+        # BUSY immediately without honoring busy_timeout. IMMEDIATE makes the
+        # second writer wait the full busy_timeout instead.
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+
 engine = create_engine(
     settings.DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},  # Needed for SQLite + FastAPI
+    connect_args=SQLITE_CONNECT_ARGS,
 )
+configure_sqlite_engine(engine)
 
 
 def init_db():
@@ -36,6 +75,11 @@ def init_db():
         UsageWindow,
         WebhookConfig,
     )
+
+    # WAL allows concurrent readers alongside a writer; synchronous=NORMAL
+    # is safe under WAL and substantially faster than the FULL default.
+    with engine.connect() as conn:
+        _enable_concurrency_pragmas(conn)
 
     SQLModel.metadata.create_all(engine)
     logger.info(f"Database initialized at {settings.DATABASE_PATH}")
@@ -64,23 +108,55 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
 ]
 
 
+def _enable_concurrency_pragmas(conn) -> None:
+    """Set WAL journal mode and NORMAL synchronous on the connection.
+
+    WAL lets readers and one writer proceed concurrently; the old rollback
+    journal serialised everything. synchronous=NORMAL is safe under WAL —
+    a crash can lose the last in-flight transaction but never corrupts the
+    DB — and is materially faster than FULL.
+
+    In-memory SQLite (used by tests) refuses journal_mode changes, so we
+    silently skip them there.
+    """
+    from sqlalchemy import text
+
+    if (
+        settings.DATABASE_URL.startswith("sqlite:///:memory:")
+        or settings.DATABASE_URL == "sqlite://"
+    ):
+        return
+    try:
+        conn.execute(text("PRAGMA journal_mode=WAL"))
+        conn.execute(text("PRAGMA synchronous=NORMAL"))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Could not set concurrency pragmas: {e}")
+
+
 def _add_columns_if_missing(conn) -> None:
     """Idempotently ALTER TABLE ... ADD COLUMN for fields that postdate
     initial schema creation. SQLModel.create_all() only creates new tables
     on existing SQLite databases — it never adds new columns.
+
+    Only the "duplicate column" race is swallowed silently; any other
+    failure is re-raised so genuine schema drift is loud.
     """
+    import sqlalchemy.exc
     from sqlalchemy import text
 
     for table, column, sql_type in _DEFERRED_COLUMNS:
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+        if column in cols:
+            continue
         try:
-            cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
-            if column in cols:
-                continue
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
             conn.commit()
             logger.info(f"Migrated: added {table}.{column}")
-        except Exception as e:
-            logger.warning(f"Could not add column {table}.{column}: {e}")
+        except sqlalchemy.exc.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                continue
+            raise
 
 
 def _create_performance_indexes(conn):
