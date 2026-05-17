@@ -239,7 +239,6 @@ def query_snapshots(
             select(UsageWindow).where(
                 UsageWindow.window_end >= min_t,
                 UsageWindow.window_end <= max_t,
-                UsageWindow.model_id == "",
                 UsageWindow.sidecar_id == "",
             )
         ).all():
@@ -250,7 +249,13 @@ def query_snapshots(
                 + (w.tokens_cache_create or 0)
                 + (w.tokens_reasoning or 0)
             )
-            key = (w.provider_id, w.account_id, w.window_type, _min_bucket(w.window_end))
+            key = (
+                w.provider_id,
+                w.account_id,
+                w.window_type,
+                w.model_id,
+                _min_bucket(w.window_end),
+            )
             if key not in window_stats:
                 window_stats[key] = {
                     "tokens_total": tokens or None,
@@ -259,13 +264,14 @@ def query_snapshots(
 
     # Open windows: reset_at > now → sum usage_events in [window_start, now]
     # LatestUsage cards for quota-only providers (e.g. Claude) carry no token/cost data,
-    # so we compute running totals directly from events.
+    # so we compute running totals directly from events. Per-model rows filter by model_id;
+    # the aggregate row (model_id="") sums across all models.
     live_series = {
-        (s.provider_id, s.account_id, s.window_type, _min_bucket(s.reset_at))
+        (s.provider_id, s.account_id, s.window_type, s.model_id, _min_bucket(s.reset_at))
         for s in all_snaps
         if s.reset_at and s.reset_at > now_naive and s.window_type in WINDOW_DURATION
     }
-    for pid, aid, wt, min_reset in live_series:
+    for pid, aid, wt, mid, min_reset in live_series:
         actual_reset = next(
             (
                 s.reset_at
@@ -273,6 +279,7 @@ def query_snapshots(
                 if s.provider_id == pid
                 and s.account_id == aid
                 and s.window_type == wt
+                and s.model_id == mid
                 and s.reset_at
                 and s.reset_at > now_naive
             ),
@@ -281,14 +288,15 @@ def query_snapshots(
         if not actual_reset:
             continue
         window_start = actual_reset - WINDOW_DURATION[wt]
-        events = session.exec(
-            select(UsageEvent).where(
-                UsageEvent.provider_id == pid,
-                UsageEvent.account_id == aid,
-                UsageEvent.ts >= window_start,
-                UsageEvent.ts <= now_naive,
-            )
-        ).all()
+        event_filters = [
+            UsageEvent.provider_id == pid,
+            UsageEvent.account_id == aid,
+            UsageEvent.ts >= window_start,
+            UsageEvent.ts <= now_naive,
+        ]
+        if mid:
+            event_filters.append(UsageEvent.model_id == mid)
+        events = session.exec(select(UsageEvent).where(*event_filters)).all()
         tokens = sum(
             (e.tokens_input or 0)
             + (e.tokens_output or 0)
@@ -298,7 +306,7 @@ def query_snapshots(
             for e in events
         )
         cost = sum(e.cost_usd or 0.0 for e in events)
-        window_stats[(pid, aid, wt, min_reset)] = {
+        window_stats[(pid, aid, wt, mid, min_reset)] = {
             "tokens_total": tokens or None,
             "cost_usd": cost or None,
         }
@@ -327,7 +335,9 @@ def query_snapshots(
                 else None
             )
             stats = (
-                window_stats.get((pid, aid, wt, _min_bucket(s.reset_at)), {}) if s.reset_at else {}
+                window_stats.get((pid, aid, wt, mid, _min_bucket(s.reset_at)), {})
+                if s.reset_at
+                else {}
             )
             rows.append(
                 {
