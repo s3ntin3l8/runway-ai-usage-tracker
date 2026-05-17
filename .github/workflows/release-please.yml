@@ -24,7 +24,10 @@ jobs:
       - uses: googleapis/release-please-action@v5
         id: release
         with:
-          release-type: node
+          # Manifest mode so we can declare extra-files (pyproject.toml) that
+          # need to be bumped in lockstep with package.json on each release.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
   build-docker:
     needs: release-please
