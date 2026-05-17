@@ -544,7 +544,7 @@ function _fcCume(cumulative, _isPayg, providerId) {
         const sub = providerId === 'github'
             ? 'quota-based · no usage events'
             : 'awaiting sidecar deltas';
-        return `<div class="fc-cume">
+        return `<div class="fc-cume fc-cume-empty">
             <div class="row">
                 <span class="label">No cumulative data</span>
                 <span class="sub">${sub}</span>

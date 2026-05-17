@@ -3084,6 +3084,18 @@ l-table td.num {
 }
 [data-cols="2"] .fc-cume .row .v em { margin-left: 3px; }
 
+/* Empty-state cume: the 3-column tray would leave the placeholder squished
+   into one third with empty filler beside it. Collapse to a single full-width
+   column so the placeholder sits centered with consistent breathing room. */
+[data-cols="2"] .fc-cume.fc-cume-empty {
+    grid-template-columns: 1fr;
+    padding: 10px 16px;
+}
+.fc-cume.fc-cume-empty .row {
+    align-items: center;
+    text-align: center;
+}
+
 [data-cols="2"] .fc-pods-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 [data-cols="2"] .fc-leds { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 
