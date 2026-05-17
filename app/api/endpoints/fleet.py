@@ -28,8 +28,9 @@ class SidecarUpdateRequest(BaseModel):
 
 
 @router.post("/ingest")
+@limiter.limit("600/minute")
 async def ingest_metrics(
-    raw_request: Request,
+    request: Request,
     x_signature: str = Header(None, alias="X-Signature"),
     x_timestamp: str = Header(None, alias="X-Timestamp"),
     session: Session = Depends(get_session),
@@ -40,6 +41,12 @@ async def ingest_metrics(
     Headers required:
     - X-Signature: HMAC-SHA256(secret, timestamp + body)
     - X-Timestamp: Unix timestamp (within 5 minutes)
+
+    Rate limit: 600 requests / minute per source IP. Sidecars batch up to
+    1000 events per push at a 15-min cadence (spec §7.3), so even a fleet
+    of 100 sidecars stays well under 5 req/min. The limit's there to keep
+    a flooding attacker from saturating the HMAC + Pydantic parse path,
+    not to throttle legitimate operators.
     """
     # 0. Guard against misconfigured or insecure API key
     if not settings.INGEST_API_KEY:
@@ -79,7 +86,7 @@ async def ingest_metrics(
         raise HTTPException(status_code=401, detail="Invalid X-Timestamp format")
 
     # 3. Read body and verify signature
-    body_bytes = await raw_request.body()
+    body_bytes = await request.body()
     # 8 MB cap. Sidecars batch large event backfills (spec §7.3: ≤1000 events/POST).
     if len(body_bytes) > 8 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Request body too large")
@@ -95,7 +102,7 @@ async def ingest_metrics(
 
     # 4. Parse request
     try:
-        request = IngestRequest.model_validate_json(body_bytes)
+        payload = IngestRequest.model_validate_json(body_bytes)
     except Exception as e:
         logger.error(f"Failed to parse ingest payload: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
@@ -103,7 +110,7 @@ async def ingest_metrics(
     tokens_to_store = []
     local_cards = []
 
-    for card in request.metrics:
+    for card in payload.metrics:
         # Check if this is a token-only card (should NOT be displayed)
         is_token_only = card.remaining == "Token" and card.unit in ("oauth", "api_key", "cookie")
 
@@ -137,42 +144,42 @@ async def ingest_metrics(
                 if provider_tokens:
                     tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_label))
                     logger.debug(
-                        f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {request.provider}"
+                        f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {payload.provider}"
                     )
             continue
 
         # Propagate sidecar_id from the request to each card (if not already set)
-        if request.sidecar_id and not card.sidecar_id:
-            card.sidecar_id = request.sidecar_id
+        if payload.sidecar_id and not card.sidecar_id:
+            card.sidecar_id = payload.sidecar_id
 
         # Keep actual data cards
         local_cards.append(card)
 
     # Register/update sidecar in persistent fleet registry (non-fatal)
-    if request.sidecar_id:
-        source_ip = raw_request.client.host if raw_request.client else "unknown"
+    if payload.sidecar_id:
+        source_ip = request.client.host if request.client else "unknown"
         try:
             fleet_registry.upsert_sidecar(
-                request.sidecar_id,
+                payload.sidecar_id,
                 source_ip,
                 session,
-                sidecar_version=request.sidecar_version,
-                os_platform=request.os_platform,
-                collection_errors=request.collection_errors,
-                last_log_lines=request.last_log_lines or [],
+                sidecar_version=payload.sidecar_version,
+                os_platform=payload.os_platform,
+                collection_errors=payload.collection_errors,
+                last_log_lines=payload.last_log_lines or [],
             )
         except Exception as _e:
-            logger.warning(f"Fleet registry upsert failed for '{request.sidecar_id}': {_e}")
+            logger.warning(f"Fleet registry upsert failed for '{payload.sidecar_id}': {_e}")
 
     # Store tokens in cache for each identified account
     tokens_received_count = 0
     for p_id, p_tokens, a_id, a_name in tokens_to_store:
         actual_acc_id = await token_cache.store(
-            p_id, p_tokens, a_id, a_name, source=request.sidecar_id
+            p_id, p_tokens, a_id, a_name, source=payload.sidecar_id
         )
         tokens_received_count += len(p_tokens)
         logger.info(
-            f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {request.provider}"
+            f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"
         )
 
     # Store local data cards directly into LatestUsage (unified with server-scraped cards)
@@ -182,11 +189,11 @@ async def ingest_metrics(
             upsert_latest_usage(
                 session,
                 card_dict,
-                sidecar_id_override=card.sidecar_id or request.sidecar_id or "local",
+                sidecar_id_override=card.sidecar_id or payload.sidecar_id or "local",
             )
         session.commit()
         logger.info(
-            f"Stored {len(local_cards)} local cards into LatestUsage from {request.provider}"
+            f"Stored {len(local_cards)} local cards into LatestUsage from {payload.provider}"
         )
 
     # Wake the poller whenever the sidecar pushes anything actionable —
@@ -205,15 +212,15 @@ async def ingest_metrics(
 
     # Process events for atomic usage tracking
     ingest_result = None
-    if request.events:
+    if payload.events:
         from app.services.event_ingestor import EventIngestor
 
         try:
             ingestor = EventIngestor(session)
-            ingest_result = ingestor.ingest(request.events, sidecar_id=request.sidecar_id)
+            ingest_result = ingestor.ingest(payload.events, sidecar_id=payload.sidecar_id)
             logger.info(
                 f"Ingested {ingest_result.events_inserted} events "
-                f"({ingest_result.events_duplicate} dup) from {request.sidecar_id or 'unknown'}"
+                f"({ingest_result.events_duplicate} dup) from {payload.sidecar_id or 'unknown'}"
             )
         except Exception as e:
             logger.error(f"Event ingestion failed: {e}")
@@ -227,11 +234,11 @@ async def ingest_metrics(
     trigger: bool = False
     sys_cfg = session.exec(select(SystemConfig)).first()
     collection_enabled = True
-    if request.sidecar_id:
+    if payload.sidecar_id:
         # Honor per-sidecar pause: paused sidecars still check in but receive
         # no poll instructions, and their pending-trigger flag is preserved
         # so a resume can still deliver it.
-        sc_row = session.get(SidecarRegistry, request.sidecar_id)
+        sc_row = session.get(SidecarRegistry, payload.sidecar_id)
         if sc_row is not None and not sc_row.collection_enabled:
             collection_enabled = False
         else:
@@ -247,14 +254,14 @@ async def ingest_metrics(
             ]
 
             poll_providers, trigger = fleet_registry.get_due_providers(
-                request.sidecar_id, provider_intervals
+                payload.sidecar_id, provider_intervals
             )
             if poll_providers:
-                logger.info(f"Instructing sidecar '{request.sidecar_id}' to poll: {poll_providers}")
+                logger.info(f"Instructing sidecar '{payload.sidecar_id}' to poll: {poll_providers}")
 
     return {
         "status": "ok",
-        "provider": request.provider,
+        "provider": payload.provider,
         "tokens_received": tokens_received_count,
         "metrics_stored": len(local_cards),
         "events_received": ingest_result.events_received if ingest_result else 0,
