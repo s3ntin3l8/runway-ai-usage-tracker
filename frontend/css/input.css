@@ -3084,29 +3084,47 @@ l-table td.num {
 }
 [data-cols="2"] .fc-cume .row .v em { margin-left: 3px; }
 
-/* Empty-state cume: the 3-column tray would leave the placeholder squished
-   into one third with empty filler beside it. Collapse to a single full-width
-   column with the placeholder centered, and give the text enough size +
-   padding that it actually fills the tray. */
-[data-cols="2"] .fc-cume.fc-cume-empty {
-    grid-template-columns: 1fr;
-    padding: 18px 20px;
-}
+/* Empty-state cume placeholder.
+   1-col (default 3-col card): cume is the narrow 200px right column — label
+   stays on one line; subtitle stacks to two lines to fill the tall column.
+   2-col (data-cols="2"): the card stacks vertically, cume becomes a 3-col tray
+   that we collapse to a single full-width row; subtitle renders inline. */
 .fc-cume.fc-cume-empty .row {
     align-items: center;
     text-align: center;
     gap: 6px;
 }
 .fc-cume.fc-cume-empty .label {
-    font-size: 11px;
-    letter-spacing: 0.18em;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    white-space: nowrap;
 }
 .fc-cume.fc-cume-empty .sub {
-    font-size: 11px;
-    letter-spacing: 0.06em;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
     margin-top: 0;
+    font-size: 10px;
+    letter-spacing: 0.04em;
     text-transform: lowercase;
 }
+.fc-cume.fc-cume-empty .sub-sep { display: none; }
+
+[data-cols="2"] .fc-cume.fc-cume-empty {
+    grid-template-columns: 1fr;
+    padding: 14px 16px;
+}
+[data-cols="2"] .fc-cume.fc-cume-empty .label {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+}
+[data-cols="2"] .fc-cume.fc-cume-empty .sub {
+    flex-direction: row;
+    gap: 6px;
+    font-size: 11px;
+}
+[data-cols="2"] .fc-cume.fc-cume-empty .sub-sep { display: inline; }
 
 [data-cols="2"] .fc-pods-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 [data-cols="2"] .fc-leds { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }

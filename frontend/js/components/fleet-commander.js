@@ -541,13 +541,15 @@ function _formatCost(usd) {
 
 function _fcCume(cumulative, _isPayg, providerId) {
     if (!cumulative) {
-        const sub = providerId === 'github'
-            ? 'quota-based · no usage events'
-            : 'awaiting sidecar deltas';
+        const subParts = providerId === 'github'
+            ? ['quota-based', 'no usage events']
+            : ['awaiting', 'sidecar deltas'];
         return `<div class="fc-cume fc-cume-empty">
             <div class="row">
                 <span class="label">No cumulative data</span>
-                <span class="sub">${sub}</span>
+                <span class="sub">
+                    <span>${subParts[0]}</span><span class="sub-sep">·</span><span>${subParts[1]}</span>
+                </span>
             </div>
         </div>`;
     }
