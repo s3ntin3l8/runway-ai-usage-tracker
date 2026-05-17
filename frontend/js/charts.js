@@ -297,11 +297,12 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                         itemStyle: {
                             color: style.color,
                             opacity: 0.55,
+                            // Diagonal stripes: continuous fill on X, 4px stripe + 4px gap on Y, rotated -45°.
                             decal: {
                                 symbol: 'rect',
-                                color: 'rgba(255,255,255,0.35)',
-                                dashArrayX: [4, 4],
-                                dashArrayY: 4,
+                                color: 'rgba(255,255,255,0.45)',
+                                dashArrayX: 1,
+                                dashArrayY: [4, 4],
                                 rotation: -Math.PI / 4,
                             },
                         },

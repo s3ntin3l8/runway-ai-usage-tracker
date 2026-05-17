@@ -1167,10 +1167,6 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
     const bucketSeconds = pickBucketSeconds(days);
 
     const cards = [...byProvider.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([pid, snaps]) => {
-        const icon = PROVIDER_ICONS[pid] || '🔧';
-        const color = PROVIDER_HEX[pid] || '#64748b';
-        const isActive = !activeProviders || activeProviders.has(pid);
-
         // Build series summed per bucket so the sparkline shape tracks per-bucket totals,
         // and the headline number is the sum across all buckets (period total).
         const byBucket = new Map();
@@ -1184,9 +1180,16 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
             .map(([, v]) => ({ value: v }));
 
         const periodTotal = points.reduce((acc, p) => acc + p.value, 0);
+        // Skip providers with zero usage in the active range — keeps the strip focused on what's live.
+        if (periodTotal <= 0) return '';
+
+        const icon = PROVIDER_ICONS[pid] || '🔧';
+        const color = PROVIDER_HEX[pid] || '#64748b';
+        const isActive = !activeProviders || activeProviders.has(pid);
+
         const sparkSVG = buildSparklineSVG(points, color, 56, 24);
         const trendArrow = getTrendArrow(points);
-        const latestValue = periodTotal > 0 ? Math.round(periodTotal).toLocaleString() : '—';
+        const latestValue = Math.round(periodTotal).toLocaleString();
         const trendStyle = trendArrow === '↑' ? 'color:var(--crit);' : trendArrow === '↓' ? 'color:var(--good);' : 'color:var(--text-dim);';
         const activeOpacity = isActive ? '' : 'opacity-40';
 
