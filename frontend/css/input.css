@@ -3090,7 +3090,10 @@ l-table td.num {
    2-col (data-cols="2"): the card stacks vertically, cume becomes a 3-col tray
    that we collapse to a single full-width row; subtitle renders inline. */
 .fc-cume.fc-cume-empty .row {
-    align-items: center;
+    /* stretch (not center) so .label and .sub fill the row width — keeps the
+       inline text centered via text-align AND lets the subtitle wrap naturally
+       when it would otherwise overflow .fc-cume's overflow:hidden clip. */
+    align-items: stretch;
     text-align: center;
     gap: 6px;
 }
