@@ -8,11 +8,34 @@ export function escapeHTML(str) {
     return String(str).replace(/[&<>"']/g, m => _ESC_MAP[m]);
 }
 
-// For values being interpolated into single-quoted attributes built inside
-// JS-emitted onclick="..." handlers. Escapes backslashes and apostrophes.
+// Safe to embed in any HTML attribute, including a single-quoted JS string
+// inside an onclick="..." handler. Two layers of escaping:
+//
+//   * HTML layer: `&`, `<`, `>`, `"` → HTML entities. `"` is the
+//     load-bearing one — without it, user input containing `"` would close
+//     the outer `attr="..."` and an attacker could inject new attributes
+//     (e.g. onmouseover="alert(1)").
+//   * JS-string layer: `'` → `\'` and `\` → `\\`. These survive the
+//     browser's HTML-decode of the attribute value, so the JS parser sees
+//     them as escapes inside the single-quoted string. HTML-encoding `'`
+//     to &#039; would NOT survive — the browser decodes it back to `'`
+//     before the JS parser runs, breaking out of the string.
+//
+// Side effect: a value containing `'` round-trips as `\'` when read back
+// via `el.dataset.x`. Acceptable: provider/account/sidecar ids in this
+// codebase don't legitimately contain apostrophes.
+const _ATTR_ESC = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": "\\'",
+    '\\': '\\\\',
+};
+
 export function escapeHTMLAttr(str) {
     if (!str) return '';
-    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return String(str).replace(/[&<>"'\\]/g, m => _ATTR_ESC[m]);
 }
 
 // For values rendered into href/src attributes. Rejects non-http(s) schemes
