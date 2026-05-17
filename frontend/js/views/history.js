@@ -235,6 +235,8 @@ function renderHistoryTiles(deltas) {
         burnLabel = `${(burnRate / 1000).toFixed(1)}<span>k tok/min</span>`;
     }
 
+    const rangeLabel = ({ 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' })[historyState.days] || `${historyState.days}d`;
+
     const providerEntries = Object.entries(providerTokenDeltas).sort((a, b) => b[1] - a[1]);
     const [hotProvider, hotTokens] = providerEntries[0] || ['—', 0];
     const hotShare = totalTokenDelta > 0 ? Math.round((hotTokens / totalTokenDelta) * 100) : 0;
@@ -246,11 +248,11 @@ function renderHistoryTiles(deltas) {
         <div class="t-val">${burnLabel}</div>
     </div>`;
     html += `<div class="hud-panel tile">
-        <div class="t-kicker">Est. cost · period</div>
+        <div class="t-kicker">Est. cost · ${rangeLabel}</div>
         <div class="t-val">$${totalCostDelta.toFixed(2)}<span>spent</span></div>
     </div>`;
     html += `<div class="hud-panel tile">
-        <div class="t-kicker">Hottest provider</div>
+        <div class="t-kicker">Hottest · ${rangeLabel}</div>
         <div class="t-val" style="font-size:22px">${escHtml(hotName)}</div>
         <div class="t-sub"><b>${Math.round(hotTokens).toLocaleString()} tok</b> · ${hotShare}% share</div>
     </div>`;

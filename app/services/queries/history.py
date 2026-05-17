@@ -463,7 +463,7 @@ def query_history_deltas(
         f"""
         SELECT
             provider_id,
-            SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_create + tokens_reasoning) AS total_tokens,
+            SUM(tokens_input + tokens_output + tokens_reasoning) AS total_tokens,
             SUM(cost_usd) AS total_cost
         FROM usage_events
         WHERE {where}
