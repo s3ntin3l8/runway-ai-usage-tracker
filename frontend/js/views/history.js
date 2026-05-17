@@ -5,11 +5,18 @@ import { STATE } from '../state.js';
 import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
 import { escapeHTML } from '../utils/html.js';
 
+const _CACHE_PREF_KEY = 'runway:history:showCache';
+
+function _readCachePref() {
+    try { return localStorage.getItem(_CACHE_PREF_KEY) !== 'false'; } catch (_) { return true; }
+}
+
 const historyState = {
     days: 1,
     activeProviders: null,       // Set of provider_ids, or null = all
     metric: 'percent',           // 'percent' | 'tokens' | 'cost'
     windowFilter: 'all',         // 'all' | 'session' | 'daily' | 'weekly' | 'monthly'
+    showCache: _readCachePref(), // tokens-metric only; persists in localStorage
     page: 1,
     _windowsCache: null,
     _chartCache: null,
@@ -44,17 +51,32 @@ export function setHistoryRange(days) {
     loadHistoryView();
 }
 
-function _updateWindowSelectorVisibility(metric) {
-    // The window-type buttons only filter the percent-based snapshot chart;
-    // for tokens/cost they don't affect rendering, so hide them to remove the dead control.
+function _updateChartControlsVisibility(metric) {
+    // The window-type buttons only filter the percent-based snapshot chart.
     const btns = document.getElementById('history-window-btns');
-    if (!btns) return;
-    const show = metric === 'percent';
-    btns.style.display = show ? '' : 'none';
-    const sep = btns.previousElementSibling;
-    if (sep && sep.classList.contains('hc-sep')) {
-        sep.style.display = show ? '' : 'none';
+    if (btns) {
+        const showWindow = metric === 'percent';
+        btns.style.display = showWindow ? '' : 'none';
+        const sep = btns.previousElementSibling;
+        if (sep && sep.classList.contains('hc-sep')) {
+            sep.style.display = showWindow ? '' : 'none';
+        }
     }
+    // The cache toggle only matters for tokens (cost prices cache in, percent has no cache concept).
+    const cacheBtn = document.getElementById('history-cache-toggle');
+    if (cacheBtn) cacheBtn.style.display = metric === 'tokens' ? '' : 'none';
+}
+
+function _updateChartSubtitle() {
+    const sub = document.getElementById('history-chart-sub');
+    if (!sub) return;
+    if (historyState.metric !== 'tokens') {
+        sub.textContent = '';
+        return;
+    }
+    sub.textContent = historyState.showCache
+        ? 'tokens billed · incl. cache reads'
+        : 'fresh tokens only · cache hidden';
 }
 
 export function setHistoryMetric(metric) {
@@ -63,8 +85,18 @@ export function setHistoryMetric(metric) {
     document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.metric === metric);
     });
-    _updateWindowSelectorVisibility(metric);
+    _updateChartControlsVisibility(metric);
+    _updateChartSubtitle();
     loadHistoryView();
+}
+
+export function toggleHistoryCache() {
+    historyState.showCache = !historyState.showCache;
+    try { localStorage.setItem(_CACHE_PREF_KEY, String(historyState.showCache)); } catch (_) {}
+    const btn = document.getElementById('history-cache-toggle');
+    if (btn) btn.classList.toggle('active', historyState.showCache);
+    _updateChartSubtitle();
+    renderHistoryFromCache();
 }
 
 export function setHistoryWindow(windowType) {
@@ -306,20 +338,25 @@ function _seriesPercent(series) {
 
 function _barSnapshots(bars, metric) {
     // daily bars → [{provider_id, service_name, timestamp, used_value, unit_type, window_type, token_usage, cache_value}]
+    // When the user has hidden cache (tokens metric only), subtract the cache portion at this
+    // boundary so the chart bucketing AND the sparkline-card totals downstream are both fresh-only.
     const rows = [];
+    const hideCache = metric === 'tokens' && historyState.showCache === false;
     for (const bar of bars) {
         for (const seg of bar.segments) {
+            const cache = seg.value_cache ?? 0;
+            const used = hideCache ? Math.max(0, seg.value - cache) : seg.value;
             rows.push({
                 provider_id: seg.provider_id,
                 service_name: seg.label,
                 timestamp: bar.ts || (bar.date + 'T12:00:00Z'),
-                used_value: seg.value,
-                cache_value: seg.value_cache ?? 0,
+                used_value: used,
+                cache_value: hideCache ? 0 : cache,
                 limit_value: null,
                 unit_type: metric === 'cost' ? 'currency' : 'tokens',
                 window_type: 'day',
                 model_id: seg.model_id,
-                token_usage: metric === 'tokens' ? { total: seg.value } : null,
+                token_usage: metric === 'tokens' ? { total: used } : null,
             });
         }
     }
@@ -529,10 +566,14 @@ export function initHistoryView() {
     window.setHistoryRange = setHistoryRange;
     window.setHistoryMetric = setHistoryMetric;
     window.setHistoryWindow = setHistoryWindow;
+    window.toggleHistoryCache = toggleHistoryCache;
     window.toggleHistoryProvider = toggleHistoryProvider;
     window.setHistoryProvidersAll = setHistoryProvidersAll;
     window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.clearHistoryFilter = clearHistoryFilter;
     window.hwGoPage = hwGoPage;
-    _updateWindowSelectorVisibility(historyState.metric);
+    const cacheBtn = document.getElementById('history-cache-toggle');
+    if (cacheBtn) cacheBtn.classList.toggle('active', historyState.showCache);
+    _updateChartControlsVisibility(historyState.metric);
+    _updateChartSubtitle();
 }

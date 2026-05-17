@@ -169,7 +169,9 @@
                 <div id="history-chart-panel" class="hud-panel history-chart mb-4">
                     <div class="hc-head">
                         <div class="hc-kicker">Usage Over Time
-                            <span class="hc-sub">tokens billed · incl. cache reads</span>
+                            <span id="history-chart-sub" class="hc-sub">tokens billed · incl. cache reads</span>
+                            <button id="history-cache-toggle" class="toggle-btn toggle-btn-mini active"
+                                    onclick="toggleHistoryCache()" title="Show / hide cache tokens">cache</button>
                         </div>
                         <div id="history-summary" class="hc-summary"></div>
                     </div>

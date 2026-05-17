@@ -1956,6 +1956,15 @@ header.top .icon-btn[aria-pressed="true"] {
     text-transform: none;
 }
 
+.toggle-btn-mini {
+    margin-left: 8px;
+    padding: 2px 8px;
+    font: 600 10px var(--mono);
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+    text-transform: lowercase;
+}
+
 .hc-summary {
     min-height: 18px;
     margin-top: 4px;
