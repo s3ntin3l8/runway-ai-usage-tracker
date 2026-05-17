@@ -135,8 +135,11 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
         const key = `${snap.provider_id || 'unknown'}|${snap.service_name || 'Usage'}|${snap.window_type || 'unknown'}|${snap.variant || ''}|${snap.model_id || ''}`;
 
         if (!buckets[bucket]) buckets[bucket] = {};
-        if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0, max: -Infinity };
+        if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, sum_cache: 0, count: 0, max: -Infinity };
         buckets[bucket][key].sum += value;
+        if (metric === 'tokens' && snap.cache_value != null) {
+            buckets[bucket][key].sum_cache += snap.cache_value;
+        }
         buckets[bucket][key].count += 1;
         if (maxValue != null) {
             buckets[bucket][key].max = Math.max(buckets[bucket][key].max, maxValue);
@@ -238,8 +241,8 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     // Build series: averages always, BAND mode adds min-max shaded area (not doubled series)
     let series = [];
 
-    // First pass: averages (always shown)
-    const avgSeries = nonZeroKeys.map(key => {
+    // First pass: averages (always shown). For bar+tokens, emit fresh + striped-cache pair.
+    const avgSeries = nonZeroKeys.flatMap(key => {
         const [pid, , wtype, variant, modelId] = key.split('|');
         const subParts = [];
         if (variant) subParts.push(variant);
@@ -258,6 +261,56 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         const seriesName = displayName ? `${pid.toUpperCase()}: ${displayName}` : pid.toUpperCase();
 
         if (isBar) {
+            // For tokens metric, split each bar segment into a solid fresh portion + striped cache portion.
+            // Same color and stack so they read as one visual bar with a texture distinction.
+            const hasCacheSplit = metric === 'tokens' && bucketEpochs.some(ep => (buckets[ep]?.[key]?.sum_cache ?? 0) > 0);
+            if (hasCacheSplit) {
+                const freshData = bucketEpochs.map(ep => {
+                    const b = buckets[ep]?.[key];
+                    if (!b) return null;
+                    const fresh = b.sum - (b.sum_cache || 0);
+                    return parseFloat(Math.max(0, fresh).toFixed(2));
+                });
+                const cacheData = bucketEpochs.map(ep => {
+                    const b = buckets[ep]?.[key];
+                    if (!b || !(b.sum_cache > 0)) return null;
+                    return parseFloat(b.sum_cache.toFixed(2));
+                });
+                return [
+                    {
+                        name: seriesName,
+                        type: 'bar',
+                        stack: 'providers',
+                        barMaxWidth: 40,
+                        itemStyle: { color: style.color },
+                        data: freshData,
+                        emphasis: { focus: 'series' },
+                        z: 2,
+                    },
+                    {
+                        name: seriesName + ' · cache',
+                        type: 'bar',
+                        stack: 'providers',
+                        barMaxWidth: 40,
+                        // Hidden from the HTML legend; toggled in lock-step with its fresh sibling.
+                        legendHoverLink: false,
+                        itemStyle: {
+                            color: style.color,
+                            opacity: 0.55,
+                            decal: {
+                                symbol: 'rect',
+                                color: 'rgba(255,255,255,0.35)',
+                                dashArrayX: [4, 4],
+                                dashArrayY: 4,
+                                rotation: -Math.PI / 4,
+                            },
+                        },
+                        data: cacheData,
+                        emphasis: { focus: 'series' },
+                        z: 2,
+                    },
+                ];
+            }
             return {
                 name: seriesName,
                 type: 'bar',
@@ -492,8 +545,15 @@ function _renderHtmlLegend(series) {
         const item = e.target.closest('.chart-legend-item');
         if (!item || !_chart) return;
         const name = item.dataset.name;
-        _legendState[name] = _legendState[name] === false;
-        item.classList.toggle('muted', _legendState[name] === false);
+        const nowOn = _legendState[name] !== false;
+        const nextOn = !nowOn;
+        _legendState[name] = nextOn;
+        // Keep the striped cache counterpart in lock-step with its fresh series.
+        const cacheName = name + ' · cache';
+        if (series.some(s => s.name === cacheName)) {
+            _legendState[cacheName] = nextOn;
+        }
+        item.classList.toggle('muted', !nextOn);
         _chart.setOption({ legend: { selected: { ..._legendState } } });
     };
 }

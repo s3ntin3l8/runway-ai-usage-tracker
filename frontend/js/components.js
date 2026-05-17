@@ -1171,23 +1171,22 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
         const color = PROVIDER_HEX[pid] || '#64748b';
         const isActive = !activeProviders || activeProviders.has(pid);
 
-        // Build series averaged per bucket sized to match the active window.
+        // Build series summed per bucket so the sparkline shape tracks per-bucket totals,
+        // and the headline number is the sum across all buckets (period total).
         const byBucket = new Map();
         for (const s of snaps) {
             const t = Math.floor(new Date(s.timestamp).getTime() / 1000);
             const bucket = t - (t % bucketSeconds);
-            if (!byBucket.has(bucket)) byBucket.set(bucket, { sum: 0, count: 0 });
-            const b = byBucket.get(bucket);
-            b.sum += s.used_value;
-            b.count += 1;
+            byBucket.set(bucket, (byBucket.get(bucket) || 0) + s.used_value);
         }
         const points = [...byBucket.entries()]
             .sort(([a], [b]) => a - b)
-            .map(([, b]) => ({ value: b.sum / b.count }));
+            .map(([, v]) => ({ value: v }));
 
+        const periodTotal = points.reduce((acc, p) => acc + p.value, 0);
         const sparkSVG = buildSparklineSVG(points, color, 56, 24);
         const trendArrow = getTrendArrow(points);
-        const latestValue = points.length > 0 ? Math.round(points[points.length - 1].value).toLocaleString() : '—';
+        const latestValue = periodTotal > 0 ? Math.round(periodTotal).toLocaleString() : '—';
         const trendStyle = trendArrow === '↑' ? 'color:var(--crit);' : trendArrow === '↓' ? 'color:var(--good);' : 'color:var(--text-dim);';
         const activeOpacity = isActive ? '' : 'opacity-40';
 

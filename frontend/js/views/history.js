@@ -252,9 +252,9 @@ function renderHistoryTiles(deltas) {
         <div class="t-val">$${totalCostDelta.toFixed(2)}<span>spent</span></div>
     </div>`;
     html += `<div class="hud-panel tile">
-        <div class="t-kicker">Hottest · ${rangeLabel}</div>
+        <div class="t-kicker">Hottest · fresh · ${rangeLabel}</div>
         <div class="t-val" style="font-size:22px">${escHtml(hotName)}</div>
-        <div class="t-sub"><b>${Math.round(hotTokens).toLocaleString()} tok</b> · ${hotShare}% share</div>
+        <div class="t-sub"><b>${Math.round(hotTokens).toLocaleString()} tok</b> · ${hotShare}% share · cache excluded</div>
     </div>`;
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Critical events</div>
@@ -291,7 +291,7 @@ function _seriesPercent(series) {
 }
 
 function _barSnapshots(bars, metric) {
-    // daily bars → [{provider_id, service_name, timestamp, used_value, unit_type, window_type, token_usage}]
+    // daily bars → [{provider_id, service_name, timestamp, used_value, unit_type, window_type, token_usage, cache_value}]
     const rows = [];
     for (const bar of bars) {
         for (const seg of bar.segments) {
@@ -300,6 +300,7 @@ function _barSnapshots(bars, metric) {
                 service_name: seg.label,
                 timestamp: bar.ts || (bar.date + 'T12:00:00Z'),
                 used_value: seg.value,
+                cache_value: seg.value_cache ?? 0,
                 limit_value: null,
                 unit_type: metric === 'cost' ? 'currency' : 'tokens',
                 window_type: 'day',
