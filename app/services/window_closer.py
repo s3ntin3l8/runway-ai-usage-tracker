@@ -46,14 +46,21 @@ def close_window(
 
     Inserts rows for: ('', ''), ({model}, ''), ('', {sidecar}), ({model}, {sidecar}).
     Returns total rows inserted (idempotent via UNIQUE constraint, returns 0 on replay).
+
+    `kind="error"` events are skipped — they represent provider failures, not
+    billable usage. This matches event_ingestor, which also excludes them from
+    period rollups, keeping window totals consistent with rollup sums.
     """
-    # Query all events in the window range for this provider + account
+    # Query message events in the window range for this provider + account.
+    # Error events are tracked in usage_events for diagnostics but never roll
+    # up into quota windows.
     events = session.exec(
         select(UsageEvent).where(
             UsageEvent.provider_id == provider_id,
             UsageEvent.account_id == account_id,
             UsageEvent.ts >= window_start,
             UsageEvent.ts < window_end,
+            UsageEvent.kind != "error",
         )
     ).all()
 

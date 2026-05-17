@@ -50,6 +50,7 @@ def _add_event(
     event_id: str,
     ts: datetime,
     *,
+    kind: str = "message",
     model_id: str | None = "sonnet",
     sidecar_id: str = "dev-01",
     tokens_input: int = 100,
@@ -65,6 +66,7 @@ def _add_event(
         sidecar_id=sidecar_id,
         event_id=event_id,
         ts=ts,
+        kind=kind,
         model_id=model_id,
         tokens_input=tokens_input,
         tokens_output=tokens_output,
@@ -403,6 +405,89 @@ def test_close_window_is_idempotent():
     # Ensure no duplicate rows
     all_rows = s.exec(select(UsageWindow)).all()
     assert len(all_rows) == first
+
+
+def test_close_window_excludes_error_events():
+    """`kind='error'` events must not contribute to window totals.
+
+    Closes the consistency gap flagged in the audit (D5): rollups already
+    skip error events in event_ingestor, but `close_window` was selecting
+    all events regardless of kind. The result was window totals exceeding
+    the sum of daily rollups for the same range. Quota-window aggregates
+    represent billable usage; an upstream API failure isn't usage.
+    """
+    s = _seeded_session()
+    _add_event(
+        s,
+        "ok1",
+        _mid_window(10),
+        model_id="sonnet",
+        tokens_input=100,
+        tokens_output=200,
+        cost_usd=0.01,
+    )
+    _add_event(
+        s,
+        "err1",
+        _mid_window(11),
+        kind="error",
+        model_id="sonnet",
+        # Use large numbers so this event would visibly skew totals if counted.
+        tokens_input=999,
+        tokens_output=999,
+        cost_usd=9.99,
+    )
+    _add_event(
+        s,
+        "ok2",
+        _mid_window(12),
+        model_id="sonnet",
+        tokens_input=50,
+        tokens_output=80,
+        cost_usd=0.005,
+    )
+
+    inserted = close_window(
+        s,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        window_start=_WINDOW_START,
+        window_end=_WINDOW_END,
+    )
+    assert inserted > 0
+
+    rollup = s.exec(
+        select(UsageWindow).where(
+            UsageWindow.model_id == "",
+            UsageWindow.sidecar_id == "",
+            UsageWindow.window_end == _WINDOW_END,
+        )
+    ).first()
+    assert rollup is not None
+    assert rollup.msgs == 2, f"expected 2 messages (err excluded), got {rollup.msgs}"
+    assert rollup.tokens_input == 150  # 100 + 50, no 999
+    assert rollup.tokens_output == 280  # 200 + 80, no 999
+    assert abs(rollup.cost_usd - 0.015) < 1e-9  # 0.01 + 0.005, no 9.99
+
+
+def test_close_window_with_only_error_events_inserts_nothing():
+    """When the window contains only error events, no usage_windows row
+    should be written — there's no usage to capture."""
+    s = _seeded_session()
+    _add_event(s, "err1", _mid_window(10), kind="error", model_id="sonnet")
+    _add_event(s, "err2", _mid_window(11), kind="error", model_id="haiku")
+
+    inserted = close_window(
+        s,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        window_start=_WINDOW_START,
+        window_end=_WINDOW_END,
+    )
+    assert inserted == 0
+    assert s.exec(select(UsageWindow)).all() == []
 
 
 def test_close_window_excludes_events_outside_range():
