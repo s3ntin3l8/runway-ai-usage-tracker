@@ -1948,6 +1948,14 @@ header.top .icon-btn[aria-pressed="true"] {
     text-transform: uppercase;
 }
 
+.hc-sub {
+    font: 500 9px var(--mono);
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    margin-left: 8px;
+    text-transform: none;
+}
+
 .hc-summary {
     min-height: 18px;
     margin-top: 4px;

@@ -513,9 +513,15 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         label = r.provider_id.capitalize()
         if use_model:
             label += f" · {use_model}"
-        bars_map[key].append(
-            {"provider_id": r.provider_id, "model_id": use_model, "label": label, "value": value}
-        )
+        segment: dict[str, object] = {
+            "provider_id": r.provider_id,
+            "model_id": use_model,
+            "label": label,
+            "value": value,
+        }
+        if metric == "tokens":
+            segment["value_cache"] = r.tokens_cache_read + r.tokens_cache_create
+        bars_map[key].append(segment)
 
     bars = []
     for key in sorted(bars_map.keys()):
