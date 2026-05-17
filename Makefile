@@ -38,10 +38,10 @@ sidecar: ## Run the sidecar agent (sources .env so RUNWAY_CONFIG_DIR + INGEST_AP
 	$(PYTHON) scripts/sidecar.py
 
 test: ## Run test suite (matches CI)
-	$(PYTEST) --ignore=tests/unit/test_browser_cookies.py
+	$(PYTEST)
 
 test-cov: ## Run tests with coverage report
-	$(PYTEST) --ignore=tests/unit/test_browser_cookies.py --cov=app --cov-report=term-missing
+	$(PYTEST) --cov=app --cov-report=term-missing
 
 lint: ## Run all linters (ruff, mypy, pip-audit)
 	$(RUFF) check . && $(RUFF) format --check .

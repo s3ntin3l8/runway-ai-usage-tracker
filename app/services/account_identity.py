@@ -26,6 +26,10 @@ def resolve_account_id(
         return raw_account_id
 
     if credential_hint:
-        return hashlib.sha256(credential_hint.encode()).hexdigest()[:12]
+        # Full SHA-256 — previously truncated to 12 chars (48 bits), which the
+        # audit flagged for birthday-paradox collision risk at scale. The full
+        # digest has no functional downside (account_id is opaque to consumers)
+        # and removes the theoretical collision floor.
+        return hashlib.sha256(credential_hint.encode()).hexdigest()
 
     return "default"

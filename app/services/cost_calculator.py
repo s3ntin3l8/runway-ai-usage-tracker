@@ -21,8 +21,17 @@ def compute_event_cost(
 ) -> float:
     """Return USD cost for an event using the price row in effect at `ts`.
 
+    Pricing is keyed on **UTC date** (`ts.date()`): two events 60 seconds apart
+    that span midnight UTC may pick different price rows if a new
+    `effective_from` falls on the second day. The provider_pricing table is
+    designed for date-level price changes, not intraday — this is intentional.
+    Aware datetimes in non-UTC timezones are NOT converted before the date
+    extraction; callers pass UTC-aware timestamps (event ingestion stores
+    `ts` in UTC, and `query_*` helpers preserve tz-awareness).
+
     Returns 0.0 when no pricing row matches. Reasoning tokens are billed at
-    the output rate (Anthropic / OpenAI convention)."""
+    the output rate (Anthropic / OpenAI convention).
+    """
     if not model_id:
         return 0.0
     row = session.exec(

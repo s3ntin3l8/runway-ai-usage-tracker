@@ -37,9 +37,9 @@ class TestResolveAccountId:
             account_label=None,
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()[:12]
+        expected = hashlib.sha256(hint.encode()).hexdigest()
         assert result == expected
-        assert len(result) == 12
+        assert len(result) == 64  # full SHA-256, no truncation
 
     def test_all_none_defaults(self):
         result = resolve_account_id(
@@ -81,7 +81,7 @@ class TestResolveAccountId:
             account_label=None,
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()[:12]
+        expected = hashlib.sha256(hint.encode()).hexdigest()
         assert result == expected
 
     def test_non_email_account_label_falls_through(self):
@@ -100,7 +100,7 @@ class TestResolveAccountId:
             account_label="Runway User",
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()[:12]
+        expected = hashlib.sha256(hint.encode()).hexdigest()
         assert result == expected
 
     def test_custom_raw_id_returned_as_is(self):
@@ -135,7 +135,7 @@ class TestResolveAccountId:
             account_label=None,
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()[:12]
+        expected = hashlib.sha256(hint.encode()).hexdigest()
         assert result == expected
 
     def test_email_with_trailing_garbage_not_matched(self):

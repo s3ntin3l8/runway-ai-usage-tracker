@@ -7,7 +7,7 @@ COPY frontend/ ./frontend/
 RUN npm run build:css
 
 # Stage 2: Build Python dependencies
-FROM python:3.12-slim-bookworm AS python-builder
+FROM python:3.12-slim-bookworm@sha256:d193c6f51a7dbd10395d6328de3a7edb0516fb0608ca138036576f574c3e07d2 AS python-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc=4:12.2.0-3 \
@@ -19,7 +19,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 3: Final Image
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:d193c6f51a7dbd10395d6328de3a7edb0516fb0608ca138036576f574c3e07d2
 # Create non-root user with home directory
 RUN groupadd -r runway && useradd -r -g runway -u 1000 -m runway
 
