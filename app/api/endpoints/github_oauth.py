@@ -237,7 +237,7 @@ async def logout() -> dict[str, str]:
     return {"status": "success"}
 
 
-async def save_token(data: dict):
+async def save_token(data: dict) -> None:
     """Securely save the GitHub token to disk."""
     config_dir = os.path.dirname(settings.GITHUB_OAUTH_PATH)
     if not os.path.exists(config_dir):
@@ -252,7 +252,7 @@ async def save_token(data: dict):
         "email": data.get("email"),
     }
 
-    def _write():
+    def _write() -> None:
         safe_write_json(settings.GITHUB_OAUTH_PATH, token_data)
 
     await asyncio.to_thread(_write)

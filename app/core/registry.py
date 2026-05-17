@@ -15,7 +15,7 @@ class Registry:
     without restarting the server.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._path = os.path.join(os.path.dirname(__file__), "registry.json")
         self._cache: dict[str, Any] = {}
         self._mtime: float = 0.0

@@ -138,7 +138,7 @@ def error_card(
     message: str,
     error_type: str = "unknown",
     provider_id: str | None = None,
-):
+) -> Any:
     from app.models.builder import LimitCardBuilder
 
     return LimitCardBuilder.error(service, icon, message, error_type, provider_id)
@@ -215,7 +215,7 @@ async def http_request_with_retry(
     max_retries: int = 3,
     initial_delay: float = 0.5,
     retry_on_429: bool = True,
-    **kwargs,
+    **kwargs: Any,
 ) -> httpx.Response:
     """
     Make an HTTP request with exponential backoff retry on 429 (rate limit).
@@ -298,7 +298,7 @@ async def http_request_with_retry(
     raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")
 
 
-def safe_write_json(path: str, data: dict):
+def safe_write_json(path: str, data: dict) -> None:
     """
     Write JSON data to a file atomically using a temporary file and rename.
     This prevents file corruption if the process is interrupted during writing.

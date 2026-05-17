@@ -92,7 +92,7 @@ class GitHubCollector(BaseCollector):
             )
         ]
 
-    async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    async def _strategy_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:  # noqa: PLR0915 — known-debt: GitHub API response handling, refactor tracked separately
         """Fetch GitHub Copilot quota with caching."""
         token = await self._get_token()
         if not token:

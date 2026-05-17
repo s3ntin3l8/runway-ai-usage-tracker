@@ -131,12 +131,12 @@ class Settings(BaseSettings):
         default_factory=lambda: os.path.join(get_platform_config_dir("codex"), "sessions")
     )
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def data_dir(self) -> str:
         return get_platform_data_dir("runway")
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def config_dir(self) -> str:
         return get_platform_config_dir("runway")
@@ -165,7 +165,7 @@ class Settings(BaseSettings):
     # set; the dashboard further falls back to the browser's auto-detected zone.
     TZ: str | None = None
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def env_timezone(self) -> str | None:
         """Validated `TZ` env var, or None if unset/invalid."""
@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     def trusted_proxy_ips(self) -> set[str]:
         return {ip.strip() for ip in self.TRUSTED_PROXY_IPS.split(",") if ip.strip()}
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def DATABASE_URL(self) -> str:
         return f"sqlite:///{self.DATABASE_PATH}"

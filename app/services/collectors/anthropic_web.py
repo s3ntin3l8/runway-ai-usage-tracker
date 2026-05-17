@@ -371,7 +371,7 @@ class AnthropicWebMixin:
             return f"org: {org_name}"
         return ""
 
-    def _parse_web_api_response(
+    def _parse_web_api_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
         self,
         data: dict[str, Any],
         org_data: dict[str, Any] | None = None,

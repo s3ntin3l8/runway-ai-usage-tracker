@@ -72,7 +72,7 @@ class CollectorManager:
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
 
-    async def _sync_collectors(self):
+    async def _sync_collectors(self):  # noqa: PLR0915 — known-debt: smart-collector lifecycle, refactor tracked separately
         """Synchronize active SmartCollectors with discovered accounts.
 
         Throttled to run at most once every 60 seconds to avoid redundant

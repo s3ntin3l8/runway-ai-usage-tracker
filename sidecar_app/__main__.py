@@ -28,7 +28,7 @@ _FALLBACK_CONFIG: dict = {
 }
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoint, splits poorly
     # 0. Enable logging to file
     setup_logging(log_level="INFO", file_enabled=True)
 

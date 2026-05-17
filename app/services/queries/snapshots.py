@@ -358,7 +358,7 @@ def query_snapshots(
     }
 
 
-def query_chart(
+def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator, splits poorly
     session: Session,
     *,
     provider_id: str | None = None,

@@ -431,7 +431,7 @@ async def get_history_windows(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
-):
+) -> dict[str, Any]:
     """Paginated list of quota windows (closed + open), newest first."""
     return query_windows(
         session,
@@ -455,7 +455,7 @@ async def get_history_snapshots(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=500),
     session: Session = Depends(get_session),
-):
+) -> dict[str, Any]:
     """Flat paginated snapshot rows with per-series delta, newest first."""
     return query_snapshots(
         session,
@@ -477,7 +477,7 @@ async def get_history_chart(
     days: float = Query(default=30.0, ge=0.01, le=365.0),
     metric: str = Query(default="percent", pattern="^(percent|tokens|cost)$"),
     session: Session = Depends(get_session),
-):
+) -> dict[str, Any]:
     """Chart data: percent → fill curves; tokens/cost → daily bars."""
     return query_chart(
         session,
@@ -499,7 +499,7 @@ async def get_history_window_detail(
     window_end: str,
     days: float | None = Query(default=None, ge=0.01, le=365.0),
     session: Session = Depends(get_session),
-):
+) -> dict[str, Any]:
     """Fill-up series and by-model breakdown for one expanded window."""
     try:
         ws = datetime.fromisoformat(window_start.replace("Z", "+00:00").replace(" ", "+"))
@@ -525,7 +525,7 @@ async def get_usage_history_deltas(
     account_id: str | None = None,
     days: float = Query(default=1.0, ge=0.01, le=90.0),
     session: Session = Depends(get_session),
-):
+) -> dict[str, Any]:
     """Compute actual consumption deltas from usage_events.
 
     Returns token_delta_total, cost_delta_total, provider_token_deltas,
@@ -542,7 +542,7 @@ async def get_usage_history_deltas(
 
 @router.get("/events")
 @limiter.limit("30/minute")
-async def get_usage_events(
+async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; collapse into a Pydantic params model in a follow-up
     request: Request,
     provider_id: str = Query(...),
     account_id: str = Query(...),

@@ -79,15 +79,18 @@ target-version = "py312"
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
 select = ["E4", "E7", "E9", "F", "I", "UP", "N", "S", "B", "A", "C4", "DTZ", "SIM", "RET", "ARG", "ERA", "PL"]
 ignore = [
-    "PLR0913", # Too many arguments
+    # PLR0913 (too many arguments) and PLR0915 (too many statements) are now
+    # enabled per audit R12 — they reliably catch kitchen-sink functions.
+    # PLR2004 (magic value) stays off: 130 hits across the codebase, almost
+    # all HTTP status codes, seconds-per-X conversions, and percentage
+    # thresholds. Constant-ifying them is busywork that adds no clarity.
     "S101",    # Use of assert
     "RET504",  # Unnecessary assignment before return
     "B008",    # Do not perform function call `Depends` in argument defaults
     "S105",    # Possible hardcoded password (noisy in tests)
-    "PLR2004", # Magic value used in comparison
+    "PLR2004", # Magic value used in comparison (see comment above)
     "PLC0415", # import should be at the top-level
     "PLR0912", # Too many branches
-    "PLR0915", # Too many statements
     "B904",    # raise ... from err
     "ARG001",  # Unused function argument
     "ARG002",  # Unused method argument
@@ -129,6 +132,13 @@ unfixable = []
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+[tool.ruff.lint.pylint]
+# Defaults are aggressive (5 args, 50 statements). Raise to values that
+# only flag genuinely-too-large functions while keeping the audit's R12
+# safety net against new god-functions creeping in.
+max-args = 10
+max-statements = 75
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG", "F841", "SIM", "DTZ", "PLR", "S", "B018"]
 "scripts/*" = ["ARG", "F841", "SIM", "DTZ", "PLR", "S", "B018", "T201"]
@@ -163,9 +173,13 @@ ignore_missing_imports = true
 exclude = ["tests", "scripts", "sidecar_app"]
 
 [[tool.mypy.overrides]]
-module = "app.core.config"
-ignore_errors = true
-
-[[tool.mypy.overrides]]
 module = "app.services.collectors.*"
 ignore_errors = true
+
+# Audit R13: tighten typing on the layers most prone to silent bugs.
+# app.core.* + app.api.endpoints.* must declare argument and return
+# types; the rest of the codebase keeps the lax default for now.
+[[tool.mypy.overrides]]
+module = ["app.core.*", "app.api.endpoints.*"]
+disallow_untyped_defs = true
+check_untyped_defs = true

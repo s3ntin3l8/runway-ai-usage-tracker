@@ -22,7 +22,7 @@ _EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _REPLACEMENT = "[REDACTED_EMAIL]"
 
 
-def scrub_pii(value):
+def scrub_pii(value: object) -> object:
     """Return `value` with email-shaped substrings replaced.
 
     Non-string input is passed through unchanged — the helper is used

@@ -30,7 +30,7 @@ class SidecarUpdateRequest(BaseModel):
 
 @router.post("/ingest")
 @limiter.limit("600/minute")
-async def ingest_metrics(
+async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest entrypoint, refactor tracked separately
     request: Request,
     x_signature: str = Header(None, alias="X-Signature"),
     x_timestamp: str = Header(None, alias="X-Timestamp"),

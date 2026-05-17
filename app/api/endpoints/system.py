@@ -247,7 +247,7 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
     """
     raw_responses = []
 
-    async def intercept_response(response: httpx.Response):
+    async def intercept_response(response: httpx.Response) -> None:
         await response.aread()
         try:
             data = response.json()
@@ -338,7 +338,7 @@ async def refresh_token(
 @router.delete("/token-health/{provider}/{account_id}")
 @limiter.limit("20/minute")
 async def delete_token_health_entry(
-    request: Request, provider: str, account_id: str, _=Depends(require_admin_key)
+    request: Request, provider: str, account_id: str, _: None = Depends(require_admin_key)
 ) -> dict[str, Any]:
     """Manually remove a token from the cache."""
     ok = await token_health_service.delete_credential(provider, account_id)
@@ -594,7 +594,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
 
 @router.put("/provider-config/{provider_id}")
 @limiter.limit("20/minute")
-async def upsert_provider_config(
+async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
     request: Request,
     provider_id: str,
     body: _ProviderConfigUpdate,

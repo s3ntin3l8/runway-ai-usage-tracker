@@ -317,7 +317,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             pass
         return {}
 
-    def _parse_oauth_response(
+    def _parse_oauth_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
         self,
         data: dict[str, Any],
         name_map: dict[str, str],
