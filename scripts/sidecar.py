@@ -42,6 +42,31 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+
+def _resolve_sidecar_version() -> str:
+    """Source-of-truth for the sidecar version reported to the server.
+
+    Prefers `package.json` at the repo root when running from source so
+    the dashboard reflects the current dev version automatically. Falls
+    back to the baked constant when running as a frozen binary or when
+    package.json isn't reachable (e.g. distributed sidecar). Update
+    `_SIDECAR_VERSION_FALLBACK` when cutting a release for binaries.
+    """
+    pkg_json = _REPO_ROOT / "package.json"
+    if pkg_json.is_file():
+        try:
+            with open(pkg_json) as _f:
+                version = json.load(_f).get("version")
+            if isinstance(version, str) and version:
+                return version
+        except (OSError, ValueError):
+            pass
+    return _SIDECAR_VERSION_FALLBACK
+
+
+_SIDECAR_VERSION_FALLBACK = "0.13.0"  # keep in sync with package.json on release
+_SIDECAR_VERSION = _resolve_sidecar_version()
+
 # --- INJECTED REGISTRY ---
 __REGISTRY__ = {
     "providers": {
@@ -2290,7 +2315,7 @@ class DaemonRunner:
             metrics, events, collection_errors = run_collection(self._config, providers=providers)
 
             os_platform = f"{platform.system()}/{platform.release()}"
-            sidecar_version = self._config.get("sidecar_version", "unknown")
+            sidecar_version = self._config.get("sidecar_version") or _SIDECAR_VERSION
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event)
