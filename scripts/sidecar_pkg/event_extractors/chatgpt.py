@@ -123,11 +123,14 @@ def parse_chatgpt_events(
                     if ts <= since:
                         continue
 
-                    # Use last_token_usage for per-turn deltas (not cumulative totals)
+                    # Use last_token_usage for per-turn deltas (not cumulative totals).
+                    # OpenAI Responses API: input_tokens is inclusive of cached_input_tokens
+                    # — subtract for fresh-only input to match Anthropic's column semantics.
                     last_usage = info.get("last_token_usage") or {}
-                    tokens_input = int(last_usage.get("input_tokens", 0))
-                    tokens_output = int(last_usage.get("output_tokens", 0))
+                    raw_input = int(last_usage.get("input_tokens", 0))
                     tokens_cache_read = int(last_usage.get("cached_input_tokens", 0))
+                    tokens_input = max(0, raw_input - tokens_cache_read)
+                    tokens_output = int(last_usage.get("output_tokens", 0))
                     tokens_reasoning = int(last_usage.get("reasoning_output_tokens", 0))
 
                     # Synthetic event_id: file stem + line number (stable across replays

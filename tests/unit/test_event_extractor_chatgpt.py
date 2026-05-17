@@ -125,9 +125,10 @@ def test_captures_token_dimensions():
         account_id="u@codex.test",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
-    # First event (gpt-5 / unknown model): 1842 input, 412 output, 500 cached, 0 reasoning
+    # First event (gpt-5 / unknown model): raw input 1842 inclusive of 500 cached →
+    # tokens_input = 1842 - 500 = 1342. Output 412, reasoning 0.
     first = next(e for e in evts if e.model_id == "unknown")
-    assert first.tokens_input == 1842
+    assert first.tokens_input == 1342
     assert first.tokens_output == 412
     assert first.tokens_cache_read == 500
     assert first.tokens_reasoning == 0
