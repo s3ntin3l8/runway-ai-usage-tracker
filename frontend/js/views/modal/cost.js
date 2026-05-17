@@ -7,27 +7,8 @@
  *   - allCumulative : full fetchCumulative() list for monthly bars (if available)
  */
 
-function _esc(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
-
-function _fmtCost(usd) {
-    if (usd == null) return '—';
-    if (usd === 0) return '$0.00';
-    if (usd < 0.01) return '<$0.01';
-    return '$' + usd.toFixed(2);
-}
-
-function _fmtTokens(val) {
-    if (val == null || val === 0) return '0';
-    if (val >= 1e9) return (val / 1e9).toFixed(2) + 'B';
-    if (val >= 1e6) return (val / 1e6).toFixed(2) + 'M';
-    if (val >= 1e3) return (val / 1e3).toFixed(0) + 'K';
-    return String(val);
-}
+import { escapeHTML as _esc } from '../../utils/html.js';
+import { formatCost as _fmtCost, formatTokens as _fmtTokens } from '../../utils/format.js';
 
 function _osGlyph(os) {
     if (!os) return '◈ ';

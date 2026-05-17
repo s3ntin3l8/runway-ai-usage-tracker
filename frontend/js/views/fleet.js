@@ -1,11 +1,6 @@
 import { fetchFleet, patchSidecar, deleteSidecarAPI, setSidecarEnabledAPI } from '../api.js';
 import { buildFleetView } from '../components.js';
-
-function escapeHTML(str) {
-    if (!str) return '';
-    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-    return str.replace(/[&<>"']/g, m => map[m]);
-}
+import { escapeHTML } from '../utils/html.js';
 
 export async function loadFleetView() {
     const container = document.getElementById('fleet-content');

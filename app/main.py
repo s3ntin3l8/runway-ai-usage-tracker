@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -90,6 +91,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Gzip text responses (CSS, JS, HTML, JSON). Browsers without Accept-Encoding
+# still get uncompressed bytes; the 512-byte floor skips tiny payloads where
+# compression overhead exceeds the savings.
+app.add_middleware(GZipMiddleware, minimum_size=512)
+
 
 # Global Exception Handler
 @app.exception_handler(Exception)
@@ -104,23 +110,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 # API routes
 app.include_router(api_router, prefix="/api")
 
-# Serve static files (frontend) with cache-busting headers
+# Serve static files (frontend). Default StaticFiles sets ETag/Last-Modified so
+# the browser can do conditional If-Modified-Since requests and receive 304s
+# when nothing changed. index.html already cache-busts subresources via
+# ?v=N query params (see <link href="/static/css/styles.css?v=7">), so bumping
+# that param is the explicit signal to force a re-download on real updates.
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-
-
-class NoCacheStaticFiles(StaticFiles):
-    """StaticFiles with no-cache headers for development."""
-
-    async def get_response(self, path: str, scope) -> Response:
-        response = await super().get_response(path, scope)
-        # Add cache-busting headers
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-
-
-app.mount("/static", NoCacheStaticFiles(directory=frontend_path), name="static")
+app.mount("/static", StaticFiles(directory=frontend_path), name="static")
 
 
 @app.get("/favicon.ico", include_in_schema=False)

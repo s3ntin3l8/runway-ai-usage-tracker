@@ -10,29 +10,9 @@
 
 import { providerDisplayLabel } from '../../components.js';
 import { formatLocalTime } from '../../utils/tz.js';
+import { escapeHTML as _esc } from '../../utils/html.js';
+import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
 import { buildSessionCard } from './usage.js';
-
-function _esc(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
-
-function _fmtTokens(val) {
-    if (val == null || val === 0) return '0';
-    if (val >= 1e9) return (val / 1e9).toFixed(2) + 'B';
-    if (val >= 1e6) return (val / 1e6).toFixed(2) + 'M';
-    if (val >= 1e3) return (val / 1e3).toFixed(0) + 'K';
-    return String(val);
-}
-
-function _fmtCost(usd) {
-    if (usd == null) return '—';
-    if (usd === 0) return '$0.00';
-    if (usd < 0.01) return '<$0.01';
-    return '$' + usd.toFixed(2);
-}
 
 function _fmtAgo(isoStr) {
     if (!isoStr) return '—';

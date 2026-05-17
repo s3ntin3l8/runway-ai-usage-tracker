@@ -3,6 +3,7 @@ import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
 import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
+import { escapeHTML } from '../utils/html.js';
 
 const historyState = {
     days: 1,
@@ -15,17 +16,7 @@ const historyState = {
     _deltasCache: null,
 };
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-function escapeHTML(str) {
-    if (!str) return '';
-    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-    return str.replace(/[&<>"']/g, m => map[m]);
-}
-
-// Short alias for use in template literals
+// Short alias kept for terser template-literal interpolation.
 const escHtml = escapeHTML;
 
 export function getHistoryState() {

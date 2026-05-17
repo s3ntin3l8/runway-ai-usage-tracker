@@ -159,6 +159,20 @@ export async function fetchHistoryRaw(params = {}) {
     return await resp.json();
 }
 
+export async function fetchHistoryChart(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/history/chart?${query}`);
+    if (!resp.ok) throw new Error(`Failed to fetch chart history: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
+export async function fetchHistoryWindowDetail(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const resp = await fetchWithAuth(`/api/v1/usage/history/window-detail?${query}`);
+    if (!resp.ok) throw new Error(`Failed to fetch window history: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
 export async function fetchHistoryDeltas(params = {}) {
     const query = new URLSearchParams(params).toString();
     const resp = await fetchWithAuth(`/api/v1/usage/history/deltas?${query}`);

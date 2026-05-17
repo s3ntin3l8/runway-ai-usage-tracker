@@ -4,20 +4,21 @@ import { applyOrder, cardKey, extractProviderOrder, extractCardOrder } from './l
 import { ensureSortable } from './sortable.js';
 import { buildGitHubOAuthModal, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
-import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
-import { loadSettingsView, renderProvidersSection, refreshToken, deleteToken } from './views/settings.js';
-import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar, toggleSidecarEnabled } from './views/fleet.js';
-import { loadForecastView, initForecastView } from './views/forecast.js';
+import { escapeHTML } from './utils/html.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
+
+// Non-dashboard views are lazy-loaded — they aren't needed for the initial
+// paint, and statically importing them shipped ~78 KB of JS that the cold
+// load never executed. Each module is fetched on first navigation and cached
+// for subsequent visits; init() runs exactly once per module.
+const _viewModules = {};
+const _viewInitDone = {};
+function loadViewModule(id) {
+    return _viewModules[id] ??= import(`./views/${id}.js`);
+}
 
 // Alias for backwards compatibility
 window.loadDashboard = loadDashboard;
-
-function escapeHTML(str) {
-    if (!str) return '';
-    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-    return str.replace(/[&<>"']/g, m => map[m]);
-}
 
 // History data is now fully managed via views/history.js
 
@@ -28,8 +29,17 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
 
 /**
  * View Management
+ *
+ * Convention: each lazy view module exports `load<Cap>View()` and optionally
+ * `init<Cap>View()` (capitalised id, e.g. id 'history' → loadHistoryView /
+ * initHistoryView). The dashboard view is statically imported above because
+ * it's the cold-load view and has a STATE.data guard that doesn't fit the
+ * convention; everything else is dispatched generically.
  */
 const KNOWN_VIEWS = ['dashboard', 'history', 'forecast', 'fleet', 'settings', 'auth', 'error'];
+const LAZY_VIEWS = ['history', 'forecast', 'settings', 'fleet'];
+
+const _cap = id => id[0].toUpperCase() + id.slice(1);
 
 window.switchView = async function(viewId) {
     if (!KNOWN_VIEWS.includes(viewId)) viewId = 'dashboard';
@@ -48,13 +58,19 @@ window.switchView = async function(viewId) {
         history.replaceState(null, '', target);
     }
 
-    if (viewId === 'dashboard' && STATE.data.length === 0) {
-        await loadDashboard();
+    if (viewId === 'dashboard') {
+        if (STATE.data.length === 0) await loadDashboard();
+        return;
     }
-    if (viewId === 'history') loadHistoryView();
-    if (viewId === 'forecast') loadForecastView();
-    if (viewId === 'settings') loadSettingsView();
-    if (viewId === 'fleet') loadFleetView();
+    if (LAZY_VIEWS.includes(viewId)) {
+        const m = await loadViewModule(viewId);
+        const initFn = m[`init${_cap(viewId)}View`];
+        if (initFn && !_viewInitDone[viewId]) {
+            _viewInitDone[viewId] = true;
+            initFn();
+        }
+        m[`load${_cap(viewId)}View`]?.();
+    }
 };
 
 // Re-exports for onclick handlers in index.html are now handled in views/history.js initHistoryView()
@@ -359,10 +375,10 @@ async function initUI() {
         switchView(v);
     });
 
-    // Initialize dashboard view event listeners
+    // Initialize dashboard view event listeners. History/Forecast init runs
+    // lazily on first switchView() to that tab — keeps their modules off the
+    // cold-load critical path.
     initDashboardView();
-    initHistoryView();
-    initForecastView();
     
     // Wake Trigger: nudge the poller and refresh data when the tab becomes visible.
     // Poller wake: 30s debounce. Data refresh: only when tab was hidden for >5 min.
@@ -394,7 +410,8 @@ async function checkGitHubStatus() {
     // Refresh provider form if GitHub is currently selected in Settings
     const pane = document.getElementById('settings-pane');
     if (pane && document.querySelector('.settings-nav-item.active')?.dataset.section === 'providers') {
-        renderProvidersSection(pane);
+        // Settings module is already loaded if this pane is active.
+        loadViewModule('settings').then(m => m.renderProvidersSection(pane));
     }
 }
 
@@ -595,27 +612,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.key === 'Escape') closeModal();
     });
 
-    // Stash app-config (user_timezone, env_timezone) on window.runwayConfig so
-    // tz.js can resolve the user's display zone before any timestamp renders.
-    try {
-        const cfg = await fetchAppConfig();
-        const { setRunwayConfig } = await import('./utils/tz.js');
-        setRunwayConfig(cfg);
-    } catch (_) {
-        // Fall through — getUserTz() will use browser auto-detect.
-    }
+    // Timezone is already on window.runwayConfig — it was injected synchronously
+    // by an inline <script> in <head> (see app/main.py:147-154) before any
+    // module evaluated. fetchAppConfig() here is a refresh of that snapshot;
+    // it runs off the critical path so it doesn't gate the dashboard render.
+    // INVARIANT: if the inline injection is ever removed from main.py, this
+    // refresh must move back to an awaited step before initUI() to avoid
+    // first-paint TZ regression.
+    const configRefreshP = fetchAppConfig()
+        .then(cfg => import('./utils/tz.js').then(m => m.setRunwayConfig(cfg)))
+        .catch(() => {});
+    const authP = checkAuth().catch(() => false);
 
-    // initUI awaits switchView('dashboard') → loadDashboard on cold start.
-    // checkAuth runs after so it can't race and double-fire loadDashboard.
+    // initUI internally awaits getDashboardLayout + loadDashboard — runs
+    // concurrently with the config refresh and the auth probe above.
     await initUI();
 
-    const authorized = await checkAuth();
-    if (authorized) {
+    if (await authP) {
         // Auto-refresh every 5 minutes — skip silently when the tab is hidden.
         refreshTimer = setInterval(() => {
             if (!document.hidden) loadDashboard();
         }, 5 * 60 * 1000);
     }
+    void configRefreshP;
 });
 
 window.handleResetProvider = async function(event, provider, accountId) {
@@ -787,17 +806,20 @@ window.viewRawProviderData = async function(providerId) {
     }
 };
 
-// Expose functions needed by inline onclick handlers in HTML
+// Expose functions needed by inline onclick handlers in HTML. Lazy-view
+// handlers can only fire after that view has rendered its DOM (so the module
+// is already cached by then), but the shim still loads it on demand to defend
+// against any stray pre-render trigger.
 window.switchView = switchView;
-window.editSidecarName = editSidecarName;
-window.addSidecarTag = addSidecarTag;
-window.deleteSidecar = deleteSidecar;
-window.toggleSidecarEnabled = toggleSidecarEnabled;
 window.setFilterDimension = setFilterDimension;
 window.setFilter = setFilter;
-window.setHistoryDays = setHistoryDays;
-window.setHistoryMetric = setHistoryMetric;
-window.toggleHistoryProvider = toggleHistoryProvider;
-window.refreshToken = refreshToken;
-window.deleteToken = deleteToken;
+
+function bindLazy(viewId, ...names) {
+    for (const name of names) {
+        window[name] = (...args) => loadViewModule(viewId).then(m => m[name](...args));
+    }
+}
+bindLazy('fleet',    'editSidecarName', 'addSidecarTag', 'deleteSidecar', 'toggleSidecarEnabled');
+bindLazy('history',  'setHistoryDays', 'setHistoryMetric', 'toggleHistoryProvider');
+bindLazy('settings', 'refreshToken', 'deleteToken');
 

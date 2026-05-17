@@ -15,7 +15,9 @@ async def require_admin_key(
 
     Allows bypass if:
     1. Request is from 127.0.0.1 and server is bound to localhost.
-    2. A trusted reverse proxy header (X-Forwarded-User, Remote-User) is present.
+    2. Request originates from an IP in TRUSTED_PROXY_IPS AND carries a
+       proxy-asserted user header (X-Forwarded-User, Remote-User). Without
+       the IP allowlist the header is trivially forgeable by any client.
     """
     if settings.ADMIN_API_KEY is None:
         return
@@ -29,8 +31,16 @@ async def require_admin_key(
     ):
         return
 
-    # 2. Reverse proxy trust (user management offloaded to proxy like Authelia/Cloudflare)
-    if x_forwarded_user or remote_user:
+    # 2. Reverse proxy trust — gated by IP allowlist so the headers can't be
+    # forged by an arbitrary client. Both the source IP and a user header
+    # must be present.
+    trusted = settings.trusted_proxy_ips
+    if (
+        trusted
+        and request.client
+        and request.client.host in trusted
+        and (x_forwarded_user or remote_user)
+    ):
         return
 
     # 3. Standard API key auth

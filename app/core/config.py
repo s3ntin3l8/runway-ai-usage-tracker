@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     INGEST_API_KEY: str = ""  # Default empty = disabled; set to non-empty to enable ingestion
     ADMIN_API_KEY: str | None = None
 
+    # Comma-separated list of reverse-proxy IPs allowed to assert auth via
+    # X-Forwarded-User / Remote-User headers. Empty = proxy-header auth
+    # disabled (default). Without this, anyone could forge the header.
+    TRUSTED_PROXY_IPS: str = ""
+
     # OAuth credentials
     GEMINI_OAUTH_CLIENT_ID: str = ""
     GEMINI_OAUTH_CLIENT_SECRET: str = ""
@@ -173,6 +178,10 @@ class Settings(BaseSettings):
     @property
     def INGEST_API_KEY_IS_INSECURE_DEFAULT(self) -> bool:
         return self.INGEST_API_KEY == DEFAULT_INGEST_API_KEY
+
+    @property
+    def trusted_proxy_ips(self) -> set[str]:
+        return {ip.strip() for ip in self.TRUSTED_PROXY_IPS.split(",") if ip.strip()}
 
     @computed_field
     @property

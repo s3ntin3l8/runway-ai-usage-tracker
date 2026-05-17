@@ -8,13 +8,7 @@
 
 import { providerDisplayLabel } from '../../components.js';
 import { formatLocalDateTime } from '../../utils/tz.js';
-
-function _esc(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
+import { escapeHTML as _esc } from '../../utils/html.js';
 
 function _fmtAgo(isoStr) {
     if (!isoStr) return '—';

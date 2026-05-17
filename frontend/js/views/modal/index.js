@@ -12,17 +12,11 @@ import { fetchHeatmap, fetchSessions } from '../../api.js';
 import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
+import { escapeHTML as _esc } from '../../utils/html.js';
 import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
 import { buildUsagePane, wireUsageSparkTabs } from './usage.js';
 import { buildCostPane } from './cost.js';
 import { buildDebugPane } from './debug.js';
-
-function _esc(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
 
 // Cached data per open modal session, cleared on each open
 let _modalCache = {};

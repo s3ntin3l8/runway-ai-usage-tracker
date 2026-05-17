@@ -10,8 +10,8 @@
     <meta name="description" content="Live dashboard tracking remaining AI subscription limits and reset timers across all your developer tools.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=B612+Mono:ital,wght@0,400;0,700;1,400&family=B612:ital,wght@0,400;0,700;1,400&display=swap">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612+Mono:ital,wght@0,400;0,700;1,400&family=B612:ital,wght@0,400;0,700;1,400&display=swap">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=B612+Mono:ital,wght@0,400;0,700;1,400&family=B612:ital,wght@0,400;0,700;1,400&display=swap" onload="this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612+Mono:ital,wght@0,400;0,700;1,400&family=B612:ital,wght@0,400;0,700;1,400&display=swap"></noscript>
     <link rel="stylesheet" href="/static/css/styles.css?v=7">
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
@@ -92,41 +92,21 @@
                     &gt; Connection refused.
                 </div>
 
-                <!-- Hero: fleet lights + most constrained + aggregate ring -->
-                <div class="hero hero-3">
-                    <div class="glass" id="fleet-health-panel">
-                        <div class="health-head">
-                            <h2>Fleet Health</h2>
-                            <div class="summary">
-                                <span id="fleet-nominal">—</span>
-                                <span class="of"> / <span id="fleet-total">—</span> nominal</span>
-                            </div>
+                <!-- Hero v4: fleet strip + 1-2 critical cards + aggregate -->
+                <div class="hero">
+                    <div class="glass fleet-strip">
+                        <div class="ttl">
+                            <span class="big">Fleet</span>
+                            <span class="sub" id="fleet-sub">—</span>
                         </div>
                         <div class="lights" id="fleet-lights"></div>
-                        <div class="health-legend">
-                            <span class="k good">OK</span>
-                            <span class="k warn">WARN</span>
-                            <span class="k crit">CRIT</span>
-                            <span id="fleet-counts" style="margin-left:auto;"></span>
-                        </div>
-                        <!-- Health bucket counts row -->
-                        <div class="health-buckets" id="health-buckets"></div>
-                        <!-- Per-provider mini-table -->
-                        <div class="prov-table" id="prov-table"></div>
+                        <div class="counts" id="fleet-counts"></div>
                     </div>
-                    <div class="glass" id="most-constrained-panel">
-                        <div id="most-constrained-content"></div>
-                    </div>
-                    <div class="glass" id="agg-hero-panel">
-                        <div class="agg agg-compact">
-                            <div>
-                                <div class="label">Avg Remaining</div>
-                                <div class="big"><span id="agg-pct-val">—</span><em>%</em></div>
-                                <div class="sub" id="agg-reset-line">—</div>
-                                <div class="agg-mini-stats" id="agg-mini-stats"></div>
-                            </div>
-                            <div class="agg-ring" id="agg-ring"></div>
-                        </div>
+                    <div class="hero-body" id="hero-body">
+                        <div class="glass crit-card" id="crit-1" hidden></div>
+                        <div class="glass crit-card" id="crit-2" hidden></div>
+                        <div class="glass crit-card crit-clear" id="crit-clear" hidden></div>
+                        <div class="glass agg-card" id="agg-card"></div>
                     </div>
                 </div>
 
@@ -373,6 +353,6 @@
     </div>
 
     <!-- Application script -->
-    <script type="module" src="/static/js/app.js?v=5" defer></script>
+    <script type="module" src="/static/js/app.js?v=7" defer></script>
 </body>
 </html>

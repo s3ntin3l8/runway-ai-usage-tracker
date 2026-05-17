@@ -2,34 +2,12 @@ import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
 import { pickBucketSeconds } from './charts.js';
 import { cardKey, applyOrder } from './layout.js';
 import { formatLocalDateTime } from './utils/tz.js';
+import { escapeHTML, escapeHTMLAttr, safeUrl } from './utils/html.js';
+import { formatNumber, formatCurrency } from './utils/format.js';
 
-/**
- * Escapes HTML special characters to prevent XSS
- * @param {string} str - String to escape
- * @returns {string} Escaped string
- */
-function escapeHTML(str) {
-    if (!str) return '';
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return str.replace(/[&<>"']/g, function (m) { return map[m]; });
-}
-
-/**
- * Escapes a value for safe use inside an HTML attribute (e.g. onclick="setFilter('...')")
- * Escapes single quotes and backslashes only — output is safe to wrap in single quotes.
- * @param {string} str
- * @returns {string}
- */
-export function escapeHTMLAttr(str) {
-    if (!str) return '';
-    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
+// Re-exported so existing `import { escapeHTMLAttr } from './components.js'`
+// callers keep working without touching their imports.
+export { escapeHTMLAttr };
 
 function _forecastSeriesKey(entry) {
     return [
@@ -152,33 +130,7 @@ function getPaceIcon(pace) {
  * @property {string|null} updated_at - ISO 8601 timestamp when data was last collected
  */
 
-/**
- * Format a number with appropriate abbreviations (K, M, B)
- * @param {number} num - Number to format
- * @returns {string} Formatted number
- */
-function formatNumber(num) {
-    if (num === null || num === undefined || isNaN(num)) return '—';
-    const absNum = Math.abs(num);
-    if (absNum >= 1e9) return `${(num / 1e9).toFixed(1)}B`;
-    if (absNum >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
-    if (absNum >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
-    if (Number.isInteger(num)) return num.toString();
-    return num.toFixed(1);
-}
-
-/**
- * Format currency amount with appropriate symbol
- * @param {number} amount - Amount to format
- * @param {string} currencyCode - Currency code (USD, EUR, etc.)
- * @returns {string} Formatted currency
- */
-function formatCurrency(amount, currencyCode) {
-    if (amount === null || amount === undefined || isNaN(amount)) return '—';
-    const symbols = { USD: '$', EUR: '€', GBP: '£', CNY: '¥', JPY: '¥' };
-    const symbol = symbols[currencyCode] || '$';
-    return `${symbol}${amount.toFixed(2)}`;
-}
+// formatNumber / formatCurrency live in ./utils/format.js (imported above).
 
 /**
  * Format relative time from ISO timestamp
@@ -532,13 +484,14 @@ export function buildModalContent(item) {
     const isAuthFailed = item.error_type === 'auth_failed';
     const retryButton = isAuthFailed ? `
         <button
-            onclick="event.stopPropagation(); window.handleResetProvider(event, '${escapeHTML(item.provider_id)}', '${escapeHTML(item.account_id)}')"
+            onclick="event.stopPropagation(); window.handleResetProvider(event, '${escapeHTMLAttr(item.provider_id)}', '${escapeHTMLAttr(item.account_id)}')"
             style="margin-top:16px;width:100%;padding:10px;background:var(--accent);color:var(--bg);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;"
             class="transition-all">Retry Authentication</button>
     ` : '';
 
-    const linkButton = item.usage_url ? `
-        <a href="${escapeHTML(item.usage_url)}" target="_blank" rel="noopener noreferrer" class="icon-btn w-10 h-10 flex items-center justify-center transition-colors" style="color:var(--text-muted);" title="Open usage page">
+    const safeUsageUrl = safeUrl(item.usage_url);
+    const linkButton = safeUsageUrl ? `
+        <a href="${safeUsageUrl}" target="_blank" rel="noopener noreferrer" class="icon-btn w-10 h-10 flex items-center justify-center transition-colors" style="color:var(--text-muted);" title="Open usage page">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
         </a>
     ` : '';
@@ -743,7 +696,7 @@ export function buildGitHubOAuthModal(data, error = null) {
                     <ol class="space-y-3" style="font-size:12px;color:var(--text-muted);">
                         <li class="flex gap-3">
                             <span style="flex-shrink:0;width:18px;height:18px;border:1px solid var(--hairline-strong);color:var(--text-dim);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;">1</span>
-                            <span>Open <a href="${escapeHTML(data.verification_uri)}" target="_blank" style="color:var(--accent-cool);font-weight:700;" class="hover:underline">${escapeHTML(data.verification_uri)}</a></span>
+                            <span>Open <a href="${safeUrl(data.verification_uri)}" target="_blank" style="color:var(--accent-cool);font-weight:700;" class="hover:underline">${escapeHTML(data.verification_uri)}</a></span>
                         </li>
                         <li class="flex gap-3">
                             <span style="flex-shrink:0;width:18px;height:18px;border:1px solid var(--hairline-strong);color:var(--text-dim);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;">2</span>

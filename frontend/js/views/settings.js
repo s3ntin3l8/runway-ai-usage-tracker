@@ -23,6 +23,7 @@ const COMMON_TIMEZONES = [
 ];
 import { STATE } from '../state.js';
 import { ensureSortable } from '../sortable.js';
+import { escapeHTML, escapeHTMLAttr } from '../utils/html.js';
 
 let _expandedProviderId = localStorage.getItem('settings_expanded_provider') || null;
 let _providerCount = null;
@@ -45,17 +46,6 @@ const FRIENDLY_TOKEN_TYPES = {
     'id_token': 'ID Token',
     'refresh_token': 'Refresh',
 };
-
-function escapeHTML(str) {
-    if (!str) return '';
-    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-    return str.replace(/[&<>"']/g, m => map[m]);
-}
-
-function escapeHTMLAttr(str) {
-    if (!str) return '';
-    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
 
 function setExpanded(id) {
     _expandedProviderId = id;
