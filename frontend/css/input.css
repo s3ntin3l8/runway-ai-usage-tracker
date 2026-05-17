@@ -2977,3 +2977,355 @@ l-table td.num {
 .hw-delta-down { color: #27ae60; }
 .hw-tokens-cell { white-space: nowrap; font-size: 0.82rem; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
 .hw-cost-cell   { white-space: nowrap; font-size: 0.82rem; font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
+
+/* ============================================================
+   DISPLAY VARIANT · 2-column fleet layout
+   data-cols="2" → two Fleet Commander cards per row. Each card
+   stacks its three internal tracks vertically: identity rail
+   across the top, main column full width below, cumulative
+   metrics tiled at the bottom. Falls back to 1-col under 1280px.
+   ============================================================ */
+[data-cols="2"] .fleet-stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    gap: 12px;
+    align-items: stretch;
+}
+/* Each card runs its three sections (rail · main · cume) on a fixed-row
+   grid so cards in the same .fleet-stack row align their section
+   boundaries: rails align at the top, mains flex to fill remaining
+   height, cume rows align at the bottom. Pods (when expanded) flow
+   into an implicit 4th row. */
+[data-cols="2"] .fc {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
+    grid-auto-rows: auto;
+    min-width: 0;
+}
+[data-cols="2"] .fc.expanded { grid-template-columns: minmax(0, 1fr); }
+
+[data-cols="2"] .fc-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline);
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 12px;
+    min-height: 64px;
+    min-width: 0;
+    overflow: hidden;
+}
+/* `.who` claims leftover space after auth + meta-row, never more than half
+   the rail. The max-width cap forces the pname/pacc ellipsis to truncate
+   so long account labels can't push badges past the card edge. */
+/* `.who` cap: min(40%, 260px). The badges (auth ~155px + meta-row pills
+   ~128px + gaps ~36px ≈ 320px) need the other ~60% on the narrow end of
+   2-col card widths (≈606px at the 1280px viewport breakpoint). 50% was
+   *just barely* not enough at that breakpoint and let the rightmost
+   badge clip on the card's right border. */
+[data-cols="2"] .fc-rail .who {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: min(40%, 260px);
+    overflow: hidden;
+}
+[data-cols="2"] .fc-rail .who .stack { min-width: 0; overflow: hidden; }
+/* `margin-left: auto` on .auth absorbs the leftover free space (.who is
+   capped at 260px, leaving ~40px on a typical 2-col rail) and pushes the
+   auth + meta-row badges flush to the rail's right edge. */
+[data-cols="2"] .fc-rail .auth { align-self: center; margin: 0 0 0 auto; flex-shrink: 0; }
+[data-cols="2"] .fc-rail .meta-row { flex-shrink: 0; flex-wrap: nowrap; }
+
+/* Cume sits as a 3-column grid tray at the card bottom. Hide the
+   period→yearly horizontal divider (it renders awkwardly when rows
+   are placed side-by-side) and normalize the value font-size so the
+   "This period" row doesn't dwarf the other two. */
+[data-cols="2"] .fc-cume {
+    grid-column: 1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
+    padding: 12px 16px;
+    align-items: start;
+}
+[data-cols="2"] .fc-cume hr { display: none; }
+[data-cols="2"] .fc-cume .row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+[data-cols="2"] .fc-cume .row .v {
+    font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+[data-cols="2"] .fc-cume .row .v em { margin-left: 3px; }
+
+[data-cols="2"] .fc-pods-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+[data-cols="2"] .fc-leds { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+
+/* Card-interior overflow guard. .fc-main and pool rows need to be hard-
+   clipped at the card edge in 2-col mode — long pool labels (white-space:
+   nowrap) and the glide-path tick (overflow: visible on .pmeter) can
+   otherwise force the grid's 1fr column wider than the card, pushing the
+   percent + RESETS column past the right border. */
+[data-cols="2"] .fc-main { min-width: 0; overflow: hidden; }
+[data-cols="2"] .fc-pool-row { min-width: 0; }
+[data-cols="2"] .fc-pool-row .pmid,
+[data-cols="2"] .fc-pool-row .phead,
+[data-cols="2"] .fc-pool-row .plab { min-width: 0; }
+[data-cols="2"] .fc-pool-row .pmeter { overflow: hidden; }
+[data-cols="2"] .fc-models-strip,
+[data-cols="2"] .fc-dump,
+[data-cols="2"] .fc-cume { min-width: 0; overflow: hidden; }
+
+/* Push per-model contribution + fuel-dump to the bottom of fc-main: the
+   quota-pools wrapper (first child) absorbs leftover vertical space, so
+   cards in the same row line up their per-model strip and fuel-dump bar
+   regardless of pool count. */
+[data-cols="2"] .fc-main > :first-child {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+@media (max-width: 1280px) {
+    [data-cols="2"] .fleet-stack { grid-template-columns: 1fr; }
+    [data-cols="2"] .fc {
+        grid-template-rows: auto auto auto;
+    }
+}
+
+/* ============================================================
+   DISPLAY VARIANT · Soft card chrome
+   data-chrome="soft" → trades the HUD framing (corner brackets,
+   hard hairlines, dashed dividers) for tonal mass: tinted trays,
+   chip blocks, stat tiles. Same info, fewer rules, more rhythm.
+   ============================================================ */
+[data-chrome="soft"] .fc {
+    gap: 10px;
+    padding: 8px;
+    background: var(--surface);
+}
+[data-chrome="soft"] .fc.glass::before,
+[data-chrome="soft"] .fc.glass::after { display: none; }
+[data-chrome="soft"] .fc.glass { box-shadow: 0 0 0 1px var(--hairline); }
+
+[data-chrome="soft"] .fc-rail {
+    border-right: 0;
+    background: var(--surface-2);
+    padding: 14px;
+    gap: 12px;
+}
+[data-chrome="soft"] .fc-rail .auth {
+    box-shadow: none;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent-ink);
+    padding: 4px 8px;
+}
+[data-theme="dark"] [data-chrome="soft"] .fc-rail .auth { color: var(--accent); }
+
+[data-chrome="soft"] .fc-rail .meta-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+}
+[data-chrome="soft"] .fc-rail .meta-row .pill {
+    box-shadow: none;
+    background: var(--surface-3);
+    text-align: center;
+    padding: 6px 4px;
+    display: flex; flex-direction: column; gap: 2px;
+    align-items: center; justify-content: center;
+    text-transform: none;
+    letter-spacing: 0.06em;
+    font-size: 9px;
+    color: var(--ink-3);
+    line-height: 1.2;
+}
+[data-chrome="soft"] .fc-rail .meta-row .pill b {
+    margin-right: 0;
+    font: 700 12px var(--font-family-mono, ui-monospace, Menlo, monospace);
+    letter-spacing: -0.01em;
+    color: var(--ink);
+}
+
+[data-chrome="soft"] .fc-main {
+    padding: 6px 4px;
+    gap: 14px;
+}
+[data-chrome="soft"] .fc-leds {
+    border-top: 0;
+    padding: 10px;
+    background: var(--surface-2);
+    gap: 4px;
+}
+[data-chrome="soft"] .fc-led { background: transparent; padding: 4px 6px; }
+[data-chrome="soft"] .fc-models-strip {
+    border-top: 0;
+    padding: 10px 12px 12px;
+    margin-top: 0;
+    background: var(--surface-2);
+}
+[data-chrome="soft"] .fc-dump {
+    border-top: 0;
+    padding: 10px 12px 12px;
+    background: var(--surface-2);
+}
+[data-chrome="soft"] .fc-dump-bar { background: var(--surface); }
+
+[data-chrome="soft"] .fc-cume {
+    border-left: 0;
+    background: var(--surface-2);
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 6px;
+}
+[data-chrome="soft"] .fc-cume hr { display: none; }
+[data-chrome="soft"] .fc-cume .row {
+    background: var(--surface-3);
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 2px;
+}
+[data-chrome="soft"] .fc-cume .row:first-child {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-3));
+}
+[data-chrome="soft"] .fc-cume .row:first-child .v { color: var(--accent); }
+
+[data-chrome="soft"] .fc-pods {
+    border-top: 0;
+    background: var(--surface-2);
+    margin: 0 -8px -8px;
+    padding: 14px 16px;
+}
+[data-chrome="soft"] .fc-pods-head .ln { display: none; }
+[data-chrome="soft"] .fc-pods-head .t:nth-child(3) { margin-left: auto; }
+
+[data-chrome="soft"] .fc-pool-row .pidx {
+    box-shadow: none;
+    background: var(--surface-3);
+    color: var(--ink-3);
+}
+[data-chrome="soft"] .fc-pool-row.crit-row .pidx {
+    background: color-mix(in srgb, var(--crit) 15%, var(--surface-3));
+    color: var(--crit);
+}
+[data-chrome="soft"] .fc-pool-row .pbadge {
+    box-shadow: none;
+    background: var(--surface-3);
+    font-weight: 600;
+}
+[data-chrome="soft"] .fc-pool-row .pbadge.shared {
+    background: color-mix(in srgb, var(--accent-cool) 14%, transparent);
+    color: var(--accent-cool);
+}
+[data-chrome="soft"] .fc-pool-row .pbadge.model {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-ink);
+}
+[data-theme="dark"] [data-chrome="soft"] .fc-pool-row .pbadge.model { color: var(--accent); }
+
+[data-chrome="soft"] .fc-pool-row .pmeter {
+    background: var(--surface);
+    height: 16px;
+}
+
+/* Combined soft + 2-col overrides — keep the soft rail compact and
+   horizontal, and let the cumulative tray flow side-by-side. */
+[data-chrome="soft"][data-cols="2"] .fc-rail {
+    border-bottom: 0;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+}
+[data-chrome="soft"][data-cols="2"] .fc-rail .who {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: min(40%, 260px);
+    overflow: hidden;
+}
+[data-chrome="soft"][data-cols="2"] .fc-rail .auth {
+    font-size: 8px;
+    padding: 3px 6px;
+    letter-spacing: 0.12em;
+    margin: 0 0 0 auto;
+}
+[data-chrome="soft"][data-cols="2"] .fc-rail .meta-row {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+[data-chrome="soft"][data-cols="2"] .fc-rail .meta-row .pill {
+    flex-direction: row;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 8.5px;
+    align-items: baseline;
+}
+[data-chrome="soft"][data-cols="2"] .fc-rail .meta-row .pill b {
+    font-size: 11px;
+}
+[data-chrome="soft"][data-cols="2"] .fc-cume {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    border-top: 0;
+    padding-top: 14px;
+    align-items: start;
+}
+[data-chrome="soft"][data-cols="2"] .fc-cume .row {
+    background: var(--surface-3);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+[data-chrome="soft"][data-cols="2"] .fc-cume .row:first-child {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-3));
+}
+
+/* Compact view · hides fuel-dump and token-info footer in 2-col mode so
+   more cards fit on screen. Placed AFTER all chrome variant rules so it
+   wins the source-order tie on equal specificity (the soft+2-col cume
+   rule above re-asserts display:grid, which would otherwise override
+   the hide). Only effective when data-cols="2" is set. */
+[data-cols="2"][data-compact="on"] .fc-dump,
+[data-cols="2"][data-compact="on"] .fc-cume {
+    display: none;
+}
+
+/* Segmented control used by the Settings → Display section */
+.display-seg {
+    display: inline-flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+.display-seg .ds-btn {
+    font: 700 9px var(--font-family-mono, ui-monospace, Menlo, monospace);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+    color: var(--ink-3);
+    cursor: pointer;
+    transition: color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.display-seg .ds-btn:hover {
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+.display-seg .ds-btn.on {
+    background: var(--accent-soft);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}

@@ -184,6 +184,28 @@ function applyTheme() {
 }
 
 /**
+ * Apply current display preferences (column count, card chrome) to document.
+ * Reflected as data attributes on <html>; CSS variants key off these.
+ */
+function applyDisplayPrefs() {
+    document.documentElement.dataset.cols = STATE.display.cols;
+    document.documentElement.dataset.chrome = STATE.display.chrome;
+    document.documentElement.dataset.compact = STATE.display.compact;
+}
+
+/**
+ * Update a display preference (cols | chrome | compact), persist to
+ * localStorage, and re-apply the data attributes so the dashboard reflows
+ * live.
+ */
+window.setDisplayPref = function (key, value) {
+    if (key !== 'cols' && key !== 'chrome' && key !== 'compact') return;
+    STATE.display[key] = value;
+    localStorage.setItem('runway_display_' + key, value);
+    applyDisplayPrefs();
+};
+
+/**
  * Start the HUD header clock (UTC time + T+ elapsed · since HH:MMZ).
  */
 function startHudClock() {
@@ -332,6 +354,7 @@ async function initUI() {
     // Initialize theme
     applyTheme();
     updateThemeIcon();
+    applyDisplayPrefs();
     startHudClock();
 
     checkGitHubStatus();

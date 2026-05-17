@@ -128,6 +128,7 @@ function renderSettingsSection(name) {
     else if (name === 'tokens') renderTokensSection(pane);
     else if (name === 'webhooks') renderWebhooksSection(pane);
     else if (name === 'system') renderSystemSection(pane);
+    else if (name === 'display') renderDisplaySection(pane);
 }
 
 // ─── Providers ───────────────────────────────────────────────────────────────
@@ -847,6 +848,69 @@ async function renderSystemSection(pane) {
     } catch (err) {
         pane.innerHTML = `<div class="settings-panel glass"><p style="padding:20px;color:var(--crit);font-size:11px;">Failed to load system info: ${escapeHTML(err.message)}</p></div>`;
     }
+}
+
+// ─── Display ─────────────────────────────────────────────────────────────────
+
+function renderDisplaySection(pane) {
+    const cols = STATE.display.cols;
+    const chrome = STATE.display.chrome;
+    const compact = STATE.display.compact;
+    pane.innerHTML = `<div class="settings-panel glass">
+        <header class="sp-head">
+            <div>
+                <h3>Display</h3>
+                <p>Browser-local appearance preferences · stored in localStorage.</p>
+            </div>
+        </header>
+        <div class="sys-grid">
+            <div class="sys-row">
+                <div>
+                    <div class="sys-k">Card columns</div>
+                    <div class="sys-s">Fleet Commander cards per row on the dashboard. Two-column layout falls back to one column below 1280px viewport width.</div>
+                </div>
+                <div class="display-seg" data-pref="cols">
+                    <button type="button" class="ds-btn ${cols === '1' ? 'on' : ''}" data-v="1">1 col</button>
+                    <button type="button" class="ds-btn ${cols === '2' ? 'on' : ''}" data-v="2">2 cols</button>
+                </div>
+            </div>
+            <div class="sys-row">
+                <div>
+                    <div class="sys-k">Card chrome</div>
+                    <div class="sys-s">Framed keeps the HUD corner brackets and hard hairlines. Soft trades them for tinted trays and stat tiles.</div>
+                </div>
+                <div class="display-seg" data-pref="chrome">
+                    <button type="button" class="ds-btn ${chrome === 'framed' ? 'on' : ''}" data-v="framed">Framed</button>
+                    <button type="button" class="ds-btn ${chrome === 'soft' ? 'on' : ''}" data-v="soft">Soft</button>
+                </div>
+            </div>
+            <div class="sys-row">
+                <div>
+                    <div class="sys-k">Compact view</div>
+                    <div class="sys-s">Hides fuel-dump and the token info footer to fit more cards per screen. Only takes effect in 2-column layout.</div>
+                </div>
+                <div class="display-seg" data-pref="compact">
+                    <button type="button" class="ds-btn ${compact === 'off' ? 'on' : ''}" data-v="off">Off</button>
+                    <button type="button" class="ds-btn ${compact === 'on' ? 'on' : ''}" data-v="on">On</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    pane.querySelectorAll('.display-seg').forEach(seg => {
+        const key = seg.dataset.pref;
+        seg.addEventListener('click', (e) => {
+            const btn = e.target.closest('.ds-btn');
+            if (!btn) return;
+            const value = btn.dataset.v;
+            if (typeof window.setDisplayPref === 'function') {
+                window.setDisplayPref(key, value);
+            }
+            seg.querySelectorAll('.ds-btn').forEach(b => {
+                b.classList.toggle('on', b.dataset.v === value);
+            });
+        });
+    });
 }
 
 export function initSettingsView() {

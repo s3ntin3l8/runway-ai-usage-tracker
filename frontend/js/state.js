@@ -19,6 +19,16 @@ export const STATE = {
         return localStorage.getItem('runway_bright_mode') === 'true' ? 'light' : 'dark';
     })(),
     githubAuth: { authenticated: false, account: null },
+    display: (() => {
+        const cols = localStorage.getItem('runway_display_cols');
+        const chrome = localStorage.getItem('runway_display_chrome');
+        const compact = localStorage.getItem('runway_display_compact');
+        return {
+            cols: cols === '2' ? '2' : '1',
+            chrome: chrome === 'soft' ? 'soft' : 'framed',
+            compact: compact === 'on' ? 'on' : 'off',
+        };
+    })(),
     data: [],
     // Dashboard context filter
     activeFilter: (() => {
