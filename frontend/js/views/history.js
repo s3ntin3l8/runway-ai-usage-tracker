@@ -44,12 +44,26 @@ export function setHistoryRange(days) {
     loadHistoryView();
 }
 
+function _updateWindowSelectorVisibility(metric) {
+    // The window-type buttons only filter the percent-based snapshot chart;
+    // for tokens/cost they don't affect rendering, so hide them to remove the dead control.
+    const btns = document.getElementById('history-window-btns');
+    if (!btns) return;
+    const show = metric === 'percent';
+    btns.style.display = show ? '' : 'none';
+    const sep = btns.previousElementSibling;
+    if (sep && sep.classList.contains('hc-sep')) {
+        sep.style.display = show ? '' : 'none';
+    }
+}
+
 export function setHistoryMetric(metric) {
     historyState.metric = metric;
     historyState.page = 1;
     document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.metric === metric);
     });
+    _updateWindowSelectorVisibility(metric);
     loadHistoryView();
 }
 
@@ -520,4 +534,5 @@ export function initHistoryView() {
     window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.clearHistoryFilter = clearHistoryFilter;
     window.hwGoPage = hwGoPage;
+    _updateWindowSelectorVisibility(historyState.metric);
 }
