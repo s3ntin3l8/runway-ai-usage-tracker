@@ -1,4 +1,4 @@
 {"sessionId":"session-abc123","projectHash":"abc","startTime":"2026-05-08T14:00:00.000Z","lastUpdated":"2026-05-08T14:00:00.000Z","kind":"main"}
-{"id":"evt-001","timestamp":"2026-05-08T14:01:00.000Z","type":"gemini","content":"some response","thoughts":[],"tokens":{"input":1000,"output":200,"cached":500,"thoughts":0,"tool":0,"total":1700},"model":"gemini-2.5-flash"}
+{"id":"evt-001","timestamp":"2026-05-08T14:01:00.000Z","type":"gemini","content":"some response","thoughts":[],"tokens":{"input":1500,"output":200,"cached":500,"thoughts":0,"tool":0,"total":1700},"model":"gemini-2.5-flash"}
 {"id":"evt-002","timestamp":"2026-05-08T14:05:00.000Z","type":"gemini","content":"another response","thoughts":[{"subject":"Thinking","description":"deep thought","timestamp":"2026-05-08T14:04:58.000Z"}],"tokens":{"input":800,"output":150,"cached":0,"thoughts":300,"tool":0,"total":1250},"model":"gemini-2.5-pro"}
 {"id":"evt-003","timestamp":"2026-05-08T14:08:00.000Z","type":"user","content":"user message"}

@@ -6,6 +6,7 @@ The file may also contain metadata lines (first line often has sessionId/startTi
 user messages (type: "user"), and $set lines for lastUpdated.
 
 Token fields: tokens.{input, output, cached, thoughts, tool, total}
+- input is INCLUSIVE of cached — we subtract to get fresh-only input
 - cached  → tokens_cache_read
 - thoughts → tokens_reasoning
 
@@ -104,9 +105,11 @@ def parse_gemini_events(
                         continue
                     seen.add(event_id)
 
-                    tokens_input = int(raw_tokens.get("input", 0))
-                    tokens_output = int(raw_tokens.get("output", 0))
+                    raw_input = int(raw_tokens.get("input", 0))
                     tokens_cache_read = int(raw_tokens.get("cached", 0))
+                    # Gemini's `input` is inclusive of `cached` — subtract for fresh-only.
+                    tokens_input = max(0, raw_input - tokens_cache_read)
+                    tokens_output = int(raw_tokens.get("output", 0))
                     tokens_reasoning = int(raw_tokens.get("thoughts", 0))
                     # Gemini doesn't bill cache creation separately
                     tokens_cache_create = 0

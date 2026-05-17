@@ -89,23 +89,43 @@ def test_filters_by_since():
 
 
 def test_captures_token_dimensions():
-    """input, output, cache_read (cached), reasoning (thoughts) are populated."""
+    """input is inclusive of cached — extractor subtracts to get fresh-only input."""
     evts = parse_gemini_events(
         [FIXTURE],
         account_id="u@gemini.test",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
+    # flash record has raw input=1500 inclusive of cached=500 → tokens_input = 1000
     flash = next(e for e in evts if e.model_id == "flash")
     assert flash.tokens_input == 1000
     assert flash.tokens_output == 200
     assert flash.tokens_cache_read == 500
     assert flash.tokens_reasoning == 0  # thoughts=0 in fixture
 
+    # pro record has cached=0 → tokens_input unchanged
     pro = next(e for e in evts if e.model_id == "pro")
     assert pro.tokens_input == 800
     assert pro.tokens_output == 150
     assert pro.tokens_cache_read == 0
     assert pro.tokens_reasoning == 300  # thoughts=300 in fixture
+
+
+def test_clamps_input_when_cached_exceeds_input(tmp_path: Path):
+    """Defensive: if cached > input (shouldn't happen but guards against bad data),
+    tokens_input clamps to 0 rather than going negative."""
+    f = tmp_path / "weird.jsonl"
+    f.write_text(
+        '{"sessionId":"s","startTime":"2026-05-08T14:00:00.000Z","kind":"main"}\n'
+        '{"id":"e1","timestamp":"2026-05-08T14:01:00.000Z","type":"gemini",'
+        '"tokens":{"input":300,"output":50,"cached":500,"thoughts":0,"tool":0,"total":850},'
+        '"model":"gemini-2.5-flash"}\n'
+    )
+    evts = parse_gemini_events(
+        [f], account_id="u@gemini.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    assert len(evts) == 1
+    assert evts[0].tokens_input == 0
+    assert evts[0].tokens_cache_read == 500
 
 
 def test_event_id_from_record_id():
