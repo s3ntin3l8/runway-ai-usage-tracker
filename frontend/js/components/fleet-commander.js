@@ -570,22 +570,27 @@ function _fcCume(cumulative, _isPayg, providerId) {
     const yearCost = _bucketCost(year);
     const lifeCost = _bucketCost(lifetime);
 
+    // Always render the cost sub (with em-dash when missing) so every populated
+    // row is the same 3-line height — keeps the tray visually consistent next
+    // to providers without cost data (e.g. opencode-free).
+    const _costSub = (usd) => escapeHTML(_formatCost(usd) || '—');
+
     return `<div class="fc-cume">
         <div class="row">
             <span class="label">This period</span>
             <span class="v">${monthTok ? _formatTokenShort(monthTok) : '—'}<em>${monthTok ? 'tok' : ''}</em></span>
-            <span class="sub">${escapeHTML(_formatCost(monthCost))}</span>
+            <span class="sub">${_costSub(monthCost)}</span>
         </div>
         <hr/>
         <div class="row">
             <span class="label">Yearly · ${now.getUTCFullYear()}</span>
             <span class="v" style="font-size:16px">${yearTok ? _formatTokenShort(yearTok) : '—'}</span>
-            <span class="sub">${escapeHTML(_formatCost(yearCost))}</span>
+            <span class="sub">${_costSub(yearCost)}</span>
         </div>
         <div class="row">
             <span class="label">Lifetime</span>
             <span class="v" style="font-size:16px">${lifeTok ? _formatTokenShort(lifeTok) : '—'}</span>
-            <span class="sub">${escapeHTML(_formatCost(lifeCost))}</span>
+            <span class="sub">${_costSub(lifeCost)}</span>
         </div>
     </div>`;
 }

@@ -3119,14 +3119,13 @@ l-table td.num {
 }
 .fc-cume.fc-cume-empty .sub-sep { display: none; }
 
-/* 2-col mode: empty placeholder MUST be exactly 2 lines (title + subtitle).
-   Tray gets a min-height so it visually matches the populated 3-cell cume.
-   Subtitle uses smaller font + tighter letter-spacing + nowrap so it stays
-   on one line at the card widths the dashboard produces. */
+/* 2-col mode: empty placeholder renders as 3 stacked lines (title + two
+   subtitle parts) to match the populated cume's label + value + cost
+   height. Inherits the column-flex sub from the base rule and just bumps
+   font sizes / padding for presence. */
 [data-cols="2"] .fc-cume.fc-cume-empty {
     grid-template-columns: 1fr;
-    padding: 18px 16px;
-    min-height: 64px;
+    padding: 12px 16px;
     align-items: center;
 }
 [data-cols="2"] .fc-cume.fc-cume-empty .label {
@@ -3134,15 +3133,8 @@ l-table td.num {
     letter-spacing: 0.16em;
 }
 [data-cols="2"] .fc-cume.fc-cume-empty .sub {
-    display: block;
-    text-align: center;
-    line-height: 1.45;
-    font-size: 10px;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
+    font-size: 11px;
 }
-[data-cols="2"] .fc-cume.fc-cume-empty .sub > span { display: inline; }
-[data-cols="2"] .fc-cume.fc-cume-empty .sub-sep { margin: 0 4px; }
 
 [data-cols="2"] .fc-pods-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 [data-cols="2"] .fc-leds { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
