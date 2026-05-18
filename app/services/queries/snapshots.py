@@ -267,50 +267,80 @@ def query_snapshots(
     # LatestUsage cards for quota-only providers (e.g. Claude) carry no token/cost data,
     # so we compute running totals directly from events. Per-model rows filter by model_id;
     # the aggregate row (model_id="") sums across all models.
+    #
+    # Implementation: pre-build a (pid, aid, wt, mid) → reset_at lookup in one pass
+    # over `all_snaps`, then issue ONE batched event query covering every live
+    # window, and bucket events into per-series accumulators in Python. The
+    # previous implementation did a linear scan of `all_snaps` and a fresh
+    # `SELECT * FROM usage_events` per window — O(snaps × series) plus N+1 SQL.
     live_series = {
         (s.provider_id, s.account_id, s.window_type, s.model_id, _min_bucket(s.reset_at))
         for s in all_snaps
         if s.reset_at and s.reset_at > now_naive and s.window_type in WINDOW_DURATION
     }
+
+    # First reset_at > now for each (pid, aid, wt, mid). `all_snaps` is sorted
+    # by ts ASC so the first hit is the oldest matching snapshot — same as the
+    # `next(...)` pick from the prior implementation.
+    actual_reset_lookup: dict[tuple, datetime] = {}
+    for s in all_snaps:
+        if not (s.reset_at and s.reset_at > now_naive):
+            continue
+        key4 = (s.provider_id, s.account_id, s.window_type, s.model_id)
+        actual_reset_lookup.setdefault(key4, s.reset_at)
+
+    # Per-series window bounds + a (pid, aid) → list[(key, window_start, mid)]
+    # index so each event only checks series for its account.
+    series_windows: dict[tuple, datetime] = {}
+    series_by_account: dict[tuple, list[tuple[tuple, datetime, str]]] = {}
     for pid, aid, wt, mid, min_reset in live_series:
-        actual_reset = next(
-            (
-                s.reset_at
-                for s in all_snaps
-                if s.provider_id == pid
-                and s.account_id == aid
-                and s.window_type == wt
-                and s.model_id == mid
-                and s.reset_at
-                and s.reset_at > now_naive
-            ),
-            None,
-        )
+        actual_reset = actual_reset_lookup.get((pid, aid, wt, mid))
         if not actual_reset:
             continue
         window_start = actual_reset - WINDOW_DURATION[wt]
-        event_filters = [
-            UsageEvent.provider_id == pid,
-            UsageEvent.account_id == aid,
-            UsageEvent.ts >= window_start,
-            UsageEvent.ts <= now_naive,
-        ]
-        if mid:
-            event_filters.append(UsageEvent.model_id == mid)
-        events = session.exec(select(UsageEvent).where(*event_filters)).all()
-        tokens = sum(
-            (e.tokens_input or 0)
-            + (e.tokens_output or 0)
-            + (e.tokens_cache_read or 0)
-            + (e.tokens_cache_create or 0)
-            + (e.tokens_reasoning or 0)
-            for e in events
-        )
-        cost = sum(e.cost_usd or 0.0 for e in events)
-        window_stats[(pid, aid, wt, mid, min_reset)] = {
-            "tokens_total": tokens or None,
-            "cost_usd": cost or None,
+        key = (pid, aid, wt, mid, min_reset)
+        series_windows[key] = window_start
+        series_by_account.setdefault((pid, aid), []).append((key, window_start, mid))
+
+    if series_windows:
+        # Initialise every series so quota-only windows with no events still
+        # appear with {tokens_total: None, cost_usd: None}.
+        accumulators: dict[tuple, dict[str, float]] = {
+            key: {"tokens": 0, "cost": 0.0} for key in series_windows
         }
+        min_window_start = min(series_windows.values())
+        pids = {pid for pid, _ in series_by_account}
+        aids = {aid for _, aid in series_by_account}
+        events = session.exec(
+            select(UsageEvent).where(
+                UsageEvent.ts >= min_window_start,
+                UsageEvent.ts <= now_naive,
+                UsageEvent.provider_id.in_(pids),  # type: ignore[attr-defined]
+                UsageEvent.account_id.in_(aids),  # type: ignore[attr-defined]
+            )
+        ).all()
+        for ev in events:
+            for key, window_start, mid in series_by_account.get(
+                (ev.provider_id, ev.account_id), ()
+            ):
+                if mid and ev.model_id != mid:
+                    continue
+                if ev.ts < window_start:
+                    continue
+                acc = accumulators[key]
+                acc["tokens"] += (
+                    (ev.tokens_input or 0)
+                    + (ev.tokens_output or 0)
+                    + (ev.tokens_cache_read or 0)
+                    + (ev.tokens_cache_create or 0)
+                    + (ev.tokens_reasoning or 0)
+                )
+                acc["cost"] += ev.cost_usd or 0.0
+        for key, totals in accumulators.items():
+            window_stats[key] = {
+                "tokens_total": totals["tokens"] or None,
+                "cost_usd": totals["cost"] or None,
+            }
 
     # Group into per-series lists and compute deltas
     series: dict[tuple, list] = {}
