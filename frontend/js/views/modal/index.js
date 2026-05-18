@@ -15,7 +15,7 @@ import { providerDisplayLabel } from '../../components.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
 import { buildUsagePane, wireUsageSparkTabs } from './usage.js';
-import { buildCostPane } from './cost.js';
+import { buildCostPane, wireCostPane } from './cost.js';
 import { buildDebugPane } from './debug.js';
 
 // Cached data per open modal session, cleared on each open
@@ -103,6 +103,7 @@ async function _renderPane(tab) {
 
         } else if (tab === 'cost') {
             body.innerHTML = buildCostPane(entry, cumData);
+            wireCostPane();
 
         } else if (tab === 'debug') {
             const tokenHealth = await _fetchTokenHealth();

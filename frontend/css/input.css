@@ -2958,6 +2958,16 @@ l-table td.num {
 
 /* cost bars */
 .m-cost-block svg text { font-family: var(--font-family-mono); }
+.m-cost-chart-wrap { position: relative; }
+.m-cost-hit { cursor: crosshair; }
+.m-cost-tip { position: absolute; top: 0; left: 0; pointer-events: none; background: var(--surface); border: 1px solid var(--hairline); padding: 8px 10px; font-family: var(--font-family-mono); font-size: 11px; color: var(--text); box-shadow: 0 4px 20px rgb(0 0 0 / 0.45); z-index: 5; min-width: 160px; transition: transform 60ms linear; }
+.m-cost-tip[hidden] { display: none; }
+.m-cost-tip-head { color: var(--ink-3); font-size: 10px; letter-spacing: 0.06em; margin-bottom: 4px; }
+.m-cost-tip-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.m-cost-tip-row .sw { display: inline-block; width: 6px; height: 6px; background: var(--accent); }
+.m-cost-tip-row .sw-dim { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.m-cost-tip-row .lbl { color: var(--text); }
+.m-cost-tip-row .val { margin-left: auto; color: var(--accent); }
 
 /* ── History window table ───────────────────────────────────────────────── */
 .hw-table { width: 100%; border-collapse: collapse; font-size: 13px; }

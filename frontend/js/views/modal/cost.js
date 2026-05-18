@@ -81,14 +81,16 @@ function _buildMonthlyCostSvg(cumData) {
 
     // Scan cumData for month_YYYY-MM keys matching current year
     const monthly = new Array(12).fill(0);
+    const monthlyTokens = new Array(12).fill(0);
     if (cumData) {
         for (const [k, v] of Object.entries(cumData)) {
             const m = k.match(/^month_(\d{4})-(\d{2})$/);
             if (!m) continue;
             if (parseInt(m[1], 10) !== currentYear) continue;
             const mIdx = parseInt(m[2], 10) - 1;
-            if (mIdx >= 0 && mIdx < 12 && v && v.cost_usd) {
-                monthly[mIdx] = v.cost_usd;
+            if (mIdx >= 0 && mIdx < 12 && v) {
+                if (v.cost_usd) monthly[mIdx] = v.cost_usd;
+                monthlyTokens[mIdx] = _bucketTotalTokens(v);
             }
         }
     }
@@ -96,18 +98,30 @@ function _buildMonthlyCostSvg(cumData) {
     const maxVal = Math.max(...monthly, 0.01);
     const ytdStr = _fmtCost(monthly.reduce((s, v) => s + v, 0));
 
-    const svgHtml = `<svg viewBox="0 0 720 180" preserveAspectRatio="none" style="width:100%;height:180px;display:block">
+    const colW = 720 / 12;
+    const bars = MONTHS.map((m, i) => {
+        const w = colW - 8;
+        const x = i * colW + 4;
+        const h = Math.max(0, (monthly[i] / maxVal) * 150);
+        const y = 170 - h;
+        const isCur = i === currentMonthIdx;
+        return `<rect x="${x}" y="${y.toFixed(1)}" width="${w}" height="${h.toFixed(1)}" fill="${isCur ? 'var(--accent)' : 'color-mix(in srgb, var(--accent) 35%, transparent)'}"/><text x="${(x + w / 2).toFixed(1)}" y="178" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--ink-3)" letter-spacing="0.1em">${m}</text>`;
+    }).join('');
+
+    // Invisible full-height hit-area rects per month, emitted after the visible
+    // bars so they capture pointer events anywhere in the column (even where
+    // the bar is short or zero). data-* attrs feed the tooltip.
+    const hits = MONTHS.map((m, i) => {
+        const x = i * colW;
+        return `<rect class="m-cost-hit" x="${x.toFixed(1)}" y="0" width="${colW.toFixed(1)}" height="170" fill="transparent" data-month-idx="${i}" data-month-label="${m}" data-cost="${monthly[i]}" data-tokens="${monthlyTokens[i]}"/>`;
+    }).join('');
+
+    const svgHtml = `<svg class="m-cost-svg" viewBox="0 0 720 180" preserveAspectRatio="none" style="width:100%;height:180px;display:block">
         <line x1="0" y1="45"  x2="720" y2="45"  stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
         <line x1="0" y1="90"  x2="720" y2="90"  stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
         <line x1="0" y1="135" x2="720" y2="135" stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
-        ${MONTHS.map((m, i) => {
-            const w = 720 / 12 - 8;
-            const x = i * (720 / 12) + 4;
-            const h = Math.max(0, (monthly[i] / maxVal) * 150);
-            const y = 170 - h;
-            const isCur = i === currentMonthIdx;
-            return `<rect x="${x}" y="${y.toFixed(1)}" width="${w}" height="${h.toFixed(1)}" fill="${isCur ? 'var(--accent)' : 'color-mix(in srgb, var(--accent) 35%, transparent)'}"/><text x="${(x + w / 2).toFixed(1)}" y="178" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--ink-3)" letter-spacing="0.1em">${m}</text>`;
-        }).join('')}
+        ${bars}
+        ${hits}
     </svg>`;
     return { svgHtml, ytdStr };
 }
@@ -187,7 +201,10 @@ export function buildCostPane(entry, cumData) {
             <h4>Monthly spend · ${yearLabel}</h4>
             <span class="meta">${_esc(ytdStr)} YTD</span>
         </div>
-        ${svgHtml}
+        <div class="m-cost-chart-wrap">
+            ${svgHtml}
+            <div class="m-cost-tip" hidden></div>
+        </div>
     </div>
 
     <!-- SIDECAR COST BREAKDOWN -->
@@ -198,4 +215,60 @@ export function buildCostPane(entry, cumData) {
         </div>
     </div>
     `;
+}
+
+/**
+ * Attach hover-tooltip behavior to the monthly cost chart.
+ * Call after buildCostPane HTML is injected into the modal body.
+ */
+export function wireCostPane() {
+    const body = document.getElementById('pm-body');
+    if (!body) return;
+    const wrap = body.querySelector('.m-cost-chart-wrap');
+    const svg  = body.querySelector('.m-cost-svg');
+    const tip  = body.querySelector('.m-cost-tip');
+    if (!wrap || !svg || !tip) return;
+
+    const year = new Date().getFullYear();
+
+    const onMove = (e) => {
+        const rect = svg.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const relX = e.clientX - rect.left;
+        let idx = Math.floor((relX / rect.width) * 12);
+        if (idx < 0) idx = 0;
+        if (idx > 11) idx = 11;
+
+        const hit = svg.querySelector(`.m-cost-hit[data-month-idx="${idx}"]`);
+        if (!hit) return;
+
+        const label  = hit.getAttribute('data-month-label') || '';
+        const costN  = parseFloat(hit.getAttribute('data-cost') || '0') || 0;
+        const tokN   = parseFloat(hit.getAttribute('data-tokens') || '0') || 0;
+
+        tip.innerHTML = `
+            <div class="m-cost-tip-head">${_esc(label)} ${year}</div>
+            <div class="m-cost-tip-row"><span class="sw"></span><span class="lbl">Spend</span><span class="val">${_esc(_fmtCost(costN))}</span></div>
+            <div class="m-cost-tip-row"><span class="sw sw-dim"></span><span class="lbl">Tokens</span><span class="val">${_esc(_fmtTokens(tokN))}</span></div>
+        `;
+
+        // Position relative to the wrap; flip to the left of the cursor near the
+        // right edge so the tip doesn't overflow.
+        tip.hidden = false;
+        const wrapRect = wrap.getBoundingClientRect();
+        const tipW = tip.offsetWidth || 160;
+        const tipH = tip.offsetHeight || 60;
+        let tx = e.clientX - wrapRect.left + 12;
+        if (tx + tipW > wrapRect.width - 4) tx = e.clientX - wrapRect.left - tipW - 12;
+        if (tx < 4) tx = 4;
+        let ty = e.clientY - wrapRect.top + 12;
+        if (ty + tipH > wrapRect.height - 4) ty = wrapRect.height - tipH - 4;
+        if (ty < 4) ty = 4;
+        tip.style.transform = `translate(${tx}px, ${ty}px)`;
+    };
+
+    const onLeave = () => { tip.hidden = true; };
+
+    svg.addEventListener('mousemove', onMove);
+    svg.addEventListener('mouseleave', onLeave);
 }
