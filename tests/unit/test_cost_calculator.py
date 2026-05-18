@@ -69,6 +69,64 @@ def test_chatgpt_gpt54_mini_cost():
     assert cost == 5.25
 
 
+def test_gemini_2_5_pro_cost_with_cache_and_thoughts():
+    """1M input + 1M output + 1M cache_read + 1M reasoning on pro-2.5
+    = $1.25 + $10.00 + $0.125 + $10.00 (reasoning billed at output rate) = $21.375."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="gemini",
+        model_id="pro-2.5",
+        ts=datetime(2026, 5, 17, tzinfo=UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        tokens_reasoning=1_000_000,
+    )
+    assert cost == 1.25 + 10.00 + 0.125 + 10.00
+
+
+def test_gemini_3_1_pro_preview_cost_uses_higher_rate():
+    """pro-3.1-preview is priced 60% above 2.5 Pro on input ($2.00 vs $1.25)
+    and 20% above on output ($12.00 vs $10.00). Same payload as the 2.5 case
+    must yield strictly more cost."""
+    s = _seeded_session()
+    ts = datetime(2026, 5, 17, tzinfo=UTC)
+    payload = {
+        "tokens_input": 1_000_000,
+        "tokens_output": 1_000_000,
+        "tokens_cache_read": 1_000_000,
+        "tokens_cache_create": 0,
+        "tokens_reasoning": 0,
+    }
+    cost_25 = compute_event_cost(s, provider_id="gemini", model_id="pro-2.5", ts=ts, **payload)
+    cost_31 = compute_event_cost(
+        s, provider_id="gemini", model_id="pro-3.1-preview", ts=ts, **payload
+    )
+    assert cost_25 == 1.25 + 10.00 + 0.125
+    assert cost_31 == 2.00 + 12.00 + 0.20
+    assert cost_31 > cost_25
+
+
+def test_gemini_flash_2_5_cache_read_rate_matches_official():
+    """Regression: cache-read on Flash 2.5 was previously seeded at $0.075/MT
+    (2.5× the real rate). Official rate is $0.03/MT."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="gemini",
+        model_id="flash-2.5",
+        ts=datetime(2026, 5, 17, tzinfo=UTC),
+        tokens_input=0,
+        tokens_output=0,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 0.03
+
+
 def test_unknown_model_returns_zero():
     s = _seeded_session()
     cost = compute_event_cost(
