@@ -31,31 +31,36 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 def _normalize_gemini_model(model_name: str) -> str:
     """Map raw Gemini model strings to versioned cost buckets.
 
-    Pro splits 2.5 vs 3.x because Google charges a different rate for each
-    (https://ai.google.dev/gemini-api/docs/pricing). Flash / Flash-Lite collapse
-    to one bucket per tier because no 3.x flash pricing has been published —
-    using the same id keeps those events priced at the (only available) 2.5 rate.
+    Each tier × major-version pair gets its own bucket because Google charges
+    distinct rates per https://ai.google.dev/gemini-api/docs/pricing. Pricing
+    rows for these ids live in app/services/pricing_seed.py.
 
     Quota cards (in app/services/collectors/gemini_api.py) keep the coarser
     pro/flash/flash-lite buckets since the families share Google's quota.
 
     Examples:
-        "gemini-2.5-flash"        → "flash-2.5"
-        "gemini-2.5-pro"          → "pro-2.5"
-        "gemini-2.5-flash-lite"   → "flash-lite-2.5"
-        "gemini-3-pro-preview"    → "pro-3.1-preview"
-        "gemini-3-flash-preview"  → "flash-2.5"   (no 3.x flash price yet)
-        ""                         → "unknown"
+        "gemini-2.5-flash"          → "flash-2.5"
+        "gemini-2.5-flash-lite"     → "flash-lite-2.5"
+        "gemini-2.5-pro"            → "pro-2.5"
+        "gemini-3-flash-preview"    → "flash-3-preview"
+        "gemini-3.1-flash"          → "flash-3.1"
+        "gemini-3.1-flash-lite"     → "flash-lite-3.1"
+        "gemini-3-pro-preview"      → "pro-3.1-preview"
+        "gemini-3.1-pro-preview"    → "pro-3.1-preview"
+        ""                           → "unknown"
     """
     lower = (model_name or "").lower()
     if not lower:
         return "unknown"
+    is_3x = "gemini-3" in lower
     if "flash-lite" in lower:
-        return "flash-lite-2.5"
+        return "flash-lite-3.1" if is_3x else "flash-lite-2.5"
     if "flash" in lower:
-        return "flash-2.5"
+        if not is_3x:
+            return "flash-2.5"
+        return "flash-3-preview" if "preview" in lower else "flash-3.1"
     if "pro" in lower:
-        return "pro-3.1-preview" if "gemini-3" in lower else "pro-2.5"
+        return "pro-3.1-preview" if is_3x else "pro-2.5"
     if "ultra" in lower:
         return "ultra"
     return model_name or "unknown"

@@ -34,9 +34,19 @@ def test_normalizes_gemini_3_pro_preview():
     assert _normalize_gemini_model("gemini-3.1-pro-preview") == "pro-3.1-preview"
 
 
-def test_normalizes_gemini_3_flash_falls_back_to_2_5():
-    """No 3.x flash pricing published; collapse to 2.5 bucket to avoid $0 cost."""
-    assert _normalize_gemini_model("gemini-3-flash-preview") == "flash-2.5"
+def test_normalizes_gemini_3_flash_preview():
+    """Gemini 3 Flash Preview gets its own bucket (Google published pricing 2026-05)."""
+    assert _normalize_gemini_model("gemini-3-flash-preview") == "flash-3-preview"
+
+
+def test_normalizes_gemini_3_1_flash_full():
+    """Future non-preview 3.1 Flash lands in its own bucket."""
+    assert _normalize_gemini_model("gemini-3.1-flash") == "flash-3.1"
+
+
+def test_normalizes_gemini_3_1_flash_lite():
+    assert _normalize_gemini_model("gemini-3.1-flash-lite") == "flash-lite-3.1"
+    assert _normalize_gemini_model("gemini-3-flash-lite") == "flash-lite-3.1"
 
 
 def test_normalizes_empty_model():

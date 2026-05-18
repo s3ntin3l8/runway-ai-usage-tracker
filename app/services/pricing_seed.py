@@ -203,9 +203,24 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.0,
         "notes": "Gemini 2.5 Flash Lite",
     },
-    # Gemini 3.x Preview — current effective date; no historical 3.x events
-    # existed in the DB before this id was introduced (extractor only emits it
-    # after 2026-05-17).
+    # Gemini 3.x — standard tier, text/image/video, prompts ≤200K tokens
+    # (https://ai.google.dev/gemini-api/docs/pricing). Tiered >200K pricing
+    # isn't modeled by this schema; long-context calls undercount slightly.
+    # Backdated to 2025-09-01 (matching the 2.5 family) so events relabeled
+    # by scripts/fix_gemini_3x_relabel.py find a matching pricing row —
+    # Google's rate hasn't changed since these models launched. The 2026-05-17
+    # row is kept as the "current" anchor in case future rate changes are
+    # added with a later effective_from.
+    {
+        "provider_id": "gemini",
+        "model_id": "pro-3.1-preview",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 12.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 3.1 Pro Preview",
+    },
     {
         "provider_id": "gemini",
         "model_id": "pro-3.1-preview",
@@ -215,6 +230,46 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.20,
         "cache_create_per_mtok": 0.0,
         "notes": "Gemini 3.1 Pro Preview",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "flash-3-preview",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.50,
+        "output_per_mtok": 3.00,
+        "cache_read_per_mtok": 0.05,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 3 Flash Preview",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "flash-3-preview",
+        "effective_from": "2026-05-17",
+        "input_per_mtok": 0.50,
+        "output_per_mtok": 3.00,
+        "cache_read_per_mtok": 0.05,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 3 Flash Preview",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "flash-lite-3.1",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.25,
+        "output_per_mtok": 1.50,
+        "cache_read_per_mtok": 0.025,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 3.1 Flash-Lite",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "flash-lite-3.1",
+        "effective_from": "2026-05-17",
+        "input_per_mtok": 0.25,
+        "output_per_mtok": 1.50,
+        "cache_read_per_mtok": 0.025,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 3.1 Flash-Lite",
     },
     # OpenCode (cost is on each event already; pricing rows here are fallback only)
 ]
