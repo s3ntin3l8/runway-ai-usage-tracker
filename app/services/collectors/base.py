@@ -15,6 +15,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -24,10 +25,36 @@ from app.core.date_utils import normalize_iso_date
 
 logger = logging.getLogger(__name__)
 
-# Canonical reset cadences. Cards must use one of these for window_type.
-WINDOW_TYPES: frozenset[str] = frozenset(
-    {"session", "daily", "weekly", "monthly", "rolling", "unknown"}
-)
+
+class WindowType(StrEnum):
+    """Canonical reset cadences. New collector code should reference these
+    members instead of bare strings; existing string-typed call sites stay
+    valid because StrEnum members compare and hash equal to their values."""
+
+    SESSION = "session"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    ROLLING = "rolling"
+    UNKNOWN = "unknown"
+
+
+class ErrorType(StrEnum):
+    """Canonical error categories produced by collectors. Same StrEnum
+    discipline as WindowType — adopt member references over time, but
+    legacy string literals (`error_type="rate_limited"`) keep working."""
+
+    RATE_LIMITED = "rate_limited"
+    AUTH_FAILED = "auth_failed"
+    API_ERROR = "api_error"
+    TIMEOUT = "timeout"
+    PARSE_ERROR = "parse_error"
+    MISSING_CONFIG = "missing_config"
+    UNKNOWN = "unknown"
+
+
+# Back-compat aliases derived from the enums — single source of truth.
+WINDOW_TYPES: frozenset[str] = frozenset(WindowType)
 
 
 def normalize_account_id(identity: str | None) -> str:
@@ -80,16 +107,17 @@ class BaseCollector(ABC):
     INPUT_SOURCE_SIDECAR = "sidecar"  # Pushed from remote agent
     INPUT_SOURCE_SERVER = "server"  # Found in local .env or files
 
-    # Error type prioritization for surfacing the most informative error
-    # Higher value = higher priority.
-    ERROR_PRIORITY = {
-        "rate_limited": 100,
-        "auth_failed": 80,
-        "api_error": 60,
-        "timeout": 40,
-        "parse_error": 20,
-        "missing_config": 10,
-        "unknown": 0,
+    # Error type prioritization for surfacing the most informative error.
+    # Higher value = higher priority. Keyed by ErrorType but lookups with
+    # plain strings still work because str-Enum members hash like their values.
+    ERROR_PRIORITY: dict[ErrorType, int] = {
+        ErrorType.RATE_LIMITED: 100,
+        ErrorType.AUTH_FAILED: 80,
+        ErrorType.API_ERROR: 60,
+        ErrorType.TIMEOUT: 40,
+        ErrorType.PARSE_ERROR: 20,
+        ErrorType.MISSING_CONFIG: 10,
+        ErrorType.UNKNOWN: 0,
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
