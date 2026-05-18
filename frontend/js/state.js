@@ -1,7 +1,6 @@
 /**
  * @typedef {Object} AppState
  * @property {boolean} compact - Toggle compact view mode
- * @property {boolean} remaining - Toggle remaining quota display
  * @property {Array} data - Array of quota limit objects from the API
  */
 
@@ -11,7 +10,6 @@
  */
 export const STATE = {
     compact: localStorage.getItem('runway_compact') === 'true',
-    remaining: localStorage.getItem('runway_remaining') === 'true',
     theme: (() => {
         const stored = localStorage.getItem('runway_theme');
         if (stored === 'light' || stored === 'dark') return stored;

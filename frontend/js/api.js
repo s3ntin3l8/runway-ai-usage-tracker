@@ -33,20 +33,6 @@ export async function fetchCumulative() {
     return await resp.json();
 }
 
-export async function fetchEvents(params = {}) {
-    const qs = new URLSearchParams(params).toString();
-    const resp = await fetchWithAuth(`/api/v1/usage/events${qs ? '?' + qs : ''}`);
-    if (!resp.ok) throw new Error(`Failed to fetch events: HTTP ${resp.status}`);
-    return await resp.json();
-}
-
-export async function fetchWindowHistory(params = {}) {
-    const qs = new URLSearchParams(params).toString();
-    const resp = await fetchWithAuth(`/api/v1/usage/window-history${qs ? '?' + qs : ''}`);
-    if (!resp.ok) throw new Error(`Failed to fetch window history: HTTP ${resp.status}`);
-    return await resp.json();
-}
-
 export async function fetchHeatmap(params = {}) {
     const qs = new URLSearchParams(params).toString();
     const resp = await fetchWithAuth(`/api/v1/usage/heatmap${qs ? '?' + qs : ''}`);

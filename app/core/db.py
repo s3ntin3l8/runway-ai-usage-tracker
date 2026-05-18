@@ -112,10 +112,6 @@ def init_db() -> None:
         if inserted:
             logger.info(f"Seeded provider_pricing with {inserted} new rows")
 
-    # Performance indexes (idempotent)
-    with engine.connect() as conn:
-        _create_performance_indexes(conn)
-
 
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, sql_type_with_default)
@@ -148,23 +144,6 @@ def _add_columns_if_missing(conn: Any) -> None:
             if "duplicate column" in str(e).lower():
                 continue
             raise
-
-
-def _create_performance_indexes(conn: Any) -> None:
-    """Create composite indexes for history query optimization.
-
-    These indexes dramatically speed up time-range queries with provider/account filters.
-    Safe to call on every startup - CREATE INDEX IF NOT EXISTS is idempotent.
-    The primary usage_events indexes are already declared in __table_args__; this
-    function covers any additional indexes not captured by the ORM declarations.
-    """
-    indexes: list[str] = []
-    for sql in indexes:
-        try:
-            conn.execute(__import__("sqlalchemy").text(sql))
-            conn.commit()
-        except Exception as e:
-            logger.debug(f"Could not create performance index (may already exist): {e}")
 
 
 def get_session() -> Iterator[Session]:

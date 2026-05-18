@@ -535,9 +535,9 @@ class BaseCollector(ABC):
                 valid_card = LimitCard(**card_data)
                 tagged_results.append(valid_card.model_dump())
             except ValidationError as e:
+                # Drop the card and log loudly — invalid cards must never reach
+                # downstream consumers (rollups, webhooks, the dashboard).
                 logger.error(f"Schema validation failed for {self.PROVIDER_ID} card: {e}")
-                # Fallback: still include the card but mark it with an error badge in logs
-                # In production, we might want to skip these, but for now we log as error.
 
         # Deduplicate by composite key (service_name, window_type, variant, model_id).
         # Keep the first occurrence and log any duplicates as a safety net
