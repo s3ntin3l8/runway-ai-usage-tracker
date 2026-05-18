@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import (
     HealthCalculator,
     PaceCalculator,
@@ -317,7 +318,7 @@ class OllamaCollector(BaseCollector):
                 raw_date = date_match.group(1)
                 try:
                     # ISO 8601 parsing
-                    resets_at = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                    resets_at = parse_iso8601_utc(raw_date)
                 except ValueError:
                     pass
 
@@ -363,7 +364,7 @@ class OllamaCollector(BaseCollector):
             if date_match:
                 raw_date = date_match.group(1)
                 try:
-                    resets_at = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                    resets_at = parse_iso8601_utc(raw_date)
                 except ValueError:
                     pass
 

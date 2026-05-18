@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, select
 
+from app.core.date_utils import parse_iso8601_utc
 from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
 from app.services.queries._shared import _parse_period_key
@@ -136,7 +137,7 @@ def query_windows(
         # Windows with no reset_at are always current (e.g. session-scoped).
         if reset_at:
             try:
-                reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                reset_dt = parse_iso8601_utc(reset_at)
                 if reset_dt < since:
                     continue
             except Exception:

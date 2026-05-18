@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import http_request_with_retry
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -45,7 +46,7 @@ class ChatGPTWebOAuthMixin:
             last_refresh = auth_data.get("last_refresh")
             if client and last_refresh and refresh_token:
                 try:
-                    lr_dt = datetime.fromisoformat(last_refresh.replace("Z", "+00:00"))
+                    lr_dt = parse_iso8601_utc(last_refresh)
                     if (datetime.now(UTC) - lr_dt).days >= 8:
                         logger.info("ChatGPT OAuth token is stale (8+ days), refreshing...")
                         new_tokens = await self._refresh_oauth_token(client, refresh_token)

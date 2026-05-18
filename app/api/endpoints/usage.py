@@ -5,6 +5,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, select
 
+from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
@@ -181,7 +182,7 @@ async def fetch_fleet_view(
         if longest:
             raw_reset = longest.get("reset_at", "")
             try:
-                reset_at = datetime.fromisoformat(raw_reset.replace("Z", "+00:00"))
+                reset_at = parse_iso8601_utc(raw_reset)
                 window_aggregations["longest"] = query_window_aggregation(
                     session,
                     provider_id=pid,
@@ -502,8 +503,10 @@ async def get_history_window_detail(
 ) -> dict[str, Any]:
     """Fill-up series and by-model breakdown for one expanded window."""
     try:
-        ws = datetime.fromisoformat(window_start.replace("Z", "+00:00").replace(" ", "+"))
-        we = datetime.fromisoformat(window_end.replace("Z", "+00:00").replace(" ", "+"))
+        # `.replace(" ", "+")` undoes URL decoding that strips the `+` from
+        # timezone offsets in query strings. Helper can't apply this safely.
+        ws = parse_iso8601_utc(window_start.replace(" ", "+"))
+        we = parse_iso8601_utc(window_end.replace(" ", "+"))
     except ValueError:
         raise HTTPException(status_code=422, detail="window_start/window_end must be ISO datetime")
     return query_window_detail(
@@ -565,9 +568,9 @@ async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; c
     since_dt: datetime | None = None
     until_dt: datetime | None = None
     if since:
-        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        since_dt = parse_iso8601_utc(since)
     if until:
-        until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        until_dt = parse_iso8601_utc(until)
 
     events = query_events(
         session,
@@ -665,7 +668,7 @@ async def get_usage_sessions(
     """
     since_dt: datetime | None = None
     if since:
-        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        since_dt = parse_iso8601_utc(since)
 
     sessions = query_sessions(
         session,

@@ -26,6 +26,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import PaceCalculator, http_request_with_retry
 from app.services.collectors.base import BaseCollector, format_token_details
 from app.services.token_cache import token_cache
@@ -363,7 +364,7 @@ class OpenCodeCollector(BaseCollector):
                 enrichment,
             ) = m.groups()
             try:
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                ts = parse_iso8601_utc(ts_str)
             except ValueError:
                 continue
 

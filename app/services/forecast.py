@@ -151,7 +151,7 @@ def _fetch_hourly_buckets(
     return result
 
 
-def _resolve_window(card: LimitCard) -> tuple[datetime, datetime, float] | None:
+def _resolve_window(card: LimitCard, now: datetime) -> tuple[datetime, datetime, float] | None:
     """Parse reset_at and compute (window_start, reset_at_dt, total_window_secs).
 
     Returns None if reset_at is missing/unparseable or window_type is unknown.
@@ -172,7 +172,6 @@ def _resolve_window(card: LimitCard) -> tuple[datetime, datetime, float] | None:
         return None
     window_duration = WINDOW_DURATIONS[effective_window_type]
     window_start = reset_at_dt - window_duration
-    now = datetime.now(UTC)
     if window_start > now:
         window_start = now - window_duration
     total_window_secs = (reset_at_dt - window_start).total_seconds()
@@ -180,10 +179,9 @@ def _resolve_window(card: LimitCard) -> tuple[datetime, datetime, float] | None:
 
 
 def _confidence_and_elapsed(
-    window_start: datetime, total_window_secs: float
+    window_start: datetime, total_window_secs: float, now: datetime
 ) -> tuple[float, float]:
     """Return (confidence, elapsed_secs) for a window."""
-    now = datetime.now(UTC)
     elapsed_secs = (now - window_start).total_seconds()
     confidence = max(
         0.0, min(1.0, elapsed_secs / total_window_secs if total_window_secs > 0 else 0.0)
@@ -191,8 +189,18 @@ def _confidence_and_elapsed(
     return confidence, elapsed_secs
 
 
-def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
-    """Dispatch to the appropriate forecast method based on unit_type."""
+def compute_forecast(
+    card: LimitCard, session: Session, now: datetime | None = None
+) -> ForecastEntry | None:
+    """Dispatch to the appropriate forecast method based on unit_type.
+
+    `now` is threaded through every helper so all clock reads for a single
+    forecast share one timestamp — otherwise separate reads could straddle a
+    window boundary and skew the trajectory. Batch callers
+    (`compute_all_forecasts`) should capture once and pass through.
+    """
+    if now is None:
+        now = datetime.now(UTC)
     if card.is_unlimited:
         return None
     if card.limit_value is None or card.limit_value <= 0:
@@ -209,27 +217,28 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         effective_unit_type = "tokens"
 
     if effective_unit_type in ("percent",):
-        return _compute_percent_forecast(card, session, effective_unit_type)
+        return _compute_percent_forecast(card, session, effective_unit_type, now=now)
     if effective_unit_type in ("currency", "credits"):
-        return _compute_currency_forecast(card, session)
+        return _compute_currency_forecast(card, session, now=now)
     if effective_unit_type in ("tokens", "generic"):
-        return _compute_token_forecast(card, session)
+        return _compute_token_forecast(card, session, now=now)
     # Unsupported unit types (requests, minutes, etc.) — insufficient data
     return None
 
 
-def _compute_token_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
+def _compute_token_forecast(
+    card: LimitCard, session: Session, now: datetime
+) -> ForecastEntry | None:
     """Original linear-regression forecast for token-denominated cards."""
-    result = _resolve_window(card)
+    result = _resolve_window(card, now)
     if result is None:
         return None
     window_start, reset_at_dt, total_window_secs = result
-    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs)
+    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs, now)
 
     if card.limit_value is None or card.limit_value <= 0:
         return None
 
-    now = datetime.now(UTC)
     buckets = _fetch_hourly_buckets(
         session,
         provider_id=card.provider_id or "",
@@ -336,7 +345,7 @@ def _compute_token_forecast(card: LimitCard, session: Session) -> ForecastEntry 
 
 
 def _compute_percent_forecast(
-    card: LimitCard, session: Session, effective_unit_type: str
+    card: LimitCard, session: Session, effective_unit_type: str, now: datetime
 ) -> ForecastEntry | None:
     """Forecast for percent-denominated cards (unit_type='percent').
 
@@ -345,13 +354,11 @@ def _compute_percent_forecast(
     we know the current gauge position and the limit (usually 100%). We
     extrapolate by computing how fast tokens are burning relative to the window.
     """
-    result = _resolve_window(card)
+    result = _resolve_window(card, now)
     if result is None:
         return None
     window_start, reset_at_dt, total_window_secs = result
-    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs)
-
-    now = datetime.now(UTC)
+    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs, now)
 
     # Derive now_pct from the card
     now_pct: float | None = None
@@ -484,18 +491,18 @@ def _compute_percent_forecast(
     )
 
 
-def _compute_currency_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
+def _compute_currency_forecast(
+    card: LimitCard, session: Session, now: datetime
+) -> ForecastEntry | None:
     """Forecast for currency-denominated cards (unit_type='currency' or 'credits').
 
     Uses daily cost_usd from period rollups to project spending trajectory.
     """
-    result = _resolve_window(card)
+    result = _resolve_window(card, now)
     if result is None:
         return None
     window_start, reset_at_dt, total_window_secs = result
-    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs)
-
-    now = datetime.now(UTC)
+    confidence, elapsed_secs = _confidence_and_elapsed(window_start, total_window_secs, now)
 
     now_pct: float | None = None
     if card.pct_used is not None:
@@ -644,8 +651,9 @@ def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastR
         "exhausted": 0,
     }
 
+    now = datetime.now(UTC)
     for card in cards:
-        entry = compute_forecast(card, session)
+        entry = compute_forecast(card, session, now=now)
         if entry is not None:
             forecasts.append(entry)
             if entry.status in summary:
@@ -654,5 +662,5 @@ def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastR
     return ForecastResponse(
         forecasts=forecasts,
         summary=summary,
-        generated_at=datetime.now(UTC).isoformat(),
+        generated_at=now.isoformat(),
     )

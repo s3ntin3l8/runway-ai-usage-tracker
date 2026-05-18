@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 
 # Mixins
 from app.services.collectors.anthropic_oauth import AnthropicOAuthMixin
@@ -128,7 +129,7 @@ class AnthropicCollector(
                             expires_at /= 1000
                         return datetime.now(UTC).timestamp() > expires_at
                     if isinstance(expires_at, str):
-                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                        exp_dt = parse_iso8601_utc(expires_at)
                         return datetime.now(UTC) > exp_dt
             return False
         except Exception as e:
@@ -149,7 +150,7 @@ class AnthropicCollector(
                         remaining = expires_at - datetime.now(UTC).timestamp()
                         return remaining < threshold
                     if isinstance(expires_at, str):
-                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                        exp_dt = parse_iso8601_utc(expires_at)
                         remaining = (exp_dt - datetime.now(UTC)).total_seconds()
                         return remaining < threshold
             return False
@@ -208,7 +209,7 @@ class AnthropicCollector(
             if not reset_at:
                 continue
             try:
-                dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                dt = parse_iso8601_utc(reset_at)
                 wt = card.get("window_type", "unknown")
                 mid = card.get("model_id")
                 resets[(wt, mid)] = dt
