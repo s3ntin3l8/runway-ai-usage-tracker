@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import (
     HealthCalculator,
     PaceCalculator,
@@ -180,7 +181,7 @@ class GeminiApiMixin:
                 if "resetTime" in bucket:
                     reset_time = bucket["resetTime"]
                     try:
-                        reset_dt = datetime.fromisoformat(reset_time.replace("Z", "+00:00"))
+                        reset_dt = parse_iso8601_utc(reset_time)
                         reset_at = reset_dt.isoformat()
                     except (ValueError, TypeError):
                         pass

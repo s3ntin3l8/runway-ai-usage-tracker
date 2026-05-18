@@ -8,11 +8,11 @@ duplicates don't poison the surrounding batch.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.cost_calculator import compute_event_cost
@@ -40,7 +40,7 @@ class EventIngestor:
         result = IngestResult(events_received=len(pushes))
         try:
             for push in pushes:
-                ts = datetime.fromisoformat(push.ts.replace("Z", "+00:00"))
+                ts = parse_iso8601_utc(push.ts)
 
                 if push.kind == "error":
                     ev = UsageEvent(

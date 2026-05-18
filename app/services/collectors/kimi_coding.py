@@ -52,6 +52,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import error_card, human_delta
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
@@ -239,7 +240,7 @@ class KimiCodingCollector(BaseCollector):
             if reset_str:
                 try:
                     # ISO format with possible microseconds
-                    reset_dt = datetime.fromisoformat(reset_str.replace("Z", "+00:00"))
+                    reset_dt = parse_iso8601_utc(reset_str)
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
                     pass
@@ -290,7 +291,7 @@ class KimiCodingCollector(BaseCollector):
             reset_dt = None
             if reset_str:
                 try:
-                    reset_dt = datetime.fromisoformat(reset_str.replace("Z", "+00:00"))
+                    reset_dt = parse_iso8601_utc(reset_str)
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
                     pass

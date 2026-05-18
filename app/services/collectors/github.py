@@ -36,6 +36,7 @@ from typing import Any
 
 import httpx
 
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import (
     HealthCalculator,
     IdentityExtractor,
@@ -360,7 +361,7 @@ class GitHubCollector(BaseCollector):
         reset_at = None
         if reset_date:
             try:
-                reset_at = datetime.fromisoformat(reset_date.replace("Z", "+00:00"))
+                reset_at = parse_iso8601_utc(reset_date)
             except (ValueError, TypeError) as e:
                 logger.debug(f"Could not parse GitHub reset date '{reset_date}': {e}")
 

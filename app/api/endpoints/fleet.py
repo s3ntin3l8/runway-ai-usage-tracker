@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
@@ -343,7 +344,7 @@ def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
 
         # Parse datetime and check if it's in the future
         try:
-            reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+            reset_dt = parse_iso8601_utc(reset_at)
         except ValueError:
             continue
 

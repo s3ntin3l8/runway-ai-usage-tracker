@@ -8,6 +8,7 @@ from datetime import datetime
 
 from sqlmodel import Session
 
+from app.core.date_utils import parse_iso8601_utc
 from app.core.db import engine
 from app.models.db import LatestUsage
 from app.models.schemas import LimitCard
@@ -50,7 +51,7 @@ def _maybe_close_previous_window(
         if not existing_reset_str:
             return 0
 
-        existing_reset_dt = datetime.fromisoformat(existing_reset_str.replace("Z", "+00:00"))
+        existing_reset_dt = parse_iso8601_utc(existing_reset_str)
 
         if new_reset_at <= existing_reset_dt:
             return 0  # reset_at has not advanced — no window closed

@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
@@ -491,7 +492,7 @@ class AnthropicWebMixin:
             reset_raw = window_data.get("resets_at") or window_data.get("resetsAt")
             if reset_raw:
                 try:
-                    reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
+                    reset_at = parse_iso8601_utc(reset_raw)
                 except (ValueError, TypeError):
                     pass
 

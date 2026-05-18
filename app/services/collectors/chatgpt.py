@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 
@@ -51,7 +52,6 @@ class ChatGPTCollector(
         """
         Extract reset_at from primary cards so enrichment can align its window boundaries.
         """
-        from datetime import datetime
 
         self._primary_reset_at = None
         for card in primary:
@@ -59,7 +59,7 @@ class ChatGPTCollector(
             if not reset_at_str:
                 continue
             try:
-                dt = datetime.fromisoformat(reset_at_str.replace("Z", "+00:00"))
+                dt = parse_iso8601_utc(reset_at_str)
                 self._primary_reset_at = dt
                 break  # We only need one reset_at for ChatGPT
             except (ValueError, TypeError):

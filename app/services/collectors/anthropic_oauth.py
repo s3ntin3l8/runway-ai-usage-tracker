@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import (
     HealthCalculator,
     PaceCalculator,
@@ -518,7 +519,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             reset_at = None
             if reset_raw:
                 try:
-                    reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
+                    reset_at = parse_iso8601_utc(reset_raw)
                 except (ValueError, TypeError):
                     pass
 

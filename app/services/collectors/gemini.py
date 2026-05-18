@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 from app.services.collectors.gemini_api import GeminiApiMixin
@@ -65,7 +66,7 @@ class GeminiCollector(
             if not reset_at:
                 continue
             try:
-                dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                dt = parse_iso8601_utc(reset_at)
                 mid = card.get("model_id", "unknown")
                 resets[mid] = dt
             except (ValueError, TypeError):
