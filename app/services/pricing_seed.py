@@ -134,16 +134,17 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.0,
         "notes": "gpt-5.3-codex (Standard)",
     },
-    # Google Gemini
+    # Google Gemini — coarse buckets kept for legacy events ingested before the
+    # extractor split into versioned ids. New events go to *-2.5 / *-3.1-preview.
     {
         "provider_id": "gemini",
         "model_id": "pro",
         "effective_from": "2025-09-01",
         "input_per_mtok": 1.25,
         "output_per_mtok": 10.00,
-        "cache_read_per_mtok": 0.31,
+        "cache_read_per_mtok": 0.125,
         "cache_create_per_mtok": 0.0,
-        "notes": "Gemini 2.5 Pro",
+        "notes": "DEPRECATED — legacy bucket, superseded by pro-2.5 from 2026-05-17",
     },
     {
         "provider_id": "gemini",
@@ -151,9 +152,9 @@ PRICING_SEED: list[dict] = [
         "effective_from": "2025-09-01",
         "input_per_mtok": 0.30,
         "output_per_mtok": 2.50,
-        "cache_read_per_mtok": 0.075,
+        "cache_read_per_mtok": 0.03,
         "cache_create_per_mtok": 0.0,
-        "notes": "Gemini 2.5 Flash",
+        "notes": "DEPRECATED — legacy bucket, superseded by flash-2.5 from 2026-05-17",
     },
     {
         "provider_id": "gemini",
@@ -161,9 +162,59 @@ PRICING_SEED: list[dict] = [
         "effective_from": "2025-09-01",
         "input_per_mtok": 0.10,
         "output_per_mtok": 0.40,
-        "cache_read_per_mtok": 0.025,
+        "cache_read_per_mtok": 0.01,
+        "cache_create_per_mtok": 0.0,
+        "notes": "DEPRECATED — legacy bucket, superseded by flash-lite-2.5 from 2026-05-17",
+    },
+    # Official rates per https://ai.google.dev/gemini-api/docs/pricing (paid tier,
+    # text/image/video). Backdated to 2025-09-01 (when 2.5 first appeared in this
+    # seed) so historical events relabeled by scripts/fix_gemini_model_ids.py
+    # find a matching pricing row — the rates themselves haven't changed; the
+    # original seed just had the wrong cache-read values.
+    # Tiered >200K-token pricing is not modeled (schema would need a tier
+    # column); 2.5 Pro long-context calls undercount slightly.
+    {
+        "provider_id": "gemini",
+        "model_id": "pro-2.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.125,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Pro",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "flash-2.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.03,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Flash",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "flash-lite-2.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.10,
+        "output_per_mtok": 0.40,
+        "cache_read_per_mtok": 0.01,
         "cache_create_per_mtok": 0.0,
         "notes": "Gemini 2.5 Flash Lite",
+    },
+    # Gemini 3.x Preview — current effective date; no historical 3.x events
+    # existed in the DB before this id was introduced (extractor only emits it
+    # after 2026-05-17).
+    {
+        "provider_id": "gemini",
+        "model_id": "pro-3.1-preview",
+        "effective_from": "2026-05-17",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 12.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 3.1 Pro Preview",
     },
     # OpenCode (cost is on each event already; pricing rows here are fallback only)
 ]

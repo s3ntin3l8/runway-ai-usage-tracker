@@ -26,6 +26,8 @@ const MODEL_DISPLAY_NAMES = {
     'sonnet': 'Sonnet', 'opus': 'Opus', 'haiku': 'Haiku',
     'design': 'Design', 'flash': 'Flash', 'pro': 'Pro',
     'flash-lite': 'Flash Lite',
+    'pro-2.5': 'Pro 2.5', 'pro-3.1-preview': 'Pro 3.1 Preview',
+    'flash-2.5': 'Flash 2.5', 'flash-lite-2.5': 'Flash Lite 2.5',
 };
 const WINDOW_DISPLAY_NAMES = {
     'session': 'Session', 'daily': 'Daily',

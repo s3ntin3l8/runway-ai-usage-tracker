@@ -29,24 +29,33 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 
 
 def _normalize_gemini_model(model_name: str) -> str:
-    """Map raw Gemini model strings to short display buckets.
+    """Map raw Gemini model strings to versioned cost buckets.
+
+    Pro splits 2.5 vs 3.x because Google charges a different rate for each
+    (https://ai.google.dev/gemini-api/docs/pricing). Flash / Flash-Lite collapse
+    to one bucket per tier because no 3.x flash pricing has been published —
+    using the same id keeps those events priced at the (only available) 2.5 rate.
+
+    Quota cards (in app/services/collectors/gemini_api.py) keep the coarser
+    pro/flash/flash-lite buckets since the families share Google's quota.
 
     Examples:
-        "gemini-2.5-flash"      → "flash"
-        "gemini-2.5-pro"        → "pro"
-        "gemini-2.5-flash-lite" → "flash-lite"
-        "gemini-3-flash-preview"→ "flash"
-        ""                       → "unknown"
+        "gemini-2.5-flash"        → "flash-2.5"
+        "gemini-2.5-pro"          → "pro-2.5"
+        "gemini-2.5-flash-lite"   → "flash-lite-2.5"
+        "gemini-3-pro-preview"    → "pro-3.1-preview"
+        "gemini-3-flash-preview"  → "flash-2.5"   (no 3.x flash price yet)
+        ""                         → "unknown"
     """
     lower = (model_name or "").lower()
     if not lower:
         return "unknown"
     if "flash-lite" in lower:
-        return "flash-lite"
+        return "flash-lite-2.5"
     if "flash" in lower:
-        return "flash"
+        return "flash-2.5"
     if "pro" in lower:
-        return "pro"
+        return "pro-3.1-preview" if "gemini-3" in lower else "pro-2.5"
     if "ultra" in lower:
         return "ultra"
     return model_name or "unknown"

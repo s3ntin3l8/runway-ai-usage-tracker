@@ -17,19 +17,26 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "gemini-sample.jsonl"
 
 
 def test_normalizes_flash_model():
-    assert _normalize_gemini_model("gemini-2.5-flash") == "flash"
+    assert _normalize_gemini_model("gemini-2.5-flash") == "flash-2.5"
 
 
 def test_normalizes_pro_model():
-    assert _normalize_gemini_model("gemini-2.5-pro") == "pro"
+    assert _normalize_gemini_model("gemini-2.5-pro") == "pro-2.5"
 
 
 def test_normalizes_flash_lite_model():
-    assert _normalize_gemini_model("gemini-2.5-flash-lite") == "flash-lite"
+    assert _normalize_gemini_model("gemini-2.5-flash-lite") == "flash-lite-2.5"
 
 
-def test_normalizes_flash_preview():
-    assert _normalize_gemini_model("gemini-3-flash-preview") == "flash"
+def test_normalizes_gemini_3_pro_preview():
+    """Gemini 3.x Pro has its own (higher) pricing — must not collapse to 2.5."""
+    assert _normalize_gemini_model("gemini-3-pro-preview") == "pro-3.1-preview"
+    assert _normalize_gemini_model("gemini-3.1-pro-preview") == "pro-3.1-preview"
+
+
+def test_normalizes_gemini_3_flash_falls_back_to_2_5():
+    """No 3.x flash pricing published; collapse to 2.5 bucket to avoid $0 cost."""
+    assert _normalize_gemini_model("gemini-3-flash-preview") == "flash-2.5"
 
 
 def test_normalizes_empty_model():
@@ -54,15 +61,15 @@ def test_extracts_gemini_type_records_only():
 
 
 def test_normalizes_model_ids():
-    """gemini-2.5-flash → flash, gemini-2.5-pro → pro."""
+    """gemini-2.5-flash → flash-2.5, gemini-2.5-pro → pro-2.5."""
     evts = parse_gemini_events(
         [FIXTURE],
         account_id="u@gemini.test",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
     model_ids = {e.model_id for e in evts}
-    assert "flash" in model_ids
-    assert "pro" in model_ids
+    assert "flash-2.5" in model_ids
+    assert "pro-2.5" in model_ids
 
 
 def test_session_id_from_filename():
@@ -85,7 +92,7 @@ def test_filters_by_since():
     )
     # Only the pro record (14:05:00) is after the cutoff
     assert len(evts) == 1
-    assert evts[0].model_id == "pro"
+    assert evts[0].model_id == "pro-2.5"
 
 
 def test_captures_token_dimensions():
@@ -96,14 +103,14 @@ def test_captures_token_dimensions():
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
     # flash record has raw input=1500 inclusive of cached=500 → tokens_input = 1000
-    flash = next(e for e in evts if e.model_id == "flash")
+    flash = next(e for e in evts if e.model_id == "flash-2.5")
     assert flash.tokens_input == 1000
     assert flash.tokens_output == 200
     assert flash.tokens_cache_read == 500
     assert flash.tokens_reasoning == 0  # thoughts=0 in fixture
 
     # pro record has cached=0 → tokens_input unchanged
-    pro = next(e for e in evts if e.model_id == "pro")
+    pro = next(e for e in evts if e.model_id == "pro-2.5")
     assert pro.tokens_input == 800
     assert pro.tokens_output == 150
     assert pro.tokens_cache_read == 0
