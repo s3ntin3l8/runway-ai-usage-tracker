@@ -100,10 +100,26 @@ function renderFleetHealth(cards) {
 
     // Bucket counts on the right side of the strip
     if (countsEl) {
+        // Observed-health counts (existing)
         const parts = [`<span><b>${nominal}</b>OK</span>`];
         if (nWarn) parts.push(`<span class="warn"><b>${nWarn}</b>WARN</span>`);
         if (nCrit) parts.push(`<span class="crit"><b>${nCrit}</b>CRIT</span>`);
         if (nErr)  parts.push(`<span class="err"><b>${nErr}</b>ERR</span>`);
+
+        // Forecast-status counts — independent signal from observed health
+        const fMap = STATE.forecastMap;
+        if (fMap?.size) {
+            const nRisk    = cards.filter(c => fMap.get(_forecastKeyForCard(c))?.status === 'risk').length;
+            const nExhaust = cards.filter(c => fMap.get(_forecastKeyForCard(c))?.status === 'exhausted').length;
+            if (nRisk)    parts.push(`<span class="crit" title="Projected to hit 100% before reset"><b>${nRisk}</b>PROJ-RISK</span>`);
+            if (nExhaust) parts.push(`<span class="crit" title="Already projected exhausted"><b>${nExhaust}</b>EXHAUST</span>`);
+
+            const genAt = STATE.forecastGeneratedAt;
+            if (genAt) {
+                const t = new Date(genAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                parts.push(`<span style="color:var(--text-dim);font-size:9px;">forecast ${t}</span>`);
+            }
+        }
         countsEl.innerHTML = parts.join('');
     }
 }
@@ -688,6 +704,7 @@ export async function loadDashboard() {
                 newMap.set(_forecastSeriesKey(entry), entry);
             }
             STATE.forecastMap = newMap;
+            STATE.forecastGeneratedAt = forecastResult.value.generated_at || null;
         }
 
         // STATE.fleet drives the new Fleet Commander grid; STATE.data still
