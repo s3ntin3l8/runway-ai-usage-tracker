@@ -36,8 +36,8 @@ let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting n
  * it's the cold-load view and has a STATE.data guard that doesn't fit the
  * convention; everything else is dispatched generically.
  */
-const KNOWN_VIEWS = ['dashboard', 'history', 'forecast', 'fleet', 'settings', 'auth', 'error'];
-const LAZY_VIEWS = ['history', 'forecast', 'settings', 'fleet'];
+const KNOWN_VIEWS = ['dashboard', 'history', 'fleet', 'settings', 'auth', 'error'];
+const LAZY_VIEWS = ['history', 'settings', 'fleet'];
 
 const _cap = id => id[0].toUpperCase() + id.slice(1);
 
