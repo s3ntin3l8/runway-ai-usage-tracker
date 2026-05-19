@@ -8,12 +8,12 @@
  * The modal markup is injected into #provider-modal (added to index.html).
  */
 
-import { fetchHeatmap, fetchSessions } from '../../api.js';
+import { fetchHeatmap, fetchSessions, fetchForecast } from '../../api.js';
 import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
-import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
+import { buildOverviewPane, wireOverviewSparkTabs, wireTrajectoryCharts, disposeTrajectoryCharts } from './overview.js';
 import { buildUsagePane, wireUsageSparkTabs, wireUsageHeatmapTooltip } from './usage.js';
 import { buildCostPane, wireCostPane } from './cost.js';
 import { buildDebugPane } from './debug.js';
@@ -59,6 +59,7 @@ async function _fetchTokenHealth() {
 async function _renderPane(tab) {
     const body = document.getElementById('pm-body');
     if (!body || !_currentEntry) return;
+    disposeTrajectoryCharts();
 
     const entry      = _currentEntry;
     const providerId = entry.provider_id || '';
@@ -82,8 +83,15 @@ async function _renderPane(tab) {
                     _modalCache.recentSessions = sd.sessions || [];
                 } catch { _modalCache.recentSessions = []; }
             }
-            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions);
+            if (!_modalCache.forecast) {
+                try {
+                    const fd = await fetchForecast({ provider_id: providerId, include_series: true });
+                    _modalCache.forecast = fd.forecasts || [];
+                } catch { _modalCache.forecast = []; }
+            }
+            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions, _modalCache.forecast);
             wireOverviewSparkTabs(_modalCache.heatmap);
+            await wireTrajectoryCharts(_modalCache.forecast);
 
         } else if (tab === 'usage') {
             if (!_modalCache.heatmap) {
@@ -190,6 +198,7 @@ export function closeProviderModal() {
     }, 200);
     document.body.style.overflow = '';
     _currentEntry = null;
+    disposeTrajectoryCharts();
     _modalCache = {};
 }
 

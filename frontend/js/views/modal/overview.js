@@ -13,6 +13,7 @@ import { formatLocalTime } from '../../utils/tz.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
 import { buildSessionCard } from './usage.js';
+import { renderTrajectoryChart, formatTrajectoryHeader, STATUS_COLOR as TRAJ_STATUS_COLOR } from '../../components/forecast-trajectory.js';
 
 function _fmtAgo(isoStr) {
     if (!isoStr) return '—';
@@ -285,7 +286,7 @@ function _bucketTotalTokens(bucket) {
  * @param {Array} recentEvents - Array of usage event objects
  * @returns {string} HTML string
  */
-export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions) {
+export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions, forecastEntries = []) {
     const critical = entry.critical_gauge || {};
     const allCards = [critical, ...(entry.secondary_limits || [])].filter(Boolean);
     const isPayg = critical.is_unlimited || (!critical.limit_value && !critical.pct_used);
@@ -505,6 +506,29 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions) 
             ${sessionCardsHtml}
         </div>
     </div>
+
+    <!-- TRAJECTORY -->
+    ${forecastEntries.length ? `
+    <div class="m-block" id="pm-trajectory-wrap">
+        <div class="head">
+            <h4>Quota trajectories</h4>
+            <span class="meta">${forecastEntries.length} pool${forecastEntries.length !== 1 ? 's' : ''}</span>
+        </div>
+        ${forecastEntries.map((fe, i) => {
+            const { label, detail } = formatTrajectoryHeader(fe);
+            const color = TRAJ_STATUS_COLOR[fe.status] || 'var(--text-dim)';
+            const statusLabel = (fe.status || '').toUpperCase();
+            return `<div class="m-traj-pool">
+                <div class="m-traj-head">
+                    <span>${_esc(label)}</span>
+                    <span style="color:${color};font-size:10px;font-weight:600;">${statusLabel}</span>
+                    ${detail ? `<span style="color:var(--text-dim);font-size:9px;">${_esc(detail)}</span>` : ''}
+                </div>
+                <div class="m-traj-chart" id="pm-traj-${i}" style="height:140px;"></div>
+            </div>`;
+        }).join('')}
+    </div>
+    ` : ''}
     `;
 }
 
@@ -529,4 +553,31 @@ export function wireOverviewSparkTabs(heatmapCells) {
             if (svgEl) oldSvg.replaceWith(svgEl);
         }
     });
+}
+
+// Track trajectory chart instances for disposal
+const _trajectoryCharts = [];
+
+/** Dispose all trajectory ECharts instances. Call before re-rendering the modal pane. */
+export function disposeTrajectoryCharts() {
+    for (const c of _trajectoryCharts) {
+        try { c.dispose(); } catch (_) {}
+    }
+    _trajectoryCharts.length = 0;
+}
+
+/**
+ * Render ECharts trajectory mini-charts after buildOverviewPane HTML has been injected.
+ * `forecastEntries` must be the same array passed to buildOverviewPane.
+ */
+export async function wireTrajectoryCharts(forecastEntries) {
+    disposeTrajectoryCharts();
+    if (!forecastEntries?.length) return;
+    for (let i = 0; i < forecastEntries.length; i++) {
+        const el = document.getElementById(`pm-traj-${i}`);
+        if (!el) continue;
+        const entry = forecastEntries[i];
+        const chart = await renderTrajectoryChart(el, entry.series || []);
+        if (chart) _trajectoryCharts.push(chart);
+    }
 }
