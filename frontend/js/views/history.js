@@ -1,4 +1,4 @@
-import { fetchHistoryDeltas } from '../api.js';
+import { fetchHistoryDeltas, fetchForecast } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
@@ -383,7 +383,7 @@ function _barSnapshots(bars, metric) {
     return rows;
 }
 
-function renderHistoryChart() {
+async function renderHistoryChart() {
     const cache = historyState._chartCache;
     if (!cache) return;
 
@@ -404,7 +404,18 @@ function renderHistoryChart() {
         stripEl.innerHTML = buildProviderSparklineStrip(snapshots, active, historyState.days);
     }
 
-    updateCharts(filtered, historyState.metric, historyState.days, historyState.windowFilter, false);
+    // Projection overlay: only for percent metric with a specific window type selected.
+    let projectionEntries = null;
+    if (historyState.metric === 'percent' && historyState.windowFilter !== 'all') {
+        try {
+            const fd = await fetchForecast({ window_type: historyState.windowFilter });
+            projectionEntries = fd.forecasts || [];
+        } catch (err) {
+            console.warn('[history] forecast fetch for overlay failed:', err?.message);
+        }
+    }
+
+    updateCharts(filtered, historyState.metric, historyState.days, historyState.windowFilter, false, projectionEntries);
 }
 
 // ---------------------------------------------------------------------------

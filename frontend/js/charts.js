@@ -183,7 +183,7 @@ export async function ensureECharts() {
  * @param {string} [windowFilter='all'] - optional filter for window_type
  * @param {boolean} [showPeaks=false] - show peak values instead of averages
  */
-export async function updateCharts(snapshots, metric = 'percent', days = 7, windowFilter = 'all', showPeaks = false) {
+export async function updateCharts(snapshots, metric = 'percent', days = 7, windowFilter = 'all', showPeaks = false, projectionEntries = null) {
     const container = document.getElementById("chart-usage");
     const emptyEl = document.getElementById("chart-empty");
     if (!container) return;
@@ -357,6 +357,96 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
     series = avgSeries;
 
+    // CSS vars needed by both projection and chart rendering — read once here.
+    const css = getComputedStyle(document.documentElement);
+
+    // Projection overlay — dashed continuation lines when caller provides forecast entries.
+    // Only for percent metric (!isBar) with a bounded x-axis horizon.
+    if (!isBar && projectionEntries && projectionEntries.length > 0) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const nowBucket = nowSec - (nowSec % bucketSeconds);
+
+        const maxResetSec = projectionEntries.reduce((m, e) => {
+            if (!e.reset_at) return m;
+            const s = Math.floor(new Date(e.reset_at).getTime() / 1000);
+            return Math.max(m, s - (s % bucketSeconds));
+        }, nowBucket);
+
+        const futureEpochs = [];
+        for (let ep = nowBucket + bucketSeconds; ep <= maxResetSec; ep += bucketSeconds) {
+            futureEpochs.push(ep);
+        }
+
+        if (futureEpochs.length > 0) {
+            for (const ep of futureEpochs) {
+                xAxisData.push(formatBucketLabel(ep, bucketSeconds));
+            }
+
+            const nowLabel = formatBucketLabel(nowBucket, bucketSeconds);
+            let nowMarkAdded = false;
+            const projCountByPid = {};
+
+            for (const key of nonZeroKeys) {
+                const [pid, serviceName, wtype, variant, modelId] = key.split('|');
+                const fe = projectionEntries.find(e =>
+                    e.provider_id === pid &&
+                    (e.service_name || 'Usage') === (serviceName || 'Usage') &&
+                    e.window_type === wtype &&
+                    (e.variant || '') === (variant || '') &&
+                    (e.model_id || '') === (modelId || '')
+                );
+                if (!fe || fe.projected_pct == null) continue;
+
+                if (projCountByPid[pid] === undefined) projCountByPid[pid] = 0;
+                const style = getSeriesStyle(pid, projCountByPid[pid]++);
+
+                const historicalNulls = bucketEpochs.map(() => null);
+                const anchorPct = fe.now_pct ?? 0;
+                const targetPct = Math.min(100, fe.projected_pct);
+                const futureData = futureEpochs.map((_, i) => {
+                    const frac = futureEpochs.length === 1 ? 1 : i / (futureEpochs.length - 1);
+                    return parseFloat((anchorPct + (targetPct - anchorPct) * frac).toFixed(2));
+                });
+
+                const projSeries = {
+                    name: key + ' · projected',
+                    type: 'line',
+                    smooth: false,
+                    symbol: 'none',
+                    lineStyle: { width: 1.5, type: 'dashed', color: style.color, opacity: 0.7 },
+                    itemStyle: { color: style.color, opacity: 0.7 },
+                    areaStyle: null,
+                    data: [...historicalNulls, ...futureData],
+                    connectNulls: false,
+                    legendHoverLink: false,
+                    z: 3,
+                    tooltip: { show: false },
+                };
+
+                if (!nowMarkAdded) {
+                    const cTextDim = css.getPropertyValue('--text-dim').trim() || '#5a6068';
+                    const cAccent  = css.getPropertyValue('--accent').trim()   || '#ffb000';
+                    projSeries.markLine = {
+                        silent: true,
+                        symbol: 'none',
+                        label: {
+                            show: true,
+                            position: 'insideEndTop',
+                            color: cTextDim,
+                            fontSize: 9,
+                            formatter: 'NOW',
+                        },
+                        lineStyle: { type: 'solid', color: cAccent, width: 1, opacity: 0.5 },
+                        data: [{ xAxis: nowLabel }],
+                    };
+                    nowMarkAdded = true;
+                }
+
+                series.push(projSeries);
+            }
+        }
+    }
+
     // BAND mode: render a single min-max shaded band per series (not doubled legend items)
     if (showPeaks && !isBar) {
         const bandCounts = {};
@@ -418,7 +508,6 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             _chart = echarts.init(container);
         }
 
-        const css = getComputedStyle(document.documentElement);
         const cText     = css.getPropertyValue('--text').trim()       || '#e8e4d4';
         const cTextDim  = css.getPropertyValue('--text-dim').trim()   || '#5a6068';
         const cHairline = css.getPropertyValue('--hairline').trim()   || '#1e2630';
