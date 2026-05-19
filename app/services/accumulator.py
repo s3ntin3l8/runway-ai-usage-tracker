@@ -76,6 +76,20 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     # detail, error_type) still merge so the UI surfaces the error state.
     is_error_card = incoming.get("data_source") == "error" or incoming.get("remaining") == "ERR"
 
+    # Recovery clear: a fresh non-error card carrying quota data wipes residual error
+    # stamps left over from a prior failed poll. Collectors use exclude_none=True so
+    # error_type=None is never sent — without this, a once-set error_type sticks
+    # forever and the frontend hero filter keeps excluding the (now-healthy) row.
+    incoming_has_fresh_quota = any(
+        incoming.get(k) is not None for k in ("used_value", "limit_value", "pct_used")
+    )
+    if not is_error_card and incoming_has_fresh_quota:
+        merged.pop("error_type", None)
+        if merged.get("data_source") == "error":
+            merged.pop("data_source", None)
+        if merged.get("remaining") == "ERR":
+            merged.pop("remaining", None)
+
     for key, value in incoming.items():
         if key == "by_model":
             # {} means "not populated by this source" — legitimate empty resets are unrepresentable
