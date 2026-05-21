@@ -1,14 +1,15 @@
 # Claude Collector
 
-**File:** `app/services/collectors/anthropic.py`
+**File:** `app/services/collectors/anthropic.py` (server-side: `oauth` + `web` strategies)
+**Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local-source strategies: statusline, CLI, logs)
 
-Anthropic Claude quota collector with 3-tier fallback: api → web → local → Error cards.
+Anthropic Claude quota collector with a 3-tier fallback: `api` → `web` → `local` → Error cards. The `local` tier executes inside the sidecar — the server itself never reads `~/.claude/*` or shells out to the `claude` CLI. The sidecar extracts those signals and posts them to `/api/v1/fleet/ingest`, where they merge into the same card as the server's `api` / `web` results.
 
 ## Overview
 
-- **Collection Strategy**: api (OAuth) → web (Cookies) → local (Statusline/CLI/Logs)
+- **Collection Strategy**: api (OAuth) → web (Cookies) → local (Statusline/CLI/Logs, via sidecar)
 - **Cards**: 2-5 cards (Session, Weekly, Sonnet, Opus, Extra Usage windows)
-- **Authentication**: OAuth token (api), Chrome cookies (web), local statusline or CLI (local).
+- **Authentication**: OAuth token (api), Chrome cookies (web), local statusline / CLI (local — collected by the sidecar).
 
 ## Setup Methods Quick Overview
 
@@ -55,12 +56,13 @@ This is the preferred method, providing the most reliable and comprehensive data
 **Auth:** Chrome `sessionKey` cookie OR manually provided cookie in Runway UI.
 **Behavior:** This data source is used if the primary hybrid strategy fails or yields no results.
 
-### Tier 3: local (CLI / Logs / Statusline)
-**Mechanism:** 
+### Tier 3: local (CLI / Logs / Statusline) — sidecar-only
+**Runs in:** the sidecar (`scripts/sidecar.py` / `sidecar_app/`). The server-side collector does not implement this tier — its only strategies are `oauth` and `web`.
+**Mechanism (sidecar):**
 - **Statusline**: Reads `~/.claude/statusline.json` (Fast Path).
 - **CLI PTY**: Executes `claude -s read-only` to parse CLI output.
-- **Local Logs**: Scans `~/.claude/projects/**/*.jsonl` for token usage.
-**Behavior:** Last-resort fallback when remote APIs are unreachable.
+- **Local Logs**: Scans `~/.claude/projects/**/*.jsonl` for token usage and emits per-message events.
+**Behavior:** The sidecar pushes both the parsed quota card and the per-message events to `/api/v1/fleet/ingest`. On the server, `EventIngestor` merges them with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from this tier, the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
 
 ## Output Format
 
@@ -151,4 +153,4 @@ If automatic cookie extraction fails (e.g. in Docker or Headless mode), you can 
 - **Note**: Runway will automatically handle both standalone `sessionKey` values and full browser bundles. The full bundle is strongly recommended to bypass Cloudflare security (WAF).
 - **Hardening**: Runway mimics your specific browser's fingerprint (User-Agent and Client Hints) to ensure the session remains valid.
 
-*Last updated: 2026-04-19*
+*Last updated: 2026-05-21*

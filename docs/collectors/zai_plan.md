@@ -47,7 +47,7 @@ The zAI Plan collector uses a single API key for authentication:
     "unit_type": "tokens",
     "reset_at": "2026-04-07T15:00:00+00:00",
     "data_source": "api",
-    "input_source": "manual",
+    "input_source": "config",
     "tier": "Basic Plan",
     "usage_url": "https://open.bigmodel.cn",
     "updated_at": "2026-04-07T10:30:00+00:00"

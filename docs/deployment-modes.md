@@ -157,27 +157,26 @@ python3 scripts/sidecar.py \
 
 ## Data Collection & Caching
 
-Runway uses **SmartCollector** for intelligent caching:
+Runway uses **SmartCollector** for intelligent caching.
 
-### Cache TTL by Provider
+### Cache TTL
 
-| Provider | TTL | Reason |
-|----------|-----|--------|
-| **Gemini** | 5 min | Fast-changing quotas |
-| **Anthropic** | 10 min | OAuth rate limit safety |
-| **ChatGPT** | 10 min | Session-based windows |
-| **OpenCode** | 30 min | Slow-changing usage |
-| **GitHub** | 15 min | Stable quotas |
-| **OpenRouter** | 15 min | Credits (prepaid) |
-| **MiniMax** | 15 min | IDE quotas |
-| **zAI/Kimi** | 15 min | API-based, stable |
+The built-in default for every registered collector is **15 minutes (900 seconds)**, set in `app/services/collector_manager.py`. There is no longer a per-provider TTL table baked into the code — the schedule is uniform.
+
+You can override the polling cadence at two layers:
+
+- **Per-provider** — set `poll_interval_seconds` on a `provider_configs` row (Settings UI → Providers → poll interval). This wins for that `(provider_id, account_id)` pair.
+- **Globally** — set `default_poll_interval_seconds` in `system_config` (Settings UI → App Config). Used whenever a provider row leaves the field null.
+
+Resolution order is per-provider override → global default → built-in 900s. The accompanying smart-polling sleep mode stretches the effective interval to ~2 hours after 45 minutes without a quota change, so an idle dashboard isn't hammering provider APIs.
 
 ### Features
 
-- **TTL Caching**: Each provider has configurable cache duration
+- **TTL Caching**: Each provider has configurable cache duration (see above)
 - **Error Tracking**: Monitors consecutive errors, forces retry after threshold
 - **Graceful Degradation**: Returns stale cached data during API failures
-- **Token Cache**: Sidecar tokens cached in memory (30-min TTL)
+- **Token Cache**: Sidecar-forwarded tokens are kept in-memory only (30-min TTL, never persisted to disk on the server)
+- **Smart sleep**: Idle dashboards downshift the poller to a 2-hour cadence; any usage event or `/api/v1/system/wake` resets it
 
 ## Security
 
@@ -197,4 +196,4 @@ Runway uses **SmartCollector** for intelligent caching:
 
 See [Sidecar Guide](sidecar.md) for detailed sidecar configuration.
 
-*Last updated: 2026-05-09*
+*Last updated: 2026-05-21*

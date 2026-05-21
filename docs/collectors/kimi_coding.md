@@ -53,7 +53,7 @@ All tiers: 200 req per 5-hour rate limit window
     "unit_type": "requests",
     "reset_at": "2026-01-09T15:23:13+00:00",
     "data_source": "web",
-    "input_source": "manual",
+    "input_source": "config",
     "tier": "Moderato",
     "usage_url": "https://www.kimi.com/code/console",
     "updated_at": "2026-04-07T10:30:00+00:00"

@@ -6,21 +6,49 @@
 
 **Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, high-performance aviation HUD dashboard with persistent history and fleet management.
 
-![Runway Dashboard](assets/dashboard.png)
+![Runway Dashboard](assets/screenshots/dashboard.png)
+
+<p align="center"><sub>Dark "aviation-HUD" theme shown. <a href="assets/screenshots/dashboard-light.png">Light theme</a> is one click away via the sun/moon toggle in the top bar.</sub></p>
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><a href="assets/screenshots/claude-modal.png"><img src="assets/screenshots/claude-modal.png" alt="Per-provider detail modal" /></a></td>
+<td width="50%"><a href="assets/screenshots/history.png"><img src="assets/screenshots/history.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Per-provider modal</b> — gauge, per-model donut, sidecar split, burn history <br/><a href="assets/screenshots/claude-modal-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>History</b> — % used / tokens / cost across windows with forecast overlay <br/><a href="assets/screenshots/history-light.png">(light)</a></sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/screenshots/fleet.png"><img src="assets/screenshots/fleet.png" alt="Fleet view showing sidecar registry" /></a></td>
+<td width="50%"><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" alt="Settings panel with provider config, token health, webhooks, audit log" /></a></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume <br/><a href="assets/screenshots/fleet-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, token health, webhooks, audit log <br/><a href="assets/screenshots/settings-light.png">(light)</a></sub></td>
+</tr>
+</table>
 
 ## Key Features
 
 - **14 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
 - **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
-- **Smart Caching**: Per-collector TTL (5-30 min) reduces API calls while keeping data fresh
+- **Event-Sourced History**: One immutable row per assistant message in `usage_events` — rollups, windows, and cost are all derived views over the same authoritative log
+- **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 45 min of no quota change
 - **Instant Serving**: `/limits` returns from an in-memory registry — never blocks on collection
-- **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling
+- **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider modal
+- **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling, hourly resolution on ≤7-day windows
 - **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
-- **Fleet Management**: Persistent registry of all sidecars with custom names, tags, and activity tracking
+- **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, and activity tracking
 - **Token Health**: Settings panel shows OAuth/cookie expiry status with one-click refresh for supported providers
-- **Sidecar Ingestion**: Push metrics from external hosts via `POST /api/v1/fleet/ingest`
+- **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
+- **Webhook Alerts**: Per-provider threshold alerts to Discord or Slack
+- **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
+- **Display Settings**: Compact mode, 2-column layout, soft chrome — configurable per browser
 - **Resilient Rendering**: Individual API failures show "Error Cards" instead of breaking the dashboard
-- **Docker Ready**: Headless-first architecture for containerized environments
+- **Docker Ready**: Headless-first architecture for containerized environments with fail-fast multi-host startup gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`)
 
 ## Quick Start
 
@@ -51,11 +79,15 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 |---------|-------------|
 | `make install` | Setup venv, install Python/Node dependencies, and wire up git hooks |
 | `make dev` | Start the development server with hot-reload (port 8765) |
+| `make dev-all` | Run the dev server and sidecar together (Ctrl-C stops both) |
 | `make run` | Start the production server |
 | `make sidecar` | Run the standalone sidecar agent script |
 | `make test` | Run the test suite (standard pytest; automatically ignores macOS-only cookie tests on Linux/WSL) |
+| `make test-cov` | Run tests with coverage report (`term-missing`) |
 | `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
 | `make format` | Automatically fix linting and formatting issues |
+| `make css` / `make watch` | Build Tailwind CSS once / rebuild on change |
+| `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make clean` | Remove virtual environments and build artifacts |
 
 ### Docker (Headless/Server)
@@ -128,22 +160,40 @@ Runway follows a **Service-Collector Pattern** with three deployment modes: **St
 
 All API routes are under `/api/v1/`.
 
-### Usage
+### Usage & history
 
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/api/v1/usage/limits` | All current quota cards (instant, from in-memory registry) |
-| `GET` | `/api/v1/usage/history` | Usage history snapshots (params: `provider_id`, `account_id`, `days`, `limit`) |
+| `GET` | `/api/v1/usage/fleet` | Fleet HUD: critical gauge + secondary limits per (provider, account), with `window_aggregations.longest` per-model/per-sidecar splits |
+| `GET` | `/api/v1/usage/cumulative` | Authorized totals across sidecars (lifetime/year/month/day) |
+| `GET` | `/api/v1/usage/forecast` | Theil-Sen projection to reset; `include_series=true` returns drill-down points |
+| `GET` | `/api/v1/usage/history/windows` | Paginated closed quota windows |
+| `GET` | `/api/v1/usage/history/snapshots` | Paginated snapshot rows with per-series delta |
+| `GET` | `/api/v1/usage/history/chart` | Time-series data for percent/tokens/cost visualisations |
+| `GET` | `/api/v1/usage/history/window-detail` | Fill-up series + by-model breakdown for one window |
+| `GET` | `/api/v1/usage/history/deltas` | Event-sourced consumption deltas |
+| `GET` | `/api/v1/usage/events` | Recent event tail for (provider, account) |
+| `GET` | `/api/v1/usage/window-history` | Closed-window history with per-model & per-sidecar splits |
+| `GET` | `/api/v1/usage/heatmap` | 7×24 hour-of-day activity grid |
+| `GET` | `/api/v1/usage/sessions` | Top-N sessions (`sort_by=tokens` or `recent`) |
+| `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM |
+| `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean |
 | `POST` | `/api/v1/usage/reset/{provider}` | Clear terminal failure state for a provider |
+| `POST` | `/api/v1/usage/collect/{provider}` | Force immediate re-collection for one provider |
 
 ### Fleet / Ingestion
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/api/v1/fleet/ingest` | Push metrics from a sidecar (HMAC-SHA256 signed) |
+| `POST` | `/api/v1/fleet/ingest` | Push metrics + events from a sidecar (HMAC-SHA256 signed, 600/min/IP) |
 | `GET` | `/api/v1/fleet/sidecars` | List all registered sidecars |
-| `PATCH` | `/api/v1/fleet/sidecars/{id}` | Update sidecar custom name or tags |
-| `DELETE` | `/api/v1/fleet/sidecars/{id}` | Remove sidecar from registry |
+| `GET` | `/api/v1/fleet/sidecars/{id}` | Single sidecar details |
+| `PATCH` | `/api/v1/fleet/sidecars/{id}` | Update custom name or tags (admin) |
+| `DELETE` | `/api/v1/fleet/sidecars/{id}` | Remove sidecar from registry (admin) |
+| `POST` | `/api/v1/fleet/sidecars/{id}/pause` | Pause collection on a sidecar (admin) |
+| `POST` | `/api/v1/fleet/sidecars/{id}/resume` | Resume collection on a sidecar (admin) |
+| `GET` | `/api/v1/fleet/config` | Active collection config the sidecar should poll |
 
 ### System
 
@@ -152,8 +202,27 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/system/health` | Liveness check |
 | `GET` | `/api/v1/system/status` | Collector cache states and error counts |
 | `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration |
+| `GET` | `/api/v1/system/audit-log` | Append-only admin-mutation trail |
 | `GET` | `/api/v1/system/token-health` | OAuth/cookie expiry status for all credentials |
-| `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh |
+| `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh (admin) |
+| `DELETE` | `/api/v1/system/token-health/{provider}/{account_id}` | Evict token from cache (admin) |
+| `POST` | `/api/v1/system/force-collect` | Trigger immediate collection cycle, fan out to sidecars |
+| `POST` | `/api/v1/system/cleanup` | Prune stale records and inactive sidecars (admin) |
+| `POST` | `/api/v1/system/wake` | Reset dormancy, restore normal polling |
+| `GET` | `/api/v1/system/debug/raw/{provider_id}` | Run collector and return raw HTTP responses (debug) |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts (admin) |
+| `GET`/`PUT` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write) |
+| `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
+| `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
+
+### Auth (GitHub Device Flow)
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/v1/auth/github/init` | Begin GitHub OAuth Device Flow |
+| `POST` | `/api/v1/auth/github/poll` | Poll for completion |
+| `GET` | `/api/v1/auth/github/status` | Current GitHub auth state |
+| `POST` | `/api/v1/auth/github/logout` | Discard stored GitHub token |
 
 **Desktop App (macOS & Windows):** Download the pre-built sidecar binary from the [releases page](https://github.com/bjoernf73/runway/releases/latest).
 
@@ -205,12 +274,19 @@ interface LimitCard {
   pct_used?: number;      // Percentage used based on cost
 
   // Metadata
-  reset_at?: string;     // ISO 8601 timestamp for tooltip
-  data_source?: string;   // "oauth" | "web_api" | "local" | "api" | "cache"
+  reset_at?: string;      // ISO 8601 timestamp for tooltip
+  data_source?: string;   // "api" | "web" | "local" (origin of payload)
+  input_source?: string;  // "config" | "server" | "sidecar" (origin of credentials)
+  variant?: string;       // Disambiguates multiple windows of the same type (e.g. "sonnet" vs "opus" weekly)
+  error_type?: string;    // Populated when collection fails — surfaces as an Error Card
   tier?: string;          // "Free" | "Pro" | "Enterprise"
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp
+  metadata?: Record<string, unknown>;  // Free-form, provider-specific extras
 }
+```
+
+See `app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [CLAUDE.md](CLAUDE.md) and [docs/statistics.md](docs/statistics.md).
 
 ## Optional Security
 
@@ -219,6 +295,16 @@ interface LimitCard {
 **`ADMIN_API_KEY`** — When set, the dashboard and admin API endpoints are protected. Unset by default (local-first, single-user). Remote access triggers a Login Screen.
 
 **`DB_ENCRYPTION_KEY`** — Fernet key for encrypting sensitive metadata in SQLite. Unset = plaintext (acceptable for local deployments). Back up this key alongside the database file.
+
+**`TLS_TERMINATED`** — Operator assertion that TLS is terminated upstream (nginx, caddy, cloudflare, kube ingress). **Required** when `APP_HOST` is not localhost — sidecar payloads carry tokens, and HMAC protects integrity but not confidentiality. See [Multi-Host Startup Gates](docs/SECURITY.md#-multi-host-startup-gates).
+
+**`CORS_ORIGINS`** — Comma-separated allow-list of origins for cross-origin requests. **Required** when `APP_HOST` is not localhost.
+
+**`TRUSTED_PROXY_IPS`** — Comma-separated list of reverse-proxy source IPs allowed to assert identity via `X-Forwarded-User` / `Remote-User`. Without an IP allow-list these headers are forgeable and bypass `ADMIN_API_KEY`.
+
+**`LOG_FORMAT`** — `plain` (default) or `json` for structured logging.
+
+**`TZ`** — IANA timezone for dashboard display (e.g. `Europe/Berlin`). Browser auto-detect is used when unset; the Settings panel can override per user.
 
 ## Network Access
 
@@ -242,4 +328,4 @@ Runway provides a flexible, multi-layered security model:
 
 MIT License - see [LICENSE](LICENSE) file.
 
-*Last updated: 2026-04-26*
+*Last updated: 2026-05-21*

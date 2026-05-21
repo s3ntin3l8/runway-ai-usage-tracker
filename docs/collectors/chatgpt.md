@@ -1,14 +1,15 @@
 # ChatGPT Collector
 
-**File:** `app/services/collectors/chatgpt.py`
+**File:** `app/services/collectors/chatgpt.py` (server-side: `web` strategy on `wham/usage`)
+**Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local-source strategies: Codex CLI RPC, session logs)
 
-ChatGPT Codex quota collector with api → local fallback.
+ChatGPT Codex quota collector with an `api` (executed against the web endpoint with an OAuth bearer or cookie) tier and a `local` enrichment tier that runs inside the sidecar. The server itself does not shell out to `codex` or scan `~/.codex/sessions/`.
 
 ## Overview
 
-- **Collection Strategy**: api (Web API / Cookie) → local (CLI RPC / Logs)
+- **Collection Strategy**: api (Web API / Cookie) → local (CLI RPC / Logs, via sidecar)
 - **Cards**: 1 card (primary window usage)
-- **Authentication**: `CHATGPT_OAUTH_TOKEN` (api), `~/.codex/auth.json` (api), or Chrome cookies (web).
+- **Authentication**: `CHATGPT_OAUTH_TOKEN` (api), `~/.codex/auth.json` (sidecar-discovered), or Chrome cookies (web).
 
 ## Setup Methods Quick Overview
 
@@ -37,11 +38,12 @@ The ChatGPT collector supports multiple authentication and data collection metho
 **Auth:** Bearer token (OAuth) or Session Cookie (Web).
 **Behavior:** Primary method for both official tokens and browser-based sessions.
 
-### Tier 2: local (CLI RPC / Logs)
-**Mechanism:** 
-- **CLI RPC**: Interface with `codex -s read-only` directly.
-- **Local Logs**: Parse `~/.codex/sessions/*.jsonl` for historical usage.
-**Behavior:** Fallback when the network API is unreachable.
+### Tier 2: local (CLI RPC / Logs) — sidecar-only
+**Runs in:** the sidecar (`scripts/sidecar.py` / `sidecar_app/`). The server-side collector implements `web` only.
+**Mechanism (sidecar):**
+- **CLI RPC**: Interfaces with `codex -s read-only` directly.
+- **Local Logs**: Parses `~/.codex/sessions/*.jsonl` for historical usage and emits per-message events.
+**Behavior:** The sidecar pushes the parsed quota card and per-message events to `/api/v1/fleet/ingest`; the server merges them with the `wham/usage` headline `%`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
 
 ## Output Format
 
@@ -61,7 +63,7 @@ The ChatGPT collector supports multiple authentication and data collection metho
     "unit_type": "percent",
     "reset_at": "2026-04-07T15:00:00+00:00",
     "data_source": "api",
-    "input_source": "manual",
+    "input_source": "config",
     "tier": "plus",
     "usage_url": "https://chatgpt.com/codex/settings/usage/",
     "updated_at": "2026-04-07T10:30:00+00:00"
@@ -117,4 +119,4 @@ If automatic browser extraction is not working (e.g., in Docker or headless envi
 - **Token Source**: Browser DevTools -> Application -> Cookies -> `https://chatgpt.com` -> `__Secure-next-auth.session-token`.
 - **Note**: This is a fallback method. Runway will attempt to exchange this for a Bearer token.
 
-*Last updated: 2026-04-19*
+*Last updated: 2026-05-21*
