@@ -1,14 +1,15 @@
 # Gemini Collector
 
-**File:** `app/services/collectors/gemini.py`
+**File:** `app/services/collectors/gemini.py` (server-side: `api` against Google Cloud Code)
+**Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local enrichment: session logs)
 
-Google Gemini CLI quota collector with api + local enrichment.
+Google Gemini CLI quota collector. The server-side `api` strategy hits Google Cloud Code endpoints with an auto-refreshed OAuth token; the `local` enrichment strategy that reads `~/.gemini/tmp/*/chats/session-*.json` executes inside the sidecar and ships per-message events to the server.
 
 ## Overview
 
-- **Collection Strategy**: api (Google Cloud Code) + local enrichment (Session Logs)
+- **Collection Strategy**: api (Google Cloud Code) + local enrichment (session logs, via sidecar)
 - **Cards**: 1-7 cards (one per model family: Flash, Pro, Flash Lite, etc.)
-- **Authentication**: OAuth credentials (api) or local session logs (local).
+- **Authentication**: OAuth credentials (api). Local session logs are discovered by the sidecar.
 
 ## Setup Methods Quick Overview
 
@@ -31,10 +32,11 @@ The Gemini collector supports the following authentication methods:
 **Auth:** OAuth token (auto-refreshed via Google).
 **Behavior:** Primary source for model-specific quotas (Flash, Pro, etc.).
 
-### Enrichment: local (Session Logs)
-**Location:** `~/.gemini/tmp/*/chats/session-*.json`
+### Enrichment: local (Session Logs) — sidecar-only
+**Runs in:** the sidecar. The server-side collector is HTTP-only.
+**Location (sidecar):** `~/.gemini/tmp/*/chats/session-*.json`
 **Tracks:** prompt + completion tokens, cached tokens, thoughts tokens.
-**Behavior:** Enriches API data with actual token usage from local sessions. Appends token breakdown to card detail string.
+**Behavior:** The sidecar parses local session logs and pushes per-message events to `/api/v1/fleet/ingest`. The server merges these with the API quota card — token breakdown and session counts come from this tier. Enrichment rows are tagged `data_source=local`, `input_source=sidecar`.
 
 ## Output Format
 
@@ -54,7 +56,7 @@ The Gemini collector supports the following authentication methods:
     "unit_type": "percent",
     "reset_at": "2026-04-08T13:44:00+00:00",
     "data_source": "api",
-    "input_source": "manual",
+    "input_source": "config",
     "tier": "pro",
     "usage_url": "https://one.google.com/settings",
     "updated_at": "2026-04-08T10:30:00+00:00"
@@ -99,4 +101,4 @@ Sidecar extracts OAuth token from `~/.gemini/oauth_creds.json`. See [sidecar doc
 - **Gemini:** https://gemini.google.com
 - **Google Cloud:** https://console.cloud.google.com
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-05-21*

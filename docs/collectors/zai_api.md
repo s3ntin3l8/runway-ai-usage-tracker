@@ -52,7 +52,7 @@ The zAI API collector uses a single API key for authentication:
     "currency": "CNY",
     "reset_at": None,
     "data_source": "api",
-    "input_source": "manual",
+    "input_source": "config",
     "tier": None,
     "usage_url": "https://open.bigmodel.cn",
     "updated_at": "2026-04-07T10:30:00+00:00"

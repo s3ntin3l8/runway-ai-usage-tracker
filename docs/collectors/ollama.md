@@ -48,7 +48,7 @@ The Ollama collector supports the following authentication methods:
     "is_unlimited": False,
     "unit_type": "percent",
     "reset_at": "2026-04-07T12:00:00+00:00",
-    "data_source": "web_scrape",
+    "data_source": "web",
     "tier": "free",
     "usage_url": "https://ollama.com/settings",
     "updated_at": "2026-04-07T10:30:00+00:00"

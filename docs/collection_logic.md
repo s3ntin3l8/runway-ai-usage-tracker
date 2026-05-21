@@ -10,8 +10,7 @@ sidecar additionally extracts events into `usage_events` and pushes them via
 authoritative quota gauge (`pct_used`, `limit_value`, `reset_at`); per-model and
 per-sidecar splits are derived on demand from `usage_events` by the
 `/api/v1/usage/fleet` endpoint's `window_aggregations` field. See the
-[event-sourced data model spec](superpowers/specs/2026-05-08-event-sourced-usage-data-model.md)
-for the full event flow.
+[Data Model section of CLAUDE.md](../CLAUDE.md#data-model) for the full event flow.
 
 ## Strategy Types
 
@@ -23,22 +22,23 @@ for the full event flow.
 
 ## Per-Collector Strategy Mapping
 
-| Collector | Strategy | Type |
-|-----------|----------|------|
-| **Anthropic** | oauth | quota |
-| Anthropic | web | quota |
-| Anthropic | cli | mixed |
-| Anthropic | statusline | mixed |
-| Anthropic | local | enrichment |
-| **ChatGPT** | web | quota |
-| ChatGPT | cli | mixed |
-| ChatGPT | local | enrichment |
-| **Gemini** | api | quota |
-| Gemini | local | enrichment |
-| **OpenCode** | api | quota |
-| OpenCode | sidecar | quota |
-| OpenCode | web | mixed |
-| OpenCode | local | enrichment |
+The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.
+
+| Collector | Strategy | Type | Runs in |
+|-----------|----------|------|---------|
+| **Anthropic** | oauth | quota | server |
+| Anthropic | web | quota | server |
+| Anthropic | cli | mixed | sidecar |
+| Anthropic | statusline | mixed | sidecar |
+| Anthropic | local (logs) | enrichment | sidecar |
+| **ChatGPT** | web | quota | server |
+| ChatGPT | cli | mixed | sidecar |
+| ChatGPT | local (logs) | enrichment | sidecar |
+| **Gemini** | api | quota | server |
+| Gemini | local (session logs) | enrichment | sidecar |
+| **OpenCode** | web | quota | server |
+| OpenCode | local (SQLite DB) | enrichment | sidecar |
+| **Antigravity** | local (LSP / quota.json) | quota | sidecar (no server-side collector) |
 
 ## Collection Pipeline
 

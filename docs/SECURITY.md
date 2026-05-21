@@ -35,7 +35,8 @@ In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message ev
 2. **Signature Generation**: 
    - Sidecars calculate a signature over the JSON body and a `X-Timestamp`.
    - The server verifies the signature matches and that the timestamp is within a 5-minute sliding window.
-3. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
+3. **Rate Limit**: `POST /ingest` is capped at **600 requests/minute per source IP** to bound damage from a stolen key or a misconfigured sidecar.
+4. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
 
 ## 🚦 Multi-Host Startup Gates
 
@@ -57,6 +58,12 @@ Every response carries a defence-in-depth header set:
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY` (for older user agents that ignore `frame-ancestors`)
 - `Referrer-Policy: no-referrer`
+
+## 📜 Audit Log
+
+Every successful admin mutation (sidecar pause/resume/delete/patch, webhook CRUD, provider-config writes, token-cache refresh/evict) is written to the `audit_log` table with actor, source IP, action, target, and a JSON payload. Read it via `GET /api/v1/system/audit-log` (admin-only) or from the **Settings → Audit Log** panel.
+
+Scope: this is a diagnostic trail with the same trust model as the rest of Runway — useful for "what happened when something surprising changed" — not a legal-grade tamper-evident log. The table is append-only at the application layer; rows can still be deleted by anyone with direct DB access.
 
 ## 🔄 Maintenance & Hygiene
 

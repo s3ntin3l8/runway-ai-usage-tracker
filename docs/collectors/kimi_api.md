@@ -21,7 +21,7 @@ The Kimi API collector uses a single API key for authentication:
 ## Data Source
 
 ### Primary: Moonshot AI Balance API
-**Endpoint:** `https://api.moonshot.cn/v1/users/me/balance`
+**Endpoint:** `https://api.moonshot.ai/v1/users/me/balance`
 **Auth:** Bearer token
 **Key Format:** `sk-proj-...` (minimum 10 characters)
 
@@ -44,7 +44,7 @@ The Kimi API collector uses a single API key for authentication:
     "currency": "USD",
     "reset_at": None,
     "data_source": "api",
-    "input_source": "manual",
+    "input_source": "config",
     "tier": None,
     "usage_url": "https://platform.moonshot.cn",
     "updated_at": "2026-04-07T10:30:00+00:00"

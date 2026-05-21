@@ -47,7 +47,7 @@ The sidecar obtains quota information using two strategies, in order:
     "health": "good",
     "pace": "Continuous",
     "detail": "Pro | user@example.com [LSP]",
-    "data_source": "lsp",
+    "data_source": "local",
     "provider_id": "antigravity",
     "account_id": "user@example.com",              # email used as account_id
     "account_label": "user@example.com",
