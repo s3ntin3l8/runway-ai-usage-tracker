@@ -398,11 +398,7 @@ def _snapshots_for_card(
         # the longest window type, e.g. monthly). Trim to [window_start, now] so
         # data from prior windows/sessions doesn't contaminate the regression —
         # the per-card SQL fallback applies the same ts >= window_start filter.
-        return [
-            (ts, pct)
-            for ts, pct in snapshot_cache.get(key, [])
-            if window_start <= ts <= now
-        ]
+        return [(ts, pct) for ts, pct in snapshot_cache.get(key, []) if window_start <= ts <= now]
 
     # Per-card fallback: query quota_snapshots directly.
     from sqlalchemy import text

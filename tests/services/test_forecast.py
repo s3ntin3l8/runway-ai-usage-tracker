@@ -424,7 +424,7 @@ def test_batch_cache_trimmed_to_current_window(db_session):
 
     # ── In-window buckets: 4 points showing clear growth ──────────────────────
     in_window_buckets: list[tuple[datetime, float]] = [
-        (window_start + timedelta(minutes=5),  2.0),
+        (window_start + timedelta(minutes=5), 2.0),
         (window_start + timedelta(minutes=30), 8.0),
         (window_start + timedelta(minutes=60), 14.0),
         (window_start + timedelta(minutes=90), 20.0),
