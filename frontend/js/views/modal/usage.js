@@ -153,6 +153,10 @@ export function buildSessionCard(s) {
         `<span class="m-subagents">${_esc(`↳ ${a.type} × ${a.turns} · ${_fmtTokens(a.tokens_total)} tok · ${_fmtCost(a.cost_usd)}`)}</span>`
     ).join('');
 
+    const modelsSep = modelRows
+        ? '<span class="m-agents-sep">models</span>'
+        : '';
+
     const agentsSep = modelRows && subagentRows
         ? '<span class="m-agents-sep">agents</span>'
         : '';
@@ -164,6 +168,7 @@ export function buildSessionCard(s) {
         <span class="msg">${_esc(desc)}</span>
         <span class="v">${_esc(val)}</span>
         ${detail ? `<span class="m-detail">${_esc(detail)}</span>` : ''}
+        ${modelsSep}
         ${modelRows}
         ${agentsSep}
         ${subagentRows}
