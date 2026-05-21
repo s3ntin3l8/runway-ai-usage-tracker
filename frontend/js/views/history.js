@@ -402,7 +402,10 @@ async function renderHistoryChart() {
     // Sparkline strip
     const stripEl = document.getElementById('history-sparkline-strip');
     if (stripEl) {
-        stripEl.innerHTML = buildProviderSparklineStrip(snapshots, active, historyState.days);
+        const stripSnapshots = historyState.windowFilter === 'all'
+            ? snapshots
+            : snapshots.filter(s => s.window_type === historyState.windowFilter);
+        stripEl.innerHTML = buildProviderSparklineStrip(stripSnapshots, active, historyState.days);
     }
 
     // Projection overlay: only for percent metric with a specific window type selected.
