@@ -394,6 +394,76 @@ def upsert_latest_usage(  # noqa: PLR0915
         )
 
 
+def prune_stale_latest_usage(
+    session: Session,
+    batch_keys: dict[tuple[str, str], set[tuple[str, str, str]]],
+) -> int:
+    """Delete latest_usage rows that the sidecar no longer reports AND whose
+    window has already closed.
+
+    Triggered at the end of a sidecar push. For each (provider_id, account_id)
+    pair covered by the payload, any row whose (window_type, variant, model_id)
+    is not in the just-pushed set AND whose card_json carries a reset_at in the
+    past is treated as a ghost — the source dropped the model from its model
+    list (Antigravity rotates these regularly) and the prior window has expired.
+    Returns the number of rows deleted.
+
+    Scoped tightly to pairs in the batch so a partial collector cycle (one
+    provider pushing a single card) never prunes another provider's healthy
+    rows.
+    """
+    from app.models.db import LatestUsage
+
+    if not batch_keys:
+        return 0
+
+    now = datetime.now(UTC)
+    deleted = 0
+    for (pid, aid), keys in batch_keys.items():
+        try:
+            rows = session.exec(
+                select(LatestUsage).where(
+                    LatestUsage.provider_id == pid,
+                    LatestUsage.account_id == aid,
+                )
+            ).all()
+            for row in rows:
+                row_key = (row.window_type, row.variant, row.model_id)
+                if row_key in keys:
+                    continue
+                try:
+                    data = json.loads(row.card_json or "{}")
+                except (ValueError, TypeError):
+                    continue
+                raw_reset = data.get("reset_at")
+                if not raw_reset:
+                    continue
+                try:
+                    reset_dt = datetime.fromisoformat(
+                        raw_reset.replace("Z", "+00:00")
+                        if isinstance(raw_reset, str)
+                        else raw_reset.isoformat()
+                    )
+                except (ValueError, AttributeError, TypeError):
+                    continue
+                if reset_dt >= now:
+                    continue
+                logger.info(
+                    "Pruning ghost latest_usage row %s/%s %s/%s/%s (reset_at=%s in past)",
+                    pid,
+                    aid,
+                    row.window_type,
+                    row.variant,
+                    row.model_id,
+                    raw_reset,
+                )
+                session.delete(row)
+                deleted += 1
+        except Exception as e:
+            logger.warning("Stale-row prune failed for %s/%s: %s", pid, aid, e)
+    return deleted
+
+
 def evict_orphan_error_rows(session: Session) -> int:
     """One-shot cleanup: remove error rows that are superseded by healthy rows.
 

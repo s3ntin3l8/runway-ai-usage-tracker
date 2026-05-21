@@ -278,3 +278,212 @@ def test_two_sidecars_different_accounts_produce_separate_rows(session):
     account_ids = {r.account_id for r in rows}
     assert "alice@example.com" in account_ids
     assert "bob@example.com" in account_ids
+
+
+def test_ingest_prunes_ghost_model_rows_with_past_reset_at(session):
+    """A latest_usage row the sidecar stops reporting AND whose reset_at is in
+    the past is pruned on the next push for the same (provider, account).
+    Otherwise it lingers as a 'RESETS JUST NOW' ghost on the dashboard.
+    """
+    import datetime as _dt
+
+    past = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=2)).isoformat()
+    future = (_dt.datetime.now(_dt.UTC) + _dt.timedelta(hours=4)).isoformat()
+
+    def _card(model_id: str, reset_at: str) -> dict:
+        return {
+            "provider_id": "antigravity",
+            "account_id": "alice@example.com",
+            "account_label": "alice@example.com",
+            "service_name": model_id or "default",
+            "window_type": "session",
+            "variant": "default",
+            "model_id": model_id,
+            "icon": "🛸",
+            "remaining": "60.0%",
+            "unit": "capacity",
+            "reset": "Dynamic",
+            "health": "good",
+            "pace": "Continuous",
+            "detail": "Pro | alice [LSP]",
+            "data_source": "local",
+            "input_source": "sidecar",
+            "used_value": 40.0,
+            "limit_value": 100.0,
+            "pct_used": 40.0,
+            "unit_type": "percent",
+            "reset_at": reset_at,
+        }
+
+    with (
+        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+
+        # First push: 3 models. Two will go stale (past reset_at), one stays current.
+        _ingest(
+            client,
+            {
+                "provider": "antigravity-sidecar",
+                "sidecar_id": "sidecar-a",
+                "metrics": [
+                    _card("gemini-3-flash", past),
+                    _card("gemini-3-5-flash-low", past),
+                    _card("gemini-3-1-pro-high", future),
+                ],
+                "events": [],
+            },
+        )
+        assert (
+            len(
+                session.exec(
+                    select(LatestUsage).where(LatestUsage.provider_id == "antigravity")
+                ).all()
+            )
+            == 3
+        )
+
+        # Second push: LSP now only returns the surviving model.
+        _ingest(
+            client,
+            {
+                "provider": "antigravity-sidecar",
+                "sidecar_id": "sidecar-a",
+                "metrics": [_card("gemini-3-1-pro-high", future)],
+                "events": [],
+            },
+        )
+
+    rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == "antigravity")).all()
+    model_ids = {r.model_id for r in rows}
+    assert model_ids == {"gemini-3-1-pro-high"}, f"Ghost rows not pruned: {model_ids}"
+
+
+def test_ingest_does_not_prune_other_provider_rows(session):
+    """The prune is scoped per (provider, account) — pushing one provider's
+    cards must not delete another provider's rows even if their reset_at
+    happens to be in the past."""
+    import datetime as _dt
+
+    past = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=2)).isoformat()
+    future = (_dt.datetime.now(_dt.UTC) + _dt.timedelta(hours=4)).isoformat()
+
+    def _card(provider_id: str, model_id: str, reset_at: str) -> dict:
+        return {
+            "provider_id": provider_id,
+            "account_id": "alice@example.com",
+            "account_label": "alice@example.com",
+            "service_name": model_id or "default",
+            "window_type": "session",
+            "variant": "default",
+            "model_id": model_id,
+            "icon": "🛸",
+            "remaining": "60.0%",
+            "unit": "capacity",
+            "reset": "Dynamic",
+            "health": "good",
+            "pace": "Continuous",
+            "detail": "Pro | alice [LSP]",
+            "data_source": "local",
+            "input_source": "sidecar",
+            "used_value": 40.0,
+            "limit_value": 100.0,
+            "pct_used": 40.0,
+            "unit_type": "percent",
+            "reset_at": reset_at,
+        }
+
+    with (
+        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+
+        # Seed a stale openai row for the same account.
+        _ingest(
+            client,
+            {
+                "provider": "openai-sidecar",
+                "sidecar_id": "sidecar-a",
+                "metrics": [_card("openai", "gpt-4", past)],
+                "events": [],
+            },
+        )
+
+        # Push fresh antigravity data — the openai stale row must survive.
+        _ingest(
+            client,
+            {
+                "provider": "antigravity-sidecar",
+                "sidecar_id": "sidecar-a",
+                "metrics": [_card("antigravity", "gemini", future)],
+                "events": [],
+            },
+        )
+
+    openai_rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == "openai")).all()
+    assert len(openai_rows) == 1, "Cross-provider prune leaked"
+
+
+def test_passive_provider_added_to_poll_providers(session):
+    """A provider that exists in latest_usage but has no provider_configs row
+    (the antigravity / opencode-free shape) must still show up in the server's
+    poll_providers instruction — otherwise it's stuck refreshing only on
+    cold-start or manual trigger.
+    """
+    from app.services.fleet_registry import fleet_registry
+
+    sidecar_id = "sidecar-passive-test"
+    # Make sure no prior test leaked cadence state for this id.
+    fleet_registry._last_provider_polls.pop(sidecar_id, None)
+    fleet_registry._pending_triggers.discard(sidecar_id)
+
+    # Seed a latest_usage row for antigravity with no provider_configs row.
+    session.add(
+        LatestUsage(
+            provider_id="antigravity",
+            account_id="alice@example.com",
+            sidecar_id=sidecar_id,
+            window_type="session",
+            variant="default",
+            model_id="gemini-3-1-pro-high",
+            card_json=json.dumps(
+                {
+                    "provider_id": "antigravity",
+                    "account_id": "alice@example.com",
+                    "window_type": "session",
+                    "variant": "default",
+                    "pct_used": 40.0,
+                }
+            ),
+        )
+    )
+    session.commit()
+
+    payload = {
+        "provider": f"sidecar-{sidecar_id}",
+        "sidecar_id": sidecar_id,
+        "metrics": [],
+        "events": [],
+    }
+
+    with (
+        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+        resp = _ingest(client, payload)
+
+    assert "antigravity" in resp["poll_providers"], (
+        f"Passive provider missing from cadence: {resp['poll_providers']}"
+    )

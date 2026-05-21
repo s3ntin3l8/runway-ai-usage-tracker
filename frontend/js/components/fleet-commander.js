@@ -137,8 +137,12 @@ function _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, 
     </div>`;
 }
 
+// Session windows aren't always 5h and don't tick on a fixed wall clock —
+// Antigravity rotates per-model windows that can be 2-5h depending on first
+// use. Show the bare window type for `session`; the live `resets <X>` countdown
+// next to the bar carries the accurate per-model time.
 const _FC_WINDOW_LABELS = {
-    session: '5h fixed',
+    session: 'session',
     daily:   '24h fixed',
     weekly:  '7d fixed',
     monthly: '30d fixed',

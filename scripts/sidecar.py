@@ -1937,6 +1937,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "model_id": model_id,
                 "used_value": round(100.0 - rem_pct, 4),
                 "limit_value": 100.0,
+                "pct_used": round(100.0 - rem_pct, 4),
                 "unit_type": "percent",
                 "window_type": "session",
                 "reset_at": reset_at,

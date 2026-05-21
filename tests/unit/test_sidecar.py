@@ -527,6 +527,7 @@ def test_ag_parse_lsp_response_model_card():
     assert card["model_id"] == "claude-sonnet-4-5-20251001"
     assert card["used_value"] == pytest.approx(40.0, abs=0.1)
     assert card["limit_value"] == 100.0
+    assert card["pct_used"] == pytest.approx(40.0, abs=0.1)
     assert card["unit_type"] == "percent"
     assert card["window_type"] == "session"
     assert card["reset_at"] is not None

@@ -13,10 +13,11 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
-from app.models.db import ProviderConfig, SidecarRegistry, SystemConfig
+from app.models.db import LatestUsage, ProviderConfig, SidecarRegistry, SystemConfig
 from app.models.schemas import IngestRequest
 from app.services import audit_log
-from app.services.accumulator import upsert_latest_usage
+from app.services.account_identity import resolve_account_id
+from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
 
@@ -186,6 +187,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
     # Store local data cards directly into LatestUsage (unified with server-scraped cards)
     if local_cards:
+        # Track (provider_id, canonical_account_id) → set of
+        # (window_type, variant, model_id) for the prune step.
+        batch_keys: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
         for card in local_cards:
             card_dict = card.model_dump(exclude_none=True)
             upsert_latest_usage(
@@ -193,9 +197,22 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 card_dict,
                 sidecar_id_override=card.sidecar_id or payload.sidecar_id or "local",
             )
+            if card.provider_id and card.account_id:
+                canonical_aid = resolve_account_id(
+                    card.provider_id, card.account_id, card.account_label
+                )
+                batch_keys.setdefault((card.provider_id, canonical_aid), set()).add(
+                    (
+                        card.window_type or "",
+                        card.variant or "default",
+                        card.model_id or "",
+                    )
+                )
+        pruned = prune_stale_latest_usage(session, batch_keys)
         session.commit()
         logger.info(
             f"Stored {len(local_cards)} local cards into LatestUsage from {payload.provider}"
+            + (f" (pruned {pruned} ghost row(s))" if pruned else "")
         )
 
     # Wake the poller whenever the sidecar pushes anything actionable —
@@ -249,11 +266,21 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             enabled_provider_rows = session.exec(
                 select(ProviderConfig).where(ProviderConfig.enabled)
             ).all()
+            configured = {row.provider_id for row in enabled_provider_rows}
+
+            # Passive providers (antigravity, opencode-free, …) have no
+            # provider_configs row because they need no credentials — the
+            # sidecar discovers them locally. Without this they'd never
+            # appear in poll_providers and would only refresh on cold-start
+            # or a user-triggered full refresh.
+            passive_pids = (
+                set(session.exec(select(LatestUsage.provider_id).distinct()).all()) - configured
+            )
 
             provider_intervals = [
                 (row.provider_id, row.poll_interval_seconds or global_interval)
                 for row in enabled_provider_rows
-            ]
+            ] + [(pid, global_interval) for pid in sorted(passive_pids)]
 
             poll_providers, trigger = fleet_registry.get_due_providers(
                 payload.sidecar_id, provider_intervals
