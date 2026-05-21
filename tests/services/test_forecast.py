@@ -7,7 +7,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
-from app.services.forecast import compute_forecast
+from app.services.forecast import SnapshotCache, compute_forecast
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -404,3 +404,70 @@ def test_decelerating_status_when_high_usage_and_projection_dips(db_session):
     assert result.projected_pct == pytest.approx(95.0, abs=0.5)
     assert result.slope is not None and result.slope >= 0.0
     assert result.method == "theil_sen"
+
+
+def test_batch_cache_trimmed_to_current_window(db_session):
+    """Regression: batch cache must not include snapshots from prior session windows.
+
+    The batch snapshot cache is built from the earliest window_start across ALL
+    cards (e.g. a monthly card pushes it back 30 days). Without per-card trimming,
+    session snapshots from *previous* sessions contaminate the Theil-Sen regression
+    and produce slope ≈ 0 → status "stable" even during active heavy usage.
+
+    After the fix, _snapshots_for_card filters cache entries to [window_start, now]
+    so only the current session's data is used.
+    """
+    # Current session: window_start = 2h ago, reset = 3h from now.
+    now = datetime(2026, 5, 21, 15, 0, 0, tzinfo=UTC)
+    reset_at_dt = now + timedelta(hours=3)
+    window_start = reset_at_dt - timedelta(hours=5)  # 2h ago relative to now
+
+    # ── In-window buckets: 4 points showing clear growth ──────────────────────
+    in_window_buckets: list[tuple[datetime, float]] = [
+        (window_start + timedelta(minutes=5),  2.0),
+        (window_start + timedelta(minutes=30), 8.0),
+        (window_start + timedelta(minutes=60), 14.0),
+        (window_start + timedelta(minutes=90), 20.0),
+    ]
+
+    # ── Out-of-window buckets: prior sessions from 24h ago, all at 0% ─────────
+    # These represent the contaminating data the bug introduced.
+    prior_session_start = window_start - timedelta(hours=24)
+    out_of_window_buckets: list[tuple[datetime, float]] = [
+        (prior_session_start + timedelta(minutes=i * 5), 0.0)
+        for i in range(60)  # 60 × 5min = 5h of flat-zero prior session
+    ]
+
+    # Combine into a single cache entry (mimics the batch path's broad time range).
+    cache_key = ("anthropic", "acc1", "session", "", "")
+    contaminated_cache: SnapshotCache = {
+        cache_key: out_of_window_buckets + in_window_buckets,
+    }
+
+    card = _make_card(
+        used_value=20.0,
+        limit_value=100.0,
+        unit_type="percent",
+        unit="percent",
+        pct_used=20.0,
+        reset_at=reset_at_dt.isoformat(),
+        window_type="session",
+    )
+
+    result = compute_forecast(card, db_session, now=now, snapshot_cache=contaminated_cache)
+
+    assert result is not None
+    # Before fix: contaminated cache → slope ≈ 0 → status "stable", projected ≈ now_pct
+    # After fix: trimmed to current window → positive slope → status "ok" or "warn"
+    assert result.status not in ("stable", "insufficient_data"), (
+        f"Forecast should reflect current-window growth, got status={result.status!r} "
+        f"projected_pct={result.projected_pct}"
+    )
+    # Samples should reflect only in-window buckets, not the 60 prior-session buckets.
+    assert result.samples_used == len(in_window_buckets), (
+        f"Expected {len(in_window_buckets)} in-window samples, got {result.samples_used}"
+    )
+    # Slope must be positive (usage is growing).
+    assert result.slope is not None and result.slope > 0, (
+        f"Expected positive slope, got {result.slope}"
+    )

@@ -394,7 +394,15 @@ def _snapshots_for_card(
     """
     if snapshot_cache is not None:
         key = (provider_id, account_id, window_type, variant, model_id)
-        return snapshot_cache.get(key, [])
+        # The batch cache covers the broadest time range across all cards (driven by
+        # the longest window type, e.g. monthly). Trim to [window_start, now] so
+        # data from prior windows/sessions doesn't contaminate the regression —
+        # the per-card SQL fallback applies the same ts >= window_start filter.
+        return [
+            (ts, pct)
+            for ts, pct in snapshot_cache.get(key, [])
+            if window_start <= ts <= now
+        ]
 
     # Per-card fallback: query quota_snapshots directly.
     from sqlalchemy import text
