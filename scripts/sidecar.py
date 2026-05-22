@@ -46,29 +46,35 @@ if str(_REPO_ROOT) not in sys.path:
 def _resolve_sidecar_version() -> str:
     """Source-of-truth for the sidecar version reported to the server.
 
-    Prefers `package.json` at the repo root when running from source so
-    the dashboard reflects the current dev version automatically. Falls
-    back to the baked constant when running as a frozen binary or when
-    package.json isn't reachable (e.g. distributed sidecar). Update
-    `_SIDECAR_VERSION_FALLBACK` when cutting a release for binaries.
+    Looks for `package.json` next to the running code: under
+    `sys._MEIPASS` for PyInstaller-frozen binaries (the spec files bundle
+    it as a data file), and at the repo root when running from source.
+    Falls back to the baked constant only if neither path resolves.
     """
-    pkg_json = _REPO_ROOT / "package.json"
-    if pkg_json.is_file():
-        try:
-            with open(pkg_json) as _f:
-                version = json.load(_f).get("version")
-            if isinstance(version, str) and version:
-                return version
-        except (OSError, ValueError):
-            pass
+    candidates: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "package.json")
+    candidates.append(_REPO_ROOT / "package.json")
+    for pkg_json in candidates:
+        if pkg_json.is_file():
+            try:
+                with open(pkg_json) as _f:
+                    version = json.load(_f).get("version")
+                if isinstance(version, str) and version:
+                    return version
+            except (OSError, ValueError):
+                continue
     return _SIDECAR_VERSION_FALLBACK
 
 
-_SIDECAR_VERSION_FALLBACK = "0.13.0"  # keep in sync with package.json on release
+_SIDECAR_VERSION_FALLBACK = (
+    "0.13.0"  # last-resort default; release flow keeps package.json authoritative
+)
 _SIDECAR_VERSION = _resolve_sidecar_version()
 
 # --- INJECTED REGISTRY ---
-__REGISTRY__ = {
+__REGISTRY__: dict[str, Any] = {
     "providers": {
         "anthropic": {
             "name": "Claude Pro",
@@ -531,7 +537,7 @@ def write_pid_file() -> bool:
         try:
             old_pid = int(_pid_file_path.read_text().strip())
             # Check if process exists
-            if platform.system() == "Windows":
+            if sys.platform == "win32":
                 import ctypes
 
                 kernel32 = ctypes.windll.kernel32
@@ -2569,6 +2575,11 @@ def main():
     parser.add_argument("--config", help="Path to config.json")
     parser.add_argument("--run-once", action="store_true", help="Run once and exit")
     parser.add_argument("--daemon", action="store_true", help="Run as daemon (default)")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_SIDECAR_VERSION}",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)

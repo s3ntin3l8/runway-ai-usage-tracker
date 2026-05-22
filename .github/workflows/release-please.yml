@@ -82,16 +82,28 @@ jobs:
             spec: sidecar_app/spec/macos.spec
             platform: macOS
             dist_path: "dist/Runway Sidecar.app"
+            ext: zip
           - os: windows-latest
             spec: sidecar_app/spec/windows.spec
             platform: Windows
             dist_path: dist/RunwaySidecar.exe
+            ext: zip
+          - os: ubuntu-latest
+            spec: sidecar_app/spec/linux.spec
+            platform: Linux
+            dist_path: dist/RunwaySidecar
+            ext: tar.gz
+          - os: ubuntu-latest
+            spec: sidecar_app/spec/linux-cli.spec
+            platform: Linux-CLI
+            dist_path: dist/runway-sidecar-cli
+            ext: tar.gz
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
       contents: write
     env:
-      ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-${{ needs.release-please.outputs.tag_name }}.zip
+      ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-${{ needs.release-please.outputs.tag_name }}.${{ matrix.ext }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -116,6 +128,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path "${{ matrix.dist_path }}" -DestinationPath "${{ env.ARTIFACT }}"
+
+      - name: Tar artifact (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf "${{ env.ARTIFACT }}" -C dist "$(basename '${{ matrix.dist_path }}')"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3

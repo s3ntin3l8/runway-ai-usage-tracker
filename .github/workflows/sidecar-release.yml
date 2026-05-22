@@ -24,6 +24,16 @@ jobs:
             artifact_name: Runway-Sidecar-Windows
             artifact_path: dist/RunwaySidecar.exe
             zip_name: Runway-Sidecar-Windows.zip
+          - os: ubuntu-latest
+            spec: sidecar_app/spec/linux.spec
+            artifact_name: Runway-Sidecar-Linux
+            artifact_path: dist/RunwaySidecar
+            zip_name: Runway-Sidecar-Linux.tar.gz
+          - os: ubuntu-latest
+            spec: sidecar_app/spec/linux-cli.spec
+            artifact_name: Runway-Sidecar-Linux-CLI
+            artifact_path: dist/runway-sidecar-cli
+            zip_name: Runway-Sidecar-Linux-CLI.tar.gz
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -56,6 +66,10 @@ jobs:
       - name: Create zip (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path "${{ matrix.artifact_path }}" -DestinationPath "${{ matrix.zip_name }}"
+
+      - name: Create tarball (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf "${{ matrix.zip_name }}" -C dist "$(basename '${{ matrix.artifact_path }}')"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3

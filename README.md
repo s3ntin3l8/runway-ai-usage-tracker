@@ -111,11 +111,16 @@ If you are running in Docker or a headless environment where browser scraping is
 
 *Note: For ChatGPT and Claude, we recommend using the Bearer token in the "API Key" field for the most reliable connection.*
 
-### Sidecar desktop app (macOS / Windows)
+### Sidecar binaries (macOS / Windows / Linux)
 
-Pre-built installers are attached to every [GitHub release](https://github.com/s3ntin3l8/ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`.
+Pre-built artifacts are attached to every [GitHub release](https://github.com/s3ntin3l8/ai-usage-tracker/releases):
 
-The binaries are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS's built-in malware gatekeeper will block the first launch.
+- `Runway-Sidecar-macOS-<version>.zip` — desktop tray app
+- `Runway-Sidecar-Windows-<version>.zip` — desktop tray app
+- `Runway-Sidecar-Linux-<version>.tar.gz` — desktop tray app (needs AppIndicator/GTK + DBus)
+- `Runway-Sidecar-Linux-CLI-<version>.tar.gz` — headless single-file binary for servers, Docker, and CI agents (no Python or GUI required)
+
+The desktop binaries are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS's built-in malware gatekeeper will block the first launch.
 
 **macOS** (Gatekeeper: *"Apple could not verify this app is free of malware"*):
 

@@ -1,12 +1,14 @@
 # Universal Sidecar Collector
 
-## Desktop App (macOS & Windows)
+## Desktop App (macOS, Windows, Linux)
 
 ### Download
 
 Download the latest release from the [GitHub Releases page](https://github.com/bjoernf73/runway/releases/latest):
 - **macOS**: `Runway-Sidecar-macOS.zip` → unzip → drag `Runway Sidecar.app` to `/Applications`
 - **Windows**: `Runway-Sidecar-Windows.zip` → unzip → run `RunwaySidecar.exe`
+- **Linux (desktop tray)**: `Runway-Sidecar-Linux.tar.gz` → `tar -xzf …` → run `./RunwaySidecar`. Requires a tray host (AppIndicator on GNOME/Unity, GTK on KDE/Xfce) and a DBus session. For headless servers / Docker, use the CLI binary below instead.
+- **Linux (headless CLI)**: `Runway-Sidecar-Linux-CLI.tar.gz` → `tar -xzf …` → run `./runway-sidecar-cli --daemon`. Single-file binary, no Python install needed, no GUI dependencies. Use this on servers, in Docker, and on CI agents.
 
 ### First Run
 
@@ -67,6 +69,11 @@ The sidecar checks for updates daily. When a newer version is available, the men
 > The sections below describe running the sidecar as a headless script or system daemon. This is the recommended approach on Linux and for server/Docker deployments.
 
 The **Runway Sidecar** is a lightweight, zero-dependency Python script that collects AI usage metrics from your host machine and pushes them to a Runway instance.
+
+You can run the same daemon two ways:
+
+1. **`scripts/sidecar.py`** — invoke the Python source directly. Best when you already have a Python toolchain checked out.
+2. **`runway-sidecar-cli`** — the precompiled single-file binary from `Runway-Sidecar-Linux-CLI.tar.gz`. Drop it into a slim container or a server with no Python install. Every flag below works against either entry point — substitute `./runway-sidecar-cli` for `python3 scripts/sidecar.py`.
 
 ## Quick Start
 
