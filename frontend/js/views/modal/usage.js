@@ -365,6 +365,44 @@ export function wireUsageSparkTabs(heatmapCells) {
 }
 
 /**
+ * Wire hover-tooltip to the throughput sparkline.
+ * Reads from module-level _sparkSeries / _sparkRange (updated by wireUsageSparkTabs).
+ * Call once after injecting usage pane HTML into the DOM.
+ */
+export function wireUsageSparkHover() {
+    const area = document.getElementById('pu-chart-area');
+    const tip  = document.getElementById('pu-spark-tip');
+    if (!area || !tip) return;
+
+    const getLabel = (i, range) => {
+        if (range === '24h') return `${String(i).padStart(2, '0')}:00`;
+        if (range === '7d') {
+            const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            return `${DAYS[Math.floor(i / 24)]} ${String(i % 24).padStart(2, '0')}:00`;
+        }
+        return `Day ${i + 1}`;
+    };
+
+    area.addEventListener('mousemove', e => {
+        if (!_sparkSeries.length) return;
+        const rect = area.getBoundingClientRect();
+        const xFrac = (e.clientX - rect.left) / rect.width;
+        const idx = Math.max(0, Math.min(_sparkSeries.length - 1, Math.round(xFrac * (_sparkSeries.length - 1))));
+        const val = _sparkSeries[idx];
+        const label = getLabel(idx, _sparkRange);
+        tip.innerHTML = `<span style="color:var(--ink-3)">${_esc(label)}</span>&nbsp;&nbsp;<b style="color:var(--accent)">${_esc(_fmtTick(val))}</b> tok`;
+        tip.hidden = false;
+        // Keep tooltip inside chart area
+        const tipW = tip.offsetWidth || 130;
+        let tx = e.clientX - rect.left + 12;
+        if (tx + tipW > rect.width - 4) tx = e.clientX - rect.left - tipW - 12;
+        tip.style.transform = `translate(${Math.max(0, tx)}px, 0)`;
+    });
+
+    area.addEventListener('mouseleave', () => { tip.hidden = true; });
+}
+
+/**
  * Wire hover-tooltip behavior to the hour-of-day heatmap.
  * Call after injecting usage pane HTML into the DOM.
  */
