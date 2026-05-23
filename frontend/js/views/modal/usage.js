@@ -78,6 +78,9 @@ function _buildSparkSvg(cells, range) {
 
 /** Build X-axis label strip HTML for the given time range. */
 function _buildXLabels(range) {
+    // 7d labels are Sun-first to match the underlying heatmap cell order
+    // (day_of_week=0 is Sun). The heatmap grid applies its own Mon-first reorder;
+    // the sparkline does not — so Sun-first labels are correct for this chart.
     const labels = range === '24h'
         ? ['00:00', '06:00', '12:00', '18:00', '24:00']
         : range === '7d'
