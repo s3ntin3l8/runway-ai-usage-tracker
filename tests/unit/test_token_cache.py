@@ -9,8 +9,10 @@ from app.services.token_cache import TokenCache
 
 def _make_id_token(payload: dict) -> str:
     """Build an unsigned JWT (header.payload.signature) — signature is not verified."""
+
     def b64(d):
         return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
     return f"{b64({'alg': 'none'})}.{b64(payload)}.sig"
 
 

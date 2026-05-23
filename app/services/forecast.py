@@ -62,8 +62,8 @@ MIN_BUCKETS_FOR_TREND = 4
 # → slope=0 → "stable" / "Won't exhaust", which is misleading because the next
 # 20% jump could happen any moment. Detect this shape and short-circuit to
 # a "low_resolution" status that suppresses the trend line.
-COARSE_STEP_PCT_THRESHOLD = 10.0   # min non-zero gap (pct) between distinct values
-MAX_UNIQUE_VALS_FOR_COARSE = 5     # at most this many distinct levels across the window
+COARSE_STEP_PCT_THRESHOLD = 10.0  # min non-zero gap (pct) between distinct values
+MAX_UNIQUE_VALS_FOR_COARSE = 5  # at most this many distinct levels across the window
 
 # A projection within this many percentage points of now_pct is reported as
 # "stable" rather than a real forecast. Covers rounded-series noise and
