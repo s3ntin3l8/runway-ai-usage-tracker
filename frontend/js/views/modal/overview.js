@@ -333,7 +333,7 @@ function _bucketTotalTokens(bucket) {
  * @param {Array} recentEvents - Array of usage event objects
  * @returns {string} HTML string
  */
-export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions) {
+export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions, quotaChartData) {
     const critical = entry.critical_gauge || {};
     const allCards = [critical, ...(entry.secondary_limits || [])].filter(Boolean);
     const isPayg = critical.is_unlimited || (!critical.limit_value && !critical.pct_used);
@@ -447,8 +447,12 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions) 
             <span class="tok">${_esc(s.tok)}</span>
         </div>`).join('') || '<div style="color:var(--ink-3);font-size:10px;">No model data yet</div>';
 
-    // Sparkline
-    const sparkHtml = _buildSparkSvg(heatmapCells, '24h');
+    // Quota sparkline — extract aggregate points for default range (24h)
+    const initialPoints = _extractOverviewPoints(quotaChartData);
+    const { svgHtml: sparkHtml, yTicks } = _buildQuotaSparkSvg(initialPoints);
+    // Update module-level hover state
+    _overviewPoints = initialPoints;
+    _overviewRange  = '24h';
 
     const { cardsHtml: sessionCardsHtml, meta: sessionsMeta } = _buildRecentSessions(recentSessions);
 
@@ -533,14 +537,23 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions) 
     <!-- SPARKLINE TABS -->
     <div class="m-spark" id="pm-spark-wrap">
         <div class="m-spark-head">
-            <h4>Usage history</h4>
+            <h4>Usage history <span class="meta" style="font-weight:500;font-size:9px;letter-spacing:.04em;color:var(--ink-3);margin-left:4px" id="pm-spark-unit">% used · 24h</span></h4>
             <span class="m-spark-tabs" id="pm-spark-tabs">
                 <button data-range="24h" class="on">24h</button>
                 <button data-range="7d">7d</button>
                 <button data-range="30d">30d</button>
             </span>
         </div>
-        ${sparkHtml}
+        <div class="m-spark-body">
+            <div class="m-spark-y-axis" id="pm-y-axis">${
+                yTicks.map(t => `<span style="top:${t.y}px">${_esc(t.label)}</span>`).join('')
+            }</div>
+            <div class="m-spark-chart-area" id="pm-chart-area">
+                ${sparkHtml}
+                <div class="m-spark-tip" id="pm-spark-tip" hidden></div>
+            </div>
+        </div>
+        ${_buildXLabelsFromPoints(initialPoints, '24h')}
     </div>
 
     <!-- RECENT SESSIONS -->
