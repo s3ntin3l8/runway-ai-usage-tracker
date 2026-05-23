@@ -7,7 +7,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
-from app.services.forecast import SnapshotCache, compute_forecast
+from app.services.forecast import SnapshotCache, _is_coarse_quantized, compute_forecast
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -471,3 +471,68 @@ def test_batch_cache_trimmed_to_current_window(db_session):
     assert result.slope is not None and result.slope > 0, (
         f"Expected positive slope, got {result.slope}"
     )
+
+
+# ── Coarse-quantized snapshot detection ───────────────────────────────────────
+
+
+def test_is_coarse_quantized_detects_20pct_steps():
+    """Antigravity-style 20% step reporting trips the coarse detector."""
+    assert _is_coarse_quantized([0.0, 0.0, 0.0, 20.0, 20.0, 40.0, 40.0, 60.0]) is True
+
+
+def test_is_coarse_quantized_rejects_smooth_data():
+    """A continuously-varying series has more than MAX_UNIQUE_VALS distinct values."""
+    assert _is_coarse_quantized([10.0, 12.0, 15.0, 18.0, 22.0, 28.0, 33.0]) is False
+
+
+def test_is_coarse_quantized_rejects_steep_monotonic_growth():
+    """Each value occurs once (no plateau) → it's a steep slope, not coarse reporting.
+
+    Without the plateau check this series — landing on 20/40/60/80 — would look
+    indistinguishable from Antigravity's quantized output.
+    """
+    assert _is_coarse_quantized([20.0, 40.0, 60.0, 80.0]) is False
+
+
+def test_is_coarse_quantized_rejects_too_few_samples():
+    """Below MIN_BUCKETS_FOR_TREND, return False — let insufficient_data path take over."""
+    assert _is_coarse_quantized([0.0, 20.0, 40.0]) is False
+
+
+def test_is_coarse_quantized_rejects_fine_step_data():
+    """Step size below threshold should not trigger (e.g. 1% increments)."""
+    assert _is_coarse_quantized([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) is False
+
+
+def test_is_coarse_quantized_handles_all_zeros():
+    """A flat-zero series has only one distinct value, no non-zero gap — return False."""
+    assert _is_coarse_quantized([0.0, 0.0, 0.0, 0.0, 0.0]) is False
+
+
+def test_forecast_marks_coarse_step_data_low_resolution(db_session):
+    """Antigravity-shaped snapshots → status 'low_resolution', no projected_limit_hit_at."""
+    now = datetime.now(UTC)
+    reset_at_dt = now + timedelta(days=5)
+    # 20% step pattern: long plateau at 60% with earlier jumps from 0/20/40.
+    pct_values = [0.0, 0.0, 20.0, 20.0, 40.0, 40.0, 60.0, 60.0, 60.0, 60.0]
+    hours = len(pct_values)
+    for i, pct in enumerate(pct_values):
+        _make_snapshot(
+            session=db_session,
+            ts=now - timedelta(hours=hours - i),
+            pct_used=pct,
+            reset_at=reset_at_dt,
+        )
+
+    card = _make_card(
+        used_value=600_000.0,
+        limit_value=1_000_000.0,
+        reset_at=reset_at_dt.isoformat(),
+    )
+    result = compute_forecast(card, db_session)
+
+    assert result is not None
+    assert result.status == "low_resolution", f"got status={result.status!r}"
+    assert result.projected_limit_hit_at is None
+    assert result.slope is None

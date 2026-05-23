@@ -4,6 +4,7 @@
 import { escapeHTML, escapeHTMLAttr } from '../utils/html.js';
 import { _formatTokenShort, formatHumanDelta, providerDisplayLabel } from './_shared.js';
 import { formatCost, formatCurrency } from '../utils/format.js';
+import { clusterPools, clusterModelLabel } from '../utils/quota.js';
 
 // Forecast lookup key — must match _forecastSeriesKey in dashboard.js.
 function _fcForecastKey(card) {
@@ -26,6 +27,7 @@ const _FC_STATUS_COLOR = {
     ok: 'var(--good)',
     stable: 'var(--good)',
     insufficient_data: 'var(--text-dim)',
+    low_resolution: 'var(--text-dim)',
 };
 
 export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
@@ -204,14 +206,30 @@ function _resetText(card) {
     return card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : '—';
 }
 
+/**
+ * Merge a cluster of same-quota cards into a single pool descriptor.
+ * Singletons pass through unchanged (cluster.length === 1).
+ */
+function _mergeCluster(cluster) {
+    const rep = cluster[0]; // representative card — all share the same quota state
+    const isMulti = cluster.length > 1;
+    const w = (rep.window_type || '').toLowerCase();
+    const wTitle = w ? w.charAt(0).toUpperCase() + w.slice(1) : 'Limit';
+    return {
+        card:  { ...rep, _clusterCards: cluster },
+        used:  _poolPct(rep),
+        glide: _glidePathPct(rep),
+        label: isMulti ? wTitle : _poolLabel(rep),
+        kind:  isMulti ? 'shared' : _poolKindAndScope(rep).kind,
+        scope: isMulti ? clusterModelLabel(cluster) : _poolKindAndScope(rep).scope,
+    };
+}
+
 function _fcPoolStack(quotaCards, forecastMap) {
-    const pools = quotaCards.map(card => ({
-        card,
-        used: _poolPct(card),
-        glide: _glidePathPct(card),
-        label: _poolLabel(card),
-        ...(_poolKindAndScope(card)),
-    })).sort((a, b) => b.used - a.used);
+    const clusters = clusterPools(quotaCards);
+    const pools = clusters
+        .map(cluster => _mergeCluster(cluster))
+        .sort((a, b) => b.used - a.used);
 
     const head = pools[0];
     const headStatus = _poolStatus(head.used);

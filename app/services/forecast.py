@@ -17,6 +17,7 @@ changes over time. Token-event data is not used here.
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from statistics import median
@@ -55,6 +56,14 @@ def _forecast_bucket_seconds(window_type: str) -> int:
 # Minimum number of distinct buckets before we trust a slope. Below this we
 # return insufficient_data; otherwise a single recent spike skews the fit.
 MIN_BUCKETS_FOR_TREND = 4
+
+# Snapshots quantized to coarse steps (e.g. Antigravity reports pct_used in
+# ~20% increments) make trend fitting unreliable: Theil-Sen sees long plateaus
+# → slope=0 → "stable" / "Won't exhaust", which is misleading because the next
+# 20% jump could happen any moment. Detect this shape and short-circuit to
+# a "low_resolution" status that suppresses the trend line.
+COARSE_STEP_PCT_THRESHOLD = 10.0   # min non-zero gap (pct) between distinct values
+MAX_UNIQUE_VALS_FOR_COARSE = 5     # at most this many distinct levels across the window
 
 # A projection within this many percentage points of now_pct is reported as
 # "stable" rather than a real forecast. Covers rounded-series noise and
@@ -104,6 +113,31 @@ class _Projection:
     used: float | None = None
     pct: float | None = None
     hit_at: str | None = None
+
+
+def _is_coarse_quantized(ys: Sequence[float]) -> bool:
+    """True when snapshots are step-quantized into coarse buckets.
+
+    All three conditions must hold:
+    - few distinct values across the window (≤ MAX_UNIQUE_VALS_FOR_COARSE),
+    - the smallest non-zero gap between sorted distinct values is ≥
+      COARSE_STEP_PCT_THRESHOLD (each level is a step, not a fine increment), and
+    - at least one consecutive plateau (zero adjacent delta) — distinguishes a
+      provider that reports {0, 20, 40, 60} as long plateaus from a steep
+      monotonic series that happens to land on those same four values.
+
+    Antigravity reports pct_used in 20% increments and snapshots hold the same
+    value for many buckets, hitting all three.
+    """
+    if len(ys) < MIN_BUCKETS_FOR_TREND:
+        return False
+    distinct = sorted({round(y, 1) for y in ys})
+    if len(distinct) > MAX_UNIQUE_VALS_FOR_COARSE:
+        return False
+    gaps = [b - a for a, b in zip(distinct, distinct[1:], strict=False) if b - a > 0.1]
+    if not gaps or min(gaps) < COARSE_STEP_PCT_THRESHOLD:
+        return False
+    return any(abs(b - a) < 0.1 for a, b in zip(ys, ys[1:], strict=False))
 
 
 def _fit_trend(xs: list[float], ys: list[float]) -> TrendFit | None:
@@ -264,6 +298,17 @@ def _build_forecast_entry(  # noqa: PLR0913
     """Apply the shared classification + clamp + hit-at pipeline."""
     series_payload = _build_series_payload(series_data, window_start) if include_series else None
     ys = series_data.ys
+
+    if _is_coarse_quantized(ys):
+        return _make_entry(
+            card=card,
+            status="low_resolution",
+            window_start=window_start,
+            samples_used=samples_used,
+            confidence=0.0,
+            now_state=now_state,
+            series=series_payload,
+        )
 
     if fit is None:
         return _make_entry(
@@ -573,6 +618,7 @@ def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastR
         "stable": 0,
         "exhausted": 0,
         "decelerating": 0,
+        "low_resolution": 0,
     }
 
     now = datetime.now(UTC)

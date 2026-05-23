@@ -1162,6 +1162,12 @@ header.top .icon-btn[aria-pressed="true"] {
     margin-bottom: 4px; letter-spacing: 0.04em;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.crit-card .who .quota {
+    font: 700 9px "B612 Mono", ui-monospace, monospace;
+    color: var(--card-accent); letter-spacing: 0.08em;
+    text-transform: uppercase; margin-bottom: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .crit-card .who .name {
     font-size: 17px; font-weight: 700; color: var(--text);
     margin-bottom: 12px; letter-spacing: -0.01em;
@@ -2486,6 +2492,8 @@ l-table td.num {
     font-size: 9.5px; font-weight: 500; color: var(--text-dim);
     letter-spacing: 0.06em; text-transform: uppercase;
     white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; flex: 1 1 auto;
 }
 .fc-pool-row .pbadge {
     font-size: 8.5px; font-weight: 700;
