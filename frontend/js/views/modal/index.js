@@ -97,7 +97,7 @@ async function _renderPane(tab) {
                     '30d': c30d.status === 'fulfilled' ? c30d.value : null,
                 };
             }
-            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions, _modalCache.quotaChart['24h']);
+            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.recentSessions, _modalCache.quotaChart['24h']);
             wireOverviewSparkTabs(_modalCache.quotaChart);
             wireOverviewSparkHover();
 

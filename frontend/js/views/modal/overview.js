@@ -250,10 +250,11 @@ function _buildXLabelsFromPoints(points, range) {
     if (!points || !points.length) {
         return `<div class="m-spark-x-axis" id="pm-x-axis"></div>`;
     }
-    const n = 5;
+    // Cap to actual point count to avoid duplicate labels when data is sparse
+    const n = Math.min(5, points.length);
     const labels = [];
     for (let i = 0; i < n; i++) {
-        const idx = Math.round((i / (n - 1)) * (points.length - 1));
+        const idx = n === 1 ? 0 : Math.round((i / (n - 1)) * (points.length - 1));
         const pt  = points[Math.min(idx, points.length - 1)];
         const d   = new Date(pt.ts);
         let label = '';
@@ -327,13 +328,13 @@ function _bucketTotalTokens(bucket) {
 /**
  * Build the Overview pane HTML string.
  *
- * @param {object} entry - Fleet entry from STATE.fleet
- * @param {object|null} cumData - Cumulative data row from STATE.cumulativeMap
- * @param {Array} heatmapCells - Flat array of 168 heatmap values (7 days × 24 hours)
- * @param {Array} recentEvents - Array of usage event objects
+ * @param {object} entry               - Fleet entry from STATE.fleet
+ * @param {object|null} cumData        - Cumulative data row from STATE.cumulativeMap
+ * @param {Array} recentSessions       - Array of recent session objects (up to 3)
+ * @param {object|null} quotaChartData - fetchHistoryChart() response for the 24h range (metric=percent)
  * @returns {string} HTML string
  */
-export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions, quotaChartData) {
+export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData) {
     const critical = entry.critical_gauge || {};
     const allCards = [critical, ...(entry.secondary_limits || [])].filter(Boolean);
     const isPayg = critical.is_unlimited || (!critical.limit_value && !critical.pct_used);
