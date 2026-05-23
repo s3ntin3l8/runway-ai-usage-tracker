@@ -571,25 +571,105 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentSessions, 
 }
 
 /**
- * Wire spark tab click → rebuild the sparkline SVG.
+ * Wire spark tab click → rebuild quota sparkline, y-axis labels, and x-axis.
+ * @param {Object} quotaChartByRange - map of range → fetchHistoryChart() response
+ *   e.g. { '24h': chartData, '7d': chartData, '30d': chartData }
  * Call after injecting overview pane HTML into the DOM.
  */
-export function wireOverviewSparkTabs(heatmapCells) {
+export function wireOverviewSparkTabs(quotaChartByRange) {
     const tabs = document.getElementById('pm-spark-tabs');
     if (!tabs) return;
     tabs.addEventListener('click', e => {
         const btn = e.target.closest('button');
         if (!btn) return;
         tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
-        const wrap = document.getElementById('pm-spark-wrap');
-        if (!wrap) return;
-        const oldSvg = wrap.querySelector('svg');
-        if (oldSvg) {
-            const newSvg = document.createElement('div');
-            newSvg.innerHTML = _buildSparkSvg(heatmapCells, btn.dataset.range);
-            const svgEl = newSvg.querySelector('svg');
-            if (svgEl) oldSvg.replaceWith(svgEl);
+
+        const range  = btn.dataset.range;
+        const data   = quotaChartByRange?.[range] || null;
+        const points = _extractOverviewPoints(data);
+        const { svgHtml, yTicks } = _buildQuotaSparkSvg(points);
+
+        // Update module-level hover state
+        _overviewPoints = points;
+        _overviewRange  = range;
+
+        // Swap SVG
+        const area = document.getElementById('pm-chart-area');
+        if (area) {
+            const oldSvg = area.querySelector('svg');
+            if (oldSvg) {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = svgHtml;
+                const svgEl = tmp.querySelector('svg');
+                if (svgEl) oldSvg.replaceWith(svgEl);
+            }
+        }
+
+        // Rebuild Y-axis labels
+        const yAxis = document.getElementById('pm-y-axis');
+        if (yAxis) {
+            yAxis.innerHTML = yTicks.map(t => `<span style="top:${t.y}px">${_esc(t.label)}</span>`).join('');
+        }
+
+        // Rebuild X-axis labels
+        const xOld = document.getElementById('pm-x-axis');
+        if (xOld) {
+            const tmp2 = document.createElement('div');
+            tmp2.innerHTML = _buildXLabelsFromPoints(points, range);
+            const xNew = tmp2.firstElementChild;
+            if (xNew) xOld.replaceWith(xNew);
+        }
+
+        // Update unit label
+        const unitEl = document.getElementById('pm-spark-unit');
+        if (unitEl) {
+            const unitMap = { '24h': '% used · 24h', '7d': '% used · 7d', '30d': '% used · 30d' };
+            unitEl.textContent = unitMap[range] || '% used';
         }
     });
+}
+
+/**
+ * Wire hover-tooltip to the overview quota sparkline.
+ * Reads from module-level _overviewPoints / _overviewRange (updated by wireOverviewSparkTabs).
+ * Call once after injecting overview pane HTML into the DOM.
+ */
+export function wireOverviewSparkHover() {
+    const area = document.getElementById('pm-chart-area');
+    const tip  = document.getElementById('pm-spark-tip');
+    if (!area || !tip) return;
+
+    area.addEventListener('mousemove', e => {
+        if (!_overviewPoints.length) return;
+        const rect  = area.getBoundingClientRect();
+        const xFrac = (e.clientX - rect.left) / rect.width;
+        const idx   = Math.max(0, Math.min(_overviewPoints.length - 1, Math.round(xFrac * (_overviewPoints.length - 1))));
+        const pt    = _overviewPoints[idx];
+        const pct   = pt?.pct_used != null ? pt.pct_used.toFixed(1) : '—';
+
+        // Format timestamp label
+        let tsLabel = '—';
+        if (pt?.ts) {
+            const d = new Date(pt.ts);
+            if (_overviewRange === '24h') {
+                tsLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+            } else if (_overviewRange === '7d') {
+                tsLabel = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+            } else {
+                tsLabel = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            }
+        }
+
+        tip.innerHTML = `<span style="color:var(--ink-3)">${_esc(tsLabel)}</span>&nbsp;&nbsp;<b style="color:var(--accent)">${_esc(pct)}%</b>`;
+        tip.hidden = false;
+
+        // Keep tooltip inside chart area
+        const tipW = tip.offsetWidth || 130;
+        let tx = e.clientX - rect.left + 12;
+        if (tx + tipW > rect.width - 4) tx = e.clientX - rect.left - tipW - 12;
+        tip.style.transform = `translate(${Math.max(0, tx)}px, 0)`;
+    });
+
+    area.addEventListener('mouseleave', () => { tip.hidden = true; });
 }
 
