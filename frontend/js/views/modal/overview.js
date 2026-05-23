@@ -180,47 +180,95 @@ function _scHue(id, idx) {
     return Math.abs(hash) % 360 || (idx * 47 + 60) % 360;
 }
 
+// Module-level state for the overview sparkline hover — updated on each tab switch.
+let _overviewPoints = [];
+let _overviewRange  = '24h';
+
 /**
- * Build the sparkline SVG from heatmap data.
- * Aggregates cell values into a series of the requested length.
+ * Extract the aggregate (model_id=null/''/"") series from a fetchHistoryChart response.
+ * Falls back to series[0] if no aggregate exists.
+ * @param {object|null} chartData - fetchHistoryChart() response
+ * @returns {Array<{ts: string, pct_used: number}>}
  */
-function _buildSparkSvg(cells, range) {
-    if (!cells || !cells.length) {
-        return '<svg id="pm-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none"><text x="360" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">No data</text></svg>';
+function _extractOverviewPoints(chartData) {
+    if (!chartData || !chartData.series || !chartData.series.length) return [];
+    const agg = chartData.series.find(s => !s.model_id || s.model_id === '') || chartData.series[0];
+    return agg?.points || [];
+}
+
+/**
+ * Build a quota-percentage sparkline SVG from points: [{ts, pct_used}].
+ * Y scale is fixed 0–100%. Grid lines at 75/50/25%.
+ * @returns {{ svgHtml: string, yTicks: Array<{y: string, label: string}> }}
+ */
+function _buildQuotaSparkSvg(points) {
+    if (!points || !points.length) {
+        return {
+            svgHtml: '<svg id="pm-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none"><text x="360" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">No data</text></svg>',
+            yTicks: [],
+        };
     }
-    // Aggregate cells into n buckets
-    const n = range === '24h' ? 24 : range === '7d' ? 7 * 24 : 30;
-    const step = Math.max(1, Math.floor(cells.length / n));
-    // Normalise cells: accept either raw numbers or {tokens:n} dicts from the heatmap API
-    const flatCells = cells.map(c => (c != null && typeof c === 'object' ? (c.tokens || 0) : (c || 0)));
-    const series = [];
-    for (let i = 0; i < n; i++) {
-        const slice = flatCells.slice(i * step, (i + 1) * step);
-        series.push(slice.reduce((a, v) => a + v, 0) / (slice.length || 1));
-    }
-    const maxVal = Math.max(...series, 1);
+
     const w = 720, h = 140;
-    const xStep = w / (series.length - 1 || 1);
-    const points = series.map((v, i) => {
-        const x = i * xStep;
-        const y = h - (v / maxVal) * (h - 12) - 6;
-        return { x, y };
-    });
-    const linePts = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-    const fillPts = `M 0 ${h} ${points.map(p => `L${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L${w} ${h} Z`;
-    return `<svg id="pm-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none">
+    // Fixed 0–100 % scale with 6px top and bottom margin
+    const toY = pct => h - (Math.max(0, Math.min(100, pct)) / 100) * (h - 12) - 6;
+
+    const xStep = w / (points.length - 1 || 1);
+    const svgPts = points.map((p, i) => ({ x: i * xStep, y: toY(p.pct_used || 0) }));
+    const linePts = svgPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    const fillPts = `M 0 ${h} ${svgPts.map(p => `L${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L${w} ${h} Z`;
+
+    // Grid at 75%, 50%, 25%
+    const yTicks = [75, 50, 25].map(pct => ({
+        y:     toY(pct).toFixed(1),
+        label: pct + '%',
+    }));
+
+    const svgHtml = `<svg id="pm-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none">
         <defs>
             <linearGradient id="pm-sg" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.30"/>
                 <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
             </linearGradient>
         </defs>
-        <line x1="0" y1="35"  x2="720" y2="35"  stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
-        <line x1="0" y1="70"  x2="720" y2="70"  stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
-        <line x1="0" y1="105" x2="720" y2="105" stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
+        ${yTicks.map(t => `<line x1="0" y1="${t.y}" x2="720" y2="${t.y}" stroke="var(--hairline-2)" stroke-dasharray="2 4"/>`).join('\n        ')}
         <path d="${fillPts}" fill="url(#pm-sg)"/>
         <path d="${linePts}" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
     </svg>`;
+
+    return { svgHtml, yTicks };
+}
+
+/**
+ * Build X-axis label strip HTML from the points array.
+ * Picks 5 evenly-spaced points and formats their timestamps by range.
+ * @param {Array<{ts: string, pct_used: number}>} points
+ * @param {string} range - '24h' | '7d' | '30d'
+ * @returns {string} HTML string
+ */
+function _buildXLabelsFromPoints(points, range) {
+    if (!points || !points.length) {
+        return `<div class="m-spark-x-axis" id="pm-x-axis"></div>`;
+    }
+    const n = 5;
+    const labels = [];
+    for (let i = 0; i < n; i++) {
+        const idx = Math.round((i / (n - 1)) * (points.length - 1));
+        const pt  = points[Math.min(idx, points.length - 1)];
+        const d   = new Date(pt.ts);
+        let label = '';
+        if (range === '24h') {
+            label = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        } else if (range === '7d') {
+            label = d.toLocaleDateString([], { weekday: 'short' });
+        } else {
+            label = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+        labels.push(label);
+    }
+    return `<div class="m-spark-x-axis" id="pm-x-axis">${
+        labels.map(l => `<span>${_esc(l)}</span>`).join('')
+    }</div>`;
 }
 
 /**
