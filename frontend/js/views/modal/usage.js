@@ -10,6 +10,7 @@
 import { formatLocalTime, getUserTz } from '../../utils/tz.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
+import { niceMax as _niceMax, fmtTick as _fmtTick } from '../../utils/chart-scale.js';
 
 function _fmtDuration(sec) {
     if (!sec || sec < 60) return '<1 min';
@@ -17,22 +18,6 @@ function _fmtDuration(sec) {
     const h = Math.floor(sec / 3600);
     const m = Math.round((sec % 3600) / 60);
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-/** Round v up to the nearest "nice" number (1/2/2.5/5/10 × 10^n). */
-function _niceMax(v) {
-    if (v <= 0) return 1;
-    const mag = Math.pow(10, Math.floor(Math.log10(v)));
-    const norm = v / mag;
-    const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
-    return nice * mag;
-}
-
-/** Format a tick label with 1 decimal on K/M only when needed. */
-function _fmtTick(v) {
-    if (v >= 1e6) return (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 1) + 'M';
-    if (v >= 1e3) return (v / 1e3).toFixed(v % 1e3 === 0 ? 0 : 1) + 'K';
-    return Math.round(v).toString();
 }
 
 /** Build a throughput sparkline SVG from heatmap cells. */
