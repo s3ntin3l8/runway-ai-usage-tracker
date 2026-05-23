@@ -20,11 +20,19 @@ function _fmtDuration(sec) {
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-/** Build a throughput sparkline SVG from heatmap cells. */
+/**
+ * Build a throughput sparkline SVG from heatmap cells.
+ * @returns {{ svgHtml: string, yTicks: Array<{y: string, label: string}>, series: number[] }}
+ */
 function _buildSparkSvg(cells, range) {
     if (!cells || !cells.length) {
-        return '<svg id="pu-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none"><text x="360" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">No data</text></svg>';
+        return {
+            svgHtml: '<svg id="pu-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none"><text x="360" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">No data</text></svg>',
+            yTicks: [],
+            series: [],
+        };
     }
+
     // Normalise cells: accept either raw numbers or {tokens:n} dicts from the heatmap API
     const flatCells = cells.map(c => (c != null && typeof c === 'object' ? (c.tokens || 0) : (c || 0)));
     const n = range === '24h' ? 24 : range === '7d' ? 7 * 24 : 30;
@@ -34,25 +42,38 @@ function _buildSparkSvg(cells, range) {
         const slice = flatCells.slice(i * step, (i + 1) * step);
         series.push(slice.reduce((a, v) => a + v, 0) / (slice.length || 1));
     }
-    const maxVal = Math.max(...series, 1);
+
+    const rawMax  = Math.max(...series, 1);
+    const niceMax = _niceMax(rawMax);
     const w = 720, h = 140;
     const xStep = w / (series.length - 1 || 1);
-    const points = series.map((v, i) => ({ x: i * xStep, y: h - (v / maxVal) * (h - 12) - 6 }));
+
+    // Map a data value to an SVG y coordinate (6px top margin, 6px bottom margin)
+    const toY = v => h - (v / niceMax) * (h - 12) - 6;
+
+    const points = series.map((v, i) => ({ x: i * xStep, y: toY(v) }));
     const linePts = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
     const fillPts = `M 0 ${h} ${points.map(p => `L${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L${w} ${h} Z`;
-    return `<svg id="pu-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none">
+
+    // Three grid lines at 25%, 50%, 75% of niceMax; labels use _fmtTick for precision
+    const yTicks = [0.75, 0.50, 0.25].map(frac => ({
+        y:     toY(niceMax * frac).toFixed(1),
+        label: _fmtTick(niceMax * frac),
+    }));
+
+    const svgHtml = `<svg id="pu-spark-svg" viewBox="0 0 720 140" preserveAspectRatio="none">
         <defs>
             <linearGradient id="pu-sg" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.30"/>
                 <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
             </linearGradient>
         </defs>
-        <line x1="0" y1="35"  x2="720" y2="35"  stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
-        <line x1="0" y1="70"  x2="720" y2="70"  stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
-        <line x1="0" y1="105" x2="720" y2="105" stroke="var(--hairline-2)" stroke-dasharray="2 4"/>
+        ${yTicks.map(t => `<line x1="0" y1="${t.y}" x2="720" y2="${t.y}" stroke="var(--hairline-2)" stroke-dasharray="2 4"/>`).join('\n        ')}
         <path d="${fillPts}" fill="url(#pu-sg)"/>
         <path d="${linePts}" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
     </svg>`;
+
+    return { svgHtml, yTicks, series };
 }
 
 /** Build heatmap cells HTML — 7 × 24 grid, Mon-first row order. */
@@ -197,7 +218,7 @@ export function buildUsagePane(entry, heatmapData, sessions) {
     const accentHue = 40; // amber default; could read from CSS variable but not critical
     const { gridHtml, peakStr, totalTokens } = _buildHeatGrid(rawCells, accentHue);
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const sparkHtml = _buildSparkSvg(rawCells, '24h');
+    const { svgHtml: sparkHtml, yTicks, series: sparkSeries } = _buildSparkSvg(rawCells, '24h');
 
     const tzLabel = getUserTz();
 
@@ -275,7 +296,8 @@ export function wireUsageSparkTabs(heatmapCells) {
         const oldSvg = wrap.querySelector('svg');
         if (oldSvg) {
             const tmp = document.createElement('div');
-            tmp.innerHTML = _buildSparkSvg(heatmapCells, btn.dataset.range);
+            const { svgHtml } = _buildSparkSvg(heatmapCells, btn.dataset.range);
+            tmp.innerHTML = svgHtml;
             const svgEl = tmp.querySelector('svg');
             if (svgEl) oldSvg.replaceWith(svgEl);
         }
