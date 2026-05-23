@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,21 @@ def upsert_latest_usage(  # noqa: PLR0915
 
     try:
         with session.begin_nested():
+            # When a card's window_type changes (e.g. Antigravity switching from
+            # "session" to "weekly" on cooldown), delete any stale rows for the same
+            # (provider, account, variant, model) that carry a different window_type.
+            # Because window_type is part of the unique key, an upsert would otherwise
+            # create a second row alongside the old one and both would persist forever.
+            session.exec(
+                delete(LatestUsage).where(
+                    LatestUsage.provider_id == card.provider_id,
+                    LatestUsage.account_id == canonical_account_id,
+                    LatestUsage.variant == variant,
+                    LatestUsage.model_id == model_id,
+                    LatestUsage.window_type != card.window_type,
+                )
+            )
+
             existing = session.exec(
                 select(LatestUsage).where(
                     LatestUsage.provider_id == card.provider_id,
