@@ -529,7 +529,7 @@ def test_ag_parse_lsp_response_model_card():
     assert card["limit_value"] == 100.0
     assert card["pct_used"] == pytest.approx(40.0, abs=0.1)
     assert card["unit_type"] == "percent"
-    assert card["window_type"] == "session"
+    assert card["window_type"] == "weekly"  # resetTime: 9999999999 (year 2286) → cooldown → weekly
     assert card["reset_at"] is not None
 
 
