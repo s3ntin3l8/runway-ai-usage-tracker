@@ -12,6 +12,10 @@ import { escapeHTML as _esc } from '../../utils/html.js';
 import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
 import { niceMax as _niceMax, fmtTick as _fmtTick } from '../../utils/chart-scale.js';
 
+// Module-level state for the sparkline hover — updated on each tab switch.
+let _sparkSeries = [];
+let _sparkRange  = '24h';
+
 function _fmtDuration(sec) {
     if (!sec || sec < 60) return '<1 min';
     if (sec < 3600) return `${Math.round(sec / 60)} min`;
@@ -233,7 +237,9 @@ export function buildUsagePane(entry, heatmapData, sessions) {
     const accentHue = 40; // amber default; could read from CSS variable but not critical
     const { gridHtml, peakStr, totalTokens } = _buildHeatGrid(rawCells, accentHue);
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const { svgHtml: sparkHtml, yTicks, series: sparkSeries } = _buildSparkSvg(rawCells, '24h');
+    const { svgHtml: sparkHtml, yTicks, series } = _buildSparkSvg(rawCells, '24h');
+    _sparkSeries = series;
+    _sparkRange  = '24h';
 
     const tzLabel = getUserTz();
 
@@ -283,20 +289,29 @@ export function buildUsagePane(entry, heatmapData, sessions) {
     <!-- THROUGHPUT SPARKLINE -->
     <div class="m-spark" id="pu-spark-wrap">
         <div class="m-spark-head">
-            <h4>Throughput</h4>
+            <h4>Throughput <span style="font-weight:500;font-size:9px;letter-spacing:.04em;color:var(--ink-3);margin-left:4px" id="pu-spark-unit">avg tok/hr</span></h4>
             <span class="m-spark-tabs" id="pu-spark-tabs">
                 <button data-range="24h" class="on">24h</button>
                 <button data-range="7d">7d</button>
                 <button data-range="30d">30d</button>
             </span>
         </div>
-        ${sparkHtml}
+        <div class="m-spark-body">
+            <div class="m-spark-y-axis" id="pu-y-axis">${
+                yTicks.map(t => `<span style="top:${t.y}px">${_esc(t.label)}</span>`).join('')
+            }</div>
+            <div class="m-spark-chart-area" id="pu-chart-area">
+                ${sparkHtml}
+                <div class="m-spark-tip" id="pu-spark-tip" hidden></div>
+            </div>
+        </div>
+        ${_buildXLabels('24h')}
     </div>
     `;
 }
 
 /**
- * Wire spark tab click → rebuild throughput sparkline.
+ * Wire spark tab click → rebuild throughput sparkline, y-axis labels, x-axis, and hover state.
  * Call after injecting usage pane HTML into the DOM.
  */
 export function wireUsageSparkTabs(heatmapCells) {
@@ -306,15 +321,45 @@ export function wireUsageSparkTabs(heatmapCells) {
         const btn = e.target.closest('button');
         if (!btn) return;
         tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
-        const wrap = document.getElementById('pu-spark-wrap');
-        if (!wrap) return;
-        const oldSvg = wrap.querySelector('svg');
-        if (oldSvg) {
-            const tmp = document.createElement('div');
-            const { svgHtml } = _buildSparkSvg(heatmapCells, btn.dataset.range);
-            tmp.innerHTML = svgHtml;
-            const svgEl = tmp.querySelector('svg');
-            if (svgEl) oldSvg.replaceWith(svgEl);
+
+        const range = btn.dataset.range;
+        const { svgHtml, yTicks, series } = _buildSparkSvg(heatmapCells, range);
+
+        // Update module-level hover state
+        _sparkSeries = series;
+        _sparkRange  = range;
+
+        // Swap SVG
+        const area = document.getElementById('pu-chart-area');
+        if (area) {
+            const oldSvg = area.querySelector('svg');
+            if (oldSvg) {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = svgHtml;
+                const svgEl = tmp.querySelector('svg');
+                if (svgEl) oldSvg.replaceWith(svgEl);
+            }
+        }
+
+        // Rebuild Y-axis labels
+        const yAxis = document.getElementById('pu-y-axis');
+        if (yAxis) {
+            yAxis.innerHTML = yTicks.map(t => `<span style="top:${t.y}px">${_esc(t.label)}</span>`).join('');
+        }
+
+        // Rebuild X-axis labels
+        const xOld = document.getElementById('pu-x-axis');
+        if (xOld) {
+            const tmp2 = document.createElement('div');
+            tmp2.innerHTML = _buildXLabels(range);
+            const xNew = tmp2.firstElementChild;
+            if (xNew) xOld.replaceWith(xNew);
+        }
+
+        // Update unit label
+        const unitEl = document.getElementById('pu-spark-unit');
+        if (unitEl) {
+            unitEl.textContent = range === '24h' ? 'avg tok/hr' : range === '7d' ? 'tok/hr by day' : 'avg tok/day';
         }
     });
 }
