@@ -15,7 +15,7 @@ import { providerDisplayLabel } from '../../components.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
 import { buildForecastPane, wireForecastPane, disposeTrajectoryCharts } from './forecast.js';
-import { buildUsagePane, wireUsageSparkTabs, wireUsageHeatmapTooltip } from './usage.js';
+import { buildUsagePane, wireUsageSparkTabs, wireUsageHeatmapTooltip, wireUsageSparkHover } from './usage.js';
 import { buildCostPane, wireCostPane } from './cost.js';
 import { buildDebugPane } from './debug.js';
 
@@ -113,6 +113,7 @@ async function _renderPane(tab) {
             body.innerHTML = buildUsagePane(entry, { cells: _modalCache.heatmap }, _modalCache.sessions);
             wireUsageSparkTabs(_modalCache.heatmap);
             wireUsageHeatmapTooltip();
+            wireUsageSparkHover();
 
         } else if (tab === 'cost') {
             body.innerHTML = buildCostPane(entry, cumData);
