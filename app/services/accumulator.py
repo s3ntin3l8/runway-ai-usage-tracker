@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, col, delete, select
 
 logger = logging.getLogger(__name__)
 
@@ -231,13 +231,17 @@ def upsert_latest_usage(  # noqa: PLR0915
             # and a "weekly" card (seven_day) at the aggregate level. Deleting across
             # window_types for those would silently destroy valid data.
             if model_id:
+                # `col()` is needed here (vs the bare `Model.field == x` style
+                # used elsewhere) because SQLModel's `delete().where()` stubs
+                # don't track the column-comparison return type the way
+                # `select().where()` does — mypy sees a `bool` otherwise.
                 session.exec(
                     delete(LatestUsage).where(
-                        LatestUsage.provider_id == card.provider_id,
-                        LatestUsage.account_id == canonical_account_id,
-                        LatestUsage.variant == variant,
-                        LatestUsage.model_id == model_id,
-                        LatestUsage.window_type != card.window_type,
+                        col(LatestUsage.provider_id) == card.provider_id,
+                        col(LatestUsage.account_id) == canonical_account_id,
+                        col(LatestUsage.variant) == variant,
+                        col(LatestUsage.model_id) == model_id,
+                        col(LatestUsage.window_type) != card.window_type,
                     )
                 )
 
