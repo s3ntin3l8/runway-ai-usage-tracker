@@ -219,9 +219,12 @@ function _forecastKeyForCard(c) {
     ].join('||');
 }
 
-/** Format a numeric value compactly with a unit suffix matching the card. */
+/** Format a numeric value compactly with a unit suffix matching the card.
+ *  `percent` cards (e.g. Claude session cookie endpoint) carry pct values directly
+ *  in used_value/limit_value — render with a '%' suffix, no magnitude formatting. */
 function _formatUnit(val, unitType) {
     if (val == null || isNaN(val)) return '—';
+    if (unitType === 'percent') return `${Math.round(val)}%`;
     const unit = unitType === 'messages' ? 'msg'
         : unitType === 'currency' ? '$'
         : unitType === 'requests' ? 'req'
@@ -233,38 +236,80 @@ function _formatUnit(val, unitType) {
     return unit === '$' ? `$${fmt(val)}` : `${fmt(val)} ${unit}`;
 }
 
-/** Format "Lands in Xh" / "Xd Yh" / "<1h" / "LANDED".
+/** Format "Exhausts in Xh" / "Xd Yh" / "<1h" / "EXHAUSTED".
  *  When iso is absent, falls back to a label derived from forecast status. */
-function _formatLandsIn(iso, status) {
+function _formatExhaustsIn(iso, status) {
     if (!iso) {
         if (status === 'stable' || status === 'ok')  return "Won't exhaust";
         if (status === 'decelerating')               return 'Decelerating';
-        if (status === 'exhausted')                  return 'LANDED';
+        if (status === 'exhausted')                  return 'EXHAUSTED';
         if (status === 'low_resolution')             return 'Trend unavailable';
-        return 'Lands in —';   // insufficient_data or unknown
+        return 'Exhausts in —';   // insufficient_data or unknown
     }
     const ms = new Date(iso) - Date.now();
-    if (isNaN(ms)) return 'Lands in —';
-    if (ms <= 0) return 'LANDED';
+    if (isNaN(ms)) return 'Exhausts in —';
+    if (ms <= 0) return 'EXHAUSTED';
     const totalMin = Math.round(ms / 60000);
-    if (totalMin < 60) return totalMin < 5 ? 'Lands in <1h' : `Lands in ${totalMin}m`;
+    if (totalMin < 60) return totalMin < 5 ? 'Exhausts in <1h' : `Exhausts in ${totalMin}m`;
     const hours = Math.floor(totalMin / 60);
     const days  = Math.floor(hours / 24);
     if (days >= 1) {
         const remH = hours - days * 24;
-        return remH > 0 ? `Lands in ${days}d ${remH}h` : `Lands in ${days}d`;
+        return remH > 0 ? `Exhausts in ${days}d ${remH}h` : `Exhausts in ${days}d`;
     }
-    return `Lands in ${hours}h`;
+    return `Exhausts in ${hours}h`;
 }
 
 /** Build the sparkline SVG layer for a crit card from 24h history points.
- *  Returns '' (no <svg>) when there's nothing meaningful to draw. */
-function _buildCritSpark(points) {
+ *  Returns '' (no <svg>) when there's nothing meaningful to draw.
+ *
+ *  When `fe.window_start` and `fe.reset_at` are supplied AND every point carries
+ *  a `ts`, samples are positioned along the x-axis by real time within the window
+ *  — gaps between polls become visible gaps in the curve, and the inline FAST
+ *  marker lands at the correct wall-clock position. Falls back to uniform index
+ *  spacing if either bound is missing or any timestamp fails to parse.
+ *
+ *  When a forecast projection is available, a dashed segment is appended from the
+ *  last observed point to the projected endpoint, mirroring the trajectory chart
+ *  in the detail modal / history view (see `forecast-trajectory.js:79–91`). */
+function _buildCritSpark(points, fe) {
     if (!points || points.length < 3) return '';
-    const vals = points.map(p => Number(p.value ?? p.pct_used ?? 0)).filter(v => !isNaN(v));
-    if (vals.length < 3) return '';
-    let min = Math.min(...vals);
-    let max = Math.max(...vals);
+    // Pair each value with its timestamp so the time/value arrays stay aligned
+    // when NaN values are dropped.
+    const samples = points
+        .map(p => ({ v: Number(p.value ?? p.pct_used ?? 0), t: p.ts ? new Date(p.ts).getTime() : NaN }))
+        .filter(s => !isNaN(s.v));
+    if (samples.length < 3) return '';
+    const vals = samples.map(s => s.v);
+
+    const wsMs = fe?.window_start ? new Date(fe.window_start).getTime() : NaN;
+    const weMs = fe?.reset_at     ? new Date(fe.reset_at).getTime()     : NaN;
+    const useTime = !isNaN(wsMs) && !isNaN(weMs) && weMs > wsMs && samples.every(s => !isNaN(s.t));
+
+    // Resolve the projection endpoint the same way the trajectory chart does:
+    // → if forecast projects hitting 100%, target is (hit_at, 100)
+    // → else target is (reset_at, projected_pct)
+    // Only meaningful when we're time-scaling the x-axis.
+    const lastT = samples[samples.length - 1].t;
+    let projX_ms = null, projY_pct = null;
+    if (useTime && fe) {
+        if (fe.projected_limit_hit_at) {
+            const t = new Date(fe.projected_limit_hit_at).getTime();
+            if (!isNaN(t) && t > lastT) {
+                projX_ms = Math.min(t, weMs);  // cap inside the window for x scaling
+                projY_pct = 100;
+            }
+        } else if (fe.projected_pct != null && weMs > lastT) {
+            projX_ms = weMs;
+            projY_pct = Math.min(100, Math.max(0, fe.projected_pct));
+        }
+    }
+
+    // Include the projection target in the y-range so the dashed segment fits the
+    // chart instead of clipping above the top edge.
+    const valsForRange = projY_pct != null ? [...vals, projY_pct] : vals;
+    let min = Math.min(...valsForRange);
+    let max = Math.max(...valsForRange);
     if (max - min < 0.5) {
         // Flat or nearly-flat: expand range so the line has a home in the chart.
         // Anchor to the last value (current usage) and bracket ±5%.
@@ -274,17 +319,30 @@ function _buildCritSpark(points) {
     }
     if (max <= min) return '';   // safety guard for degenerate data (e.g. all zeros)
     const W = 600, H = 200;
-    const xs = vals.map((_, i) => (i / (vals.length - 1)) * W);
-    const ys = vals.map(v => H - ((v - min) / (max - min)) * H);
-    const linePath = xs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${ys[i].toFixed(1)}`).join(' ');
-    const areaPath = `${linePath} L ${W} ${H} L 0 ${H} Z`;
 
-    // Inflection: find steepest segment (max -Δy / Δx since higher value = lower y)
-    let inflIdx = vals.length - 2;
+    const toX = ms => Math.max(0, Math.min(W, ((ms - wsMs) / (weMs - wsMs)) * W));
+    const toY = pct => H - ((pct - min) / (max - min)) * H;
+
+    const xs = useTime ? samples.map(s => toX(s.t))
+                       : samples.map((_, i) => (i / (samples.length - 1)) * W);
+    const ys = vals.map(toY);
+    const linePath = xs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${ys[i].toFixed(1)}`).join(' ');
+    // Close the area under the observed curve only — not under the dashed
+    // forecast and not into the unobserved future/past edges of the chart.
+    const firstX = xs[0], lastX = xs[xs.length - 1];
+    const areaPath = `${linePath} L ${lastX.toFixed(1)} ${H} L ${firstX.toFixed(1)} ${H} Z`;
+
+    // Inflection: steepest segment by visual pixel slope (Δpct / Δt). With uniform
+    // index xs this is equivalent to max Δpct (the prior behavior); with time-based
+    // xs it correctly weights short bursts over long flat plateaus.
+    let inflIdx = vals.length - 1;
     let maxSlope = -Infinity;
     for (let i = 1; i < vals.length; i++) {
-        const dy = ys[i - 1] - ys[i];          // positive = rising
-        if (dy > maxSlope) { maxSlope = dy; inflIdx = i; }
+        const dy = ys[i - 1] - ys[i];          // positive = rising in pct
+        const dx = xs[i] - xs[i - 1];
+        if (dx <= 0) continue;
+        const slope = dy / dx;
+        if (slope > maxSlope) { maxSlope = slope; inflIdx = i; }
     }
     const inflX = xs[inflIdx];
     const inflFrac = inflX / W;
@@ -292,10 +350,17 @@ function _buildCritSpark(points) {
     const nowX = xs[xs.length - 1];
     const nowY = ys[ys.length - 1];
 
+    // Dashed projection segment from now → projected endpoint, matching the
+    // forecast-trajectory dashed style (dasharray + 0.5 opacity, inherits stroke).
+    const projPath = (projX_ms != null && projY_pct != null)
+        ? `<path class="line proj" d="M ${nowX.toFixed(1)} ${nowY.toFixed(1)} L ${toX(projX_ms).toFixed(1)} ${toY(projY_pct).toFixed(1)}" stroke-dasharray="4 3" opacity="0.5" fill="none" />`
+        : '';
+
     return `
         <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
             <path class="area" d="${areaPath}" />
             <path class="line" d="${linePath}" />
+            ${projPath}
             <line class="infl" x1="${inflX.toFixed(1)}" y1="0" x2="${inflX.toFixed(1)}" y2="${H}" />
             <circle class="now-ring" cx="${nowX.toFixed(1)}" cy="${nowY.toFixed(1)}" r="5" />
             <circle class="now-dot"  cx="${nowX.toFixed(1)}" cy="${nowY.toFixed(1)}" r="3" />
@@ -387,7 +452,7 @@ function _renderCritCard(slotEl, entry, forecastMap, historyByKey, isPrimary) {
         metaParts.push(`<b>${nominalMult.toFixed(1)}×</b> nominal`);
     }
 
-    const sparkHTML = _buildCritSpark(historyByKey?.get(fKey));
+    const sparkHTML = _buildCritSpark(historyByKey?.get(fKey), fe);
 
     slotEl.hidden = false;
     slotEl.className = `glass crit-card ${accentCls}`;
@@ -402,7 +467,7 @@ function _renderCritCard(slotEl, entry, forecastMap, historyByKey, isPrimary) {
             <div class="who">
                 <div class="prov">${escapeHTML(providerDisplayLabel(c.provider_id || ''))} · ${escapeHTML(c.account_label || c.account_id || '')}</div>
                 <div class="quota">${escapeHTML(_critQuotaLabelFromEntry(entry))}</div>
-                <div class="name">${escapeHTML(_formatLandsIn(fe?.projected_limit_hit_at, fe?.status))}</div>
+                <div class="name">${escapeHTML(_formatExhaustsIn(fe?.projected_limit_hit_at, fe?.status))}</div>
                 <div class="when"><b>${escapeHTML(_formatUnit(used, c.unit_type))}</b> · <b>${escapeHTML(_formatUnit(left, c.unit_type))}</b> left</div>
                 ${nominalMult != null ? `<div class="pace">at current pace · <b>${nominalMult.toFixed(1)}× nominal</b></div>` : ''}
             </div>
