@@ -67,9 +67,7 @@ class ChatGPTWebMixin:
             effective_account_id = self.account_id or account_id
             if effective_account_id:
                 asyncio.create_task(
-                    token_cache.update_account_metadata(
-                        "chatgpt", effective_account_id, name=email
-                    )
+                    token_cache.update_account_metadata("chatgpt", effective_account_id, name=email)
                 )
 
         primary = data.get("rate_limit", {}).get("primary_window", {})
