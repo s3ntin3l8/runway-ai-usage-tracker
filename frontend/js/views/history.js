@@ -413,7 +413,12 @@ async function renderHistoryChart() {
     if (historyState.metric === 'percent' && historyState.windowFilter !== 'all') {
         try {
             const fd = await fetchForecast({ window_type: historyState.windowFilter });
-            projectionEntries = fd.forecasts || [];
+            // Filter to visible providers only — a hidden provider's reset_at must not
+            // extend the X-axis or anchor other series' forecast horizons.
+            const activeForForecast = historyState.activeProviders;
+            projectionEntries = (fd.forecasts || []).filter(e =>
+                !activeForForecast || activeForForecast.has(e.provider_id)
+            );
         } catch (err) {
             console.warn('[history] forecast fetch for overlay failed:', err?.message);
         }

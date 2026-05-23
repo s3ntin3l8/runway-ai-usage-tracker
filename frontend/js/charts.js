@@ -407,11 +407,10 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
                 const targetPct = Math.min(100, fe.projected_pct);
 
-                // Anchor the dashed projection at the literal end of the solid line — the
-                // last historical bucket's *value*, not the forecast's regressed now_pct —
-                // so the two segments meet without a vertical jump. The line then ramps
-                // straight to targetPct at the reset, using the anchor's epoch as the
-                // interpolation origin so the whole projection is one diagonal.
+                // Build historicalNulls: all null except:
+                //   • the last sampled bucket (visual continuity with the solid line)
+                //   • the nowBucket bridge point, if present in historical data
+                //     (makes recent spikes visible at the forecast anchor)
                 const historicalNulls = bucketEpochs.map(() => null);
                 let lastHistIdx = -1;
                 let lastHistValue = null;
@@ -426,33 +425,72 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                         }
                     }
                 }
-                const anchorPct = lastHistValue != null ? lastHistValue : (fe.now_pct ?? 0);
+                // Visual continuity: touch the solid line's endpoint.
                 if (lastHistIdx >= 0) {
-                    historicalNulls[lastHistIdx] = anchorPct;
+                    historicalNulls[lastHistIdx] = lastHistValue;
+                }
+                // Anchor: prefer the current API-reported value over the last bucket so
+                // any spike that arrived after the most recent sample is reflected.
+                const anchorPct = fe.now_pct ?? lastHistValue ?? 0;
+                // Bridge point: if the NOW bucket exists in historical data, stamp it with
+                // anchorPct so the dashed line explicitly shows the current reading before
+                // projecting forward.
+                const nowBucketIdx = bucketEpochs.indexOf(nowBucket);
+                if (nowBucketIdx >= 0) {
+                    historicalNulls[nowBucketIdx] = anchorPct;
                 }
 
-                const anchorEpoch = lastHistIdx >= 0 ? bucketEpochs[lastHistIdx] : nowBucket;
-                const targetEpoch = futureEpochs[futureEpochs.length - 1];
-                const span = Math.max(1, targetEpoch - anchorEpoch);
+                // Per-series horizon: cap each series at its own reset_at rather than the
+                // global maxResetSec. This prevents a monthly provider from stretching a
+                // 5-hour session forecast across days.
+                const seriesResetSec = fe.reset_at
+                    ? Math.floor(new Date(fe.reset_at).getTime() / 1000)
+                    : maxResetSec;
+                const anchorEpoch = nowBucket;
+                const span = Math.max(1, seriesResetSec - anchorEpoch);
 
                 const futureData = futureEpochs.map(ep => {
+                    if (ep > seriesResetSec) return null;  // blank past own reset
                     const frac = (ep - anchorEpoch) / span;
                     return parseFloat((anchorPct + (targetPct - anchorPct) * frac).toFixed(2));
                 });
 
+                const lowConfidence = fe.samples_used < 3;
+                const projOpacity = lowConfidence ? 0.35 : 0.7;
                 const projSeries = {
                     name: key + ' · projected',
                     type: 'line',
                     smooth: true,
                     symbol: 'none',
-                    lineStyle: { width: 1.5, type: 'dashed', color: style.color, opacity: 0.7 },
-                    itemStyle: { color: style.color, opacity: 0.7 },
+                    lineStyle: { width: 1.5, type: 'dashed', color: style.color, opacity: projOpacity },
+                    itemStyle: { color: style.color, opacity: projOpacity },
                     areaStyle: null,
                     data: [...historicalNulls, ...futureData],
                     connectNulls: true,
                     legendHoverLink: false,
                     z: 3,
-                    tooltip: { show: false },
+                    tooltip: lowConfidence ? {
+                        show: true,
+                        formatter: p =>
+                            `${p.seriesName}<br/>⚠ Low confidence — only ${fe.samples_used} sample(s)<br/>${p.value != null ? p.value + '%' : '—'}`,
+                    } : { show: false },
+                    endLabel: {
+                        show: true,
+                        distance: 4,
+                        fontSize: 10,
+                        color: style.color,
+                        opacity: 0.75,
+                        formatter: () => {
+                            if (fe.projected_limit_hit_at) {
+                                const t = new Date(fe.projected_limit_hit_at)
+                                    .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                return `~100% ${t}`;
+                            }
+                            const t = new Date(fe.reset_at)
+                                .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            return `↺ ${t}`;
+                        },
+                    },
                 };
 
                 if (!nowMarkAdded) {
