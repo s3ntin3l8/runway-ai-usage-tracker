@@ -366,11 +366,26 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         const nowSec = Math.floor(Date.now() / 1000);
         const nowBucket = nowSec - (nowSec % bucketSeconds);
 
-        const maxResetSec = projectionEntries.reduce((m, e) => {
+        let maxResetSec = projectionEntries.reduce((m, e) => {
             if (!e.reset_at) return m;
             const s = Math.floor(new Date(e.reset_at).getTime() / 1000);
             return Math.max(m, s - (s % bucketSeconds));
         }, nowBucket);
+
+        // Hard cap: a session window is ≤5 h by definition, daily ≤24 h, etc.
+        // Stale or mis-classified entries can't drag the X-axis into multi-day
+        // territory for the wrong view type — this guard is purely defensive.
+        const _WINDOW_MAX_FUTURE_SEC = {
+            session: 6 * 3600,          // 5 h max + 1 h buffer
+            daily:   26 * 3600,         // 24 h + 2 h buffer
+            weekly:  8 * 24 * 3600,     // 7 d + 1 d buffer
+            monthly: 32 * 24 * 3600,    // 30 d + 2 d buffer
+            rolling: 32 * 24 * 3600,
+        };
+        const _windowCap = _WINDOW_MAX_FUTURE_SEC[windowFilter];
+        if (_windowCap) {
+            maxResetSec = Math.min(maxResetSec, nowBucket + _windowCap);
+        }
 
         const futureEpochs = [];
         for (let ep = nowBucket + bucketSeconds; ep <= maxResetSec; ep += bucketSeconds) {
