@@ -1607,7 +1607,7 @@ class GenericCollector:
                                         "used_value": round(100.0 - rem, 4),
                                         "limit_value": 100.0,
                                         "unit_type": "percent",
-                                        "window_type": "session",
+                                        "window_type": _infer_antigravity_window_type(reset_at),
                                         "reset_at": reset_at.isoformat() if reset_at else None,
                                         "metadata": {
                                             "name": m_name,
@@ -1882,6 +1882,27 @@ def _ag_probe_lsp(port: int, csrf: str, icon: str) -> list[dict[str, Any]]:
         return []
 
 
+def _infer_antigravity_window_type(
+    reset_dt: datetime.datetime | None,
+) -> str:
+    """Return the canonical window_type for an Antigravity quota card.
+
+    Antigravity has two distinct quota states:
+    - Normal rolling 5-hour session  → "session"
+    - 7-day cooldown after overuse   → "weekly"
+
+    12 hours is the decision boundary: a fresh 5-hour session can never
+    exceed 5 h of remaining time, so anything ≤ 12 h is a session window.
+    Anything longer means the model is in the cooldown period.
+    """
+    if reset_dt is None:
+        return "session"  # credits / unknown — preserve existing behaviour
+    remaining = reset_dt - datetime.datetime.now(tz=datetime.UTC)
+    if remaining <= datetime.timedelta(hours=12):
+        return "session"
+    return "weekly"
+
+
 def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, Any]]:
     """Parse LSP GetUserStatus response into metric cards."""
     results = []
@@ -1945,7 +1966,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "limit_value": 100.0,
                 "pct_used": round(100.0 - rem_pct, 4),
                 "unit_type": "percent",
-                "window_type": "session",
+                "window_type": _infer_antigravity_window_type(reset_dt),
                 "reset_at": reset_at,
             }
         )
