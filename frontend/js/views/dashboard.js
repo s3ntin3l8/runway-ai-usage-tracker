@@ -4,6 +4,7 @@ import { STATE } from '../state.js';
 import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFleetCommanderCard } from '../components.js';
 import { cardKey, applyOrder } from '../layout.js';
 import { escapeHTML } from '../utils/html.js';
+import { clusterPools, clusterModelLabel } from '../utils/quota.js';
 import { openProviderModal, initProviderModal } from './modal/index.js';
 
 let loadDataGeneration = 0;
@@ -232,9 +233,16 @@ function _formatUnit(val, unitType) {
     return unit === '$' ? `$${fmt(val)}` : `${fmt(val)} ${unit}`;
 }
 
-/** Format "Lands in Xh" / "Xd Yh" / "<1h" / "LANDED". */
-function _formatLandsIn(iso) {
-    if (!iso) return 'Lands in —';
+/** Format "Lands in Xh" / "Xd Yh" / "<1h" / "LANDED".
+ *  When iso is absent, falls back to a label derived from forecast status. */
+function _formatLandsIn(iso, status) {
+    if (!iso) {
+        if (status === 'stable' || status === 'ok')  return "Won't exhaust";
+        if (status === 'decelerating')               return 'Decelerating';
+        if (status === 'exhausted')                  return 'LANDED';
+        if (status === 'low_resolution')             return 'Trend unavailable';
+        return 'Lands in —';   // insufficient_data or unknown
+    }
     const ms = new Date(iso) - Date.now();
     if (isNaN(ms)) return 'Lands in —';
     if (ms <= 0) return 'LANDED';
@@ -255,9 +263,16 @@ function _buildCritSpark(points) {
     if (!points || points.length < 3) return '';
     const vals = points.map(p => Number(p.value ?? p.pct_used ?? 0)).filter(v => !isNaN(v));
     if (vals.length < 3) return '';
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    if (max - min < 0.5) return '';   // essentially flat — skip
+    let min = Math.min(...vals);
+    let max = Math.max(...vals);
+    if (max - min < 0.5) {
+        // Flat or nearly-flat: expand range so the line has a home in the chart.
+        // Anchor to the last value (current usage) and bracket ±5%.
+        const anchor = vals[vals.length - 1];
+        min = Math.max(0,   anchor - 5);
+        max = Math.min(100, anchor + 5);
+    }
+    if (max <= min) return '';   // safety guard for degenerate data (e.g. all zeros)
     const W = 600, H = 200;
     const xs = vals.map((_, i) => (i / (vals.length - 1)) * W);
     const ys = vals.map(v => H - ((v - min) / (max - min)) * H);
@@ -289,6 +304,25 @@ function _buildCritSpark(points) {
         <div class="spark-annot infl-lbl" style="left:${(inflFrac * 100).toFixed(0)}%; top: 2px;"><b>FAST</b></div>`;
 }
 
+/**
+ * Build a compact quota identity label for the hero card.
+ * Shows WINDOW_TYPE · model names (merged when multiple models share the same physical quota).
+ * @param {object} entry  — fleet entry with critical_gauge + secondary_limits
+ * @returns {string}
+ */
+function _critQuotaLabelFromEntry(entry) {
+    const c = entry.critical_gauge;
+    if (!c) return '';
+    const allCards = [c, ...(entry.secondary_limits || [])];
+    const clusters = clusterPools(allCards);
+    const critCluster = clusters.find(cl => cl.includes(c)) || [c];
+    const winLabel   = c.window_type ? c.window_type.toUpperCase() : '';
+    const modelLabel = critCluster.length > 1
+        ? clusterModelLabel(critCluster)
+        : (c.service_name || c.model_id || '');
+    return [winLabel, modelLabel].filter(Boolean).join(' · ');
+}
+
 /** Pull a computable pct_used out of a card-shaped object, or null if missing. */
 function _pctUsedOf(c) {
     if (!c) return null;
@@ -298,7 +332,13 @@ function _pctUsedOf(c) {
 }
 
 /** Render a single most-constrained card into the given slot element.
- *  The card's accent color (crit/warn/good) follows the entry's health. */
+ *  The card's accent color (crit/warn/good) follows the entry's health.
+ * @param {HTMLElement} slotEl
+ * @param {object}      entry        — fleet entry (critical_gauge + secondary_limits)
+ * @param {Map}         forecastMap
+ * @param {Map}         historyByKey
+ * @param {boolean}     isPrimary
+ */
 function _renderCritCard(slotEl, entry, forecastMap, historyByKey, isPrimary) {
     const c = entry.critical_gauge;
     const pct_used  = _pctUsedOf(c);
@@ -361,7 +401,8 @@ function _renderCritCard(slotEl, entry, forecastMap, historyByKey, isPrimary) {
             <div class="pct">${remaining != null ? remaining : '—'}<em>%</em></div>
             <div class="who">
                 <div class="prov">${escapeHTML(providerDisplayLabel(c.provider_id || ''))} · ${escapeHTML(c.account_label || c.account_id || '')}</div>
-                <div class="name">${escapeHTML(_formatLandsIn(fe?.projected_limit_hit_at))}</div>
+                <div class="quota">${escapeHTML(_critQuotaLabelFromEntry(entry))}</div>
+                <div class="name">${escapeHTML(_formatLandsIn(fe?.projected_limit_hit_at, fe?.status))}</div>
                 <div class="when"><b>${escapeHTML(_formatUnit(used, c.unit_type))}</b> · <b>${escapeHTML(_formatUnit(left, c.unit_type))}</b> left</div>
                 ${nominalMult != null ? `<div class="pace">at current pace · <b>${nominalMult.toFixed(1)}× nominal</b></div>` : ''}
             </div>
@@ -539,7 +580,13 @@ async function _fetchCritHistory(fleet, forecastMap) {
             window_start: fe.window_start,
             window_end:   fe.reset_at,
         });
-        return { key: _forecastKeyForCard(c), points: data?.fill_series || [] };
+        // Prefer the per-model series when the card has a specific model_id;
+        // fall back to the aggregate fill_series (first-model or default rollup).
+        const modelId = c.model_id || '';
+        const points = (modelId && data?.fill_by_model?.find(m => m.model_id === modelId)?.series)
+            || data?.fill_series
+            || [];
+        return { key: _forecastKeyForCard(c), points };
     }));
 
     const map = new Map();
