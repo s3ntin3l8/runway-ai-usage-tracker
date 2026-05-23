@@ -125,13 +125,19 @@ export function buildDebugPane(entry, tokenHealth) {
         );
         if (myTokens.length) {
             tokenHealthHtml = myTokens.map(t => {
-                const expiresIn = t.expires_at ? _fmtUntil(t.expires_at) + ' remaining' : 'unknown expiry';
+                const expiresIn = !t.expires_at
+                    ? 'unknown expiry'
+                    : new Date(t.expires_at) <= new Date()
+                        ? 'expired'
+                        : _fmtUntil(t.expires_at) + ' remaining';
                 const issueDate = formatLocalDateTime(t.issued_at, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                 const scopes = t.scopes ? t.scopes.join(' · ') : '—';
-                const healthCls = t.health === 'good' ? 'good' : t.health === 'warn' ? 'warn' : '';
+                const healthCls = t.status === 'valid' ? 'good'
+                    : (t.status === 'expiring' || t.status === 'expired') ? 'warn'
+                    : '';
                 return `<div class="m-event ${healthCls}">
                     <span class="t">expires</span><span class="dot"></span>
-                    <span class="msg">OAuth bearer · ${_esc(expiresIn)}</span>
+                    <span class="msg">${expiresIn === 'expired' ? 'expired' : 'OAuth bearer · ' + _esc(expiresIn)}</span>
                     <span class="v">${t.auto_rotate ? 'auto-rotate on' : ''}</span>
                 </div>
                 <div class="m-event">

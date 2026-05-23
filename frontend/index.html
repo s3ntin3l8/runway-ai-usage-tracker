@@ -91,6 +91,16 @@
                     &gt; Connection refused.
                 </div>
 
+                <!-- Token health alert banner -->
+                <div id="token-alert-banner" class="hidden p-3 border mono text-sm mb-4"
+                     style="align-items:center;justify-content:space-between;gap:12px;">
+                    <span id="token-alert-msg"></span>
+                    <span style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+                        <a id="token-alert-link" href="#" style="text-decoration:underline;white-space:nowrap;">→ Token Settings</a>
+                        <button id="token-alert-dismiss" style="opacity:0.6;cursor:pointer;background:none;border:none;font:inherit;color:inherit;padding:0;line-height:1;">✕</button>
+                    </span>
+                </div>
+
                 <!-- Hero v4: fleet strip + 1-2 critical cards + aggregate -->
                 <div class="hero">
                     <div class="glass fleet-strip">

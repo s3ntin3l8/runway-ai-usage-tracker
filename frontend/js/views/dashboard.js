@@ -1,5 +1,5 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchHistoryChart, fetchHistoryWindowDetail, fetchUsageFleet, fetchCumulative } from '../api.js';
+import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchHistoryChart, fetchHistoryWindowDetail, fetchUsageFleet, fetchCumulative, fetchTokenHealth } from '../api.js';
 import { STATE } from '../state.js';
 import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFleetCommanderCard } from '../components.js';
 import { cardKey, applyOrder } from '../layout.js';
@@ -8,6 +8,64 @@ import { openProviderModal, initProviderModal } from './modal/index.js';
 
 let loadDataGeneration = 0;
 let _searchQuery = '';
+
+/**
+ * Show a banner on the dashboard when any OAuth/API tokens are expired or
+ * expiring soon. Severity: red for expired, amber for expiring-only.
+ * The banner is dismissible per page-load (no persistence needed — it will
+ * reappear on the next dashboard load if tokens are still unhealthy).
+ */
+function renderTokenAlerts(tokenHealthResult) {
+    const banner  = document.getElementById('token-alert-banner');
+    const msg     = document.getElementById('token-alert-msg');
+    const link    = document.getElementById('token-alert-link');
+    const dismiss = document.getElementById('token-alert-dismiss');
+    if (!banner || !msg) return;
+
+    // Silently skip when the fetch failed — don't block dashboard render
+    if (!tokenHealthResult || tokenHealthResult.status !== 'fulfilled') return;
+
+    const tokens   = tokenHealthResult.value?.tokens ?? [];
+    const expired  = tokens.filter(t => t.status === 'expired');
+    const expiring = tokens.filter(t => t.status === 'expiring');
+    if (!expired.length && !expiring.length) { banner.classList.add('hidden'); return; }
+
+    const isErr = expired.length > 0;
+    const color = isErr ? 'var(--crit)' : 'var(--warn)';
+
+    // Build message: "> chatgpt · expired  ·  gemini · expiring soon"
+    const fmt = t => t.provider + (t.account_label ? ` (${t.account_label})` : '');
+    const parts = [
+        ...expired.map(t  => `${fmt(t)} · expired`),
+        ...expiring.map(t => `${fmt(t)} · expiring soon`),
+    ];
+    msg.textContent = '> ' + parts.join('  ·  ');
+
+    // Apply severity-appropriate colour
+    banner.style.background  = `color-mix(in srgb,${color} 8%,transparent)`;
+    banner.style.borderColor = `color-mix(in srgb,${color} 30%,transparent)`;
+    banner.style.color       = color;
+    banner.style.display     = 'flex';
+    banner.classList.remove('hidden');
+
+    if (link) {
+        link.style.color = color;
+        link.onclick = (e) => {
+            e.preventDefault();
+            // Navigate to Settings and open the Tokens tab
+            if (typeof window.navigateTo === 'function') window.navigateTo('settings');
+            // Attempt to activate the tokens tab after the view mounts
+            setTimeout(() => {
+                const tab = document.querySelector('[data-settings-tab="tokens"]');
+                if (tab) tab.click();
+            }, 150);
+        };
+    }
+
+    if (dismiss) {
+        dismiss.onclick = () => banner.classList.add('hidden');
+    }
+}
 
 function _forecastSeriesKey(entry) {
     return [
@@ -686,11 +744,12 @@ export async function loadDashboard() {
     if (errorBanner) errorBanner.classList.add('hidden');
 
     try {
-        const [limitsResult, forecastResult, fleetResult, cumulativeResult] = await Promise.allSettled([
+        const [limitsResult, forecastResult, fleetResult, cumulativeResult, tokenHealthResult] = await Promise.allSettled([
             fetchLimits(),
             fetchForecast(),
             fetchUsageFleet(),
             fetchCumulative(),
+            fetchTokenHealth(),
         ]);
 
         if (myGeneration !== loadDataGeneration) return;
@@ -730,6 +789,7 @@ export async function loadDashboard() {
         renderConstrainedHero(STATE.fleet || [], STATE.forecastMap, new Map());
         renderFilterBar(STATE.data);
         renderProviderSections(STATE.data);
+        renderTokenAlerts(tokenHealthResult);
         window._lastFetchTime = Date.now();
 
         // Fire-and-forget: fetch 24h history for the top 1-2 crits, then re-render
