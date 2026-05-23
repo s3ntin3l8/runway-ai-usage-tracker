@@ -265,3 +265,87 @@ def test_evict_orphan_error_rows_noop_when_clean(session: Session):
 
     deleted = evict_orphan_error_rows(session)
     assert deleted == 0
+
+
+# ── Cross-window-type delete guard tests ──────────────────────────────────────
+
+
+def _make_card(
+    provider_id: str = "anthropic",
+    account_id: str = "alice@example.com",
+    window_type: str = "session",
+    model_id: str | None = None,
+    variant: str | None = None,
+) -> dict:
+    """Minimal valid LimitCard for cross-window-type tests."""
+    return {
+        "service_name": provider_id.capitalize(),
+        "icon": "🤖",
+        "unit": "%",
+        "unit_type": "percent",
+        "pct_used": 40.0,
+        "used_value": 40.0,
+        "limit_value": 100.0,
+        "health": "good",
+        "remaining": "60%",
+        "detail": "",
+        "pace": "normal",
+        "reset_in": "3h",
+        "window_type": window_type,
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "account_label": account_id,
+        "data_source": "api",
+        "input_source": "server",
+        "sidecar_id": "local",
+        **({"model_id": model_id} if model_id is not None else {}),
+        **({"variant": variant} if variant is not None else {}),
+    }
+
+
+def test_aggregate_cards_different_window_types_coexist(session: Session):
+    """Aggregate cards (model_id='') with different window_types must NOT delete each other.
+
+    Anthropic emits both a 'session' card (five_hour window) and a 'weekly' card
+    (seven_day window) — both at the aggregate level with empty model_id. Upserting
+    the weekly card must not delete the session card.
+    """
+    # Seed: Anthropic session aggregate
+    upsert_latest_usage(session, _make_card(window_type="session"))
+    session.commit()
+
+    # Upsert the weekly aggregate — must NOT delete the session row
+    upsert_latest_usage(session, _make_card(window_type="weekly"))
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    window_types = {r.window_type for r in rows}
+    assert window_types == {"session", "weekly"}, (
+        f"Expected both session and weekly rows to coexist; found: {window_types}"
+    )
+
+
+def test_model_specific_conflicting_window_type_is_deleted(session: Session):
+    """Model-specific cards (model_id != '') must delete a stale same-model row with a
+    different window_type.
+
+    Antigravity emits 'session' cards normally and 'weekly' during cooldown for the
+    same model_id. Upserting a weekly card for that model must delete the stale session row.
+    """
+    model = "Claude Opus 4.6 (Thinking)"
+
+    # Seed: stale session row (pre-cooldown)
+    upsert_latest_usage(
+        session, _make_card(provider_id="antigravity", window_type="session", model_id=model)
+    )
+    session.commit()
+
+    # Cooldown kicks in: weekly card for the same model arrives
+    upsert_latest_usage(
+        session, _make_card(provider_id="antigravity", window_type="weekly", model_id=model)
+    )
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    assert len(rows) == 1, f"Expected only the weekly row; found {len(rows)} rows"
+    assert rows[0].window_type == "weekly"

@@ -219,20 +219,27 @@ def upsert_latest_usage(  # noqa: PLR0915
 
     try:
         with session.begin_nested():
-            # When a card's window_type changes (e.g. Antigravity switching from
-            # "session" to "weekly" on cooldown), delete any stale rows for the same
-            # (provider, account, variant, model) that carry a different window_type.
-            # Because window_type is part of the unique key, an upsert would otherwise
-            # create a second row alongside the old one and both would persist forever.
-            session.exec(
-                delete(LatestUsage).where(
-                    LatestUsage.provider_id == card.provider_id,
-                    LatestUsage.account_id == canonical_account_id,
-                    LatestUsage.variant == variant,
-                    LatestUsage.model_id == model_id,
-                    LatestUsage.window_type != card.window_type,
+            # When a model-specific card's window_type changes (e.g. Antigravity
+            # switching from "session" to "weekly" on cooldown), delete any stale rows
+            # for the same (provider, account, variant, model) that carry a different
+            # window_type. Because window_type is part of the unique key, an upsert
+            # would otherwise create a second row alongside the old one indefinitely.
+            #
+            # Guard: only fire for model-specific cards (model_id != ""). Aggregate
+            # cards (model_id == "") can legitimately have multiple window_types for
+            # the same provider — e.g. Anthropic emits both a "session" card (five_hour)
+            # and a "weekly" card (seven_day) at the aggregate level. Deleting across
+            # window_types for those would silently destroy valid data.
+            if model_id:
+                session.exec(
+                    delete(LatestUsage).where(
+                        LatestUsage.provider_id == card.provider_id,
+                        LatestUsage.account_id == canonical_account_id,
+                        LatestUsage.variant == variant,
+                        LatestUsage.model_id == model_id,
+                        LatestUsage.window_type != card.window_type,
+                    )
                 )
-            )
 
             existing = session.exec(
                 select(LatestUsage).where(
