@@ -1917,19 +1917,15 @@ def _infer_antigravity_window_type(
 ) -> str:
     """Return the canonical window_type for an Antigravity quota card.
 
-    Antigravity has two distinct quota states:
-    - Normal rolling 5-hour session  → "session"
-    - 7-day cooldown after overuse   → "weekly"
-
-    12 hours is the decision boundary: a fresh 5-hour session can never
-    exceed 5 h of remaining time, so anything ≤ 12 h is a session window.
-    Anything longer means the model is in the cooldown period.
+    Antigravity has two underlying quota states — a rolling 5-hour session and
+    a 7-day cooldown that engages after the session is exhausted — but they
+    share the same physical pool. Classifying them differently splits the
+    quota_snapshots time series at the session→cooldown transition, breaking
+    history continuity on the dashboard. Always return "weekly" so a single
+    series persists across both phases; the actual cooldown delta is still
+    carried by `reset_at`, which is what the UI labels off of.
     """
-    if reset_dt is None:
-        return "session"  # credits / unknown — preserve existing behaviour
-    remaining = reset_dt - datetime.datetime.now(tz=datetime.UTC)
-    if remaining <= datetime.timedelta(hours=12):
-        return "session"
+    del reset_dt
     return "weekly"
 
 
