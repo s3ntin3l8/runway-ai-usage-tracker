@@ -633,6 +633,62 @@ def test_ag_parse_lsp_response_falls_back_to_label_for_placeholder_model():
     assert cards[2]["model_id"] == "claude-sonnet-4-5"  # real id passed through
 
 
+def test_ag_parse_lsp_response_treats_null_remaining_with_future_reset_as_exhausted():
+    """Antigravity drops remainingFraction on exhaustion; future resetTime means 100% used."""
+    mod = _load_sidecar_module()
+    future_ts = int(time.time()) + 3600  # 1h ahead
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "Gemini 3.1 Pro (High)",
+                        "modelOrAlias": {"model": "MODEL_PLACEHOLDER_M16"},
+                        "quotaInfo": {"resetTime": future_ts},  # no remainingFraction
+                    },
+                ]
+            },
+            "userTier": {"availableCredits": []},
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["model_id"] == "Gemini 3.1 Pro (High)"
+    assert card["pct_used"] == 100.0
+    assert card["used_value"] == 100.0
+    assert card["limit_value"] == 100.0
+    assert card["unit_type"] == "percent"
+    assert card["remaining"] == "0.0%"
+
+
+def test_ag_parse_lsp_response_skips_null_remaining_with_no_reset():
+    """No remainingFraction and no future reset = genuinely uninformative, skip."""
+    mod = _load_sidecar_module()
+    past_ts = int(time.time()) - 3600  # 1h ago
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {"label": "No reset", "quotaInfo": {}},
+                    {"label": "Past reset", "quotaInfo": {"resetTime": past_ts}},
+                ]
+            },
+            "userTier": {"availableCredits": []},
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert cards == []
+
+
 def test_ag_parse_lsp_response_marks_local_sidecar_origin():
     """LSP cards must carry data_source='local' and input_source='sidecar'."""
     mod = _load_sidecar_module()

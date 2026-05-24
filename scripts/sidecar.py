@@ -1944,8 +1944,29 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
     for cfg in user_status.get("cascadeModelConfigData", {}).get("clientModelConfigs", []):
         quota = cfg.get("quotaInfo", {})
         rem_frac = quota.get("remainingFraction")
+        # resetTime can be either a Unix timestamp (int/float) or an ISO 8601
+        # string like "2026-05-09T13:03:17Z" — the LSP has returned both.
+        reset_ts = quota.get("resetTime")
+        reset_dt = None
+        if reset_ts is not None:
+            try:
+                reset_dt = datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
+            except (TypeError, ValueError):
+                try:
+                    reset_dt = datetime.datetime.fromisoformat(str(reset_ts).replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    reset_dt = None
         if rem_frac is None:
-            continue
+            # Antigravity drops remainingFraction once a model is exhausted; the
+            # only remaining signal is a future resetTime. Treat that as 100%
+            # used until reset — matches what Antigravity's own UI shows. Skip
+            # if there isn't even a forward-looking reset, since that's
+            # genuinely uninformative.
+            if reset_dt is None or reset_dt <= datetime.datetime.now(tz=datetime.UTC):
+                continue
+            rem_pct = 0.0
+        else:
+            rem_pct = float(rem_frac) * 100
         label = cfg.get("label", "Model")
         # Antigravity's LSP returns modelOrAlias either as a string
         # (e.g. "MODEL_PLACEHOLDER_M36", "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
@@ -1962,19 +1983,6 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         if not candidate or str(candidate).startswith("MODEL_"):
             candidate = None
         model_id = candidate or label
-        rem_pct = float(rem_frac) * 100
-        # resetTime can be either a Unix timestamp (int/float) or an ISO 8601
-        # string like "2026-05-09T13:03:17Z" — the LSP has returned both.
-        reset_ts = quota.get("resetTime")
-        reset_dt = None
-        if reset_ts is not None:
-            try:
-                reset_dt = datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
-            except (TypeError, ValueError):
-                try:
-                    reset_dt = datetime.datetime.fromisoformat(str(reset_ts).replace("Z", "+00:00"))
-                except (TypeError, ValueError):
-                    reset_dt = None
         reset_at = reset_dt.isoformat() if reset_dt else None
         w_type = _infer_antigravity_window_type(reset_dt)
         # Per-model cards from one LSP response share a physical quota; pool_id
