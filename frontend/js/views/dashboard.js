@@ -5,6 +5,7 @@ import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFle
 import { cardKey, applyOrder } from '../layout.js';
 import { escapeHTML } from '../utils/html.js';
 import { clusterPools, clusterModelLabel } from '../utils/quota.js';
+import { formatHumanDelta } from '../components/_shared.js';
 import { openProviderModal, initProviderModal } from './modal/index.js';
 
 let loadDataGeneration = 0;
@@ -454,6 +455,15 @@ function _renderCritCard(slotEl, entry, forecastMap, historyByKey, isPrimary) {
 
     const sparkHTML = _buildCritSpark(historyByKey?.get(fKey), fe);
 
+    // When the quota is fully drained, the forecast/exhaustion line is meaningless —
+    // surface the reset time instead so the card answers "when can I use this again?"
+    const isExhausted = pct_used != null && pct_used >= 100;
+    const exhaustLine = isExhausted
+        ? (c.reset_at
+            ? `EXHAUSTED · resets in ${formatHumanDelta(new Date(c.reset_at))}`
+            : 'EXHAUSTED')
+        : _formatExhaustsIn(fe?.projected_limit_hit_at, fe?.status);
+
     slotEl.hidden = false;
     slotEl.className = `glass crit-card ${accentCls}`;
     slotEl.innerHTML = `
@@ -467,7 +477,7 @@ function _renderCritCard(slotEl, entry, forecastMap, historyByKey, isPrimary) {
             <div class="who">
                 <div class="prov">${escapeHTML(providerDisplayLabel(c.provider_id || ''))} · ${escapeHTML(c.account_label || c.account_id || '')}</div>
                 <div class="quota">${escapeHTML(_critQuotaLabelFromEntry(entry))}</div>
-                <div class="name">${escapeHTML(_formatExhaustsIn(fe?.projected_limit_hit_at, fe?.status))}</div>
+                <div class="name">${escapeHTML(exhaustLine)}</div>
                 <div class="when"><b>${escapeHTML(_formatUnit(used, c.unit_type))}</b> · <b>${escapeHTML(_formatUnit(left, c.unit_type))}</b> left</div>
                 ${nominalMult != null ? `<div class="pace">at current pace · <b>${nominalMult.toFixed(1)}× nominal</b></div>` : ''}
             </div>
