@@ -217,6 +217,35 @@ def test_query_snapshots_window_type_filter(session):
     assert all_["total"] == 2
 
 
+def test_query_snapshots_provider_ids_filter(session):
+    """`provider_ids` accepts a list and filters via SQL IN, so the row count
+    matches the visible rows even with multiple providers selected. Regression
+    for sparse pages when the table filtered client-side after server pagination."""
+    now = datetime.now(UTC)
+    for pid in ("anthropic", "openai", "google"):
+        session.add(
+            QuotaSnapshot(
+                provider_id=pid,
+                account_id="user@example.com",
+                window_type="weekly",
+                model_id="",
+                ts=now,
+                pct_used=20.0,
+            )
+        )
+    session.commit()
+
+    none_filter = query_snapshots(session, days=1, limit=10)
+    single = query_snapshots(session, days=1, provider_ids=["anthropic"], limit=10)
+    pair = query_snapshots(session, days=1, provider_ids=["anthropic", "openai"], limit=10)
+
+    assert none_filter["total"] == 3
+    assert single["total"] == 1
+    assert {r["provider_id"] for r in single["rows"]} == {"anthropic"}
+    assert pair["total"] == 2
+    assert {r["provider_id"] for r in pair["rows"]} == {"anthropic", "openai"}
+
+
 def test_query_snapshots_hides_zero_pct_from_count_and_rows(session):
     """Zero-pct buckets are hidden in both the page rows and the total count,
     so pagination stays accurate (no empty late pages). Regression for the

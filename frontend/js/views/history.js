@@ -177,10 +177,19 @@ export function setHistoryProvidersNone() {
 // ---------------------------------------------------------------------------
 
 async function fetchHistorySnapshots() {
+    const active = historyState.activeProviders;
+    // Empty selection → render an empty table without round-tripping the server
+    // (and dodge the invalid empty IN-clause case).
+    if (active && active.size === 0) {
+        return { rows: [], total: 0, page: historyState.page, limit: 50 };
+    }
     const params = new URLSearchParams({ days: historyState.days, page: historyState.page, limit: 50 });
-    // Never filter by provider at API level — snapshots cache must contain all providers
-    // so pill toggles can filter the table client-side without refetching (mirrors the
-    // chart fetch behaviour in fetchHistoryChart).
+    // Server filters via SQL IN so pagination matches the filtered set
+    // (avoids sparse pages from client-side filtering). Sort the joined IDs
+    // so cache keys are deterministic across selection orders.
+    if (active && active.size > 0) {
+        params.set('provider_id', [...active].sort().join(','));
+    }
     if (historyState.windowFilter !== 'all')
         params.set('window_type', historyState.windowFilter);
     const r = await fetch(`/api/v1/usage/history/snapshots?${params}`);
@@ -447,13 +456,11 @@ function renderSnapshotTable() {
     const cache = historyState._windowsCache;
     if (!cache) { container.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
 
-    // Server already filters zero-pct rows (see query_snapshots). Provider
-    // filtering happens client-side so the cache slot stays provider-agnostic
-    // and pill toggles react instantly without a refetch.
+    // Server already filters by provider (see fetchHistorySnapshots) and by
+    // zero-pct rows (see query_snapshots), so `cache.total` matches the visible
+    // count and the pager stays accurate.
     const rows = cache.rows || [];
-    const active = historyState.activeProviders;
-    const filteredRows = active ? rows.filter(r => active.has(r.provider_id)) : rows;
-    if (!filteredRows.length) {
+    if (!rows.length) {
         container.innerHTML = '<p class="ht-empty">No data for selected range.</p>';
         return;
     }
@@ -465,7 +472,7 @@ function renderSnapshotTable() {
         return String(n);
     }
     const seenSeries = new Set();
-    const rowsHtml = filteredRows.map(r => {
+    const rowsHtml = rows.map(r => {
         const seriesKey = `${r.provider_id}|${r.account_id}|${r.window_type}|${r.model_id}`;
         const isLatest = !seenSeries.has(seriesKey);
         seenSeries.add(seriesKey);
@@ -495,10 +502,7 @@ function renderSnapshotTable() {
     if (metaEl) {
         const rangeLabel = { 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' }[historyState.days]
             ?? `${historyState.days}d`;
-        const countLabel = active
-            ? `${filteredRows.length} of ${cache.total} snapshots`
-            : `${cache.total} snapshots`;
-        metaEl.textContent = `${countLabel} · ${rangeLabel} · page ${cache.page}`;
+        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}`;
     }
 
     container.innerHTML = `
@@ -590,16 +594,22 @@ export async function loadHistoryView({ forceFetch = false } = {}) {
         historyState.activeProviders = new Set([f.value]);
     }
 
-    // Both fetches deliberately omit provider_id (see fetchHistoryChart and
-    // fetchHistorySnapshots) so cache slots stay provider-agnostic and pill
-    // toggles filter client-side without refetching.
+    // The chart fetch is provider-agnostic so the sparkline strip can render
+    // every pill (chart filters client-side). Snapshots use server-side
+    // filtering so each provider subset gets its own cache slot — without
+    // this, switching between subsets would serve stale data.
+    const activeProvidersKey = historyState.activeProviders
+        ? [...historyState.activeProviders].sort().join(',') || 'none'
+        : '*';
     const chartKey = _cacheKey({
         metric: historyState.metric,
         windowFilter: historyState.windowFilter,
+        providers: '*',
     });
     const snapKey = _cacheKey({
         metric: historyState.metric,
         windowFilter: historyState.windowFilter,
+        providers: activeProvidersKey,
     });
     const days = historyState.days;
 

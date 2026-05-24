@@ -5,7 +5,7 @@ See app/services/queries/__init__.py for the public surface.
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlmodel import Session, select
 
 from app.core.date_utils import parse_iso8601_utc
@@ -388,6 +388,11 @@ def _build_window_stats_for_rows(
 # delta with LAG. LAG ignores gaps — the delta on bucket N is computed against
 # the previous *existing* bucket for that series, not the previous calendar
 # bucket. This matches the prior Python behavior (it iterated existing rows).
+# `provider_ids` is an expanding bind param so a single SQL string can serve
+# both the "no filter" path (has_provider_filter=0, IN clause short-circuited)
+# and the "filter to N providers" path (has_provider_filter=1, IN matches the
+# bound list). COUNT and PAGE must use identical filter clauses — drift here
+# causes the pager total to mismatch the visible rows.
 _SNAPSHOTS_COUNT_SQL = text(
     # Counts only buckets whose latest snapshot has a non-zero pct_used (NULL
     # is preserved so "unknown %" rows still surface). This matches the rows
@@ -405,14 +410,14 @@ _SNAPSHOTS_COUNT_SQL = text(
             ) AS rn
         FROM quota_snapshots
         WHERE ts >= :since
-          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (:has_provider_filter = 0 OR provider_id IN :provider_ids)
           AND (:account_id  IS NULL OR account_id  = :account_id)
           AND (:window_type IS NULL OR window_type = :window_type)
     )
     SELECT COUNT(*) AS n FROM bucketed
     WHERE rn = 1 AND (pct_used IS NULL OR pct_used > 0)
     """
-)
+).bindparams(bindparam("provider_ids", expanding=True))
 
 _CHART_PERCENT_SQL = text(
     # Bucket aggregate is MAX(pct_used), not the latest sample in the bucket.
@@ -449,7 +454,7 @@ _SNAPSHOTS_PAGE_SQL = text(
             ) AS rn
         FROM quota_snapshots
         WHERE ts >= :since
-          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (:has_provider_filter = 0 OR provider_id IN :provider_ids)
           AND (:account_id  IS NULL OR account_id  = :account_id)
           AND (:window_type IS NULL OR window_type = :window_type)
     ),
@@ -483,13 +488,13 @@ _SNAPSHOTS_PAGE_SQL = text(
     ORDER BY ts DESC
     LIMIT :limit OFFSET :offset
     """
-)
+).bindparams(bindparam("provider_ids", expanding=True))
 
 
 def query_snapshots(
     session: Session,
     *,
-    provider_id: str | None = None,
+    provider_ids: list[str] | None = None,
     account_id: str | None = None,
     window_type: str | None = None,
     days: float = 7.0,
@@ -508,9 +513,14 @@ def query_snapshots(
     now_naive = datetime.now(UTC).replace(tzinfo=None)
     bucket_seconds = _bucket_seconds_for(days)
     wt_param = window_type if window_type and window_type != "all" else None
+    # Expanding bindparam doesn't accept empty lists. When no filter is active
+    # we bind a dummy value and short-circuit via has_provider_filter=0.
+    has_provider_filter = 1 if provider_ids else 0
+    pids_param = list(provider_ids) if provider_ids else [""]
     params = {
         "since": since,
-        "provider_id": provider_id,
+        "has_provider_filter": has_provider_filter,
+        "provider_ids": pids_param,
         "account_id": account_id,
         "window_type": wt_param,
         "bucket_seconds": bucket_seconds,

@@ -475,10 +475,18 @@ async def get_history_snapshots(
     limit: int = Query(default=50, ge=1, le=500),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Flat paginated snapshot rows with per-series delta, newest first."""
+    """Flat paginated snapshot rows with per-series delta, newest first.
+
+    `provider_id` accepts a single value (`?provider_id=claude`) or a
+    comma-separated list (`?provider_id=claude,chatgpt`). Multi-value form
+    lets the server paginate the filtered set so pages aren't sparse.
+    """
+    provider_ids: list[str] | None = None
+    if provider_id:
+        provider_ids = [p.strip() for p in provider_id.split(",") if p.strip()] or None
     return query_snapshots(
         session,
-        provider_id=provider_id,
+        provider_ids=provider_ids,
         account_id=account_id,
         days=days,
         window_type=window_type,
