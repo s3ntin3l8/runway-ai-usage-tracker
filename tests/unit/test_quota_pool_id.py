@@ -35,22 +35,32 @@ class TestSchemaDefault:
 
 class TestAntigravityLSPEmitter:
     """The LSP path in scripts/sidecar.py:collect_antigravity_lsp must tag
-    every per-model card with the same quota_pool_id derived from
-    `antigravity:{window_type}:{reset_at_iso}` so the dashboard treats them as
-    one physical pool."""
+    per-model cards with a family-scoped quota_pool_id derived from
+    `antigravity:{family}:{window_type}:{reset_at_iso}`.
 
-    def test_pool_id_format_for_session_window(self):
-        # Mirror the format the emitter uses; this is a contract test rather
-        # than a behavioral test against the function (which requires an LSP
-        # process to probe). The format is what matters for clustering.
+    Antigravity has two physical pools (gemini, frontier) that can reset
+    independently. Including the family in the id ensures each pool clusters
+    separately even when both share the same reset_at.
+    """
+
+    def test_pool_id_format_gemini(self):
         reset_iso = "2026-05-23T16:00:00+00:00"
-        window_type = "session"
-        pool_id = f"antigravity:{window_type}:{reset_iso}"
-        assert pool_id == "antigravity:session:2026-05-23T16:00:00+00:00"
+        window_type = "weekly"
+        family = "gemini"
+        pool_id = f"antigravity:{family}:{window_type}:{reset_iso}"
+        assert pool_id == "antigravity:gemini:weekly:2026-05-23T16:00:00+00:00"
+
+    def test_pool_id_format_frontier(self):
+        reset_iso = "2026-05-23T16:00:00+00:00"
+        window_type = "weekly"
+        family = "frontier"
+        pool_id = f"antigravity:{family}:{window_type}:{reset_iso}"
+        assert pool_id == "antigravity:frontier:weekly:2026-05-23T16:00:00+00:00"
 
     def test_null_reset_yields_null_pool_id(self):
         """If a card has no reset_at we can't form a pool_id; leaving it None
         keeps the card a singleton in the aggregator (safe default)."""
         reset_iso = None
-        pool_id = f"antigravity:session:{reset_iso}" if reset_iso else None
+        family = "frontier"
+        pool_id = f"antigravity:{family}:weekly:{reset_iso}" if reset_iso else None
         assert pool_id is None
