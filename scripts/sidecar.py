@@ -472,7 +472,24 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
             "log_level": "INFO",
             "log_file_enabled": True,
         }
-        config_file.write_text(json.dumps(template, indent=2))
+        # Write with owner-only permissions: the file holds the ingest API
+        # key, so a world-readable default umask (0644) would let any local
+        # user on the box read the secret.
+        body = json.dumps(template, indent=2).encode("utf-8")
+        flags = os.O_CREAT | os.O_WRONLY | os.O_EXCL
+        try:
+            fd = os.open(str(config_file), flags, 0o600)
+        except FileExistsError:
+            # Created by another process between exists() and open(); fall
+            # through to the normal "config exists" path on next call.
+            pass
+        else:
+            with os.fdopen(fd, "wb") as f:
+                f.write(body)
+        try:
+            os.chmod(config_file, 0o600)
+        except OSError:
+            pass  # best-effort on platforms without POSIX perms
         print(f"ERROR: Config file created at {config_file}")
         print("Please edit and add your api_url and api_key")
         sys.exit(1)
@@ -1615,10 +1632,10 @@ class GenericCollector:
                                 )
                                 w_type = _infer_antigravity_window_type(reset_at)
                                 reset_iso = reset_at.isoformat() if reset_at else None
-                                # All per-model cards from this file share one
-                                # physical Antigravity quota — pool_id lets the
-                                # dashboard cluster them as one SHARED bar.
-                                pool_id = f"antigravity:{w_type}:{reset_iso}" if reset_iso else None
+                                # Pool_id scopes cards to their quota family so
+                                # Gemini and frontier models cluster separately.
+                                family = _ag_pool_family(m_name, m_name)
+                                pool_id = f"antigravity:{family}:{w_type}:{reset_iso}" if reset_iso else None
                                 results.append(
                                     {
                                         "service_name": m_name,
@@ -1929,6 +1946,20 @@ def _infer_antigravity_window_type(
     return "weekly"
 
 
+def _ag_pool_family(label: str, model_id: str | None) -> str:
+    """Classify an Antigravity model into its shared-quota family.
+
+    Antigravity has two distinct physical quota pools that reset independently:
+    one for Gemini models and one for frontier models (Claude + GPT-OSS).
+    Using a family-scoped pool_id ensures each pool gets its own dashboard card
+    rather than merging both into one when their reset_at happens to coincide.
+    """
+    text = f"{label} {model_id or ''}".lower()
+    if "gemini" in text:
+        return "gemini"
+    return "frontier"
+
+
 def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, Any]]:
     """Parse LSP GetUserStatus response into metric cards."""
     results = []
@@ -1981,9 +2012,10 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         model_id = candidate or label
         reset_at = reset_dt.isoformat() if reset_dt else None
         w_type = _infer_antigravity_window_type(reset_dt)
-        # Per-model cards from one LSP response share a physical quota; pool_id
-        # tells the dashboard to render them as a single SHARED row.
-        pool_id = f"antigravity:{w_type}:{reset_at}" if reset_at else None
+        # Pool_id scopes cards to their physical quota family (gemini vs frontier)
+        # so they cluster correctly even when both pools share the same reset_at.
+        family = _ag_pool_family(label, model_id)
+        pool_id = f"antigravity:{family}:{w_type}:{reset_at}" if reset_at else None
         results.append(
             {
                 "service_name": label,
