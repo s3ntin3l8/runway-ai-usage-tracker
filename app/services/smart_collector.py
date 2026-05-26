@@ -314,7 +314,10 @@ class SmartCollector:
 
         tagged = []
         for card in result:
-            card_copy = card.copy()
+            # Deep copy: nested dicts (token_usage, by_model) must not share
+            # references with the cached result, since callers further mutate
+            # cards (e.g. accumulator merge).
+            card_copy = copy.deepcopy(card)
             original_detail = card_copy.get("detail", "")
             card_copy["detail"] = f"{original_detail} [Cached {age_str} ago]"
             # Preserve original data_source and input_source if they exist

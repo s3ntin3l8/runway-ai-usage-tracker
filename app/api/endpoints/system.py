@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -46,12 +47,12 @@ async def health_check(request: Request) -> dict[str, Any]:
 @router.get("/settings")
 @limiter.limit("30/minute")
 async def get_app_settings(request: Request) -> dict[str, Any]:
-    """Return the current non-sensitive configuration."""
-    # Check if request is authenticated via proxy or local trust
-    x_forwarded_user = request.headers.get("X-Forwarded-User")
-    remote_user = request.headers.get("Remote-User")
-    user_context = x_forwarded_user or remote_user
+    """Return non-sensitive configuration plus an authentication probe.
 
+    Kept reachable without auth so the UI can bootstrap its login flow; the
+    response itself never includes secrets and redacts the
+    `ingest_api_key_is_default` flag from anonymous callers.
+    """
     # Admin key bypass for local development matches core/security.py
     # Only trust if client IS localhost AND server is also only listening on localhost
     is_local_trust = bool(
@@ -60,26 +61,48 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
     )
 
+    # Reverse-proxy SSO only counts as authenticated when the request
+    # originates from a trusted proxy IP — otherwise X-Forwarded-User /
+    # Remote-User can be forged by any client.
+    x_forwarded_user = request.headers.get("X-Forwarded-User")
+    remote_user = request.headers.get("Remote-User")
+    proxy_header_user = x_forwarded_user or remote_user
+    trusted_proxy_ips = settings.trusted_proxy_ips
+    from_trusted_proxy = bool(
+        trusted_proxy_ips and request.client and request.client.host in trusted_proxy_ips
+    )
+    user_context = proxy_header_user if (proxy_header_user and from_trusted_proxy) else None
+
     auth_methods = []
     if settings.ADMIN_API_KEY:
         auth_methods.append("admin_key")
 
     x_admin_key = request.headers.get("X-Admin-Key")
-    is_valid_admin_key = bool(settings.ADMIN_API_KEY and x_admin_key == settings.ADMIN_API_KEY)
+    is_valid_admin_key = bool(
+        settings.ADMIN_API_KEY
+        and x_admin_key is not None
+        and hmac.compare_digest(x_admin_key, settings.ADMIN_API_KEY)
+    )
 
-    return {
+    is_authenticated = bool(
+        user_context or is_local_trust or is_valid_admin_key or not settings.ADMIN_API_KEY
+    )
+
+    response: dict[str, Any] = {
         "project_name": settings.PROJECT_NAME,
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
-        "ingest_api_key_is_default": settings.INGEST_API_KEY_IS_INSECURE_DEFAULT,
         "admin_auth_required": settings.ADMIN_API_KEY is not None,
         "auth_methods": auth_methods,
         "user_context": user_context,
-        "is_authenticated": bool(
-            user_context or is_local_trust or is_valid_admin_key or not settings.ADMIN_API_KEY
-        ),
+        "is_authenticated": is_authenticated,
     }
+    # Only authenticated callers see the ingest-key warning flag — it's a
+    # useful fingerprint for an attacker probing for default deployments.
+    if is_authenticated:
+        response["ingest_api_key_is_default"] = settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
+    return response
 
 
 @router.get("/status")
@@ -99,14 +122,12 @@ async def get_audit_log(
     request: Request,
     limit: int = 200,
     session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """Return the most recent admin-mutation audit entries.
 
-    Limited to `limit` rows (caller-tunable, server-capped at 1000) and
-    ordered newest-first. Available to any caller — the table records
-    only metadata about admin actions, not the underlying credentials
-    or payloads themselves. Tighten with require_admin_key if a future
-    change starts persisting secrets here.
+    Admin-gated: source IPs and action/target metadata are operationally
+    sensitive even though the table itself avoids persisting secrets.
     """
     capped = max(1, min(limit, 1000))
     rows = session.exec(select(AuditLog).order_by(col(AuditLog.ts).desc()).limit(capped)).all()
@@ -128,7 +149,10 @@ async def get_audit_log(
 
 @router.post("/force-collect")
 @limiter.limit("6/minute")
-async def force_collect(request: Request) -> dict[str, Any]:
+async def force_collect(
+    request: Request,
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
     """Trigger an immediate collection cycle and update the registry.
 
     Also fans out a pending trigger to every registered sidecar so the next
@@ -221,7 +245,10 @@ async def cleanup_database(
 
 @router.post("/wake")
 @limiter.limit("10/minute")
-async def wake_poller(request: Request) -> dict[str, Any]:
+async def wake_poller(
+    request: Request,
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
     """Reset dormancy state and restore normal polling interval."""
     from app.services.poller import poller
 
@@ -231,7 +258,10 @@ async def wake_poller(request: Request) -> dict[str, Any]:
 
 @router.get("/token-health")
 @limiter.limit("30/minute")
-async def get_token_health(request: Request) -> dict[str, Any]:
+async def get_token_health(
+    request: Request,
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
     """Return health status for all cached credentials."""
     tokens = await token_health_service.get_health()
     return {"tokens": tokens}
@@ -239,10 +269,15 @@ async def get_token_health(request: Request) -> dict[str, Any]:
 
 @router.get("/debug/raw/{provider_id}")
 @limiter.limit("10/minute")
-async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str, Any]:
+async def get_raw_provider_data(
+    request: Request,
+    provider_id: str,
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
     """
     Run a specific collector and capture raw HTTP responses.
     Useful for troubleshooting provider API changes.
+    Admin-gated: returns live upstream URLs/bodies (auth headers masked).
     """
     raw_responses = []
 
@@ -374,8 +409,13 @@ class _WebhookUpdate(BaseModel):
 
 
 @router.get("/webhooks")
-async def list_webhooks(session: Session = Depends(get_session)) -> dict:
-    """List all webhook alert configurations."""
+async def list_webhooks(
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """List all webhook alert configurations.
+    Admin-gated: webhook URLs commonly carry per-channel tokens.
+    """
     configs = session.exec(select(WebhookConfig)).all()
     return {
         "webhooks": [
@@ -402,6 +442,13 @@ async def create_webhook(
     _auth: None = Depends(require_admin_key),
 ) -> dict:
     """Create a webhook alert configuration."""
+    from app.services.webhooks import WebhookURLError, validate_webhook_url
+
+    try:
+        validate_webhook_url(body.url)
+    except WebhookURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     config = WebhookConfig(**body.model_dump())
     session.add(config)
     session.commit()
@@ -419,10 +466,18 @@ async def update_webhook(
     _auth: None = Depends(require_admin_key),
 ) -> dict:
     """Update a webhook alert configuration."""
+    from app.services.webhooks import WebhookURLError, validate_webhook_url
+
     config = session.get(WebhookConfig, webhook_id)
     if not config:
         raise HTTPException(status_code=404, detail="Webhook not found")
-    for key, value in body.model_dump(exclude_none=True).items():
+    updates = body.model_dump(exclude_none=True)
+    if "url" in updates:
+        try:
+            validate_webhook_url(updates["url"])
+        except WebhookURLError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    for key, value in updates.items():
         setattr(config, key, value)
     session.add(config)
     session.commit()
@@ -682,7 +737,7 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
     if body.session_cookie is not None:
         val = body.session_cookie
-        if val and ";" in val or "=" in val:
+        if val and (";" in val or "=" in val):
             # Attempt to extract common session tokens from a full cookie string
             found = None
             if provider_id == "anthropic":

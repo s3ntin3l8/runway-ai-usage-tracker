@@ -294,7 +294,7 @@ class CollectorManager:
             else:
                 # Register a new future before releasing the lock so any
                 # concurrent callers that arrive now will find it and wait
-                future = asyncio.get_event_loop().create_future()
+                future = asyncio.get_running_loop().create_future()
                 self._collect_future = future
                 is_leader = True
         # Lock released; only the leader drives the collection
@@ -323,15 +323,31 @@ class CollectorManager:
         client = await self._get_client()
 
         active_keys = list(self.smart_collectors.keys())
-        tasks = [self._collect_with_semaphore(key, client) for key in active_keys]
-
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=45.0
+        # Wrap each in a Task so we can harvest partial results on global timeout.
+        # Each task also has its own 25s per-collector timeout in
+        # _collect_with_semaphore, so the 45s here is a safety net for the
+        # combined latency of the queue under semaphore contention.
+        tasks = [
+            asyncio.create_task(self._collect_with_semaphore(key, client)) for key in active_keys
+        ]
+        done, pending = await asyncio.wait(tasks, timeout=45.0)
+        if pending:
+            logger.error(
+                "Global collector timeout reached after 45s: "
+                f"{len(pending)} task(s) still running, harvesting {len(done)} completed."
             )
-        except TimeoutError:
-            logger.error("Global collector timeout reached. Collection aborted.")
-            results = []
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        results: list[Any] = []
+        for t in tasks:
+            if t.cancelled():
+                results.append(asyncio.CancelledError())
+            elif (exc := t.exception()) is not None:
+                results.append(exc)
+            else:
+                results.append(t.result())
 
         flattened = []
         for i, res in enumerate(results):

@@ -1,5 +1,7 @@
 """Optional admin key dependency for mutation endpoints."""
 
+import hmac
+
 from fastapi import Header, HTTPException, Request
 
 from app.core.config import settings
@@ -55,7 +57,7 @@ async def require_admin_key(
         _stash_actor(request, x_forwarded_user or remote_user)
         return
 
-    # 3. Standard API key auth
-    if x_admin_key != settings.ADMIN_API_KEY:
+    # 3. Standard API key auth — constant-time compare to prevent timing oracle.
+    if x_admin_key is None or not hmac.compare_digest(x_admin_key, settings.ADMIN_API_KEY):
         raise HTTPException(status_code=403, detail="Invalid or missing admin key")
     _stash_actor(request, "api-key")

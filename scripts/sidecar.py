@@ -567,34 +567,70 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
 # --- PID File Management ---
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return True if a process with `pid` is currently running."""
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(1, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but we don't own it; treat as alive so we don't
+        # clobber another user's sidecar.
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def write_pid_file() -> bool:
-    """Write PID file. Returns False if already running."""
+    """Write PID file atomically. Returns False if another sidecar holds it.
+
+    Uses O_CREAT|O_EXCL to remove the TOCTOU between "check exists" and
+    "write" — two daemons racing here used to be able to both claim the
+    file because each saw it absent before either wrote.
+    """
     global _pid_file_path
     _pid_file_path = get_pid_file_path()
 
-    # Check if already running
-    if _pid_file_path.exists():
+    pid_bytes = str(os.getpid()).encode("ascii")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    while True:
         try:
-            old_pid = int(_pid_file_path.read_text().strip())
-            # Check if process exists
-            if sys.platform == "win32":
-                import ctypes
-
-                kernel32 = ctypes.windll.kernel32
-                handle = kernel32.OpenProcess(1, False, old_pid)
-                if handle:
-                    kernel32.CloseHandle(handle)
-                    logging.error(f"Sidecar already running (PID: {old_pid})")
+            fd = os.open(str(_pid_file_path), flags, 0o600)
+        except FileExistsError:
+            # Existing PID file — read it and decide whether it's stale.
+            try:
+                old_pid = int(_pid_file_path.read_text().strip())
+            except (OSError, ValueError):
+                # Corrupt file: remove and retry.
+                try:
+                    _pid_file_path.unlink()
+                except OSError:
                     return False
-            else:
-                os.kill(old_pid, 0)  # Check if process exists
+                continue
+            if _pid_is_alive(old_pid):
                 logging.error(f"Sidecar already running (PID: {old_pid})")
                 return False
-        except (OSError, ValueError, ProcessLookupError):
-            # Process not running, stale PID file
-            pass
+            # Stale PID — unlink and retry exclusive create.
+            try:
+                _pid_file_path.unlink()
+            except OSError:
+                return False
+            continue
+        else:
+            with os.fdopen(fd, "wb") as f:
+                f.write(pid_bytes)
+            break
 
-    _pid_file_path.write_text(str(os.getpid()))
     # Cache hostname after initialization
     get_hostname()
     return True
@@ -634,11 +670,17 @@ def signal_handler(signum, frame):
 
 
 def setup_signal_handlers() -> None:
-    """Setup signal handlers for graceful shutdown."""
+    """Setup signal handlers for graceful shutdown.
+
+    SIGHUP is ignored rather than treated as shutdown: a background
+    sidecar whose launching terminal closes gets SIGHUP, and we don't
+    want that to kill it. The config file watcher in sidecar_app/config.py
+    handles live config reloads — there's no separate reload signal here.
+    """
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     if hasattr(signal, "SIGHUP"):
-        signal.signal(signal.SIGHUP, signal_handler)
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 
 # --- Queue Management ---
@@ -1217,11 +1259,24 @@ class BrowserCookieExtractor:
 
     @staticmethod
     def get_cookie(domain, name):
+        # Normalise the domain to its bare form (no leading dot) so we can
+        # express a precise suffix match. The previous LIKE %{domain}% was
+        # a substring match — "anthropic.com" matched "evil-anthropic.com"
+        # and "anthropic.com.evil.org" alike, which is wrong both for
+        # security and for correctness if a malicious cookie row ever
+        # landed in the user's browser store.
+        bare = (domain or "").lstrip(".")
+        dotted = "." + bare
+        like_subdomain = "%." + bare
+
         for target in BrowserCookieExtractor.get_all_paths():
             try:
                 if target["type"] == "safari":
                     for c in BrowserCookieExtractor.parse_safari(target["path"]):
-                        if domain in c["domain"] and c["name"] == name:
+                        host = (c.get("domain") or "").lower()
+                        if c["name"] == name and (
+                            host == bare or host == dotted or host.endswith(dotted)
+                        ):
                             return c["value"]
                 else:
                     with sqlite3.connect(
@@ -1230,8 +1285,10 @@ class BrowserCookieExtractor:
                         cursor = conn.cursor()
                         if target["type"] == "chromium":
                             cursor.execute(
-                                "SELECT encrypted_value FROM cookies WHERE host_key LIKE ? AND name = ?",
-                                (f"%{domain}%", name),
+                                "SELECT encrypted_value FROM cookies "
+                                "WHERE name = ? "
+                                "AND (host_key = ? OR host_key = ? OR host_key LIKE ?)",
+                                (name, bare, dotted, like_subdomain),
                             )
                             row = cursor.fetchone()
                             if row:
@@ -1240,8 +1297,10 @@ class BrowserCookieExtractor:
                                     return val
                         else:  # Firefox
                             cursor.execute(
-                                "SELECT value FROM moz_cookies WHERE host LIKE ? AND name = ?",
-                                (f"%{domain}%", name),
+                                "SELECT value FROM moz_cookies "
+                                "WHERE name = ? "
+                                "AND (host = ? OR host = ? OR host LIKE ?)",
+                                (name, bare, dotted, like_subdomain),
                             )
                             row = cursor.fetchone()
                             if row:
@@ -1635,7 +1694,11 @@ class GenericCollector:
                                 # Pool_id scopes cards to their quota family so
                                 # Gemini and frontier models cluster separately.
                                 family = _ag_pool_family(m_name, m_name)
-                                pool_id = f"antigravity:{family}:{w_type}:{reset_iso}" if reset_iso else None
+                                pool_id = (
+                                    f"antigravity:{family}:{w_type}:{reset_iso}"
+                                    if reset_iso
+                                    else None
+                                )
                                 results.append(
                                     {
                                         "service_name": m_name,

@@ -1,14 +1,20 @@
 /**
- * Centralized fetch wrapper that injects authentication headers
+ * Centralized fetch wrapper that injects authentication headers.
+ *
+ * Kept in localStorage so the key persists across tabs and reloads. Moving
+ * to sessionStorage doesn't meaningfully reduce XSS impact (an XSS payload
+ * can also intercept fetch in real time), and it forces a re-login on every
+ * new tab/browser restart. Local-only deployments don't need the key at
+ * all — the server's localhost-trust gate accepts 127.0.0.1 without one.
  */
-async function fetchWithAuth(url, options = {}) {
+export async function fetchWithAuth(url, options = {}) {
     const adminKey = localStorage.getItem('runway_admin_key');
     const headers = options.headers || {};
-    
+
     if (adminKey) {
         headers['X-Admin-Key'] = adminKey;
     }
-    
+
     return fetch(url, { ...options, headers });
 }
 

@@ -1,6 +1,8 @@
 # app/services/webhooks.py
+import ipaddress
 import logging
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import httpx
 from sqlmodel import Session, select
@@ -11,6 +13,62 @@ from app.models.schemas import LimitCard
 logger = logging.getLogger(__name__)
 
 _HYSTERESIS = 0.85  # reset alert when usage drops below threshold * 0.85
+
+
+class WebhookURLError(ValueError):
+    """Webhook URL fails SSRF allowlist checks."""
+
+
+_BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata.google.internal",
+    "metadata",  # short alias some cloud SDKs accept
+}
+
+
+def validate_webhook_url(url: str) -> None:
+    """Raise WebhookURLError if `url` is unsafe for outbound webhook delivery.
+
+    Blocks non-http(s) schemes, loopback, RFC1918, link-local (incl. cloud
+    metadata at 169.254.169.254), multicast/reserved/unspecified IP literals,
+    and the literal hostnames used by cloud-metadata services.
+
+    Hostnames that resolve to internal IPs at request time are NOT caught
+    here — full SSRF protection against DNS rebinding requires resolving at
+    the moment of connect and pinning to a public IP. Validating literal
+    forms catches the bulk of "I pasted localhost into the form" misuse and
+    accidental metadata access.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise WebhookURLError(f"Invalid URL: {exc}") from exc
+
+    if parsed.scheme not in ("http", "https"):
+        raise WebhookURLError(f"Only http(s) URLs are allowed (got scheme {parsed.scheme!r})")
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise WebhookURLError("URL must include a hostname")
+
+    if host in _BLOCKED_HOSTNAMES:
+        raise WebhookURLError(f"Hostname {host!r} is not allowed")
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # Hostname — defer to connect-time (see docstring note).
+        return
+
+    if (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        raise WebhookURLError(f"IP {ip} is not allowed for webhook delivery")
 
 
 async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
@@ -87,6 +145,9 @@ async def _fire_webhook(
     used_pct: float,
 ) -> None:
     """Dispatch a single webhook notification."""
+    # Defense in depth: rows created before validate_webhook_url was added
+    # could still hold loopback/metadata URLs. Re-check before each call.
+    validate_webhook_url(config.url)
     if config.channel == "discord":
         payload = _discord_payload(card, used_pct, config.threshold_pct)
     else:

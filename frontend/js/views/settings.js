@@ -1,4 +1,4 @@
-import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, deleteTokenHealth, fetchSettings, fetchAppConfig, putAppConfig } from '../api.js';
+import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, deleteTokenHealth, fetchSettings, fetchAppConfig, putAppConfig, fetchWithAuth } from '../api.js';
 import { setRunwayConfig } from '../utils/tz.js';
 import { showAlert, showConfirm } from '../utils/modal-dialog.js';
 
@@ -104,7 +104,7 @@ async function prefetchNavCounts(activeSection) {
             .catch(() => {}));
     }
     if (activeSection !== 'webhooks') {
-        tasks.push(fetch('/api/v1/system/webhooks')
+        tasks.push(fetchWithAuth('/api/v1/system/webhooks')
             .then(r => r.json())
             .then(d => { _webhookCount = (d.webhooks || []).length; })
             .catch(() => {}));
@@ -602,7 +602,7 @@ export async function deleteToken(provider, accountId) {
 async function renderWebhooksSection(pane) {
     let webhooks = [];
     try {
-        const res = await fetch('/api/v1/system/webhooks');
+        const res = await fetchWithAuth('/api/v1/system/webhooks');
         webhooks = (await res.json()).webhooks || [];
     } catch (e) { /* ignore */ }
 
@@ -683,7 +683,7 @@ function wireWebhookCards(pane) {
 }
 
 export async function addWebhookRow() {
-    const res = await fetch('/api/v1/system/webhooks', {
+    const res = await fetchWithAuth('/api/v1/system/webhooks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider_id: '*', threshold_pct: 90, url: '', channel: 'discord' }),
@@ -695,7 +695,7 @@ export async function addWebhookRow() {
 }
 
 export async function patchWebhook(id, field, value) {
-    await fetch(`/api/v1/system/webhooks/${id}`, {
+    await fetchWithAuth(`/api/v1/system/webhooks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
@@ -703,7 +703,7 @@ export async function patchWebhook(id, field, value) {
 }
 
 export async function testWebhook(id) {
-    const res = await fetch(`/api/v1/system/webhooks/${id}/test`, { method: 'POST' });
+    const res = await fetchWithAuth(`/api/v1/system/webhooks/${id}/test`, { method: 'POST' });
     const data = await res.json();
     if (res.ok) {
         await showAlert('Test sent', 'The webhook was triggered.');
@@ -713,7 +713,7 @@ export async function testWebhook(id) {
 }
 
 export async function deleteWebhook(id) {
-    await fetch(`/api/v1/system/webhooks/${id}`, { method: 'DELETE' });
+    await fetchWithAuth(`/api/v1/system/webhooks/${id}`, { method: 'DELETE' });
     const pane = document.getElementById('settings-pane');
     if (pane) renderWebhooksSection(pane);
 }
@@ -924,7 +924,7 @@ async function renderAuditSection(pane) {
     let entries = [];
     let error = '';
     try {
-        const res = await fetch('/api/v1/system/audit-log?limit=200');
+        const res = await fetchWithAuth('/api/v1/system/audit-log?limit=200');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         entries = (await res.json()).entries || [];
     } catch (e) {

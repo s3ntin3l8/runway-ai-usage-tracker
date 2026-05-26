@@ -2963,7 +2963,7 @@ class TestKimiCodingCollector:
             ]
         }
 
-        mock_http_client.post.return_value = response
+        mock_http_client.request.return_value = response
 
         with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
             mock_settings.KIMI_AUTH_TOKEN = "jwt_token_here"
@@ -2983,7 +2983,7 @@ class TestKimiCodingCollector:
         response.status_code = 200
         response.json.return_value = {}
 
-        mock_http_client.post.return_value = response
+        mock_http_client.request.return_value = response
 
         with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
             mock_settings.KIMI_AUTH_TOKEN = "jwt_token_here"
@@ -3016,7 +3016,7 @@ class TestKimiCodingCollector:
         response = MagicMock(spec=httpx.Response)
         response.status_code = 401
 
-        mock_http_client.post.return_value = response
+        mock_http_client.request.return_value = response
 
         with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
             mock_settings.KIMI_AUTH_TOKEN = "invalid_token"

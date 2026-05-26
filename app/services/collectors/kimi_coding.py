@@ -53,7 +53,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import error_card, human_delta
+from app.core.utils import error_card, http_request_with_retry, human_delta
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -103,7 +103,9 @@ class KimiCodingCollector(BaseCollector):
             return []
 
         try:
-            resp = await client.post(
+            resp = await http_request_with_retry(
+                client,
+                "POST",
                 self.API_ENDPOINT,
                 headers={
                     "Authorization": f"Bearer {token}",

@@ -403,7 +403,17 @@ async def get_usage_forecast(
     from app.models.db import LatestUsage
     from app.services.forecast import compute_forecast
 
-    records = session.exec(select(LatestUsage)).all()
+    # Push known filters into SQL so we don't materialise the whole table
+    # when the caller only wants one card's forecast.
+    stmt = select(LatestUsage)
+    if provider_id:
+        stmt = stmt.where(LatestUsage.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(LatestUsage.account_id == account_id)
+    if window_type:
+        stmt = stmt.where(LatestUsage.window_type == window_type)
+
+    records = session.exec(stmt).all()
     results = []
     for r in records:
         try:
@@ -412,17 +422,11 @@ async def get_usage_forecast(
             continue
 
     if not results:
-        # Bootstrap fallback
-        results = await manager.collect_all()
+        # Bootstrap fallback — only when the caller asked for everything.
+        if not (provider_id or account_id or window_type):
+            results = await manager.collect_all()
 
     cards = [LimitCard(**item) for item in results]
-
-    if provider_id:
-        cards = [c for c in cards if c.provider_id == provider_id]
-    if account_id:
-        cards = [c for c in cards if c.account_id == account_id]
-    if window_type:
-        cards = [c for c in cards if c.window_type == window_type]
 
     if include_series:
         # Drill-down path: skip batch optimization, compute per-card with series.

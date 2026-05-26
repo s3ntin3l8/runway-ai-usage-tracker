@@ -519,11 +519,13 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
-        # CSRF guard: browsers always send Origin on cross-origin POSTs.
-        # Reject any request whose Origin header doesn't match our own address.
+        # CSRF guard: modern browsers send Origin on EVERY POST (same- or
+        # cross-origin) since ~2020. We require it to be present AND match
+        # our bound address — falling back to "missing = trusted" was the
+        # historical loophole some non-browser clients exploited.
         origin = self.headers.get("Origin", "")
         allowed = f"http://127.0.0.1:{self.server.server_address[1]}"
-        if origin and not origin.startswith(allowed):
+        if not origin or not origin.startswith(allowed):
             self.send_error(403, "Forbidden")
             return
 

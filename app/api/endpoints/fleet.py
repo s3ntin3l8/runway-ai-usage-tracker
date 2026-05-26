@@ -347,12 +347,19 @@ def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
 
     from app.models.db import LatestUsage
 
-    rows = session.exec(select(LatestUsage)).all()
+    # Push the default-variant / no-model-id filters into SQL so we don't
+    # materialise per-model rows that we'd immediately discard.
+    rows = session.exec(
+        select(LatestUsage).where(
+            LatestUsage.model_id == "",
+            col(LatestUsage.variant).in_(["", "default"]),
+        )
+    ).all()
     now = datetime.now(UTC)
     anchors: dict[str, dict[str, str]] = {}
 
     for r in rows:
-        # Skip variant-scoped rows (only include default variant)
+        # Defense-in-depth: filters above are already SQL-enforced.
         if r.model_id and r.model_id != "":
             continue
         if r.variant not in ("", "default"):

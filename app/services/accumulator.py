@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
 logger = logging.getLogger(__name__)
@@ -60,8 +61,11 @@ def record_quota_snapshot(
                     reset_at=reset_at,
                 )
             )
-    except Exception:
-        pass  # unique constraint violation = same-minute duplicate, safe to ignore
+    except IntegrityError:
+        # Unique constraint = same-minute duplicate, safe to ignore. Any
+        # other DB error (connection drop, schema mismatch) should bubble
+        # up so the caller can log it loudly instead of hiding silently.
+        pass
 
 
 def merge_card_json(existing: str | None, incoming: dict) -> str:
@@ -445,6 +449,10 @@ def prune_stale_latest_usage(
 
     now = datetime.now(UTC)
     deleted = 0
+    # First pass: walk each (pid, aid) and collect the row IDs to prune.
+    # Doing the JSON parse / reset_at check in Python is unavoidable (the
+    # reset_at lives inside the JSON blob), but the actual DELETE happens
+    # in a single bulk statement per pair instead of N round trips.
     for (pid, aid), keys in batch_keys.items():
         try:
             rows = session.exec(
@@ -453,6 +461,7 @@ def prune_stale_latest_usage(
                     LatestUsage.account_id == aid,
                 )
             ).all()
+            stale_ids: list[int] = []
             for row in rows:
                 row_key = (row.window_type, row.variant, row.model_id)
                 if row_key in keys:
@@ -483,8 +492,12 @@ def prune_stale_latest_usage(
                     row.model_id,
                     raw_reset,
                 )
-                session.delete(row)
-                deleted += 1
+                if row.id is not None:
+                    stale_ids.append(row.id)
+
+            if stale_ids:
+                session.exec(delete(LatestUsage).where(col(LatestUsage.id).in_(stale_ids)))
+                deleted += len(stale_ids)
         except Exception as e:
             logger.warning("Stale-row prune failed for %s/%s: %s", pid, aid, e)
     return deleted
