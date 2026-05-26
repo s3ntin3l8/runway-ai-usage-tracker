@@ -50,6 +50,8 @@ When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start un
 
 These are fail-fast checks: a misconfigured deployment dies at import time with a clear `RuntimeError`, never silently exposing tokens over cleartext or serving with a broken CORS policy. Localhost binds are exempt by design — Runway's primary topology is "developer's laptop".
 
+The `["*"]` CORS fallback only takes effect when `APP_HOST` resolves to `127.0.0.1` / `localhost`; the gate above guarantees any non-localhost bind must ship an explicit allow-list, so wildcard CORS is never exposed off-host.
+
 ## 🔒 Response Headers
 
 Every response carries a defence-in-depth header set:

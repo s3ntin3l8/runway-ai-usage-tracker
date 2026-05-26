@@ -46,7 +46,9 @@ def _load_dotenv() -> None:
         key, _, val = line.partition("=")
         key = key.strip()
         val = val.strip()
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        if (val.startswith('"') and val.endswith('"')) or (
+            val.startswith("'") and val.endswith("'")
+        ):
             val = val[1:-1]
         os.environ.setdefault(key, val)
 
@@ -96,9 +98,7 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(UTC)
 
 
-def fetch_snapshots(
-    session: Session, start: datetime, end: datetime
-) -> list[QuotaSnapshot]:
+def fetch_snapshots(session: Session, start: datetime, end: datetime) -> list[QuotaSnapshot]:
     rows = list(
         session.exec(
             select(QuotaSnapshot)
@@ -118,9 +118,7 @@ def fetch_snapshots(
     return rows
 
 
-def fetch_closed_windows(
-    session: Session, start: datetime, end: datetime
-) -> list[UsageWindow]:
+def fetch_closed_windows(session: Session, start: datetime, end: datetime) -> list[UsageWindow]:
     rows = list(
         session.exec(
             select(UsageWindow)
@@ -403,7 +401,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_inspect = sub.add_parser("inspect", help="List snapshots + windows in range; recommend cutoff.")
+    p_inspect = sub.add_parser(
+        "inspect", help="List snapshots + windows in range; recommend cutoff."
+    )
     p_inspect.add_argument(
         "--end",
         type=parse_ts,

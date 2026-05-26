@@ -7,7 +7,7 @@ name = "runway"
 version = "0.13.0" # x-release-please-version
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.111.0",
+    "fastapi>=0.111.0,!=0.136.3",
     "uvicorn[standard]>=0.29.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0.0",

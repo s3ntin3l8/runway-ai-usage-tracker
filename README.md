@@ -93,7 +93,7 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 ### Docker (Server Runtime)
 
 ```bash
-docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/s3ntin3l8/ai-usage-tracker:latest
+docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/s3ntin3l8/runway:latest
 ```
 
 Prefer Compose? A ready-to-use [`docker-compose.yml`](docker-compose.yml) ships in the repo root — `docker compose up -d` after copying `.env.example` → `.env`. The full Compose example with healthcheck and persistent volume is in the [Deployment Guide](docs/deployment.md#docker).
@@ -115,7 +115,7 @@ If you are running in Docker or a headless environment where browser scraping is
 
 ### Sidecar binaries (macOS / Windows / Linux)
 
-Pre-built artifacts are attached to every [GitHub release](https://github.com/s3ntin3l8/ai-usage-tracker/releases):
+Pre-built artifacts are attached to every [GitHub release](https://github.com/s3ntin3l8/runway/releases):
 
 - `Runway-Sidecar-macOS-<version>.zip` — desktop tray app
 - `Runway-Sidecar-Windows-<version>.zip` — desktop tray app
@@ -138,6 +138,8 @@ Alternatively: right-click the app in Finder → **Open** → **Open** again in 
 
 ## Supported Providers
 
+**13 providers** — 12 collected by the server, 1 sidecar-only.
+
 | Provider | Collection Method | Cards | Env Var | Docs |
 |----------|------------------|-------|---------|------|
 | **Claude** | OAuth → Web API → Local logs | 2-5 | `CLAUDE_CODE_OAUTH_TOKEN` (opt) | [📖](docs/collectors/claude.md) |
@@ -148,12 +150,18 @@ Alternatively: right-click the app in Finder → **Open** → **Open** again in 
 | **MiniMax** | REST API (IDE Quotas) | 1-3 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
 | **Ollama** | Web API (Cloud) + Session cookie | 2 | `OLLAMA_SESSION_TOKEN` (opt) | [📖](docs/collectors/ollama.md) |
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
-| **zAI API** | REST API (Balance) | 1 | `ZAI_API_KEY` | [📖](docs/collectors/zai_api.md) |
-| **zAI Plan** | REST API (Quotas) | 1-2 | `ZAI_API_KEY` | [📖](docs/collectors/zai_plan.md) |
+| **zAI** | REST API (Balance + Quotas) | 1-3 | `ZAI_API_KEY` | [📖 API](docs/collectors/zai_api.md) · [📖 Plan](docs/collectors/zai_plan.md) |
 | **Kimi API** | REST API (Balance) | 1 | `KIMI_API_KEY` | [📖](docs/collectors/kimi_api.md) |
 | **Kimi Coding** | Web API (IDE Quotas) | 2 | `KIMI_AUTH_TOKEN` (opt) | [📖](docs/collectors/kimi_coding.md) |
 | **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
-| **Antigravity** | Local JSON file | 1-3 | — (IDE running) | [📖](docs/collectors/antigravity.md) |
+
+### Sidecar-only providers
+
+These providers can only be collected from the workstation where the IDE/CLI runs, so they require a [sidecar](docs/sidecar.md) on each host. The server container has no path to them.
+
+| Provider | Collection Method | Cards | Env Var | Docs |
+|----------|------------------|-------|---------|------|
+| **Antigravity** | Local JSON file (sidecar only) | 1-3 | — (IDE running) | [📖](docs/collectors/antigravity.md) |
 
 **Env Var Legend:** (opt) = Optional, has fallback | — = Detected automatically
 

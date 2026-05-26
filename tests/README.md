@@ -214,7 +214,7 @@ asyncio_mode = auto
 Make sure the project root is in PYTHONPATH:
 
 ```bash
-export PYTHONPATH="${PYTHONPATH}:/home/bjoern/projects/ai-usage-tracker"
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 pytest
 ```
 
