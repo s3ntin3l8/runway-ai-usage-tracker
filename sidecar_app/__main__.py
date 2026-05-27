@@ -24,7 +24,6 @@ from sidecar_app.updater import UpdateChecker
 _FALLBACK_CONFIG: dict = {
     "api_url": "http://localhost:8765",
     "api_key": "",
-    "interval_seconds": 1800,
 }
 
 
@@ -76,12 +75,9 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         new_key = new_config.get("api_key", "")
         old_url = config.get("api_url", "")
         new_url = new_config.get("api_url", "")
-        old_interval = config.get("interval_seconds", 900)
-        new_interval = new_config.get("interval_seconds", 900)
 
         config.update(new_config)
         daemon._runner._config = new_config
-        daemon._runner._interval = new_interval
 
         credentials_changed = (new_key != old_key) or (new_url != old_url)
         if credentials_changed:
@@ -90,8 +86,6 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
             if new_key and new_key != "REPLACE_ME":
                 daemon._runner._stop_event.clear()
                 daemon.start()
-        elif new_interval != old_interval:
-            logging.info(f"Config reloaded: interval changed to {new_interval}s")
         else:
             logging.info("Config reloaded (no credentials change)")
 

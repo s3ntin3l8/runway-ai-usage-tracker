@@ -19,35 +19,6 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 17653
 
-# Provider list — mirrors __REGISTRY__ keys in scripts/sidecar.py
-_PROVIDER_LIST: list[tuple[str, str]] = [
-    ("anthropic", "Claude Pro"),
-    ("github", "GitHub Copilot"),
-    ("gemini", "Gemini API"),
-    ("chatgpt", "ChatGPT / Codex"),
-    ("opencode", "OpenCode"),
-    ("antigravity", "Antigravity"),
-    ("ollama", "Ollama Cloud"),
-    ("openrouter", "OpenRouter"),
-    ("minimax", "MiniMax"),
-    ("kimi", "Kimi API"),
-    ("zai", "zAI API"),
-]
-
-
-def _make_providers_html(enabled: list) -> str:
-    """Return checkbox HTML for the providers section."""
-    all_enabled = not enabled or "all" in enabled
-    parts = []
-    for pid, name in _PROVIDER_LIST:
-        checked = "checked" if (all_enabled or pid in enabled) else ""
-        parts.append(
-            f'<label class="provider-check">'
-            f'<input type="checkbox" name="providers" value="{pid}" {checked}>'
-            f"<span>{_esc(name)}</span></label>"
-        )
-    return "\n".join(parts)
-
 
 # ---------------------------------------------------------------------------
 # HTML — self-contained, no external CDN, matches Runway dark aesthetic
@@ -211,14 +182,6 @@ select {
 
 .footer { text-align: center; font-size: 0.68rem; color: #3f3f46; padding-top: 0.5rem; }
 
-.provider-check {
-  display: flex; align-items: center; gap: 0.5rem;
-  cursor: pointer; font-size: 0.78rem; color: #a1a1aa;
-  padding: 0.2rem 0; user-select: none;
-}
-.provider-check input[type="checkbox"] { width: auto; accent-color: #7c3aed; cursor: pointer; }
-.provider-check:hover { color: #e4e4e7; }
-
 .log-pre {
   font-size: 0.63rem; line-height: 1.55; color: #52525b;
   background: rgba(9,9,11,0.6); border: 1px solid rgba(63,63,70,0.4);
@@ -275,35 +238,6 @@ select {
         </button>
       </div>
     </div>
-
-    <div class="section-label" style="margin-top:1.25rem">Collection</div>
-
-    <div class="field">
-      <label for="interval_select">Sync interval</label>
-      <select id="interval_select" onchange="onIntervalSelect(this)">
-        <option value="300"  $sel300>5 minutes</option>
-        <option value="900"  $sel900>15 minutes</option>
-        <option value="1800" $sel1800>30 minutes</option>
-        <option value="3600" $sel3600>1 hour</option>
-        <option value="7200" $sel7200>2 hours</option>
-        <option value="custom" $selcustom>Custom…</option>
-      </select>
-    </div>
-
-    <div class="field" id="custom-interval-field" style="display:$custom_display">
-      <label for="interval_seconds">Custom interval (seconds)</label>
-      <input type="number" id="interval_seconds" name="interval_seconds"
-             value="$interval_seconds" min="60" max="86400" step="60">
-      <span class="field-hint">Minimum 60 seconds.</span>
-    </div>
-    <input type="hidden" id="interval_hidden" name="interval_seconds" value="$interval_seconds">
-
-    <div class="section-label" style="margin-top:1.25rem">Providers</div>
-    <div class="field-hint" style="margin-bottom:0.75rem">Uncheck providers you do not use to skip collection.</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.25rem 1.5rem">
-      $providers_html
-    </div>
-    <input type="hidden" name="providers_submitted" value="1">
 
     <div style="margin-top:1.5rem" class="actions">
       <button type="submit" class="btn btn-primary" id="save-btn">
@@ -376,31 +310,6 @@ async function pollStatus() {
 pollStatus();
 setInterval(pollStatus, 5000);
 
-// ---- Interval select ------------------------------------------------------
-
-const PRESETS = new Set(['300','900','1800','3600','7200']);
-
-function onIntervalSelect(sel) {
-  const customField = document.getElementById('custom-interval-field');
-  const hidden = document.getElementById('interval_hidden');
-  if (sel.value === 'custom') {
-    customField.style.display = '';
-  } else {
-    customField.style.display = 'none';
-    hidden.value = sel.value;
-  }
-}
-
-document.getElementById('interval_select').addEventListener('change', function() {
-  if (this.value !== 'custom') {
-    document.getElementById('interval_hidden').value = this.value;
-  }
-});
-
-document.getElementById('interval_seconds').addEventListener('input', function() {
-  document.getElementById('interval_hidden').value = this.value;
-});
-
 // ---- Key visibility toggle ------------------------------------------------
 
 function toggleKey() {
@@ -425,13 +334,8 @@ async function saveSettings(e) {
   hideToasts();
 
   const data = new URLSearchParams({
-    api_url:          document.getElementById('api_url').value,
-    api_key:          document.getElementById('api_key').value,
-    interval_seconds: document.getElementById('interval_hidden').value,
-    providers_submitted: '1',
-  });
-  document.querySelectorAll('input[name="providers"]').forEach(cb => {
-    if (cb.checked) data.append('providers', cb.value);
+    api_url: document.getElementById('api_url').value,
+    api_key: document.getElementById('api_key').value,
   });
 
   try {
@@ -543,29 +447,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve_settings_page(self) -> None:
         config = self.server.get_config()
-        interval = int(config.get("interval_seconds", 1800))
-        presets = {300, 900, 1800, 3600, 7200}
-        is_custom = interval not in presets
-
-        def sel(v: int) -> str:
-            return "selected" if interval == v and not is_custom else ""
-
         status = self.server.get_status()
-        enabled_providers = config.get("providers", ["all"])
         html = _HTML.substitute(
             api_url=_esc(config.get("api_url", "")),
             api_key=_esc(config.get("api_key", "")),
-            interval_seconds=interval,
-            sel300=sel(300),
-            sel900=sel(900),
-            sel1800=sel(1800),
-            sel3600=sel(3600),
-            sel7200=sel(7200),
-            selcustom="selected" if is_custom else "",
-            custom_display="" if is_custom else "none",
             version=_esc(status.get("version", "?")),
             sidecar_id=_esc(status.get("sidecar_id", "")),
-            providers_html=_make_providers_html(enabled_providers),
         )
         self._send_html(html)
 
@@ -594,10 +481,6 @@ class _Handler(BaseHTTPRequestHandler):
 
         api_url = first("api_url")
         api_key = first("api_key")
-        try:
-            interval = max(60, int(first("interval_seconds", "900")))
-        except ValueError:
-            interval = 900
 
         if not api_url:
             self._send_json({"ok": False, "error": "API URL is required"}, 400)
@@ -606,13 +489,6 @@ class _Handler(BaseHTTPRequestHandler):
         new_config = dict(self.server.get_config())
         new_config["api_url"] = api_url
         new_config["api_key"] = api_key
-        new_config["interval_seconds"] = interval
-
-        # Persist provider list when the form includes the providers_submitted sentinel
-        if first("providers_submitted") == "1":
-            checked = params.get("providers", [])
-            all_ids = {pid for pid, _ in _PROVIDER_LIST}
-            new_config["providers"] = ["all"] if set(checked) >= all_ids else list(checked)
 
         try:
             self.server.save_config(new_config)

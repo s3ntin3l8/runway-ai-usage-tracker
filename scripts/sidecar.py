@@ -372,7 +372,6 @@ __REGISTRY__: dict[str, Any] = {
 # --- Configuration ---
 
 DEFAULT_CONFIG = {
-    "interval_seconds": 900,
     "heartbeat_seconds": 60,
     "providers": ["all"],
     "retry_attempts": 3,
@@ -463,7 +462,6 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
         template = {
             "api_url": "http://your-server:8765",
             "api_key": "your-secret-key",
-            "interval_seconds": 900,
             "heartbeat_seconds": 60,
             "providers": ["all"],
             "retry_attempts": 3,
@@ -2413,10 +2411,10 @@ class DaemonRunner:
         # intervals (set in the dashboard) decide how often each provider is
         # actually scraped.
         self._heartbeat: int = config.get("heartbeat_seconds", 60)
-        # Retained for backward compat — older code paths read this. With the
-        # heartbeat-driven model, the cadence is server-controlled, so this
-        # value is no longer the primary loop period.
-        self._interval: int = config.get("interval_seconds", 900)
+        # Staleness threshold for the "warn if no cycle in 2× this" check below.
+        # Not a polling cadence — the server controls that via /fleet/ingest's
+        # poll_providers response field.
+        self._staleness_threshold: int = 900
         self.on_status_change = on_status_change
 
         # Readable state attributes
@@ -2454,10 +2452,10 @@ class DaemonRunner:
         if reason == "queued":
             return "warn"
         # reason == "success"
-        # Check staleness: warn if last cycle was more than 2× interval ago
+        # Check staleness: warn if last cycle was more than 2× threshold ago
         if self.last_cycle_at is not None:
             age = time.time() - self.last_cycle_at
-            if age > 2 * self._interval:
+            if age > 2 * self._staleness_threshold:
                 return "warn"
         return "ok"
 
@@ -2764,9 +2762,8 @@ def main():
     atexit.register(cleanup)
 
     api_url = config["api_url"]
-    interval = config.get("interval_seconds", 900)
 
-    logging.info(f"Sidecar started for {api_url} (Interval: {interval}s)")
+    logging.info(f"Sidecar started for {api_url}")
 
     global _daemon_running
     _daemon_running = True

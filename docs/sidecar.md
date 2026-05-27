@@ -4,7 +4,7 @@
 
 ### Download
 
-Download the latest release from the [GitHub Releases page](https://github.com/bjoernf73/runway/releases/latest):
+Download the latest release from the [GitHub Releases page](https://github.com/s3ntin3l8/runway/releases/latest):
 - **macOS**: `Runway-Sidecar-macOS.zip` → unzip → drag `Runway Sidecar.app` to `/Applications`
 - **Windows**: `Runway-Sidecar-Windows.zip` → unzip → run `RunwaySidecar.exe`
 - **Linux (desktop tray)**: `Runway-Sidecar-Linux.tar.gz` → `tar -xzf …` → run `./RunwaySidecar`. Requires a tray host (AppIndicator on GNOME/Unity, GTK on KDE/Xfce) and a DBus session. For headless servers / Docker, use the CLI binary below instead.
@@ -125,8 +125,6 @@ The default location for Runway's (and Sidecar's) configuration files is platfor
 **Optional fields (with defaults):**
 ```json
 {
-  "interval_seconds": 1800,
-  "providers": ["all"],
   "retry_attempts": 3,
   "retry_backoff_seconds": 5,
   "queue_max_size_mb": 10,
@@ -134,6 +132,8 @@ The default location for Runway's (and Sidecar's) configuration files is platfor
   "log_file_enabled": true
 }
 ```
+
+The sidecar's polling cadence is server-controlled (via the `poll_providers` field returned from `/api/v1/fleet/ingest`); there is no local `interval_seconds` or `providers` config. Configure per-provider intervals and enable/disable in the Runway dashboard's fleet settings.
 
 ## Usage
 

@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 from sidecar_app.autostart import install_login_item, is_login_item_installed, remove_login_item
 from sidecar_app.daemon import TrayDaemon
 
-RELEASES_URL = "https://github.com/bjoernf73/runway/releases"
+RELEASES_URL = "https://github.com/s3ntin3l8/runway/releases"
 
 if getattr(sys, "frozen", False):
     _ASSETS_DIR = pathlib.Path(sys._MEIPASS) / "assets"  # type: ignore[attr-defined]

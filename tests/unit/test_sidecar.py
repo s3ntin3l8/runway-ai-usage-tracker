@@ -97,7 +97,6 @@ class TestWindowsCredCache:
 MINIMAL_CONFIG = {
     "api_url": "http://localhost:8765",
     "api_key": "test-key",
-    "interval_seconds": 60,
     "retry_attempts": 1,
     "retry_backoff_seconds": 0,
 }
