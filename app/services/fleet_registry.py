@@ -141,8 +141,16 @@ class FleetRegistryService:
 
     def to_dict(self, row: SidecarRegistry) -> dict:
         """Serialize a SidecarRegistry row to a response dict."""
+        # Imported lazily so unit tests that exercise to_dict don't need
+        # the global FastAPI startup wiring.
+        from app.services.sidecar_version_checker import (
+            is_update_available,
+            sidecar_version_checker,
+        )
+
         last_seen_utc = row.last_seen.replace(tzinfo=UTC)
         stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
+        latest_version = sidecar_version_checker.get_latest()
         return {
             "sidecar_id": row.sidecar_id,
             "hostname": row.hostname,
@@ -154,6 +162,8 @@ class FleetRegistryService:
             "error_count": row.error_count,
             "ingest_count": row.ingest_count,
             "sidecar_version": row.sidecar_version,
+            "latest_version": latest_version,
+            "update_available": is_update_available(row.sidecar_version, latest_version),
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
             "stale": stale,

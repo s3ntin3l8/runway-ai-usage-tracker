@@ -22,6 +22,7 @@ from app.core.rate_limit import limiter
 from app.models.db import SystemConfig
 from app.services.collector_manager import manager
 from app.services.poller import poller
+from app.services.sidecar_version_checker import sidecar_version_checker
 from app.services.token_auto_refresher import token_auto_refresher
 
 # Propagate the resolved display tz into the process so log %(asctime)s and
@@ -90,10 +91,15 @@ async def lifespan(app: FastAPI):
     if settings.TOKEN_AUTO_REFRESH_ENABLED:
         token_auto_refresher.start()
 
+    # Start background sidecar version checker (polls GitHub once on start +
+    # every 24h so the fleet view can flag outdated sidecars).
+    sidecar_version_checker.start()
+
     yield
     # Shutdown logic
     await poller.stop()
     await token_auto_refresher.stop()
+    await sidecar_version_checker.stop()
     await manager.close()
 
 

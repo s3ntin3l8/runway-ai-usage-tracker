@@ -139,3 +139,50 @@ class TestToDict:
         assert d["last_ip"] == "192.168.1.1"
         assert "last_seen" in d
         assert "first_seen" in d
+
+
+class TestToDictUpdateAvailable:
+    """to_dict surfaces update_available + latest_version from the version checker."""
+
+    def _row(self, version: str | None) -> SidecarRegistry:
+        now = datetime(2026, 4, 13, 12, 0, 0, tzinfo=UTC)
+        return SidecarRegistry(
+            sidecar_id="host-1",
+            hostname="host-1",
+            sidecar_version=version,
+            first_seen=now,
+            last_seen=now,
+        )
+
+    def test_flags_update_when_sidecar_is_behind(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
+        d = service.to_dict(self._row("1.4.0"))
+        assert d["update_available"] is True
+        assert d["latest_version"] == "1.5.0"
+
+    def test_no_update_when_sidecar_matches_latest(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
+        d = service.to_dict(self._row("1.5.0"))
+        assert d["update_available"] is False
+        assert d["latest_version"] == "1.5.0"
+
+    def test_no_update_when_latest_unknown(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", None)
+        d = service.to_dict(self._row("1.0.0"))
+        assert d["update_available"] is False
+        assert d["latest_version"] is None
+
+    def test_no_update_when_sidecar_version_missing(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
+        d = service.to_dict(self._row(None))
+        assert d["update_available"] is False
+        assert d["latest_version"] == "1.5.0"
+        assert d["sidecar_version"] is None
