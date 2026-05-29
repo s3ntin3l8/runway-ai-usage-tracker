@@ -1,4 +1,4 @@
-import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
+import { fetchWithAuth, fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
 import { applyOrder, cardKey, extractProviderOrder, extractCardOrder } from './layout.js';
 import { ensureSortable } from './sortable.js';
@@ -745,7 +745,7 @@ window.viewRawProviderData = async function(providerId) {
     modal.classList.add('active');
 
     try {
-        const resp = await fetch(`/api/v1/system/debug/raw/${providerId}`);
+        const resp = await fetchWithAuth(`/api/v1/system/debug/raw/${providerId}`);
         if (!resp.ok) {
             const err = await resp.json();
             throw new Error(err.detail || 'Failed to fetch raw data');
