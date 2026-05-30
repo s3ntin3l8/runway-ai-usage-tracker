@@ -1,0 +1,104 @@
+#  ╔─────────────────────────────────────────────────────────────────────────────╗
+#  ║  🏃 Runway — AI Usage Tracker                                               ║
+#  ║  🔐 Docker Compose + Traefik (automatic HTTPS via Let's Encrypt)            ║
+#  ╚─────────────────────────────────────────────────────────────────────────────╝
+#
+#  Self-contained stack: brings up Traefik AND Runway together. Traefik
+#  terminates TLS and reverse-proxies to Runway over the internal `proxy`
+#  network — Runway itself publishes no host ports.
+#
+#  Quick Start:
+#    1. cp .env.traefik.example .env  — then fill it in. That file documents the
+#       MANDATORY keys for this topology (behind a proxy Runway crosses the
+#       multi-host security gate and the container refuses to start without them):
+#
+#         APP_HOST=0.0.0.0
+#         TLS_TERMINATED=true                       # Traefik terminates TLS
+#         CORS_ORIGINS=https://runway.example.com   # your public origin
+#         DB_ENCRYPTION_KEY=<fernet key>            # python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#         INGEST_API_KEY=<strong secret>            # for sidecar ingestion
+#         RUNWAY_HOST=runway.example.com            # public DNS name (interpolated below)
+#         ACME_EMAIL=you@example.com                # Let's Encrypt contact (interpolated below)
+#
+#    2. Point an A record for RUNWAY_HOST at this host, and make sure ports
+#       80 + 443 are reachable from the internet (ACME HTTP-01 challenge).
+#
+#    3. docker compose -f docker-compose.traefik.yml up -d
+#       Access the dashboard at https://${RUNWAY_HOST}
+#
+#  Sidecar connectivity: Runway publishes NO host port here — :8765 lives only on
+#  the internal `proxy` network. Sidecars reach the server through the PUBLIC URL;
+#  /api/v1/fleet/ingest rides through Traefik on :443 like any other path:
+#
+#         python3 scripts/sidecar.py --api-url https://${RUNWAY_HOST} --api-key <INGEST_API_KEY>
+#
+#  This is TLS-encrypted (ingest payloads carry tokens/cookies) and needs no
+#  inbound ports on the sidecar host. For per-client ingest rate limiting set
+#  TRUSTED_PROXY_IPS to Traefik's IP (see .env.traefik.example). For a same-host
+#  native sidecar that should skip the public round-trip, add a loopback publish
+#  to the runway service: `ports: ["127.0.0.1:8765:8765"]` and use
+#  --api-url http://localhost:8765.
+#
+#  Pinning: change `:latest` to a specific version (e.g. `:1.0.0`). Available
+#  tags: https://github.com/s3ntin3l8/runway/pkgs/container/runway
+#
+#  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+services:
+  traefik:
+    image: traefik:v3
+    container_name: traefik
+    command:
+      # Docker provider — only containers with `traefik.enable=true` are routed
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # Global HTTP → HTTPS redirect
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt (ACME) HTTP-01 challenge
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    restart: unless-stopped
+    networks:
+      - proxy
+
+  runway:
+    image: ghcr.io/s3ntin3l8/runway:latest
+    container_name: runway
+    env_file:
+      - .env
+    volumes:
+      # Persist application data (database, configs)
+      - ./data:/home/runway/.config/runway
+    restart: unless-stopped
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/api/v1/system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.runway.rule=Host(`${RUNWAY_HOST}`)"
+      - "traefik.http.routers.runway.entrypoints=websecure"
+      - "traefik.http.routers.runway.tls.certresolver=le"
+      - "traefik.http.services.runway.loadbalancer.server.port=8765"
+      # Active healthcheck — reuse Runway's own health endpoint
+      - "traefik.http.services.runway.loadbalancer.healthcheck.path=/api/v1/system/health"
+      - "traefik.http.services.runway.loadbalancer.healthcheck.interval=30s"
+
+networks:
+  proxy: {}

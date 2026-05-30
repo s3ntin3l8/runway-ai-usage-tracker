@@ -78,6 +78,48 @@ services:
 
 When `APP_HOST != 127.0.0.1`, the server refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, and an explicit `CORS_ORIGINS` allow-list. See [SECURITY.md](SECURITY.md).
 
+### Docker behind Traefik
+
+For a public-facing dashboard, front Runway with a reverse proxy that terminates TLS. This crosses the multi-host gate above, so `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=true`, and `CORS_ORIGINS` become mandatory — the container fails fast on startup without them.
+
+[`docker-compose.traefik.yml`](../docker-compose.traefik.yml) is a self-contained Traefik + Runway stack with automatic HTTPS via Let's Encrypt. Runway publishes no host ports; traffic enters only through Traefik on `:443`.
+
+[`.env.traefik.example`](../.env.traefik.example) ships the full flag set for this topology — `cp .env.traefik.example .env`, fill it in, then `docker compose -f docker-compose.traefik.yml up -d`. The mandatory keys:
+
+```bash
+APP_HOST=0.0.0.0
+TLS_TERMINATED=true                       # Traefik terminates TLS
+CORS_ORIGINS=https://runway.example.com   # your public origin
+DB_ENCRYPTION_KEY=<fernet key>            # generate below
+INGEST_API_KEY=<strong secret>            # for sidecar ingestion
+RUNWAY_HOST=runway.example.com            # public DNS name (Host rule)
+ACME_EMAIL=you@example.com                # Let's Encrypt contact
+# Optional but recommended for a public deployment:
+ADMIN_API_KEY=<strong secret>             # protect admin/config endpoints
+TRUSTED_PROXY_IPS=<traefik container IP>  # per-client ingest rate limiting (see below)
+
+# Generate the Fernet key:
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+> [!NOTE]
+> Let's Encrypt's HTTP-01 challenge needs ports **80 and 443** publicly reachable and a real DNS **A record** for `RUNWAY_HOST` pointing at the host. The same labels apply if you already run Traefik — copy the `runway` service onto your existing proxy network.
+
+#### Sidecars behind Traefik
+
+Runway publishes no host port in this topology — `:8765` lives only on the internal `proxy` network. Sidecars reach the server through the **public URL**; `/api/v1/fleet/ingest` is just another path under the `Host()` router, so it rides through Traefik on `:443`:
+
+```bash
+python3 scripts/sidecar.py --api-url https://runway.example.com --api-key <INGEST_API_KEY>
+```
+
+This applies to **remote and same-host sidecars alike** — the sidecar always runs natively (it needs host keychains/cookies/files) and talks to the server over the network. Going through Traefik is the preferred path: it's TLS-encrypted, which matters because ingest payloads carry OAuth tokens and cookies (HMAC protects integrity, not confidentiality). The sidecar needs only outbound HTTPS — no inbound ports.
+
+Two things to know:
+
+- **Rate-limit bucketing.** The ingest limiter (600/min) keys on client IP. Behind a proxy that IP is Traefik's, so every sidecar collapses into one bucket unless you set `TRUSTED_PROXY_IPS` to Traefik's container IP — then Runway honors the `X-Forwarded-For` Traefik sets and buckets per real client (this also gates `X-Forwarded-User` admin auth). Harmless for a couple of sidecars; set it for a fleet. The match is exact (not CIDR), so pin Traefik to a static IP if you depend on it.
+- **Same-host shortcut.** To let a local native sidecar skip the public DNS → Traefik round-trip, add a loopback publish to the `runway` service — `ports: ["127.0.0.1:8765:8765"]` — and point that sidecar at `http://localhost:8765`. Remote sidecars keep using the public URL.
+
 ## Sidecar deployment
 
 ### Same host
@@ -184,4 +226,4 @@ Resolution order is per-provider override → global default → built-in 900s. 
 
 See [sidecar.md](sidecar.md) for detailed sidecar configuration and the ingest payload format.
 
-*Last updated: 2026-05-21*
+*Last updated: 2026-05-30*

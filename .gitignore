@@ -57,6 +57,7 @@ external_metrics.json
 .env
 .env.*
 !.env.example
+!.env.traefik.example
 *.key
 *.pem
 secrets/
