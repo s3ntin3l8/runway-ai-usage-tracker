@@ -7,7 +7,12 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
-from app.services.forecast import SnapshotCache, _is_coarse_quantized, compute_forecast
+from app.services.forecast import (
+    SnapshotCache,
+    _is_coarse_quantized,
+    compute_all_forecasts,
+    compute_forecast,
+)
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -536,3 +541,111 @@ def test_forecast_marks_coarse_step_data_low_resolution(db_session):
     assert result.status == "low_resolution", f"got status={result.status!r}"
     assert result.projected_limit_hit_at is None
     assert result.slope is None
+
+
+# ── Near-limit floor: a card already near its limit must never read as
+#    "Won't exhaust" / "Trend unavailable", regardless of trend shape ─────────
+
+
+def test_high_usage_flat_plateau_is_near_limit_not_stable(db_session):
+    """A flat plateau at 90% used → 'near_limit', not 'stable' (which renders "Won't exhaust").
+
+    Regression for the dashboard reporting "Won't exhaust" on a card sitting at
+    90% used: a flat trend at high usage fits slope≈0 → the old 'stable' branch.
+    """
+    now = datetime.now(UTC)
+    reset_at_dt = now + timedelta(days=6)
+    # Six hourly buckets all pinned at 90% — slope 0, not coarse (one distinct value).
+    for i in range(6):
+        _make_snapshot(
+            session=db_session,
+            ts=now - timedelta(hours=6 - i),
+            pct_used=90.0,
+            reset_at=reset_at_dt,
+        )
+
+    card = _make_card(
+        unit_type="percent",
+        unit="percent",
+        used_value=90.0,
+        limit_value=100.0,
+        pct_used=90.0,
+        reset_at=reset_at_dt.isoformat(),
+    )
+    result = compute_forecast(card, db_session, now=now)
+
+    assert result is not None
+    assert result.status == "near_limit", f"got status={result.status!r}"
+
+
+def test_high_usage_spike_then_plateau_is_near_limit_not_low_resolution(db_session):
+    """A spike (25→90) that plateaus at 90% → 'near_limit', not 'low_resolution'.
+
+    The coarse-quantization short-circuit returns BEFORE classification, so a
+    near-limit floor placed only in the classifier would miss this path. The
+    series {25, 90} trips the coarse detector but the card is at 90% used.
+    """
+    now = datetime.now(UTC)
+    reset_at_dt = now + timedelta(days=6)
+    # One early bucket at 25%, then a long plateau at 90% — coarse-quantized shape.
+    pct_values = [25.0, 90.0, 90.0, 90.0, 90.0, 90.0]
+    hours = len(pct_values)
+    for i, pct in enumerate(pct_values):
+        _make_snapshot(
+            session=db_session,
+            ts=now - timedelta(hours=hours - i),
+            pct_used=pct,
+            reset_at=reset_at_dt,
+        )
+
+    card = _make_card(
+        unit_type="percent",
+        unit="percent",
+        used_value=90.0,
+        limit_value=100.0,
+        pct_used=90.0,
+        reset_at=reset_at_dt.isoformat(),
+    )
+    # Sanity: this shape is exactly what the coarse detector targets.
+    assert _is_coarse_quantized(pct_values) is True
+    result = compute_forecast(card, db_session, now=now)
+
+    assert result is not None
+    assert result.status == "near_limit", f"got status={result.status!r}"
+
+
+def test_high_usage_plateau_near_limit_via_batch_path(db_session):
+    """End-to-end via compute_all_forecasts (the production batch path).
+
+    Faithful repro of the reported card: chatgpt/weekly at 90% used after a
+    spike that plateaued. The batch path must not report 'stable'/'low_resolution'.
+    """
+    now = datetime.now(UTC)
+    reset_at_dt = now + timedelta(days=6)
+    for i in range(8):
+        _make_snapshot(
+            session=db_session,
+            ts=now - timedelta(hours=8 - i),
+            pct_used=90.0,
+            reset_at=reset_at_dt,
+            provider_id="chatgpt",
+            account_id="acc1",
+            window_type="weekly",
+        )
+
+    card = _make_card(
+        provider_id="chatgpt",
+        window_type="weekly",
+        unit_type="percent",
+        unit="percent",
+        used_value=90.0,
+        limit_value=100.0,
+        pct_used=90.0,
+        reset_at=reset_at_dt.isoformat(),
+    )
+    resp = compute_all_forecasts([card], db_session)
+
+    assert len(resp.forecasts) == 1
+    entry = resp.forecasts[0]
+    assert entry.status == "near_limit", f"got status={entry.status!r}"
+    assert resp.summary.get("near_limit") == 1

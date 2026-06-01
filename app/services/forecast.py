@@ -73,6 +73,17 @@ STABLE_PCT_EPSILON = 0.1
 # Status thresholds in pct_used terms.
 LIMIT_PCT = 100.0
 EXHAUSTED_PCT = 99.9
+# A card already this full is reported as "near_limit" regardless of trend
+# shape. At this usage level the recent slope is moot — a flat/coarse/sparse
+# trend must not read as the reassuring "Won't exhaust" (stable) or
+# "Trend unavailable" (low_resolution): the card is nearly out of quota.
+# Deliberately set above WARN_PCT (80): at >=90% used the verdict is alarming
+# regardless of how much window remains, whereas an 80% card late in its window
+# can genuinely coast to reset without exhausting. The 80-89 band keeps the
+# trend-based classification (a *flat* card there is still "stable"); we don't
+# escalate it from current pace/elapsed ratio because that reintroduces the
+# velocity-forward false alarms the trend fit exists to avoid.
+NEAR_LIMIT_PCT = 90.0
 WARN_PCT = 80.0
 # Phase 2 — projected_limit_hit_at is suppressed if the predicted hit time lies
 # more than this many window-durations in the future.
@@ -202,6 +213,33 @@ def _compute_hit_at(
     return (now + timedelta(seconds=hit_secs_from_now)).isoformat()
 
 
+def _now_pct_floor_status(now_pct: float | None) -> str | None:
+    """Status dictated purely by how full the card already is, or None.
+
+    A card already at/near its limit is critical no matter what the recent
+    trend looks like — including when the trend is flat, coarse-quantized, or
+    too sparse to fit. This floor sits *above* the trend short-circuits in
+    `_build_forecast_entry` because `low_resolution` / `insufficient_data`
+    return before `_classify_status` ever sees `now_pct`; a guard placed only
+    in the classifier would miss those paths. Returns None when the card is not
+    yet near its limit, leaving the trend-based classification untouched.
+    """
+    if now_pct is None:
+        return None
+    if now_pct >= EXHAUSTED_PCT:
+        return "exhausted"
+    if now_pct >= NEAR_LIMIT_PCT:
+        return "near_limit"
+    return None
+
+
+def _floor_projection(status: str, now_state: _NowState, limit_value: float) -> _Projection:
+    """Projection for a now_pct-floored status (`exhausted` / `near_limit`)."""
+    if status == "exhausted":
+        return _Projection(used=limit_value, pct=LIMIT_PCT)
+    return _Projection(used=now_state.used, pct=now_state.pct)
+
+
 def _classify_status(
     *,
     now_pct: float | None,
@@ -299,25 +337,40 @@ def _build_forecast_entry(  # noqa: PLR0913
     series_payload = _build_series_payload(series_data, window_start) if include_series else None
     ys = series_data.ys
 
+    # A card already near its limit is critical regardless of trend shape. This
+    # floor runs before the coarse / insufficient short-circuits so a spike that
+    # plateaus high never reads "Trend unavailable" or "Won't exhaust".
+    floor_status = _now_pct_floor_status(now_state.pct)
+
     if _is_coarse_quantized(ys):
         return _make_entry(
             card=card,
-            status="low_resolution",
+            status=floor_status or "low_resolution",
             window_start=window_start,
             samples_used=samples_used,
-            confidence=0.0,
+            confidence=confidence if floor_status else 0.0,
             now_state=now_state,
+            projection=(
+                _floor_projection(floor_status, now_state, limit_value)
+                if floor_status
+                else _Projection()
+            ),
             series=series_payload,
         )
 
     if fit is None:
         return _make_entry(
             card=card,
-            status="insufficient_data",
+            status=floor_status or "insufficient_data",
             window_start=window_start,
             samples_used=samples_used,
             confidence=confidence,
             now_state=now_state,
+            projection=(
+                _floor_projection(floor_status, now_state, limit_value)
+                if floor_status
+                else _Projection()
+            ),
             series=series_payload,
         )
 
@@ -345,8 +398,17 @@ def _build_forecast_entry(  # noqa: PLR0913
         hit_at=hit_at,
     )
 
+    # Escalate near-limit cards out of the reassuring/flat verdicts ("stable" /
+    # "ok" / "warn"). Left as-is: "risk" (carries a concrete hit time, more
+    # useful than "near_limit"), "exhausted" (the floor's strongest outcome),
+    # and "decelerating" (already high-usage-aware and not falsely reassuring).
+    if floor_status is not None and status not in ("risk", "exhausted", "decelerating"):
+        status = floor_status
+
     if status == "exhausted":
         projection = _Projection(used=limit_value, pct=LIMIT_PCT)
+    elif status == "near_limit":
+        projection = _Projection(used=now_state.used, pct=now_pct)
     elif status == "stable":
         projection = _Projection(used=projected_used, pct=now_pct)
     elif status == "decelerating":
@@ -619,6 +681,7 @@ def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastR
         "exhausted": 0,
         "decelerating": 0,
         "low_resolution": 0,
+        "near_limit": 0,
     }
 
     now = datetime.now(UTC)

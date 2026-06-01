@@ -21,6 +21,7 @@ function _fcForecastKey(card) {
 
 const _FC_STATUS_COLOR = {
     exhausted: 'var(--crit)',
+    near_limit: 'var(--crit)',
     risk: 'var(--crit)',
     warn: 'var(--warn)',
     decelerating: 'var(--info, #4a9eff)',

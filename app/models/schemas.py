@@ -146,7 +146,8 @@ class ForecastEntry(BaseModel):
     window_start: str  # ISO-8601 UTC
     samples_used: int
     confidence: float  # 0.0–1.0
-    # "ok" | "warn" | "risk" | "insufficient_data" | "stable" | "exhausted" | "decelerating"
+    # "ok" | "warn" | "risk" | "insufficient_data" | "stable" | "exhausted"
+    # | "decelerating" | "low_resolution" | "near_limit"
     status: str
     method: str  # "linear" | "theil_sen"
     # Pct per second from the trend fit; null when no fit. Lets the UI render
@@ -165,6 +166,7 @@ class ForecastEntry(BaseModel):
 
 class ForecastResponse(BaseModel):
     forecasts: list[ForecastEntry]
-    # Keyed by status: risk, warn, ok, insufficient_data, stable, exhausted, decelerating
+    # Keyed by status: risk, warn, ok, insufficient_data, stable, exhausted,
+    # decelerating, low_resolution, near_limit
     summary: dict[str, int]
     generated_at: str  # ISO-8601 UTC
