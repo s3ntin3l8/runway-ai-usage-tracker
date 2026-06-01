@@ -185,6 +185,24 @@ function applyTheme() {
 }
 
 /**
+ * Apply current accent color to document
+ */
+function applyAccent() {
+    const el = document.documentElement;
+    if (STATE.accent && STATE.accent !== 'orange') {
+        el.dataset.accent = STATE.accent;
+    } else {
+        delete el.dataset.accent;
+    }
+}
+
+window.setAccent = function (color) {
+    STATE.accent = color;
+    localStorage.setItem('runway_accent', color);
+    applyAccent();
+};
+
+/**
  * Apply current display preferences (column count, card chrome) to document.
  * Reflected as data attributes on <html>; CSS variants key off these.
  */
@@ -352,8 +370,9 @@ async function initUI() {
         document.body.classList.add('compact-mode');
     }
 
-    // Initialize theme
+    // Initialize theme and accent
     applyTheme();
+    applyAccent();
     updateThemeIcon();
     applyDisplayPrefs();
     startHudClock();

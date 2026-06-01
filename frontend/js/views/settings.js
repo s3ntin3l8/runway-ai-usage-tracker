@@ -852,10 +852,22 @@ async function renderSystemSection(pane) {
 
 // ─── Display ─────────────────────────────────────────────────────────────────
 
+const ACCENT_OPTIONS = [
+    { value: 'orange', hex: '#ffb000', label: 'Orange' },
+    { value: 'blue',   hex: '#3b82f6', label: 'Blue'   },
+    { value: 'green',  hex: '#22c55e', label: 'Green'  },
+    { value: 'purple', hex: '#a855f7', label: 'Purple' },
+];
+
 function renderDisplaySection(pane) {
     const cols = STATE.display.cols;
     const chrome = STATE.display.chrome;
     const compact = STATE.display.compact;
+    const accent = STATE.accent || 'orange';
+    const swatchHtml = ACCENT_OPTIONS.map(o => `
+        <button type="button" class="accent-swatch${accent === o.value ? ' active' : ''}"
+                style="--swatch:${o.hex}" data-accent="${o.value}" title="${o.label}"></button>
+    `).join('');
     pane.innerHTML = `<div class="settings-panel glass">
         <header class="sp-head">
             <div>
@@ -864,6 +876,13 @@ function renderDisplaySection(pane) {
             </div>
         </header>
         <div class="sys-grid">
+            <div class="sys-row">
+                <div>
+                    <div class="sys-k">Color</div>
+                    <div class="sys-s">Accent color applied across cards, nav, and indicators.</div>
+                </div>
+                <div class="accent-swatches">${swatchHtml}</div>
+            </div>
             <div class="sys-row">
                 <div>
                     <div class="sys-k">Card columns</div>
@@ -909,6 +928,18 @@ function renderDisplaySection(pane) {
             seg.querySelectorAll('.ds-btn').forEach(b => {
                 b.classList.toggle('on', b.dataset.v === value);
             });
+        });
+    });
+
+    pane.querySelector('.accent-swatches')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.accent-swatch');
+        if (!btn) return;
+        const value = btn.dataset.accent;
+        if (typeof window.setAccent === 'function') {
+            window.setAccent(value);
+        }
+        pane.querySelectorAll('.accent-swatch').forEach(b => {
+            b.classList.toggle('active', b.dataset.accent === value);
         });
     });
 }

@@ -16,6 +16,10 @@ export const STATE = {
         // Migrate legacy boolean key
         return localStorage.getItem('runway_bright_mode') === 'true' ? 'light' : 'dark';
     })(),
+    accent: (() => {
+        const stored = localStorage.getItem('runway_accent');
+        return ['orange', 'blue', 'green', 'purple'].includes(stored) ? stored : 'orange';
+    })(),
     githubAuth: { authenticated: false, account: null },
     display: (() => {
         const cols = localStorage.getItem('runway_display_cols');

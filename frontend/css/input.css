@@ -51,6 +51,40 @@
     --scanline:        0.015;
 }
 
+/* ── Accent themes (override only the three accent tokens; status colors are untouched) */
+:root[data-accent="blue"]   { --accent: #3b82f6; --accent-dim: rgba(59,130,246,.12);  --accent-2: #60a5fa; }
+:root[data-accent="green"]  { --accent: #22c55e; --accent-dim: rgba(34,197,94,.12);   --accent-2: #4ade80; }
+:root[data-accent="purple"] { --accent: #a855f7; --accent-dim: rgba(168,85,247,.12);  --accent-2: #c084fc; }
+
+/* Light-mode variants — darker accent + neutralised warm-ivory palette so non-orange accents feel at home */
+:root[data-accent="blue"][data-theme="light"] {
+    --accent:          #1d4ed8;
+    --accent-dim:      rgba(29,78,216,.10);
+    --accent-2:        #3b82f6;
+    --bg:              #f0f4f8;
+    --surface-2:       #e8edf4;
+    --hairline:        #c5cdd8;
+    --hairline-strong: #a5b0be;
+}
+:root[data-accent="green"][data-theme="light"] {
+    --accent:          #16a34a;
+    --accent-dim:      rgba(22,163,74,.10);
+    --accent-2:        #22c55e;
+    --bg:              #f0f5f1;
+    --surface-2:       #e5ece7;
+    --hairline:        #bfcdc4;
+    --hairline-strong: #9db5a4;
+}
+:root[data-accent="purple"][data-theme="light"] {
+    --accent:          #7c3aed;
+    --accent-dim:      rgba(124,58,237,.10);
+    --accent-2:        #a855f7;
+    --bg:              #f2f0f6;
+    --surface-2:       #ebe6f2;
+    --hairline:        #c5bed4;
+    --hairline-strong: #a89cbc;
+}
+
 @theme {
     --font-family-mono: 'B612 Mono', ui-monospace, monospace;
     --font-family-sans: 'B612', ui-sans-serif, system-ui, sans-serif;
@@ -3523,3 +3557,20 @@ l-table td.num {
     box-shadow: inset 0 0 0 1px var(--crit);
 }
 .btn-danger:hover { filter: brightness(1.1); }
+
+/* ── Accent color swatches (Display settings) ─────────────── */
+.accent-swatches { display: flex; gap: 8px; align-items: center; }
+.accent-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--swatch);
+    border: 2px solid transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: outline-color var(--dur-fast) var(--ease);
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+}
+.accent-swatch:hover { outline-color: var(--swatch); }
+.accent-swatch.active { outline-color: var(--swatch); }
