@@ -478,6 +478,69 @@ def test_batch_cache_trimmed_to_current_window(db_session):
     )
 
 
+def test_boundary_bucket_parity_between_paths(db_session):
+    """Regression: the per-card and batch paths must agree on the boundary bucket.
+
+    When ``window_start`` falls partway through a bucket (e.g. 13:30:13 inside the
+    hourly bucket labelled 13:00), a snapshot at 13:34 is *in-window* but its
+    floored bucket label (13:00) predates ``window_start``. The per-card SQL path
+    filters raw ``ts >= window_start`` before bucketing, so it keeps that bucket;
+    the batch path used to trim on the floored *label* and dropped it — yielding a
+    shorter series and a different status for identical data.
+
+    Both paths must produce the same status / samples / slope.
+    """
+    now = datetime.now(UTC)
+    base_hour = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=6)
+    # window_start sits 30m13s into its hourly bucket → a snapshot a few minutes
+    # later floors to a bucket label that predates window_start.
+    window_start = base_hour + timedelta(minutes=30, seconds=13)
+    reset_at_dt = window_start + timedelta(days=7)  # weekly window
+
+    # Boundary snapshot: 4 min after window_start → same hour-bucket as base_hour,
+    # whose label (base_hour) is < window_start. In-window, must be kept.
+    _make_snapshot(
+        session=db_session,
+        ts=window_start + timedelta(minutes=4),
+        pct_used=10.0,
+        reset_at=reset_at_dt,
+        window_type="weekly",
+    )
+    # A clean rising ramp in four later, distinct hour-buckets.
+    for i, pct in enumerate((20.0, 30.0, 40.0, 50.0), start=1):
+        _make_snapshot(
+            session=db_session,
+            ts=window_start + timedelta(hours=i, minutes=6),
+            pct_used=pct,
+            reset_at=reset_at_dt,
+            window_type="weekly",
+        )
+
+    card = _make_card(
+        unit_type="percent",
+        unit="percent",
+        used_value=50.0,
+        limit_value=100.0,
+        pct_used=50.0,
+        reset_at=reset_at_dt.isoformat(),
+        window_type="weekly",
+    )
+
+    # Per-card path (snapshot_cache=None → SQL fallback).
+    per_card = compute_forecast(card, db_session, now=now, snapshot_cache=None)
+    # Batch path (builds and consumes the snapshot cache internally).
+    batch = compute_all_forecasts([card], db_session)
+    assert len(batch.forecasts) == 1
+    batched = batch.forecasts[0]
+
+    assert per_card is not None
+    # The boundary bucket must survive in BOTH paths → 5 samples, not 4.
+    assert per_card.samples_used == 5
+    assert batched.samples_used == per_card.samples_used
+    assert batched.status == per_card.status
+    assert batched.slope == pytest.approx(per_card.slope, abs=1e-9)
+
+
 # ── Coarse-quantized snapshot detection ───────────────────────────────────────
 
 

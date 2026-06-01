@@ -478,7 +478,10 @@ def _derive_now_pct(card: LimitCard) -> float | None:
 
 # Cache type for the batch optimisation path.
 # Key: (provider_id, account_id, window_type, variant, model_id)
-# Value: pre-bucketed [(bucket_ts, pct_used)] sorted oldest-first.
+# Value: finest-resolution [(ts, pct_used)] sorted oldest-first, where `ts` is
+# each bucket's real (newest) snapshot timestamp — NOT a floored label.
+# `_snapshots_for_card` trims by that real ts and re-floors to the card's bucket
+# width, so the boundary bucket stays in parity with the per-card SQL path.
 SnapshotCache = dict[tuple[str, str, str, str, str], list[tuple[datetime, float]]]
 
 
@@ -501,11 +504,22 @@ def _snapshots_for_card(
     """
     if snapshot_cache is not None:
         key = (provider_id, account_id, window_type, variant, model_id)
-        # The batch cache covers the broadest time range across all cards (driven by
-        # the longest window type, e.g. monthly). Trim to [window_start, now] so
-        # data from prior windows/sessions doesn't contaminate the regression —
-        # the per-card SQL fallback applies the same ts >= window_start filter.
-        return [(ts, pct) for ts, pct in snapshot_cache.get(key, []) if window_start <= ts <= now]
+        # The batch cache covers the broadest time range across all cards (driven
+        # by the longest window type, e.g. monthly) and is bucketed at the finest
+        # resolution, each point tagged with its real (newest) snapshot ts. Trim
+        # by that real ts to [window_start, now] — so prior-window data is excluded
+        # AND a boundary snapshot whose floored label predates window_start is
+        # still kept — then re-floor to this card's bucket width, keeping the
+        # newest value per bucket. This mirrors the per-card SQL path, which
+        # filters raw ts >= window_start before bucketing.
+        floored: dict[int, tuple[datetime, float]] = {}
+        for ts, pct in snapshot_cache.get(key, []):
+            if not (window_start <= ts <= now):
+                continue
+            bucket_epoch = (int(ts.timestamp()) // bucket_seconds) * bucket_seconds
+            # Cache points are oldest-first, so the last write per bucket is newest.
+            floored[bucket_epoch] = (datetime.fromtimestamp(bucket_epoch, tz=UTC), pct)
+        return [floored[epoch] for epoch in sorted(floored)]
 
     # Per-card fallback: query quota_snapshots directly.
     from sqlalchemy import text
@@ -704,35 +718,18 @@ def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastR
 
     snapshot_cache: SnapshotCache | None = None
     if earliest_window_start is not None:
-        # Fetch at the finest bucket resolution; coarser-window cards still get
-        # the correct last-in-bucket value because they query a wider partition.
-        raw_cache = query_pct_snapshot_buckets_batch(
+        # Fetch at the finest bucket resolution, tagged with each bucket's real
+        # (newest) snapshot timestamp. `_snapshots_for_card` does the per-card
+        # window trim and re-floors to that card's coarser bucket width, so no
+        # re-aggregation is needed here — and trimming on the real ts (not a
+        # floored label) keeps the boundary bucket in parity with the per-card
+        # SQL path.
+        snapshot_cache = query_pct_snapshot_buckets_batch(
             session,
             since=earliest_window_start,
             until=now,
             bucket_seconds=finest_bucket,
         )
-        # Re-bucket per card if its window uses a coarser resolution.
-        # Build the final cache keyed by (provider, account, window_type, variant, model_id)
-        # with bucket_seconds appropriate for that card's window_type.
-        snapshot_cache = {}
-        for key, fine_buckets in raw_cache.items():
-            _pid, _aid, _wt, _variant, _mid = key
-            card_bucket_secs = _forecast_bucket_seconds(_wt)
-            if card_bucket_secs == finest_bucket:
-                snapshot_cache[key] = fine_buckets
-            else:
-                # Re-aggregate: keep last value per coarser bucket.
-                coarse: dict[int, tuple[datetime, float]] = {}
-                for bts, pct in fine_buckets:
-                    epoch = int(bts.timestamp())
-                    coarse_epoch = (epoch // card_bucket_secs) * card_bucket_secs
-                    # fine_buckets are sorted oldest-first; later overwrites are newer.
-                    coarse[coarse_epoch] = (
-                        datetime.fromtimestamp(coarse_epoch, tz=UTC),
-                        pct,
-                    )
-                snapshot_cache[key] = sorted(coarse.values())
 
     for card in cards:
         entry = compute_forecast(card, session, now=now, snapshot_cache=snapshot_cache)

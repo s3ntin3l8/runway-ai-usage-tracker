@@ -28,7 +28,13 @@ def query_pct_snapshot_buckets_batch(
     Single scan; Python-side partitioning. Each bucket keeps the last (newest)
     snapshot value in the interval — correct for a monotonically increasing gauge.
 
-    Returns: {(provider_id, account_id, window_type, variant, model_id): [(bucket_ts, pct_used)]}
+    The returned timestamp is the kept snapshot's *real* ts (not the floored
+    bucket label). Consumers re-floor to their own bucket width; carrying the
+    real ts lets the per-card window trim (``ts >= window_start``) rescue a
+    boundary snapshot whose floored label predates ``window_start`` — matching
+    the per-card SQL path, which filters raw ts before bucketing.
+
+    Returns: {(provider_id, account_id, window_type, variant, model_id): [(ts, pct_used)]}
     """
 
     def _naive_utc_str(dt: datetime) -> str:
@@ -58,7 +64,7 @@ def query_pct_snapshot_buckets_batch(
               AND pct_used IS NOT NULL
         )
         SELECT provider_id, account_id, window_type, variant, model_id,
-               bucket_epoch, pct_used
+               CAST(strftime('%s', ts) AS INTEGER) AS ts_epoch, pct_used
         FROM bucketed
         WHERE rn = 1
         ORDER BY provider_id, account_id, window_type, variant, model_id, bucket_epoch ASC
@@ -82,8 +88,8 @@ def query_pct_snapshot_buckets_batch(
             str(row.variant),
             str(row.model_id),
         )
-        bucket_ts = datetime.fromtimestamp(int(row.bucket_epoch), tz=UTC)
-        result.setdefault(key, []).append((bucket_ts, float(row.pct_used)))
+        snapshot_ts = datetime.fromtimestamp(int(row.ts_epoch), tz=UTC)
+        result.setdefault(key, []).append((snapshot_ts, float(row.pct_used)))
     return result
 
 
