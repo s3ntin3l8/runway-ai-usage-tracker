@@ -80,7 +80,7 @@ class ChatGPTWebMixin:
                 {
                     "service_name": "ChatGPT",
                     "variant": "Codex",
-                    "window_type": "weekly",
+                    "window_type": "monthly",
                     "icon": "💬",
                     "remaining": f"{(100 - pct):.1f}%",
                     "unit": "remaining",
