@@ -235,3 +235,48 @@ def test_pricing_boundary_uses_utc_date_not_local_date():
     cost_utc = compute_event_cost(s, ts=utc_ts, **common)
     cost_pdt = compute_event_cost(s, ts=same_instant_in_pdt.astimezone(UTC), **common)
     assert cost_utc == cost_pdt == 2.00
+
+
+def test_anthropic_versioned_opus_falls_back_to_family_rate():
+    """opus-4.8 has no pricing row, so it bills at the 'opus' family rate."""
+    s = _seeded_session()
+    versioned = compute_event_cost(
+        s,
+        provider_id="anthropic",
+        model_id="opus-4.8",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    family = compute_event_cost(
+        s,
+        provider_id="anthropic",
+        model_id="opus",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert versioned == family > 0.0
+
+
+def test_gemini_versioned_id_still_matches_exactly():
+    """Provider that prices per version keeps exact match (no fallback drift)."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="gemini",
+        model_id="pro-2.5",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost > 0.0
