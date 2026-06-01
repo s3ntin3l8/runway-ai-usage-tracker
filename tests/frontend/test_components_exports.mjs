@@ -34,8 +34,6 @@ const REQUIRED_EXPORTS = [
     // Imported by frontend/js/views/fleet.js
     // (buildFleetView covered above)
     // Other publicly-used builders kept exported by the original module
-    'buildModalSkeleton',
-    'buildProviderModal',
     'buildModalContent',
 ];
 

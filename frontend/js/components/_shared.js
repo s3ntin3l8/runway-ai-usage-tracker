@@ -27,22 +27,34 @@ export function formatHumanDelta(targetDate) {
     return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
 }
 
+const _DI = 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg';
+const _LH = 'https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons';
+
 const _PROV_MAP = {
-    anthropic:      { label: 'Anthropic · Claude', key: 'claude',      init: 'CL' },
-    openai:         { label: 'OpenAI · ChatGPT',   key: 'chatgpt',     init: 'AI' },
-    google_gemini:  { label: 'Google · Gemini',    key: 'gemini',      init: 'GM' },
-    github_copilot: { label: 'GitHub · Copilot',   key: 'copilot',     init: 'GH' },
-    opencode:       { label: 'Opencode',            key: 'opencode',    init: 'OC' },
-    zai:            { label: 'Z.AI',                key: 'zai',         init: 'ZI' },
-    kimi_api:       { label: 'Kimi',                key: 'kimi',        init: 'KM' },
-    kimi_coding:    { label: 'Kimi Coding',         key: 'kimi',        init: 'KC' },
-    kimi_k2:        { label: 'Kimi K2',             key: 'kimi',        init: 'K2' },
-    minimax:        { label: 'MiniMax',             key: 'minimax',     init: 'MM' },
-    openrouter:     { label: 'OpenRouter',          key: 'openrouter',  init: 'OR' },
-    ollama:         { label: 'Ollama',              key: 'ollama',      init: 'OL' },
-    antigravity:    { label: 'Antigravity',         key: 'antigravity', init: 'AG' },
+    anthropic:   { label: 'Anthropic · Claude', key: 'claude',      init: 'CL', icon:      `${_DI}/claude-ai.svg` },
+    chatgpt:     { label: 'OpenAI · ChatGPT',   key: 'chatgpt',     init: 'AI', icon:      `${_DI}/openai.svg` },
+    gemini:      { label: 'Google · Gemini',    key: 'gemini',      init: 'GM', icon:      `${_DI}/google-gemini.svg` },
+    github:      { label: 'GitHub · Copilot',   key: 'copilot',     init: 'GH', icon:      `${_DI}/github-copilot.svg` },
+    opencode:    { label: 'Opencode',            key: 'opencode',    init: 'OC', iconLight: `${_DI}/opencode-light.svg`,  iconDark: `${_DI}/opencode-dark.svg` },
+    zai:         { label: 'Z.AI',                key: 'zai',         init: 'ZI', icon:      `${_DI}/z-ai.svg` },
+    kimi_api:    { label: 'Kimi',                key: 'kimi',        init: 'KM', icon:      `${_DI}/kimi-ai.svg` },
+    kimi_coding: { label: 'Kimi Coding',         key: 'kimi',        init: 'KC', icon:      `${_DI}/kimi-ai.svg` },
+    kimi_k2:     { label: 'Kimi K2',             key: 'kimi',        init: 'K2', icon:      `${_DI}/kimi-ai.svg` },
+    minimax:     { label: 'MiniMax',             key: 'minimax',     init: 'MM', iconLight: `${_DI}/minimax-light.svg`,  iconDark: `${_DI}/minimax-dark.svg` },
+    openrouter:  { label: 'OpenRouter',          key: 'openrouter',  init: 'OR', icon:      `${_DI}/open-router.svg`,    iconDark: `${_DI}/open-router-dark.svg` },
+    ollama:      { label: 'Ollama',              key: 'ollama',      init: 'OL', icon:      `${_DI}/ollama.svg` },
+    antigravity: { label: 'Antigravity',         key: 'antigravity', init: 'AG', icon:      `${_LH}/antigravity-color.svg` },
 };
 
 export function providerDisplayLabel(providerId) {
     return _PROV_MAP[providerId]?.label || providerId || 'Other';
+}
+
+/** Returns the CDN URL for a provider's icon, theme-aware. Returns null when no icon is defined. */
+export function providerIconUrl(providerId) {
+    const prov = _PROV_MAP[providerId];
+    if (!prov || (!prov.icon && !prov.iconLight && !prov.iconDark)) return null;
+    const isLight = document.documentElement.dataset.theme === 'light';
+    if (isLight) return prov.iconLight ?? prov.icon ?? null;
+    return prov.iconDark ?? prov.icon ?? null;
 }

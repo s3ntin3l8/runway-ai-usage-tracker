@@ -2,7 +2,7 @@
 // Imports shared helpers from ../utils/html.js and ./_shared.js.
 
 import { escapeHTML, escapeHTMLAttr } from '../utils/html.js';
-import { _formatTokenShort, formatHumanDelta, providerDisplayLabel } from './_shared.js';
+import { _formatTokenShort, formatHumanDelta, providerDisplayLabel, providerIconUrl } from './_shared.js';
 import { formatCost, formatCurrency } from '../utils/format.js';
 import { clusterPools, clusterModelLabel } from '../utils/quota.js';
 
@@ -123,13 +123,14 @@ function _authorityLabel(dataSource, inputSource) {
 function _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, sidecarCount) {
     const initial = (provLabel || '?').trim().charAt(0).toUpperCase();
     const provClass = providerId ? `c-${escapeHTMLAttr(providerId)}` : '';
+    const iconUrl = providerIconUrl(providerId);
     const planPill = planText
         ? `<span class="pill"><b>${escapeHTML(planText)}</b></span>`
         : '';
     const sidecarPill = `<span class="pill"><b>${sidecarCount}</b>sidecar${sidecarCount === 1 ? '' : 's'}</span>`;
     return `<div class="fc-rail">
         <div class="who">
-            <div class="plogo ${provClass}">${escapeHTML(initial)}</div>
+            <div class="plogo ${provClass}${iconUrl ? ' has-icon' : ''}">${iconUrl ? `<img class="plogo-img" src="${escapeHTMLAttr(iconUrl)}" alt="" loading="lazy" onerror="const p=this.parentElement;p.classList.remove('has-icon');p.innerHTML='${escapeHTMLAttr(initial)}'">` : escapeHTML(initial)}</div>
             <div class="stack">
                 <div class="pname">${escapeHTML(provLabel)}</div>
                 <div class="pacc">${escapeHTML(accountLabel)}</div>

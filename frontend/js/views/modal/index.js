@@ -12,6 +12,7 @@ import { fetchHeatmap, fetchSessions, fetchForecast, fetchHistoryChart } from '.
 import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
+import { providerIconUrl } from '../../components/_shared.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { buildOverviewPane, wireOverviewSparkTabs, wireOverviewSparkHover } from './overview.js';
 import { buildForecastPane, wireForecastPane, disposeTrajectoryCharts } from './forecast.js';
@@ -177,8 +178,23 @@ export async function openProviderModal(entry) {
     // Update header
     const logoEl = document.getElementById('pm-logo');
     if (logoEl) {
-        logoEl.textContent = (provLabel || '?')[0].toUpperCase();
-        logoEl.className = `plogo c-${_esc(providerId)}`;
+        const iconUrl = providerIconUrl(providerId);
+        logoEl.className = `plogo c-${_esc(providerId)}${iconUrl ? ' has-icon' : ''}`;
+        if (iconUrl) {
+            const img = document.createElement('img');
+            img.className = 'plogo-img';
+            img.src = iconUrl;
+            img.alt = '';
+            img.loading = 'lazy';
+            img.onerror = () => {
+                logoEl.classList.remove('has-icon');
+                logoEl.textContent = (provLabel || '?')[0].toUpperCase();
+            };
+            logoEl.innerHTML = '';
+            logoEl.appendChild(img);
+        } else {
+            logoEl.textContent = (provLabel || '?')[0].toUpperCase();
+        }
     }
     const titleEl = document.getElementById('pm-title');
     if (titleEl) {

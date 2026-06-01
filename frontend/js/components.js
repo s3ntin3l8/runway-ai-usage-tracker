@@ -61,16 +61,10 @@ function cardSubtitleText(card) {
 }
 
 // _formatTokenShort, formatHumanDelta, providerDisplayLabel moved to ./components/_shared.js
-import { _formatTokenShort, formatHumanDelta, providerDisplayLabel } from './components/_shared.js';
+import { _formatTokenShort, formatHumanDelta, providerDisplayLabel, providerIconUrl } from './components/_shared.js';
 export { providerDisplayLabel };
 
 
-const PROVIDER_ICONS = {
-    anthropic: '🟠', gemini: '✨', github: '🐙', chatgpt: '🤖',
-    openrouter: '🚀', opencode: '⚡', ollama: '🦙', minimax: '💎',
-    kimi_api: '🌊', kimi_coding: '💻', kimi_k2: '🌙', zai: '🌐',
-    antigravity: '🪐',
-};
 
 
 /**
@@ -977,180 +971,6 @@ function getTrendArrow(points) {
     return '→';
 }
 
-/**
- * Build skeleton loading state for the provider modal.
- * @param {number} count - number of service rows to show skeletons for
- * @returns {string} HTML string
- */
-export function buildModalSkeleton(count) {
-    const rows = Array(Math.min(count, 10)).fill(0).map(() => `
-        <div style="background:var(--surface);border:1px solid var(--hairline);padding:16px;border-radius:1px;">
-            <div class="flex justify-between items-start mb-2.5">
-                <div class="flex-1 min-w-0">
-                    <div class="skeleton h-6 w-32 mb-2" style="border-radius:1px;"></div>
-                    <div class="flex gap-2">
-                        <div class="skeleton h-4 w-16" style="border-radius:1px;"></div>
-                        <div class="skeleton h-4 w-12" style="border-radius:1px;"></div>
-                    </div>
-                </div>
-                <div class="skeleton w-16 h-7" style="border-radius:1px;"></div>
-            </div>
-            <div class="skeleton h-5 w-full mb-2" style="border-radius:1px;"></div>
-            <div class="h-1 overflow-hidden" style="background:var(--surface-2);">
-                <div class="skeleton h-full w-3/4" style="border-radius:0;"></div>
-            </div>
-        </div>
-    `).join('');
-    
-    return rows;
-}
-
-/**
- * Build the provider drill-down modal.
- * @param {string} providerId
- * @param {Array} items - LimitCard items for this provider (sorted worst-first)
- * @param {Array} history - raw history snapshots from /api/v1/usage/history
- * @returns {string} HTML string
- */
-export function buildProviderModal(providerId, items, history) {
-    const icon = PROVIDER_ICONS[providerId] || '🔧';
-    const accounts = [...new Set(items.map(i => i.account_label).filter(Boolean))];
-    const accountText = accounts.join(' · ') || '';
-    const windowType = items[0]?.window_type || '';
-    const serviceCount = items.length;
-
-    // Preserve the order passed in — openProviderModal already applies the user's layout.
-    const sorted = items;
-
-    const BAR_HEX = { critical: 'var(--crit)', warning: 'var(--warn)', good: 'var(--good)', unlimited: 'var(--unlm)', unknown: 'var(--unk)' };
-    const MODAL_SOURCE_LABELS = { 
-        oauth: 'OAuth', 
-        web_api: 'Web API', 
-        scrape: 'Scrape', 
-        logs: 'Logs', 
-        statusline: 'Statusline', 
-        api: 'API', 
-        sidecar: 'Sidecar',
-        cache: 'Cache',
-        fallback: 'Fallback'
-    };
-    const MODAL_INPUT_LABELS = {
-        sidecar: 'Sidecar',
-        config: 'Config',
-        server: 'Server'
-    };
-
-    const serviceRows = sorted.map(item => {
-        const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
-        const barColor = BAR_HEX[item.health] || '#3f3f46';
-        const badgeLabels = { critical: 'CRIT', warning: 'WARN', good: 'GOOD', unlimited: 'UNLM', unknown: '——' };
-
-        // Percentage
-        let pct = null;
-        if (!item.is_unlimited && item.used_value != null && item.limit_value > 0) {
-            pct = (item.used_value / item.limit_value) * 100;
-        }
-        const barWidth = item.is_unlimited ? 100 : (pct ?? 0);
-
-        // Sparkline — filter history for this service+window so two windows of the
-        // same service don't bleed into one mixed sparkline.
-        const svcHistory = (history || [])
-            .filter(s => s.provider_id === providerId
-                && s.service_name === item.service_name
-                && (s.variant || null) === (item.variant || null)
-                && (s.window_type || null) === (item.window_type || null)
-                && (s.model_id || null) === (item.model_id || null)
-                && typeof s.used_value === 'number' && isFinite(s.used_value))
-            .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-            .map(s => ({ value: s.used_value }));
-        const sparkColor = item.is_unlimited ? 'var(--unlm)' : barColor;
-        const sparkSVG = buildSparklineSVG(svcHistory, sparkColor);
-        const trendArrow = getTrendArrow(svcHistory);
-
-        // Used / limit display
-        const fmt = formatUsageValues(item.used_value, item.limit_value, item.unit_type, item.currency);
-        const usageText = item.is_unlimited
-            ? (item.unit_type === 'tokens' ? (item.used_value / 1000000).toFixed(1) + 'M tokens' : 'Unlimited')
-            : (fmt.used !== '—' && fmt.limit !== '—')
-            ? `${fmt.used} / ${fmt.limit}${fmt.unit ? ' ' + fmt.unit : ''}`
-            : escapeHTML(String(item.remaining ?? '—'));
-
-        const resetText = item.reset_at ? escapeHTML(formatResetDisplay(item.reset_at)) : escapeHTML(String(item.reset ?? '—'));
-        const sourceLabel = MODAL_SOURCE_LABELS[item.data_source] || escapeHTML(item.data_source || '');
-        const inputLabel = MODAL_INPUT_LABELS[item.input_source] || escapeHTML(item.input_source || '');
-        
-        const combinedSourceLabel = item.input_source && item.input_source !== 'unknown' 
-            ? `${sourceLabel} · ${inputLabel}` 
-            : sourceLabel;
-
-        const paceIcon = getPaceIcon(item.pace);
-        const tierBadge = item.tier ? getTierBadge(item.tier) : '';
-
-        return `<div style="background:var(--surface);border:1px solid var(--hairline);padding:16px;border-radius:1px;position:relative;" data-card-key="${escapeHTMLAttr(cardKey(item))}">
-            <span class="drag-handle" aria-hidden="true">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
-                    <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
-                    <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
-                </svg>
-            </span>
-            <div class="flex justify-between items-start mb-2.5">
-                <div class="flex-1 min-w-0">
-                    <div style="font-size:1.1rem;font-weight:700;color:var(--text);">${escapeHTML(item.service_name)}</div>
-                    ${_windowSubtitle(item)}
-                    <div class="flex flex-wrap items-center gap-1.5" style="margin-top:6px;">
-                        <span class="tag ${h.tag}">${badgeLabels[item.health] || '——'}</span>
-                        ${tierBadge}
-                        ${combinedSourceLabel ? `<span style="font-size:10px;color:var(--text-muted);">${combinedSourceLabel}</span>` : ''}
-                        ${paceIcon ? `<span style="font-size:1rem;">${paceIcon}</span>` : ''}
-                        ${item.pace ? `<span style="font-size:10px;color:var(--text-muted);">${escapeHTML(item.pace)}</span>` : ''}
-                    </div>
-                </div>
-                <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <span style="font-size:1rem;color:var(--text-dim);">${trendArrow}</span>
-                    ${sparkSVG}
-                </div>
-            </div>
-            <div class="flex justify-between mb-2" style="font-size:0.9rem;color:var(--text-muted);">
-                <span>${usageText}</span>
-                <span style="color:var(--text-dim);">${resetText}</span>
-            </div>
-            <div class="h-1 overflow-hidden" style="background:var(--surface-2);">
-                <div class="h-full transition-all" style="width:${Math.min(barWidth, 100).toFixed(1)}%;background:${barColor};border-radius:0;"></div>
-            </div>
-        </div>`;
-    }).join('');
-
-    // RAW payload for debugging
-    const rawPayload = JSON.stringify(items, null, 2);
-
-    return `<div>
-        <div class="flex justify-between items-start mb-5 pb-4" style="border-bottom:1px solid var(--hairline);">
-            <div>
-                <div style="font-size:1.1rem;font-weight:700;color:var(--text);letter-spacing:0.04em;">${icon} ${escapeHTML(providerId)}</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
-            </div>
-            <div class="flex items-center gap-1">
-                <button id="refresh-provider-btn" title="Refresh now" class="icon-btn w-8 h-8 flex items-center justify-center transition-colors" style="color:var(--text-muted);">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-                </button>
-                <button id="close-modal" class="icon-btn transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center" style="color:var(--text-muted);">✕</button>
-            </div>
-        </div>
-        <div class="space-y-3 max-h-[55vh] overflow-y-auto pr-1" data-provider-id="${escapeHTMLAttr(providerId)}">${serviceRows}</div>
-        <!-- Actions footer -->
-        <div class="flex items-center gap-2 mt-5 pt-4 flex-wrap" style="border-top:1px solid var(--hairline);">
-            <button class="toggle-btn" onclick="openProviderInHistory('${escapeHTMLAttr(providerId)}')">Open in History</button>
-        </div>
-        <!-- RAW PAYLOAD -->
-        <details class="mt-4" style="font-size:10px;">
-            <summary style="cursor:pointer;color:var(--text-dim);letter-spacing:0.08em;text-transform:uppercase;list-style:none;display:flex;align-items:center;gap:6px;">
-                <span style="font-size:9px;border:1px solid var(--hairline-strong);padding:1px 5px;">▶</span> RAW PAYLOAD
-            </summary>
-            <pre style="margin-top:8px;padding:12px;background:var(--surface-2);border:1px solid var(--hairline);overflow-x:auto;font-size:10px;color:var(--text-muted);max-height:300px;overflow-y:auto;line-height:1.5;">${escapeHTML(rawPayload)}</pre>
-        </details>
-    </div>`;
-}
 
 /**
  * Build the per-provider sparkline summary strip for the History tab.
@@ -1197,7 +1017,8 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
         // Skip providers with zero usage in the active range — keeps the strip focused on what's live.
         if (periodTotal <= 0) return '';
 
-        const icon = PROVIDER_ICONS[pid] || '🔧';
+        const _pidIconUrl = providerIconUrl(pid);
+        const _pidIconHtml = _pidIconUrl ? `<img src="${escapeHTMLAttr(_pidIconUrl)}" style="width:10px;height:10px;vertical-align:middle;object-fit:contain;display:inline;" alt="">` : '';
         const color = PROVIDER_HEX[pid] || '#64748b';
         const isActive = !activeProviders || activeProviders.has(pid);
 
@@ -1211,7 +1032,7 @@ export function buildProviderSparklineStrip(history, activeProviders, days = 7) 
                      style="border:1px solid ${isActive ? color : 'var(--hairline)'};padding:10px;"
                      onclick="toggleHistoryProvider('${escapeHTMLAttr(pid)}')">
             <div class="flex items-center justify-between gap-2 mb-1.5">
-                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">${icon} ${escapeHTML(pid)}</span>
+                <span style="font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">${_pidIconHtml} ${escapeHTML(pid)}</span>
                 ${sparkSVG}
             </div>
             <div class="flex items-baseline gap-1">
@@ -1313,8 +1134,9 @@ export function buildHorizonCard(card, forecastEntry) {
 
     const subParts = cardSubtitleParts(card).map(escapeHTML);
     if (card.account_label) subParts.push(escapeHTML(card.account_label));
+    const iconUrl = providerIconUrl(card.provider_id);
     const head = `<div class="row">
-        <div class="plogo c-${prov.key}" style="font-size:${card.icon ? '14px' : '10px'};">${escapeHTML(card.icon || prov.init)}</div>
+        <div class="plogo c-${prov.key}${iconUrl ? ' has-icon' : ''}" style="font-size:${iconUrl || card.icon ? '14px' : '10px'};">${iconUrl ? `<img class="plogo-img" src="${escapeHTMLAttr(iconUrl)}" alt="" loading="lazy" onerror="const p=this.parentElement;p.classList.remove('has-icon');p.style.fontSize='10px';p.innerHTML='${escapeHTMLAttr(card.icon || prov.init)}'">` : escapeHTML(card.icon || prov.init)}</div>
         <div class="stack-xs">
             <span class="title">${escapeHTML(card.service_name)}</span>
             <span class="sub">${subParts.join(' · ')}</span>
@@ -1476,9 +1298,10 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
         ? `<dt>Sidecar</dt><dd>${escapeHTML(card.sidecar_id)}</dd>`
         : '';
 
+    const iconUrl2 = providerIconUrl(card.provider_id);
     return `
         <div class="modal-v2-hd">
-            <div class="plogo c-${prov.key}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:${card.icon ? '14px' : '10px'};font-weight:700;flex-shrink:0;">${escapeHTML(card.icon || prov.init)}</div>
+            <div class="plogo c-${prov.key}${iconUrl2 ? ' has-icon' : ''}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:${iconUrl2 || card.icon ? '14px' : '10px'};font-weight:700;flex-shrink:0;">${iconUrl2 ? `<img class="plogo-img" src="${escapeHTMLAttr(iconUrl2)}" alt="" loading="lazy" onerror="const p=this.parentElement;p.classList.remove('has-icon');p.style.fontSize='10px';p.innerHTML='${escapeHTMLAttr(card.icon || prov.init)}'">` : escapeHTML(card.icon || prov.init)}</div>
             <div class="stack-xs">
                 <span class="title">${escapeHTML(card.service_name)}</span>
                 ${_windowSubtitle(card)}
