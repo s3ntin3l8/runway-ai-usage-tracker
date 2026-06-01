@@ -8,7 +8,7 @@
  *   - recentSessions : fetchSessions({sort_by:'recent'}) response (3 most recent sessions)
  */
 
-import { providerDisplayLabel } from '../../components.js';
+import { providerDisplayLabel, modelDisplayName } from '../../components.js';
 import { formatLocalTime } from '../../utils/tz.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
@@ -443,7 +443,7 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
     const mixLegendHtml = mix.map(s => `
         <div class="it">
             <i style="background: oklch(0.62 0.16 ${s.color})"></i>
-            <span class="name">${_esc(s.name)}</span>
+            <span class="name">${_esc(modelDisplayName(s.name))}</span>
             <span class="pct">${s.share}%</span>
             <span class="tok">${_esc(s.tok)}</span>
         </div>`).join('') || '<div style="color:var(--ink-3);font-size:10px;">No model data yet</div>';

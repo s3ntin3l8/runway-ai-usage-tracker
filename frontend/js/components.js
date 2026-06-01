@@ -35,13 +35,21 @@ const WINDOW_DISPLAY_NAMES = {
     // 'rolling' and 'unknown' deliberately omitted — no useful subtitle component.
 };
 
+/** Human label for a model_id slug. Known families use the map; versioned
+ *  slugs like "opus-4.8" fall back to title-cased words → "Opus 4.8". */
+export function modelDisplayName(modelId) {
+    if (!modelId) return '';
+    return MODEL_DISPLAY_NAMES[modelId]
+        || String(modelId).replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 /** Compose a card subtitle from variant + model_id + window_type. */
 function cardSubtitleParts(card) {
     if (!card) return [];
     const parts = [];
     if (card.variant) parts.push(String(card.variant));
     if (card.model_id) {
-        parts.push(MODEL_DISPLAY_NAMES[card.model_id] || String(card.model_id).replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+        parts.push(modelDisplayName(card.model_id));
     }
     const w = WINDOW_DISPLAY_NAMES[card.window_type];
     if (w) parts.push(w);
