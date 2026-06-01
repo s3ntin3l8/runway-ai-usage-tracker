@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/s3ntin3l8/runway/compare/v1.0.0...v1.1.0) (2026-06-01)
+
+
+### Features
+
+* **cost:** fall back to family rate for versioned model ids ([4652d1d](https://github.com/s3ntin3l8/runway/commit/4652d1dfe90a44200c1263f551bb539c1cf2a8a9))
+* **display:** add selectable accent color themes ([1b384ee](https://github.com/s3ntin3l8/runway/commit/1b384ee1873ad2618af18293753f194f00240745))
+* **display:** replace letter-box provider badges with SVG icons ([2e505d0](https://github.com/s3ntin3l8/runway/commit/2e505d043f9a6d8ae182da013a628502629da019))
+* **fleet:** flag sidecars running an outdated release ([13eb394](https://github.com/s3ntin3l8/runway/commit/13eb394f96b65ec4c791fc8b2212174a0d6d559c))
+* **frontend:** show Claude model version in model-mix legend ([cdb80f8](https://github.com/s3ntin3l8/runway/commit/cdb80f8dd495434e4e4aa391f8ca5b7f3b08c772))
+* **sidecar:** preserve Claude model version in model_id slug ([4387c1d](https://github.com/s3ntin3l8/runway/commit/4387c1d016a4ee1c57a34518dd395859c805ad1e))
+* **sidecar:** slim local settings UI, drop vestigial polling config ([4b10c37](https://github.com/s3ntin3l8/runway/commit/4b10c377bee638193b4741b1c111202298eff0be))
+
+
+### Bug Fixes
+
+* correct Anthropic Opus/Haiku seed rates to effective pricing ([c1e894d](https://github.com/s3ntin3l8/runway/commit/c1e894d0ecf77de601cc509a7873ec272e89c3d4))
+* **display:** remove icon box border; add opencode-free icon mapping ([6034b5d](https://github.com/s3ntin3l8/runway/commit/6034b5d7f68a6fba5f5dcf0895077f80a0281561))
+* **display:** token expiry banner follows accent color ([f2c6039](https://github.com/s3ntin3l8/runway/commit/f2c60397c945da604e31846923806e3cc66f77f3))
+* **display:** wire --accent-soft to --accent-dim so tints follow accent ([32bb2c1](https://github.com/s3ntin3l8/runway/commit/32bb2c19271b41cb5b6db96114d23205c16c169d))
+* **fleet:** always use calendar-month data for per-model and sidecar attribution ([ad748f1](https://github.com/s3ntin3l8/runway/commit/ad748f15bfaabf2a86b0cc36b1169157c8b00a91))
+* **forecast:** align batch and per-card boundary-bucket handling ([80ae76d](https://github.com/s3ntin3l8/runway/commit/80ae76dfb21f07fb28b56074aae6fc6ab3d63300))
+* **forecast:** label insufficient-data cards "Gathering data" ([fcbe698](https://github.com/s3ntin3l8/runway/commit/fcbe698c0a32deba7b049beefd9a0c1d09bfab9b))
+* **forecast:** report near-limit cards instead of "Won't exhaust" ([01dc269](https://github.com/s3ntin3l8/runway/commit/01dc2690b7dca7387abce933265ec78b0ff77171))
+* **frontend:** send admin key when fetching provider debug data ([a799658](https://github.com/s3ntin3l8/runway/commit/a79965832772d4a2036cbe2bf4d3878344dc30f7))
+* **frontend:** send admin key when fetching provider debug data ([5a6d29c](https://github.com/s3ntin3l8/runway/commit/5a6d29cdb5e87e1a42839a884a1e6b77ebd9ed90))
+* remove Claude Design / Cowork quota cards ([40f9932](https://github.com/s3ntin3l8/runway/commit/40f993256ac4751077a160bf8792b61b055be645))
+* reset "This period"/"Yearly" gauges on the user's local timezone ([5e673c6](https://github.com/s3ntin3l8/runway/commit/5e673c6dc66a7f1a5c0771e220e97d52c24e8e30))
+* update Codex usage window from weekly to monthly ([d29dc4d](https://github.com/s3ntin3l8/runway/commit/d29dc4dbb9f388545734bad4be7de71ab06090a9))
+
 ## [1.0.0](https://github.com/s3ntin3l8/runway/compare/v0.13.0...v1.0.0) (2026-05-26)
 
 
