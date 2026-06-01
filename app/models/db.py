@@ -208,7 +208,7 @@ class UsageEvent(SQLModel, table=True):
     kind: str = Field(
         default="message", index=True
     )  # "message" | "error" | reserved: "reset", "anomaly"
-    model_id: str | None = None  # normalized: sonnet, opus, gpt-5, ...
+    model_id: str | None = None  # normalized: opus-4.8, sonnet-4.5, gpt-5, ...
     session_id: str | None = None  # provider's conversation/session id
     subagent_type: str | None = Field(
         default=None, index=True

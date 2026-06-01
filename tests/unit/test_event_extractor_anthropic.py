@@ -1,10 +1,35 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+import pytest
+
+from scripts.sidecar_pkg.event_extractors.anthropic import (
+    _normalize_anthropic_model,
+    parse_anthropic_events,
+)
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sample.jsonl"
 SIDECHAIN_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sidechain-sample.jsonl"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("claude-opus-4-5-20250929", "opus-4.5"),
+        ("claude-sonnet-4-5-20250929", "sonnet-4.5"),
+        ("claude-opus-4-7", "opus-4.7"),
+        ("claude-sonnet-4-6", "sonnet-4.6"),
+        ("claude-opus-4-8-20260515", "opus-4.8"),
+        ("claude-3-5-sonnet-20241022", "sonnet-3.5"),
+        ("claude-3-5-haiku-20241022", "haiku-3.5"),
+        ("claude-3-opus-20240229", "opus-3"),
+        ("claude-opus-4-20250514", "opus-4"),
+        ("opus", "opus"),
+        ("", "unknown"),
+    ],
+)
+def test_normalize_preserves_version(raw, expected):
+    assert _normalize_anthropic_model(raw) == expected
 
 
 def test_extracts_assistant_messages_only():
@@ -15,7 +40,7 @@ def test_extracts_assistant_messages_only():
     )
     assert len(evts) == 2
     assert all(e.provider_id == "anthropic" for e in evts)
-    assert {e.model_id for e in evts} == {"sonnet", "opus"}
+    assert {e.model_id for e in evts} == {"sonnet-4.5", "opus-4.5"}
 
 
 def test_dedup_event_id_includes_request_id():
@@ -34,7 +59,7 @@ def test_filters_by_since():
         since=datetime(2026, 5, 8, 14, 23, 30, tzinfo=UTC),
     )
     assert len(evts) == 1
-    assert evts[0].model_id == "opus"
+    assert evts[0].model_id == "opus-4.5"
 
 
 def test_captures_token_dimensions():
@@ -43,7 +68,7 @@ def test_captures_token_dimensions():
         account_id="u@x",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
-    opus = next(e for e in evts if e.model_id == "opus")
+    opus = next(e for e in evts if e.model_id == "opus-4.5")
     assert opus.tokens_input == 300
     assert opus.tokens_output == 100
     assert opus.tokens_cache_read == 500
@@ -56,8 +81,8 @@ def test_counts_tool_calls():
         account_id="u@x",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
-    opus = next(e for e in evts if e.model_id == "opus")
-    sonnet = next(e for e in evts if e.model_id == "sonnet")
+    opus = next(e for e in evts if e.model_id == "opus-4.5")
+    sonnet = next(e for e in evts if e.model_id == "sonnet-4.5")
     assert opus.tool_calls == 1
     assert sonnet.tool_calls == 0
 
@@ -91,4 +116,4 @@ def test_sidechain_event_captures_attribution_agent():
     assert by_type == {None, "Explore", "Plan"}
     explore = next(e for e in evts if e.subagent_type == "Explore")
     assert explore.session_id == "parent_sess"
-    assert explore.model_id == "opus"
+    assert explore.model_id == "opus-4.7"

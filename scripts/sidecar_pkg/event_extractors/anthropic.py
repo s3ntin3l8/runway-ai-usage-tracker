@@ -16,21 +16,45 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 
 
 def _normalize_anthropic_model(model: str) -> str:
-    """Map 'claude-sonnet-4-5-20250929' to 'sonnet' for display grouping.
+    """Map a raw Claude model id to a ``family-version`` slug for grouping.
 
-    Keep separate buckets for 'design' if present; full model id stored in raw_json.
+    The version is preserved so the dashboard can split Opus 4.8 / 4.7 / 4.6.
+    The date snapshot token (YYYYMMDD) is dropped so all snapshots of one
+    version aggregate. Position-independent, so it handles both the new
+    ordering ("claude-opus-4-5-20250929") and the older one
+    ("claude-3-5-sonnet-20241022", "claude-3-opus-20240229").
+
+    Examples:
+        "claude-opus-4-5-20250929"   -> "opus-4.5"
+        "claude-opus-4-7"            -> "opus-4.7"
+        "claude-3-5-sonnet-20241022" -> "sonnet-3.5"
+        "claude-3-opus-20240229"     -> "opus-3"
+        "claude-opus-4-20250514"     -> "opus-4"
+        "opus"                       -> "opus"
+        ""                           -> "unknown"
+
+    Cost lookup falls back to the bare family in
+    ``app/services/cost_calculator.py``, so a version with no dedicated
+    pricing row still bills at the family rate.
     """
     m = model.lower()
     if "opus" in m:
-        return "opus"
-    if "sonnet" in m:
-        return "sonnet"
-    if "haiku" in m:
-        return "haiku"
-    if "design" in m or "omelette" in m:
-        return "design"
-    base = m.replace("claude-", "")
-    return base.split("-")[0] if base else "unknown"
+        family = "opus"
+    elif "sonnet" in m:
+        family = "sonnet"
+    elif "haiku" in m:
+        family = "haiku"
+    elif "design" in m or "omelette" in m:
+        family = "design"
+    else:
+        base = m.replace("claude-", "")
+        return base.split("-")[0] if base else "unknown"
+
+    # Collect numeric version tokens, dropping the 8-digit date snapshot.
+    version_parts = [t for t in m.split("-") if t.isdigit() and len(t) != 8]
+    if not version_parts:
+        return family
+    return f"{family}-{'.'.join(version_parts)}"
 
 
 def parse_anthropic_events(
