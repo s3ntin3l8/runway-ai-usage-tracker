@@ -1301,7 +1301,7 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
     const iconUrl2 = providerIconUrl(card.provider_id);
     return `
         <div class="modal-v2-hd">
-            <div class="plogo c-${prov.key}${iconUrl2 ? ' has-icon' : ''}" style="width:28px;height:28px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hairline-2);font-size:${iconUrl2 || card.icon ? '14px' : '10px'};font-weight:700;flex-shrink:0;">${iconUrl2 ? `<img class="plogo-img" src="${escapeHTMLAttr(iconUrl2)}" alt="" loading="lazy" onerror="const p=this.parentElement;p.classList.remove('has-icon');p.style.fontSize='10px';p.innerHTML='${escapeHTMLAttr(card.icon || prov.init)}'">` : escapeHTML(card.icon || prov.init)}</div>
+            <div class="plogo c-${prov.key}${iconUrl2 ? ' has-icon' : ''}" style="width:28px;height:28px;display:grid;place-items:center;${iconUrl2 ? '' : 'box-shadow:inset 0 0 0 1px var(--hairline-2);'}font-size:${iconUrl2 || card.icon ? '14px' : '10px'};font-weight:700;flex-shrink:0;">${iconUrl2 ? `<img class="plogo-img" src="${escapeHTMLAttr(iconUrl2)}" alt="" loading="lazy" onerror="const p=this.parentElement;p.classList.remove('has-icon');p.style.fontSize='10px';p.innerHTML='${escapeHTMLAttr(card.icon || prov.init)}'">` : escapeHTML(card.icon || prov.init)}</div>
             <div class="stack-xs">
                 <span class="title">${escapeHTML(card.service_name)}</span>
                 ${_windowSubtitle(card)}
