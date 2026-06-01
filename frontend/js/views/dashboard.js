@@ -246,7 +246,8 @@ function _formatExhaustsIn(iso, status) {
         if (status === 'decelerating')               return 'Decelerating';
         if (status === 'exhausted')                  return 'EXHAUSTED';
         if (status === 'low_resolution')             return 'Trend unavailable';
-        return 'Exhausts in —';   // insufficient_data or unknown
+        if (status === 'insufficient_data')          return 'Gathering data';
+        return 'Exhausts in —';   // unknown / unexpected status only
     }
     const ms = new Date(iso) - Date.now();
     if (isNaN(ms)) return 'Exhausts in —';
