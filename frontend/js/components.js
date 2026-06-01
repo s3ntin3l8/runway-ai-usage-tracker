@@ -1344,16 +1344,6 @@ export function buildCardModalContent(card, forecastEntry, history24h) {
                 </dl>
             </div>
             ` : ''}
-            ${card.by_model && Object.keys(card.by_model).length > 0 ? `
-            <div>
-                <h4>By Model</h4>
-                <dl class="kv">
-                    ${Object.entries(card.by_model).map(([model, data]) =>
-                        `<dt>${escapeHTML(model)}</dt><dd>${data.msgs ?? 0} msgs</dd>`
-                    ).join('')}
-                </dl>
-            </div>
-            ` : ''}
             <div class="historyline">
                 <div style="font-size:9px;font-weight:700;color:var(--text-dim);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:6px;">Last 24 hours</div>
                 ${_buildSparklineSVG(history24h)}

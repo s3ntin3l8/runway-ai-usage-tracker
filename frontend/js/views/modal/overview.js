@@ -66,54 +66,22 @@ function _donutSvg(slices) {
 }
 
 /**
- * Build the model mix slices from cumData (by_model in current month bucket)
- * or fall back to by_model on fleet entry cards.
+ * Build the model mix slices from cumData (by_model in current month bucket).
+ * Returns empty array when no live event data exists for this month.
  */
-function _buildModelMix(entry, cumData) {
-    // Prefer the cumulative month bucket's by_model for accurate period stats
+function _buildModelMix(cumData) {
     const monthBucket = _cumBucket(cumData, 'month');
     const sourceByModel = (monthBucket && Object.keys(monthBucket.by_model || {}).length)
         ? monthBucket.by_model
         : null;
 
+    if (!sourceByModel) return [];
+
     const byModel = {};
-    if (sourceByModel) {
-        for (const [mdl, stats] of Object.entries(sourceByModel)) {
-            const tok = (stats.tokens_input || 0) + (stats.tokens_output || 0) +
-                        (stats.tokens_cache_read || 0) + (stats.tokens_reasoning || 0);
-            byModel[mdl] = { tok, cost: stats.cost_usd || 0, msgs: stats.msgs || 0 };
-        }
-    } else {
-        // Fall back to by_model on the fleet entry cards. Card by_model can
-        // come in two shapes:
-        //   { tokens_total: <number>, cost_usd, msgs }                          -- flat
-        //   { tokens: { input, output, total, ... }, cost, msgs }               -- nested
-        // The nested form is what OpenCode and other token-rich collectors
-        // emit. Reading `stats.tokens` directly when it's an object would
-        // concatenate "[object Object]"; pull the total off it instead.
-        const allCards = [entry.critical_gauge, ...(entry.secondary_limits || [])].filter(Boolean);
-        for (const c of allCards) {
-            if (!c.by_model) continue;
-            for (const [mdl, stats] of Object.entries(c.by_model)) {
-                if (!byModel[mdl]) byModel[mdl] = { tok: 0, cost: 0, msgs: 0 };
-                let tok = 0;
-                if (typeof stats.tokens_total === 'number') {
-                    tok = stats.tokens_total;
-                } else if (stats.tokens && typeof stats.tokens === 'object') {
-                    tok = Number(stats.tokens.total ?? 0)
-                        || (Number(stats.tokens.input ?? 0)
-                            + Number(stats.tokens.output ?? 0)
-                            + Number(stats.tokens.cache_read ?? 0)
-                            + Number(stats.tokens.cache_create ?? 0)
-                            + Number(stats.tokens.reasoning ?? 0));
-                } else if (typeof stats.tokens === 'number') {
-                    tok = stats.tokens;
-                }
-                byModel[mdl].tok  += tok;
-                byModel[mdl].cost += Number(stats.cost_usd ?? stats.cost ?? 0);
-                byModel[mdl].msgs += Number(stats.msgs ?? 0);
-            }
-        }
+    for (const [mdl, stats] of Object.entries(sourceByModel)) {
+        const tok = (stats.tokens_input || 0) + (stats.tokens_output || 0) +
+                    (stats.tokens_cache_read || 0) + (stats.tokens_reasoning || 0);
+        byModel[mdl] = { tok, cost: stats.cost_usd || 0, msgs: stats.msgs || 0 };
     }
 
     const entries = Object.entries(byModel).sort((a, b) => b[1].tok - a[1].tok);
@@ -434,7 +402,7 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
     }).join('') || '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No sidecars yet</span><span class="v"></span></div>';
 
     // Model mix
-    const mix = _buildModelMix(entry, cumData);
+    const mix = _buildModelMix(cumData);
     const donutHtml = _donutSvg(mix);
     const mixLegendHtml = mix.map(s => `
         <div class="it">
