@@ -7,6 +7,7 @@ import { formatLocalTime, formatLocalDate } from '../utils/tz.js';
 
 export const STATUS_COLOR = {
     exhausted: 'var(--crit)',
+    near_limit: 'var(--crit)',
     risk: 'var(--crit)',
     warn: 'var(--warn)',
     decelerating: 'var(--info, #4a9eff)',

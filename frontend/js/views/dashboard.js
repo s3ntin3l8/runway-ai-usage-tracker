@@ -242,6 +242,7 @@ function _formatUnit(val, unitType) {
 function _formatExhaustsIn(iso, status) {
     if (!iso) {
         if (status === 'stable' || status === 'ok')  return "Won't exhaust";
+        if (status === 'near_limit')                 return 'Near limit';
         if (status === 'decelerating')               return 'Decelerating';
         if (status === 'exhausted')                  return 'EXHAUSTED';
         if (status === 'low_resolution')             return 'Trend unavailable';

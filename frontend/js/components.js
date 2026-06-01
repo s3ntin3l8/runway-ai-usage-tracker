@@ -1257,6 +1257,9 @@ function _forecastPaceBucket(forecastEntry) {
     if (s === 'risk' || s === 'exhausted') return 'fast';
     if (s === 'warn') return 'moderate';
     if (s === 'ok'   || s === 'stable')   return 'stable';
+    // 'near_limit' falls through to null: a card that spiked then plateaued has
+    // no meaningful *current* pace — criticality is carried by color + pct, and
+    // null cleanly omits the pace row (matches dashboard paceLabel).
     return null;
 }
 
