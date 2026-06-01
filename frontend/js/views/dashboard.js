@@ -33,7 +33,7 @@ function renderTokenAlerts(tokenHealthResult) {
     if (!expired.length && !expiring.length) { banner.classList.add('hidden'); return; }
 
     const isErr = expired.length > 0;
-    const color = isErr ? 'var(--crit)' : 'var(--warn)';
+    const color = isErr ? 'var(--crit)' : 'var(--accent)';
 
     // Format expiry time remaining for expiring tokens (e.g. "in 23h", "in 2d")
     const fmtRemaining = t => {
