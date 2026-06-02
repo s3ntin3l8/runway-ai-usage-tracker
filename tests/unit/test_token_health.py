@@ -195,6 +195,73 @@ class TestTokenHealthService:
         assert result[0]["expires_at"] is None
 
     @pytest.mark.asyncio
+    async def test_expired_unrefreshable_is_redundant_with_healthy_sibling(self):
+        """An expired, unrefreshable token is flagged redundant when another
+        credential for the same provider is healthy — so the dashboard banner
+        can ignore it instead of crying wolf."""
+        service = TokenHealthService()
+        expired_jwt = _make_jwt(time.time() - 3600)
+        valid_jwt = _make_jwt(time.time() + 86400 * 7)
+
+        mock_stats = {
+            "chatgpt": {
+                "dead": {"tokens": ["oauth_token"], "account_label": None, "ttl_remaining": 600},
+                "alive": {"tokens": ["oauth_token"], "account_label": None, "ttl_remaining": 600},
+            }
+        }
+
+        async def fake_get(provider, acc_id):
+            return {"oauth_token": expired_jwt if acc_id == "dead" else valid_jwt}
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(side_effect=fake_get),
+            ),
+            patch("os.path.exists", return_value=False),
+            _mock_no_db_configs(),
+        ):
+            result = await service.get_health()
+
+        by_acc = {r["account_id"]: r for r in result}
+        assert by_acc["dead"]["status"] == "expired"
+        assert by_acc["dead"]["redundant"] is True
+        assert by_acc["alive"]["redundant"] is False
+
+    @pytest.mark.asyncio
+    async def test_expired_unrefreshable_not_redundant_without_healthy_sibling(self):
+        """When every credential for the provider is dead, keep alarming."""
+        service = TokenHealthService()
+        expired_jwt = _make_jwt(time.time() - 3600)
+
+        mock_stats = {
+            "chatgpt": {
+                "dead": {"tokens": ["oauth_token"], "account_label": None, "ttl_remaining": 600},
+            }
+        }
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={"oauth_token": expired_jwt}),
+            ),
+            patch("os.path.exists", return_value=False),
+            _mock_no_db_configs(),
+        ):
+            result = await service.get_health()
+
+        assert result[0]["status"] == "expired"
+        assert result[0]["redundant"] is False
+
+    @pytest.mark.asyncio
     async def test_provider_config_api_key_appears_in_health(self):
         """API keys stored in ProviderConfig (Settings → Providers) show in Token Health."""
         service = TokenHealthService()

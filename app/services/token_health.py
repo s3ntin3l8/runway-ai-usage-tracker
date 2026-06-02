@@ -217,6 +217,20 @@ class TokenHealthService:
         except Exception as e:
             logger.debug(f"GitHub file health scan failed: {e}")
 
+        # Mark expired, unrefreshable entries as "redundant" when another
+        # credential for the same provider is still healthy. Such an entry can't
+        # be auto-rolled (no refresh_token) and isn't blocking collection — so
+        # the dashboard banner should not raise a hard alarm on it alone. When
+        # *every* credential for a provider is dead, none are redundant and the
+        # alarm still fires.
+        healthy_providers = {r["provider"] for r in result if r["status"] in ("valid", "expiring")}
+        for r in result:
+            r["redundant"] = (
+                r["status"] == "expired"
+                and not r["can_refresh"]
+                and r["provider"] in healthy_providers
+            )
+
         return result
 
     async def delete_credential(self, provider: str, account_id: str) -> bool:

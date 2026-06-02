@@ -74,6 +74,11 @@ class TokenAutoRefresher:
 
         Returns the number of tokens successfully refreshed (useful for tests).
         """
+        # Evict any already-expired tokens that carry no refresh_token first —
+        # they can never be rolled, so leaving them keeps Token Health stuck on
+        # a stale "expired" entry (and the dashboard banner lit).
+        await token_cache.purge_expired_unrefreshable()
+
         accounts = await token_cache.get_all_active_accounts()
         now = time.time()
         refreshed = 0

@@ -212,6 +212,51 @@ class TokenCache:
             if not self._cache[provider]:
                 del self._cache[provider]
 
+    @staticmethod
+    def _token_exp(tokens: dict[str, str]) -> float | None:
+        """Find the JWT `exp` claim on any token field that carries one."""
+        for key in ("oauth_token", "access_token", "id_token"):
+            tok = tokens.get(key)
+            if not tok:
+                continue
+            payload = IdentityExtractor.extract_jwt_payload(tok)
+            exp = payload.get("exp")
+            if exp is None:
+                continue
+            try:
+                return float(exp)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    async def purge_expired_unrefreshable(self) -> int:
+        """Evict entries already past their JWT `exp` that carry no refresh_token.
+
+        Such tokens can never be auto-rolled (the auto-refresher skips anything
+        without a refresh_token), so they only linger as stale "expired" noise in
+        Token Health — e.g. a session-cookie-derived bearer or a pre-fix codex
+        token pushed without its refresh_token. Refreshable, still-valid, and
+        opaque (no-exp) entries are left untouched.
+
+        Returns the number of entries removed.
+        """
+        async with self._lock:
+            now = time.time()
+            removed = 0
+            for provider in list(self._cache.keys()):
+                for acc_id in list(self._cache[provider].keys()):
+                    tokens, _, _ = self._cache[provider][acc_id]
+                    if "refresh_token" in tokens:
+                        continue
+                    exp = self._token_exp(tokens)
+                    if exp is not None and exp < now:
+                        del self._cache[provider][acc_id]
+                        removed += 1
+                        logger.info(f"Purged expired unrefreshable token for {provider}/{acc_id}")
+                if not self._cache[provider]:
+                    del self._cache[provider]
+            return removed
+
     async def remove(self, provider: str, account_id: str) -> bool:
         """
         Manually remove an account from the cache.

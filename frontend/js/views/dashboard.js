@@ -28,8 +28,13 @@ function renderTokenAlerts(tokenHealthResult) {
     if (!tokenHealthResult || tokenHealthResult.status !== 'fulfilled') return;
 
     const tokens   = tokenHealthResult.value?.tokens ?? [];
-    const expired  = tokens.filter(t => t.status === 'expired');
-    const expiring = tokens.filter(t => t.status === 'expiring');
+    // Skip "redundant" entries: expired, unrefreshable credentials that another
+    // healthy credential for the same provider already covers. They're flagged
+    // server-side (token_health) so the banner doesn't cry wolf over an orphaned
+    // token that isn't blocking collection. Still shown (honestly) in Settings.
+    const alerting = tokens.filter(t => !t.redundant);
+    const expired  = alerting.filter(t => t.status === 'expired');
+    const expiring = alerting.filter(t => t.status === 'expiring');
     if (!expired.length && !expiring.length) { banner.classList.add('hidden'); return; }
 
     const isErr = expired.length > 0;

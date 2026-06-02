@@ -229,7 +229,12 @@ __REGISTRY__: dict[str, Any] = {
                     "type": "file",
                     "paths": ["~/.codex/auth.json", "{{CONFIG_DIR:codex}}/auth.json"],
                     "format": "json",
-                    "mapping": {"tokens.access_token": "oauth_token"},
+                    "mapping": {
+                        "tokens.access_token": "oauth_token",
+                        "tokens.refresh_token": "refresh_token",
+                        "tokens.id_token": "id_token",
+                        "tokens.account_id": "account_id",
+                    },
                 },
                 {
                     "type": "env",

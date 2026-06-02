@@ -168,6 +168,25 @@ async def test_refresh_due_ignores_providers_without_refresh_endpoint(cache, ref
 
 
 @pytest.mark.asyncio
+async def test_refresh_due_purges_dead_unrefreshable_tokens(cache, refresher):
+    """An already-expired token with no refresh_token is evicted during the scan.
+
+    These can never be auto-rolled, so they'd otherwise linger as a stale
+    "expired" entry in Token Health (and trip the dashboard banner).
+    """
+    expired = _jwt({"exp": time.time() - 60, "sub": "x"})
+    await cache.store("chatgpt", {"oauth_token": expired}, account_id="dead")
+
+    with patch(
+        "app.services.token_auto_refresher.refresh_oauth_token",
+        new=AsyncMock(),
+    ):
+        await refresher.refresh_due()
+
+    assert await cache.get("chatgpt", "dead") is None
+
+
+@pytest.mark.asyncio
 async def test_start_stop_lifecycle(refresher):
     refresher.start()
     assert refresher._task is not None
