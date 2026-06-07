@@ -3730,3 +3730,147 @@ l-table td.num {
     /* ---- Fleet view: align the bare header text with card content ---- */
     #view-fleet > .mb-5 { padding: 0 6px; }
 }
+
+/* ============================================================
+   MOBILE LAYER — shared bottom sheet + "Filters" pill
+   (consumers: dashboard filter sheet, history filter sheet;
+   the provider modal reuses only the drag behavior from sheet.js)
+   ============================================================ */
+
+/* Base (desktop-neutral): sheets and filter pills exist in the DOM on all
+   viewports but are mobile-only UI. Keeping display:none outside the query
+   also covers the "sheet left open while resizing to desktop" edge. */
+.sheet-bg { display: none; }
+.m-filter-bar { display: none; }
+
+@media (max-width: 640px) {
+
+    /* ---- Full-width "Filters" pill with live summary ---- */
+    .m-filter-bar { display: flex; align-items: center; margin-bottom: 14px; }
+    .m-filter-btn {
+        flex: 1;
+        display: flex; align-items: center; gap: 9px;
+        min-height: 46px;
+        padding: 10px 13px;
+        background: var(--surface);
+        border: 1px solid var(--hairline-strong);
+        border-radius: 12px;
+        cursor: pointer;
+        color: var(--text);
+        text-align: left;
+        transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+    }
+    .m-filter-btn:active { background: var(--surface-2); border-color: var(--text-dim); }
+    .m-filter-btn > svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--text-dim); }
+    .m-filter-btn .mfb-label {
+        font: 700 11px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.1em; text-transform: uppercase;
+        flex: 0 0 auto;
+    }
+    .m-filter-btn .mfb-summary {
+        margin-left: auto;
+        font: 500 11px 'B612 Mono', ui-monospace, monospace;
+        color: var(--accent);
+        letter-spacing: 0.02em;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .m-filter-btn .mfb-caret { width: 13px; height: 13px; flex: 0 0 auto; color: var(--text-dim); }
+
+    /* ---- Bottom sheet ---- */
+    .sheet-bg {
+        position: fixed; inset: 0; z-index: 60;
+        display: flex; align-items: flex-end; justify-content: center;
+        background: rgba(0, 0, 0, 0);
+        opacity: 0; pointer-events: none;
+        transition: opacity 280ms var(--ease), background 280ms var(--ease);
+    }
+    .sheet-bg[hidden] { display: none; }
+    .sheet-bg.open { opacity: 1; pointer-events: auto; background: rgba(0, 0, 0, 0.58); }
+    .sheet {
+        width: 100%; max-height: 88%;
+        display: flex; flex-direction: column;
+        background: var(--surface);
+        border-top: 1px solid var(--hairline-strong);
+        border-radius: 22px 22px 0 0;
+        overflow: hidden;
+        transform: translateY(100%);
+        transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
+        will-change: transform;
+        padding-bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+    }
+    .sheet-bg.open .sheet { transform: translateY(0); }
+    .sheet.dragging { transition: none; }
+    .sheet-grip { display: flex; justify-content: center; padding: 9px 0 2px; cursor: grab; touch-action: none; }
+    .sheet-grip span { width: 38px; height: 4px; border-radius: 100px; background: var(--hairline-strong); }
+    .sheet-head {
+        display: flex; align-items: center;
+        padding: 8px 20px 14px;
+        border-bottom: 1px solid var(--hairline);
+        cursor: grab; touch-action: none;
+    }
+    .sheet-head h3 {
+        margin: 0;
+        font: 700 12px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.14em; text-transform: uppercase;
+        color: var(--text);
+    }
+    .sheet-x {
+        margin-left: auto;
+        background: none; border: 0;
+        color: var(--text-dim);
+        font-size: 26px; line-height: 1;
+        cursor: pointer; padding: 0 4px;
+    }
+    .sheet-x:active { color: var(--text); }
+    .sheet-body {
+        padding: 18px 20px 6px;
+        overflow-y: auto;
+        display: flex; flex-direction: column; gap: 20px;
+    }
+    .sheet-label {
+        font: 700 9px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.14em; text-transform: uppercase;
+        color: var(--text-dim);
+        margin-bottom: 10px;
+    }
+    .sheet-seg { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sheet-seg .toggle-btn {
+        flex: 1 0 auto;
+        min-width: 60px; min-height: 40px;
+        font-size: 11.5px; padding: 9px 12px;
+        border-radius: 10px;
+    }
+    .sheet-apply {
+        margin: 14px 20px 0;
+        padding: 15px; min-height: 50px;
+        background: var(--accent); color: #0a0c0f;
+        border: 0; border-radius: 13px;
+        font: 700 11px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.14em; text-transform: uppercase;
+        cursor: pointer;
+    }
+    .sheet-apply:active { opacity: 0.85; }
+    /* Labeled row with a trailing switch (e.g. "Cache reads") */
+    .sheet-group-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .sheet-hint {
+        font: 500 10px 'B612 Mono', ui-monospace, monospace;
+        color: var(--text-dim); letter-spacing: 0.02em;
+    }
+    .sheet-switch {
+        flex: 0 0 auto;
+        width: 50px; height: 30px; padding: 0;
+        border-radius: 100px; cursor: pointer;
+        position: relative;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline-strong);
+        transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+    }
+    .sheet-switch .knob {
+        position: absolute; top: 2px; left: 2px;
+        width: 24px; height: 24px; border-radius: 50%;
+        background: var(--text-dim);
+        transition: transform var(--dur) var(--ease), background var(--dur) var(--ease);
+    }
+    .sheet-switch.on { background: var(--accent-soft); border-color: var(--accent); }
+    .sheet-switch.on .knob { transform: translateX(20px); background: var(--accent); }
+}
