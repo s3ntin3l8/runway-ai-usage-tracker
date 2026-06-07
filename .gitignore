@@ -76,6 +76,7 @@ task.md
 diagnose.py
 docs/internal/
 scratch/
+app/brain/
 .opencode/
 
 # --- SUPERPOWERS ---
