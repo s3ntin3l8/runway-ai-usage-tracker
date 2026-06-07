@@ -252,6 +252,16 @@ window.toggleTheme = function () {
     updateThemeIcon();
 }
 
+// Set theme to a specific value — used by the Settings › Display control
+// (the header toggle is hidden on phones). Mirrors window.setAccent.
+window.setTheme = function (value) {
+    if (value !== 'light' && value !== 'dark') return;
+    STATE.theme = value;
+    localStorage.setItem('runway_theme', value);
+    applyTheme();
+    updateThemeIcon();
+}
+
 function updateThemeIcon() {
     const sunIcon = document.getElementById('theme-icon-sun');
     const moonIcon = document.getElementById('theme-icon-moon');

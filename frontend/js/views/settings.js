@@ -876,6 +876,7 @@ export function renderDisplaySection(pane) {
     const cols = STATE.display.cols;
     const chrome = STATE.display.chrome;
     const compact = STATE.display.compact;
+    const theme = STATE.theme;
     const accent = STATE.accent || 'orange';
     const swatchHtml = ACCENT_OPTIONS.map(o => `
         <button type="button" class="accent-swatch${accent === o.value ? ' active' : ''}"
@@ -889,6 +890,16 @@ export function renderDisplaySection(pane) {
             </div>
         </header>
         <div class="sys-grid">
+            <div class="sys-row">
+                <div>
+                    <div class="sys-k">Theme</div>
+                    <div class="sys-s">Light or dark appearance. Mirrors the header toggle (which is hidden on phones).</div>
+                </div>
+                <div class="display-seg" data-pref="theme">
+                    <button type="button" class="ds-btn ${theme === 'light' ? 'on' : ''}" data-v="light">Light</button>
+                    <button type="button" class="ds-btn ${theme === 'dark' ? 'on' : ''}" data-v="dark">Dark</button>
+                </div>
+            </div>
             <div class="sys-row">
                 <div>
                     <div class="sys-k">Color</div>
@@ -935,7 +946,11 @@ export function renderDisplaySection(pane) {
             const btn = e.target.closest('.ds-btn');
             if (!btn) return;
             const value = btn.dataset.v;
-            if (typeof window.setDisplayPref === 'function') {
+            // Theme reuses the segmented styling but has its own setter
+            // (setDisplayPref only handles cols/chrome/compact).
+            if (key === 'theme') {
+                window.setTheme?.(value);
+            } else if (typeof window.setDisplayPref === 'function') {
                 window.setDisplayPref(key, value);
             }
             seg.querySelectorAll('.ds-btn').forEach(b => {
