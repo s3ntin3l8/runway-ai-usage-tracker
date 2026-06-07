@@ -4003,19 +4003,27 @@ l-table td.num {
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     /* Stack the identity rail so the provider name gets a full line and the
-       source badge + tier/sidecar pills drop to their own lines below it
-       (a wrapping row squeezed the name). */
-    .fc-rail {
+       source badge + tier/sidecar pills drop to their own lines below it.
+       Qualified with [data-cols][data-chrome] (both always present on <html>)
+       so it outranks the 2-column / soft-chrome rail layouts, which turn the
+       rail into a horizontal bar and cap .who at min(40%,260px) — squeezing
+       the name on phones regardless of the chosen column/chrome preference. */
+    [data-cols][data-chrome] .fc-rail {
         padding: 14px;
         flex-direction: column;
         align-items: stretch;
+        flex-wrap: nowrap;
         gap: 8px;
+        min-height: 0;
     }
-    .fc-rail .who { width: 100%; min-width: 0; }
-    .fc-rail .who .stack { min-width: 0; overflow: hidden; }
-    .fc-rail .pname,
-    .fc-rail .pacc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .fc-rail .auth { align-self: flex-start; }
+    [data-cols][data-chrome] .fc-rail .who {
+        width: 100%; max-width: none; min-width: 0; flex: 0 0 auto;
+    }
+    [data-cols][data-chrome] .fc-rail .who .stack { min-width: 0; overflow: hidden; }
+    [data-cols][data-chrome] .fc-rail .pname,
+    [data-cols][data-chrome] .fc-rail .pacc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    [data-cols][data-chrome] .fc-rail .auth { align-self: flex-start; margin: 0; }
+    [data-cols][data-chrome] .fc-rail .meta-row { flex-wrap: wrap; flex-shrink: 1; }
     .fc-main { padding: 14px; gap: 12px; }
     .fc-cume {
         padding: 14px;
