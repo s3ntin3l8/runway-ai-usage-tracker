@@ -4002,28 +4002,30 @@ l-table td.num {
         min-width: 0; max-width: 100%;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    /* Stack the identity rail so the provider name gets a full line and the
-       source badge + tier/sidecar pills drop to their own lines below it.
+    /* Identity rail at phone width: the provider name gets its own full line,
+       then the source badge + tier/sidecar pills share a single line below it.
        Qualified with [data-cols][data-chrome] (both always present on <html>)
        so it outranks the 2-column / soft-chrome rail layouts, which turn the
        rail into a horizontal bar and cap .who at min(40%,260px) — squeezing
-       the name on phones regardless of the chosen column/chrome preference. */
+       the name on phones regardless of the chosen column/chrome preference.
+       .who at flex-basis 100% claims row 1 alone; .auth + .meta-row wrap
+       together onto row 2. */
     [data-cols][data-chrome] .fc-rail {
         padding: 14px;
-        flex-direction: column;
-        align-items: stretch;
-        flex-wrap: nowrap;
-        gap: 8px;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
         min-height: 0;
     }
     [data-cols][data-chrome] .fc-rail .who {
-        width: 100%; max-width: none; min-width: 0; flex: 0 0 auto;
+        flex: 1 1 100%; max-width: none; min-width: 0;
     }
     [data-cols][data-chrome] .fc-rail .who .stack { min-width: 0; overflow: hidden; }
     [data-cols][data-chrome] .fc-rail .pname,
     [data-cols][data-chrome] .fc-rail .pacc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    [data-cols][data-chrome] .fc-rail .auth { align-self: flex-start; margin: 0; }
-    [data-cols][data-chrome] .fc-rail .meta-row { flex-wrap: wrap; flex-shrink: 1; }
+    [data-cols][data-chrome] .fc-rail .auth { align-self: center; margin: 0; flex: 0 0 auto; }
+    [data-cols][data-chrome] .fc-rail .meta-row { flex: 0 0 auto; flex-wrap: nowrap; }
     .fc-main { padding: 14px; gap: 12px; }
     .fc-cume {
         padding: 14px;
