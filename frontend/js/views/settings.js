@@ -31,7 +31,7 @@ let _providerCount = null;
 let _tokenCount = null;
 let _webhookCount = null;
 
-const POLL_OPTIONS = [
+export const POLL_OPTIONS = [
     { label: '1 min',   value: 60 },
     { label: '5 min',   value: 300 },
     { label: '15 min',  value: 900 },
@@ -79,7 +79,15 @@ function flashRow(pane, providerId) {
     setTimeout(() => row.classList.remove('pr-saved'), 750);
 }
 
-export function loadSettingsView() {
+export async function loadSettingsView() {
+    // Phone: iOS-style drill-in shell (menu → section → provider) instead of
+    // the desktop sidebar + pane. Lazy-loaded so desktop never pays for it.
+    if (window.matchMedia('(max-width: 640px)').matches) {
+        const m = await import('./settings-mobile.js');
+        m.renderSettingsMobile();
+        return;
+    }
+    document.getElementById('settings-mobile')?.remove();
     _expandedProviderId = localStorage.getItem('settings_expanded_provider') || null;
     const activeSection = localStorage.getItem('settings_section') || 'providers';
     document.querySelectorAll('.settings-nav-item').forEach(btn => {
@@ -264,7 +272,7 @@ function buildProviderRowHTML(p) {
     </div>`;
 }
 
-function buildProviderDetailHTML(p) {
+export function buildProviderDetailHTML(p) {
     const defaultTtlLabel = POLL_OPTIONS.find(o => o.value === p.default_ttl_seconds)?.label ?? `${p.default_ttl_seconds}s`;
 
     const apiKeyHTML = p.supports_api_key ? `<div class="pd-row">
@@ -359,12 +367,15 @@ function buildProviderDetailHTML(p) {
     </div>`;
 }
 
-function wireProviderDetail(pane, selected) {
+export function wireProviderDetail(pane, selected, opts = {}) {
+    // Mobile drill-in passes its own re-render (the desktop default would
+    // paint the providers LIST into the detail pane).
+    const rerender = opts.rerender || (() => renderProvidersSection(pane));
     pane.querySelector('#provider-save-btn')?.addEventListener('click', () =>
-        saveProviderConfig(pane, selected.provider_id)
+        saveProviderConfig(pane, selected.provider_id, opts)
     );
     pane.querySelector('#provider-discard-btn')?.addEventListener('click', () =>
-        renderProvidersSection(pane)
+        rerender()
     );
     pane.querySelector('#provider-raw-data-btn')?.addEventListener('click', () => {
         if (typeof window.viewRawProviderData === 'function') {
@@ -405,12 +416,14 @@ function toggleFieldEdit(pane, prefix) {
     input.style.display = showing ? 'none' : '';
 }
 
-async function saveProviderConfig(pane, providerId) {
+export async function saveProviderConfig(pane, providerId, opts = {}) {
+    const rerender = opts.rerender || (() => renderProvidersSection(pane));
     const btn = pane.querySelector('#provider-save-btn');
     if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
 
     const expandedRow = pane.querySelector('.provider-row.expanded');
-    const enabledToggle = expandedRow?.querySelector('.provider-row-header .toggle');
+    const enabledToggle = expandedRow?.querySelector('.provider-row-header .toggle')
+        || pane.querySelector('[data-drill-enabled] .toggle');  // mobile drill-in
     const enabled = enabledToggle ? enabledToggle.classList.contains('on') : true;
 
     const accountLabel = pane.querySelector('#field-account-label')?.value ?? null;
@@ -443,7 +456,7 @@ async function saveProviderConfig(pane, providerId) {
             account_label: accountLabel,
             ...(collectionStrategies !== null ? { collection_strategies: collectionStrategies } : {}),
         });
-        renderProvidersSection(pane);
+        rerender();
     } catch (err) {
         if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
         showAlert('Save failed', err.message);
@@ -471,7 +484,7 @@ function buildResolvedStrategyList(supported, savedConfig) {
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 
-async function renderTokensSection(pane) {
+export async function renderTokensSection(pane) {
     try {
         const health = await fetchTokenHealth();
         const tokens = health.tokens || [];
@@ -599,7 +612,7 @@ export async function deleteToken(provider, accountId) {
 
 // ─── Webhooks ─────────────────────────────────────────────────────────────────
 
-async function renderWebhooksSection(pane) {
+export async function renderWebhooksSection(pane) {
     let webhooks = [];
     try {
         const res = await fetchWithAuth('/api/v1/system/webhooks');
@@ -720,7 +733,7 @@ export async function deleteWebhook(id) {
 
 // ─── System ───────────────────────────────────────────────────────────────────
 
-async function renderSystemSection(pane) {
+export async function renderSystemSection(pane) {
     try {
         const [s, cfg] = await Promise.all([fetchSettings(), fetchAppConfig()]);
         const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
@@ -859,7 +872,7 @@ const ACCENT_OPTIONS = [
     { value: 'purple', hex: '#a855f7', label: 'Purple' },
 ];
 
-function renderDisplaySection(pane) {
+export function renderDisplaySection(pane) {
     const cols = STATE.display.cols;
     const chrome = STATE.display.chrome;
     const compact = STATE.display.compact;
@@ -945,13 +958,19 @@ function renderDisplaySection(pane) {
 }
 
 export function initSettingsView() {
-    // Event listeners are attached after each section render
+    // Section event listeners attach after each render; the only one-time
+    // wiring is the shell swap when the 640px breakpoint is crossed while
+    // Settings is active (desktop sidebar+pane ↔ mobile drill-in).
+    window.matchMedia('(max-width: 640px)').addEventListener('change', () => {
+        const view = document.getElementById('view-settings');
+        if (view && !view.classList.contains('hidden')) loadSettingsView();
+    });
 }
 
 
 // ─── Audit log ────────────────────────────────────────────────────────────────
 
-async function renderAuditSection(pane) {
+export async function renderAuditSection(pane) {
     let entries = [];
     let error = '';
     try {
