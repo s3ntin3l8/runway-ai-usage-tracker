@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete
 from sqlmodel import Session, col, select
 
-from app.core.config import settings
+from app.core.config import APP_VERSION, settings
 from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
@@ -92,6 +92,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "project_name": settings.PROJECT_NAME,
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
+        "version": APP_VERSION,
         "encryption_enabled": encryption_service.is_enabled,
         "admin_auth_required": settings.ADMIN_API_KEY is not None,
         "auth_methods": auth_methods,

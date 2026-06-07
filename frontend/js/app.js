@@ -166,7 +166,14 @@ async function checkAuth() {
     const nav = document.getElementById('main-nav');
     try {
         const settings = await fetchSettings();
-        
+
+        // Reflect the real backend version in the brand chip (Release-Please
+        // bumps pyproject.toml; the static markup is just a pre-load fallback).
+        if (settings.version) {
+            const chip = document.getElementById('brand-chip');
+            if (chip) chip.textContent = `v${settings.version}`;
+        }
+
         if (settings.is_authenticated) {
             // Authorized (local, proxy, or valid key already in localStorage)
             if (nav) {

@@ -52,6 +52,33 @@ def get_platform_config_dir(app_name: str) -> str:
 DEFAULT_INGEST_API_KEY = "sidecar-default-secret"
 
 
+def _read_app_version() -> str:
+    """Resolve the app version (Release-Please-managed in pyproject.toml).
+
+    Reads pyproject.toml first — it's the source of truth Release Please bumps,
+    and an editable install's cached metadata goes stale. Falls back to
+    installed package metadata for images that ship without pyproject.toml.
+    """
+    try:
+        import tomllib
+        from pathlib import Path
+
+        pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+        with pyproject.open("rb") as fh:
+            return str(tomllib.load(fh)["project"]["version"])
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version
+
+        return version("runway")
+    except Exception:
+        return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
