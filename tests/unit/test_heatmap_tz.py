@@ -16,6 +16,11 @@ from sqlmodel.pool import StaticPool
 from app.models.db import UsageEvent
 from app.services.event_query import query_heatmap
 
+# Fixed window anchor so the May 2026 event timestamps below never age out
+# of the rolling `days` window (they're 12–13 days before this, inside both
+# days=14 and days=30). Without this the tests are time bombs.
+_NOW = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+
 
 def _engine():
     e = create_engine(
@@ -66,7 +71,9 @@ def test_utc_bucketing_when_tz_missing():
     # SQLite %w: Sun=0..Sat=6 → Thursday = 4.
     _add_event(s, "e1", datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC), tokens=500)
 
-    cells = query_heatmap(s, provider_id="anthropic", account_id="user@example.com", days=30)
+    cells = query_heatmap(
+        s, provider_id="anthropic", account_id="user@example.com", days=30, now=_NOW
+    )
 
     assert _cell(cells, dow=4, hour=14) == 500
     assert sum(c["tokens"] for c in cells) == 500
@@ -79,7 +86,7 @@ def test_local_bucketing_shifts_with_tz():
     _add_event(s, "e1", datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC), tokens=500)
 
     cells_utc = query_heatmap(
-        s, provider_id="anthropic", account_id="user@example.com", days=30, tz="UTC"
+        s, provider_id="anthropic", account_id="user@example.com", days=30, tz="UTC", now=_NOW
     )
     cells_berlin = query_heatmap(
         s,
@@ -87,6 +94,7 @@ def test_local_bucketing_shifts_with_tz():
         account_id="user@example.com",
         days=30,
         tz="Europe/Berlin",
+        now=_NOW,
     )
 
     # UTC: hour 14 on Thursday
@@ -110,6 +118,7 @@ def test_local_bucketing_can_change_day_of_week():
         account_id="user@example.com",
         days=30,
         tz="America/Los_Angeles",
+        now=_NOW,
     )
 
     # Pacific: Thursday (dow=4) 18:00 — proves dow remap from Python Mon=0..Sun=6
@@ -127,6 +136,7 @@ def test_invalid_tz_falls_back_to_utc():
         account_id="user@example.com",
         days=30,
         tz="Not/A/Real_Zone",
+        now=_NOW,
     )
 
     # Should match the UTC bucketing — bug-for-bug compatible with no tz.
@@ -136,7 +146,12 @@ def test_invalid_tz_falls_back_to_utc():
 def test_returns_full_168_cells():
     s = _session()
     cells = query_heatmap(
-        s, provider_id="anthropic", account_id="user@example.com", days=14, tz="Europe/Berlin"
+        s,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        days=14,
+        tz="Europe/Berlin",
+        now=_NOW,
     )
     assert len(cells) == 168
     # All zero — no events.
@@ -156,7 +171,9 @@ def test_cost_usd_is_summed_per_cell():
     _add_event(s, "e2", datetime(2026, 5, 7, 14, 45, 0, tzinfo=UTC), tokens=300, cost_usd=0.75)
     _add_event(s, "e3", datetime(2026, 5, 7, 9, 0, 0, tzinfo=UTC), tokens=100, cost_usd=0.50)
 
-    cells = query_heatmap(s, provider_id="anthropic", account_id="user@example.com", days=30)
+    cells = query_heatmap(
+        s, provider_id="anthropic", account_id="user@example.com", days=30, now=_NOW
+    )
 
     # Helper to fetch a whole cell dict.
     def _full(dow: int, hour: int) -> dict:
