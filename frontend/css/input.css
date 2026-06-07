@@ -4310,10 +4310,22 @@ l-table td.num {
     .modal .tabs { overflow-x: auto; scrollbar-width: none; }
     .modal .tabs::-webkit-scrollbar { height: 0; }
     .modal .m-hero { grid-template-columns: 1fr; gap: 12px; }
+    /* Reset panel: keep it a padded box (text was jammed against the border via
+       padding-left:0) and lay burn-rate / headroom in a second column beside
+       the reset time instead of stacking everything down one line. */
     .modal .m-hero .countdown {
-        padding-left: 0; border-left: 0;
-        padding-top: 12px; border-top: 1px solid var(--hairline-2);
+        display: grid;
+        grid-template-columns: auto 1fr;
+        column-gap: 16px; row-gap: 3px;
+        align-content: start;
+        padding: 12px;
     }
+    .modal .m-hero .countdown .label { grid-column: 1; grid-row: 1; }
+    .modal .m-hero .countdown .big   { grid-column: 1; grid-row: 2; }
+    .modal .m-hero .countdown .sub   { grid-column: 1; grid-row: 3; }
+    .modal .m-hero .countdown .stat  { grid-column: 2; margin-top: 0; align-self: center; }
+    .modal .m-hero .countdown .stat:nth-last-of-type(2) { grid-row: 2; }
+    .modal .m-hero .countdown .stat:last-of-type { grid-row: 3; }
     .modal .m-kpis { grid-template-columns: 1fr 1fr; }
     .modal .m-mix { grid-template-columns: 1fr; justify-items: center; }
     /* Usage heatmap: let the 24 hour-columns shrink to the phone width */
@@ -4324,6 +4336,34 @@ l-table td.num {
         grid-template-columns: 12px minmax(40px, 1fr) auto auto auto auto !important;
         gap: 6px; font-size: 9.5px;
     }
+    /* Overview "sidecar attribution" + Cost "by sidecar" rows use the base
+       6-column grid (no inline template) which overflows the phone sheet and
+       wraps the machine name. Reflow to a tidy row with the bar on its own
+       full-width line. (Debug rows keep their inline-grid override above.) */
+    .modal .m-side-row:not([style*="grid-template-columns"]) {
+        grid-template-columns: 12px minmax(0, 1fr) auto auto auto;
+        column-gap: 10px; row-gap: 5px; font-size: 10px;
+        align-items: baseline; padding: 10px 4px;
+    }
+    .modal .m-side-row:not([style*="grid-template-columns"]) .nm {
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .modal .m-side-row:not([style*="grid-template-columns"]) .bar {
+        grid-column: 1 / -1;
+    }
+
+    /* Session rows: the desktop "time | dot | msg | value" grid crushes the
+       message into a sliver on a phone. Put dot + time + value on the first
+       line and let the message and detail/model lines run full width. */
+    .modal .m-event {
+        grid-template-columns: auto 1fr auto;
+        column-gap: 8px; row-gap: 3px;
+        align-items: center;
+    }
+    .modal .m-event .dot { grid-row: 1; grid-column: 1; }
+    .modal .m-event .t   { grid-row: 1; grid-column: 2; justify-self: start; }
+    .modal .m-event .v   { grid-row: 1; grid-column: 3; justify-self: end; text-align: right; }
+    .modal .m-event .msg { grid-row: 2; grid-column: 1 / -1; }
 }
 
 /* ============================================================
