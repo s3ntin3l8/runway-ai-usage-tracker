@@ -22,6 +22,7 @@ def query_heatmap(
     account_id: str,
     days: int = 14,
     tz: str | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, float]]:
     """Return a 7×24 grid of token + cost totals grouped by day-of-week and hour.
 
@@ -35,6 +36,10 @@ def query_heatmap(
     bucketing (so "14:00" in the heatmap corresponds to 14:00 in the user's
     local time). When `tz` is None or invalid, falls back to UTC bucketing
     via the original SQLite `strftime` aggregation.
+
+    `now` anchors the rolling `days` window (UTC); None means the current
+    time. Production never passes it — it exists so tests with fixed event
+    timestamps don't age out of the window.
     """
     zone: ZoneInfo | None = None
     if tz:
@@ -44,9 +49,11 @@ def query_heatmap(
             zone = None
 
     if zone is None:
-        return _heatmap_utc(session, provider_id=provider_id, account_id=account_id, days=days)
+        return _heatmap_utc(
+            session, provider_id=provider_id, account_id=account_id, days=days, now=now
+        )
     return _heatmap_local(
-        session, provider_id=provider_id, account_id=account_id, days=days, zone=zone
+        session, provider_id=provider_id, account_id=account_id, days=days, zone=zone, now=now
     )
 
 
@@ -56,8 +63,12 @@ def _heatmap_utc(
     provider_id: str,
     account_id: str,
     days: int,
+    now: datetime | None = None,
 ) -> list[dict[str, float]]:
     since_clause = f"-{days} days"
+    # SQLite treats a bound 'now' string the same as the literal, so the
+    # default is byte-identical to the original datetime('now', ...) query.
+    anchor = now.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S") if now else "now"
 
     sql = text(
         """
@@ -69,14 +80,19 @@ def _heatmap_utc(
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
-          AND ts >= datetime('now', :since_clause)
+          AND ts >= datetime(:anchor, :since_clause)
         GROUP BY dow, hour
         """
     )
 
     rows = session.exec(
         sql,
-        params={"provider_id": provider_id, "account_id": account_id, "since_clause": since_clause},
+        params={
+            "provider_id": provider_id,
+            "account_id": account_id,
+            "anchor": anchor,
+            "since_clause": since_clause,
+        },
     ).all()  # type: ignore[call-overload]
 
     tokens_heat: dict[tuple[int, int], int] = {}
@@ -96,8 +112,9 @@ def _heatmap_local(
     account_id: str,
     days: int,
     zone: ZoneInfo,
+    now: datetime | None = None,
 ) -> list[dict[str, float]]:
-    since = datetime.now(UTC) - timedelta(days=days)
+    since = (now or datetime.now(UTC)) - timedelta(days=days)
 
     rows = session.exec(  # type: ignore[call-overload]
         select(  # type: ignore[call-overload]
