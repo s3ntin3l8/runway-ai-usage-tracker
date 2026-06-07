@@ -3630,8 +3630,11 @@ l-table td.num {
         margin-left: 2px;
         white-space: nowrap;
     }
-    header.top .top-actions { gap: 6px; }
-    header.top .last-sync { padding: 0 2px; font-size: 9px; }
+    header.top .top-actions { gap: 6px; flex-shrink: 0; }
+    header.top .last-sync { padding: 0 2px; font-size: 9px; white-space: nowrap; }
+    /* With search + edit + refresh visible on Quotas the row gets tight —
+       drop the version chip there so nothing wraps or overlaps. */
+    body[data-view="dashboard"][data-mobile-subview="quotas"] header.top .brand small { display: none; }
     #toggle-theme { display: none; }
     /* Edit (and later, search) surface only on the Quotas tab */
     #toggle-edit { display: none; }
@@ -3688,6 +3691,10 @@ l-table td.num {
     .fleet-strip .ttl { flex-wrap: wrap; row-gap: 2px; }
     .fleet-strip .lights { width: 100%; }
     .fleet-strip .counts { flex-wrap: wrap; gap: 8px 18px; }
+    /* Hover tooltips are meaningless on touch — and their 200px absolutely-
+       positioned boxes (even while visibility:hidden) inflate scrollWidth,
+       which makes mobile browsers zoom the layout viewport out. */
+    .fleet-strip .tooltip { display: none; }
 
     /* Most-constrained card keeps the full-width spotlight; the
        2nd-constrained pool and the fleet aggregate drop into a compact
@@ -3706,6 +3713,9 @@ l-table td.num {
     .crit-card .body { gap: 12px; }
     .crit-card .who .name { font-size: 15px; margin-bottom: 8px; }
     .crit-card .head .lbl { letter-spacing: 0.1em; }
+    /* Sparkline annotations ("FAST" / "← since reset") collide at phone
+       width; pace already reads from the head meta. */
+    .crit-card .spark-annot { display: none; }
 
     /* 2nd-constrained → compact: single-column body, smaller readout,
        secondary "when / pace" lines and the 0–100 scale trimmed. */
@@ -3982,13 +3992,26 @@ l-table td.num {
     /* ---- Provider card frame at phone width (builds on the ≤960px
             single-column collapse): identity rail as a wrapping row,
             cumulative tray as a two-up row. ---- */
+    /* Let the card's single grid track shrink below its children's
+       min-content (long nowrap lines like the pools-head meta otherwise
+       widen the whole page). */
+    .fc { grid-template-columns: minmax(0, 1fr); }
+    .fc-rail, .fc-main, .fc-cume { min-width: 0; }
+    .fc-pools-head { flex-wrap: wrap; row-gap: 2px; }
+    .fc-pools-head .meta {
+        min-width: 0; max-width: 100%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .fc-rail {
         padding: 14px;
         flex-direction: row; flex-wrap: wrap;
         align-items: center;
         gap: 8px 12px;
     }
-    .fc-rail .who { flex: 1 1 100%; }
+    .fc-rail .who { flex: 1 1 100%; min-width: 0; }
+    .fc-rail .who .stack { min-width: 0; overflow: hidden; }
+    .fc-rail .pname,
+    .fc-rail .pacc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fc-main { padding: 14px; gap: 12px; }
     .fc-cume {
         padding: 14px;

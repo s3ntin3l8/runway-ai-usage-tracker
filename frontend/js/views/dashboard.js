@@ -780,13 +780,21 @@ function renderProviderSections(cards) {
         return;
     }
 
-    // Apply current filter chip to fleet entries: keep an entry if any of its
-    // cards (critical_gauge + secondary_limits) match the filter.
+    // Apply current filter chip + search query to fleet entries: keep an
+    // entry if any of its cards (critical_gauge + secondary_limits) match.
     const filter = STATE.activeFilter;
+    const q = _searchQuery.toLowerCase();
     const matchEntry = (entry) => {
-        if (!filter) return true;
         const all = [entry.critical_gauge, ...(entry.secondary_limits || [])].filter(Boolean);
-        return all.some(c => c[filter.dimension] === filter.value);
+        if (filter && !all.some(c => c[filter.dimension] === filter.value)) return false;
+        if (q) {
+            const hay = [
+                entry.provider_id, entry.account_id,
+                ...all.map(c => `${c.service_name || ''} ${c.account_label || ''}`),
+            ].join(' ').toLowerCase();
+            if (!hay.includes(q)) return false;
+        }
+        return true;
     };
 
     let visible = fleet.filter(matchEntry);
