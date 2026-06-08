@@ -2989,8 +2989,6 @@ l-table td.num {
 
 /* sidecar attribution table */
 .m-side { display: flex; flex-direction: column; gap: 0; }
-.m-side-stack { display: grid; grid-template-columns: 12px repeat(20, 1fr); height: 22px; background: var(--surface-3); margin-bottom: 12px; box-shadow: inset 0 0 0 1px var(--hairline-2); }
-.m-side-stack span { display: block; height: 100%; }
 .m-side-row {
     display: grid;
     grid-template-columns: 14px 1fr 70px 90px 80px 1fr;
