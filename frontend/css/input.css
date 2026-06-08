@@ -2971,13 +2971,13 @@ l-table td.num {
 .m-mix .donut { width: 160px; height: 160px; }
 .m-mix .donut .center-pct { font: 700 18px var(--font-family-mono); fill: var(--ink); font-variant-numeric: tabular-nums; }
 .m-mix .donut .center-lab { font: 700 8px var(--font-family-mono); fill: var(--ink-3); letter-spacing: 0.14em; text-transform: uppercase; }
-.m-mix-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.m-mix-legend .it { display: grid; grid-template-columns: 10px 1fr auto auto auto; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface-2); }
+.m-mix-legend { display: flex; flex-direction: column; gap: 4px; }
+.m-mix-legend .it { display: grid; grid-template-columns: 10px 1fr 44px 76px 68px; align-items: center; gap: 6px 10px; padding: 6px 8px; background: var(--surface-2); }
 .m-mix-legend .it i { width: 10px; height: 10px; }
 .m-mix-legend .it .name { font: 600 11px var(--font-family-mono); color: var(--ink); }
-.m-mix-legend .it .pct { font: 700 11px var(--font-family-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
-.m-mix-legend .it .tok { font: 500 10px var(--font-family-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.m-mix-legend .it .cost { font: 500 10px var(--font-family-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.m-mix-legend .it .pct  { font: 700 11px var(--font-family-mono); color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+.m-mix-legend .it .tok  { font: 500 10px var(--font-family-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
+.m-mix-legend .it .cost { font: 500 10px var(--font-family-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
 
 /* modal wingmen grid */
 .m-wingmen {
@@ -4349,7 +4349,6 @@ l-table td.num {
     .modal .m-hero .countdown .stat:last-of-type { grid-row: 3; }
     .modal .m-kpis { grid-template-columns: 1fr 1fr; }
     .modal .m-mix { grid-template-columns: 1fr; justify-items: center; }
-    .modal .m-mix-legend { grid-template-columns: 1fr; }
     /* Usage heatmap: let the 24 hour-columns shrink to the phone width */
     .modal .m-heat i { min-height: 0; aspect-ratio: auto; height: 13px; min-width: 0; }
     /* Debug sidecar rows carry an inline 6×80px grid — compact those only
