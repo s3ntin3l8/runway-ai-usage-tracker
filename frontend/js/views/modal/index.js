@@ -102,9 +102,9 @@ async function _renderPane(tab) {
             if (!_modalCache.sidecarLastSeen) {
                 try {
                     const fd = await fetchFleet();
-                    const sidecars = fd.sidecars || fd || [];
+                    const sidecars = Array.isArray(fd?.sidecars) ? fd.sidecars : [];
                     _modalCache.sidecarLastSeen = new Map(
-                        (Array.isArray(sidecars) ? sidecars : []).map(s => [s.sidecar_id, s.last_seen])
+                        sidecars.map(s => [s.sidecar_id, s.last_seen])
                     );
                 } catch { _modalCache.sidecarLastSeen = new Map(); }
             }

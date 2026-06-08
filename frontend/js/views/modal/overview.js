@@ -381,13 +381,13 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
     const totalDelta = sidecarRows.reduce((a, r) => a + r.deltaRaw, 0) || 1;
     const sidecarCount  = sidecarRows.length;
     const healthyCount  = sidecarRows.filter(r => r.status === 'good').length;
-    let _maxLastSeen = null;
+    let maxLastSeen = null;
     if (sidecarLastSeen) {
         for (const ts of sidecarLastSeen.values()) {
-            if (ts && (!_maxLastSeen || ts > _maxLastSeen)) _maxLastSeen = ts;
+            if (ts && (!maxLastSeen || ts > maxLastSeen)) maxLastSeen = ts;
         }
     }
-    const lastPush = _maxLastSeen ? _fmtAgo(_maxLastSeen) : (sidecarRows.length ? sidecarRows[0].ago : '—');
+    const lastPush = maxLastSeen ? _fmtAgo(maxLastSeen) : '—';
 
     const stackBar = sidecarRows.map((r, i) => {
         const share = (r.deltaRaw / totalDelta) * 100;
