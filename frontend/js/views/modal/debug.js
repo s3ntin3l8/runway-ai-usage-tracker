@@ -47,11 +47,9 @@ function _scHue(id, idx) {
 /** Build a key-value row for the authoritative source table. */
 function _kvRow(key, val, cls) {
     const cls_ = cls ? ` ${cls}` : '';
-    return `<div class="m-event${cls_}">
-        <span class="t">${_esc(key)}</span>
-        <span class="dot" style="opacity:.4"></span>
-        <span class="msg">${_esc(val)}</span>
-        <span class="v"></span>
+    return `<div class="m-kv-row${cls_}">
+        <span class="m-kv-key">${_esc(key)}</span>
+        <span class="m-kv-val">${_esc(val)}</span>
     </div>`;
 }
 
@@ -135,31 +133,17 @@ export function buildDebugPane(entry, tokenHealth) {
                 const healthCls = t.status === 'valid' ? 'good'
                     : (t.status === 'expiring' || t.status === 'expired') ? 'warn'
                     : '';
-                return `<div class="m-event ${healthCls}">
-                    <span class="t">expires</span><span class="dot"></span>
-                    <span class="msg">${expiresIn === 'expired' ? 'expired' : 'OAuth bearer · ' + _esc(expiresIn)}</span>
-                    <span class="v">${t.auto_rotate ? 'auto-rotate on' : ''}</span>
-                </div>
-                <div class="m-event">
-                    <span class="t">scope</span><span class="dot" style="opacity:.4"></span>
-                    <span class="msg">${_esc(scopes)}</span>
-                    <span class="v">verified</span>
-                </div>
-                <div class="m-event">
-                    <span class="t">issued</span><span class="dot" style="opacity:.4"></span>
-                    <span class="msg">${_esc(issueDate)}</span>
-                    <span class="v"></span>
-                </div>`;
+                const expiresVal = expiresIn === 'expired' ? 'expired' : 'OAuth bearer · ' + expiresIn;
+                const autoRotate = t.auto_rotate ? ' · auto-rotate on' : '';
+                return _kvRow('expires', expiresVal + autoRotate, healthCls)
+                    + _kvRow('scope', scopes)
+                    + _kvRow('issued', issueDate);
             }).join('');
         }
     }
 
     if (!tokenHealthHtml) {
-        tokenHealthHtml = `<div class="m-event">
-            <span class="t">status</span><span class="dot" style="opacity:.4"></span>
-            <span class="msg">No token data available for this account</span>
-            <span class="v"></span>
-        </div>`;
+        tokenHealthHtml = _kvRow('status', 'No token data available for this account');
     }
 
     return `

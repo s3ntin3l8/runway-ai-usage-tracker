@@ -3039,6 +3039,17 @@ l-table td.num {
 .m-event .m-agents-sep::before,
 .m-event .m-agents-sep::after { content: ''; flex: 1; height: 1px; background: var(--hairline-2); }
 
+/* debug key/value table — stays side-by-side on mobile (no override needed) */
+.m-kv-row {
+    display: grid; grid-template-columns: 120px 1fr; gap: 0 12px;
+    padding: 3px 0; align-items: baseline;
+    border-bottom: 1px solid var(--hairline-2);
+    font: 500 11px var(--font-family-mono);
+}
+.m-kv-row:last-child { border-bottom: 0; }
+.m-kv-key { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); white-space: nowrap; }
+.m-kv-val { font-size: 11px; color: var(--ink); word-break: break-all; }
+
 /* sparkline tabs */
 .m-spark { padding: 14px; box-shadow: inset 0 0 0 1px var(--hairline-2); }
 .m-spark-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
