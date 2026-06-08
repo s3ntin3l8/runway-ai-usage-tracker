@@ -6,7 +6,7 @@ PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 
-.PHONY: help install install-hooks dev dev-all run sidecar test test-cov lint format css watch secrets clean
+.PHONY: help install install-hooks dev dev-all run sidecar test test-cov lint format css watch secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -58,7 +58,10 @@ css: ## Build Tailwind CSS (one-shot)
 watch: ## Watch and rebuild Tailwind CSS on change
 	npm run watch:css
 
-secrets: ## Scan for secrets against baseline
+secrets: ## Gate: fail if any tracked file has a secret not in the baseline (matches CI)
+	git ls-files -z | xargs -0 $(VENV)/bin/detect-secrets-hook --baseline .secrets.baseline
+
+secrets-baseline: ## Regenerate/update .secrets.baseline (run after vetting new detections, then commit)
 	$(VENV)/bin/detect-secrets scan --baseline .secrets.baseline
 
 clean: ## Remove venv, caches, and build artifacts

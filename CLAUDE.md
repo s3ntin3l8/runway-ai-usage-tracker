@@ -17,7 +17,7 @@ A `Makefile` wraps all common tasks — run `make help` for the full list. Key t
 - **Lint**: `make lint` (ruff + mypy + pip-audit). `make format` to auto-fix.
 - **CSS**: `make css` (one-shot) / `make watch` (rebuild Tailwind on change).
 - **Sidecar**: `make sidecar` (sources `.env` so `RUNWAY_CONFIG_DIR` + `INGEST_API_KEY` align with the dev server).
-- **Secrets**: `make secrets` (scan against `.secrets.baseline`).
+- **Secrets**: `make secrets` (gates — fails on any unbaselined credential in a tracked file; same check as CI). `make secrets-baseline` regenerates the baseline after vetting new detections.
 
 ## Schema Fields
 When adding new card fields, update both `LimitCard` in `app/models/schemas.py` and the README.md TypeScript interface. Token breakdown fields:

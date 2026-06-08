@@ -34,7 +34,11 @@ jobs:
       - name: Type check with mypy
         run: mypy .
       - name: Detect secrets
-        run: detect-secrets scan --baseline .secrets.baseline
+        # Gate, don't just scan: `detect-secrets scan --baseline` rewrites the
+        # baseline and exits 0, so it never fails CI. `detect-secrets-hook`
+        # exits non-zero on any secret in a tracked file that isn't already
+        # allowlisted in .secrets.baseline.
+        run: git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline
       - name: Dependency security scan
         run: pip-audit -r requirements.txt
 
