@@ -101,7 +101,7 @@ function _buildModelMix(cumData) {
  * antigravity is quota-only — no rollup contributions, but cards still
  * carry a sidecar_id).
  */
-function _buildSidecarRows(entry) {
+function _buildSidecarRows(entry, sidecarLastSeen = null) {
     const contributions = entry.sidecar_contributions || {};
     const rows = [];
     for (const [sid, stats] of Object.entries(contributions)) {
@@ -115,7 +115,7 @@ function _buildSidecarRows(entry) {
             costRaw: stats.cost_usd || 0,
             cost: _fmtCost(stats.cost_usd || 0),
             status: 'good',
-            ago: stats.last_seen ? _fmtAgo(stats.last_seen) : '—',
+            ago: (sidecarLastSeen?.get(sid)) ? _fmtAgo(sidecarLastSeen.get(sid)) : (stats.last_seen ? _fmtAgo(stats.last_seen) : '—'),
         });
     }
     const seen = new Set(rows.map(r => r.id));
@@ -133,7 +133,7 @@ function _buildSidecarRows(entry) {
             costRaw: 0,
             cost: '—',
             status: 'good',
-            ago: c?.updated_at ? _fmtAgo(c.updated_at) : '—',
+            ago: (sidecarLastSeen?.get(sid)) ? _fmtAgo(sidecarLastSeen.get(sid)) : (c?.updated_at ? _fmtAgo(c.updated_at) : '—'),
         });
     }
     rows.sort((a, b) => b.deltaRaw - a.deltaRaw);
@@ -298,7 +298,7 @@ function _bucketTotalTokens(bucket) {
  * @param {object|null} quotaChartData - fetchHistoryChart() response for the 24h range (metric=percent)
  * @returns {string} HTML string
  */
-export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData) {
+export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData, sidecarLastSeen = null) {
     const critical = entry.critical_gauge || {};
     const allCards = [critical, ...(entry.secondary_limits || [])].filter(Boolean);
     const isPayg = critical.is_unlimited || (!critical.limit_value && !critical.pct_used);
@@ -369,17 +369,25 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
     const monthTokNum = _bucketTotalTokens(monthBucket);
     const monthTok   = monthTokNum > 0 ? _fmtTokens(monthTokNum) + ' tok' : '—';
     const monthCost  = _fmtCost(monthBucket?.cost_usd ?? null);
+    const yearTokNum = _bucketTotalTokens(yearBucket);
+    const yearTok    = yearTokNum > 0 ? _fmtTokens(yearTokNum) + ' tok' : '—';
     const ytdCost    = _fmtCost(yearBucket?.cost_usd ?? null);
     const lifetimeTokNum = _bucketTotalTokens(lifetimeBucket);
     const lifetimeTok = lifetimeTokNum > 0 ? _fmtTokens(lifetimeTokNum) + ' tok' : '—';
     const lifetimeCost = _fmtCost(lifetimeBucket?.cost_usd ?? null);
 
     // Sidecar rows
-    const sidecarRows = _buildSidecarRows(entry);
+    const sidecarRows = _buildSidecarRows(entry, sidecarLastSeen);
     const totalDelta = sidecarRows.reduce((a, r) => a + r.deltaRaw, 0) || 1;
     const sidecarCount  = sidecarRows.length;
     const healthyCount  = sidecarRows.filter(r => r.status === 'good').length;
-    const lastPush = sidecarRows.length ? (sidecarRows[0].ago) : '—';
+    let _maxLastSeen = null;
+    if (sidecarLastSeen) {
+        for (const ts of sidecarLastSeen.values()) {
+            if (ts && (!_maxLastSeen || ts > _maxLastSeen)) _maxLastSeen = ts;
+        }
+    }
+    const lastPush = _maxLastSeen ? _fmtAgo(_maxLastSeen) : (sidecarRows.length ? sidecarRows[0].ago : '—');
 
     const stackBar = sidecarRows.map((r, i) => {
         const share = (r.deltaRaw / totalDelta) * 100;
@@ -450,23 +458,24 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
     <!-- KPIs -->
     <div class="m-kpis">
         <div class="kpi">
-            <div class="k">This period</div>
+            <div class="k">This month</div>
             <div class="v">${_esc(monthTok)}</div>
-        </div>
-        <div class="kpi kpi-cost">
-            <div class="k">Period cost</div>
-            <div class="v">${_esc(monthCost)}</div>
-            <div class="d">${_esc(ytdCost)} YTD</div>
+            <div class="d">${_esc(monthCost)}</div>
         </div>
         <div class="kpi">
-            <div class="k">Sidecars</div>
-            <div class="v">${sidecarCount}<em>active · ${healthyCount} healthy</em></div>
-            <div class="d">last push ${_esc(lastPush)}</div>
+            <div class="k">Yearly</div>
+            <div class="v">${_esc(yearTok)}</div>
+            <div class="d">${_esc(ytdCost)}</div>
         </div>
         <div class="kpi">
             <div class="k">Lifetime</div>
             <div class="v">${_esc(lifetimeTok)}</div>
             <div class="d">${_esc(lifetimeCost)}</div>
+        </div>
+        <div class="kpi">
+            <div class="k">Sidecars</div>
+            <div class="v">${sidecarCount}<em>active · ${healthyCount} healthy</em></div>
+            <div class="d">last push ${_esc(lastPush)}</div>
         </div>
     </div>
 

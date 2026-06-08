@@ -607,7 +607,7 @@ function _fcCume(cumulative, _isPayg, providerId) {
 
     return `<div class="fc-cume">
         <div class="row">
-            <span class="label">This period</span>
+            <span class="label">This month</span>
             <span class="v">${monthTok ? _formatTokenShort(monthTok) : '—'}<em>${monthTok ? 'tok' : ''}</em></span>
             <span class="sub">${_costSub(monthCost)}</span>
         </div>

@@ -8,7 +8,7 @@
  * The modal markup is injected into #provider-modal (added to index.html).
  */
 
-import { fetchHeatmap, fetchSessions, fetchForecast, fetchHistoryChart } from '../../api.js';
+import { fetchHeatmap, fetchSessions, fetchForecast, fetchHistoryChart, fetchFleet } from '../../api.js';
 import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
@@ -99,7 +99,16 @@ async function _renderPane(tab) {
                     '30d': c30d.status === 'fulfilled' ? c30d.value : null,
                 };
             }
-            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.recentSessions, _modalCache.quotaChart['24h']);
+            if (!_modalCache.sidecarLastSeen) {
+                try {
+                    const fd = await fetchFleet();
+                    const sidecars = fd.sidecars || fd || [];
+                    _modalCache.sidecarLastSeen = new Map(
+                        (Array.isArray(sidecars) ? sidecars : []).map(s => [s.sidecar_id, s.last_seen])
+                    );
+                } catch { _modalCache.sidecarLastSeen = new Map(); }
+            }
+            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.recentSessions, _modalCache.quotaChart['24h'], _modalCache.sidecarLastSeen);
             wireOverviewSparkTabs(_modalCache.quotaChart);
             wireOverviewSparkHover();
 
