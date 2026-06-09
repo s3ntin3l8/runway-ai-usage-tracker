@@ -1,0 +1,20 @@
+name: Cleanup GHCR
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Run every Sunday at midnight UTC
+  workflow_dispatch:      # Allow manual triggering
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete untagged images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'runway'
+          package-type: 'container'
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 5
