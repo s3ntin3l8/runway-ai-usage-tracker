@@ -145,8 +145,7 @@ def persist_to_local_file(provider: str, new_tokens: dict[str, str], source: str
             try:
                 creds["expiry_date"] = int(float(exp) * 1000)
             except (TypeError, ValueError):
-                # codeql[py/clear-text-logging-sensitive-data]
-                logger.debug("Could not parse JWT exp claim %r as number", exp)
+                logger.debug("Could not parse JWT exp claim as number")
 
     try:
         safe_write_json(path, creds)

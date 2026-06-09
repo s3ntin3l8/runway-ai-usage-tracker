@@ -10,6 +10,7 @@ Architecture:
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import time
 from typing import Any
@@ -58,8 +59,7 @@ class TokenCache:
             or tokens.get("api_key")
             or next(iter(tokens.values()))
         )
-        # codeql[py/weak-sensitive-data-hashing]
-        return hashlib.sha256(ident.encode(), usedforsecurity=False).hexdigest()[:12]
+        return hmac.new(b"runway-cache-id-v1", ident.encode(), hashlib.sha256).hexdigest()[:12]
 
     async def store(
         self,
@@ -98,10 +98,12 @@ class TokenCache:
             metadata = {"account_label": account_label, "source": source}
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
-            # codeql[py/clear-text-logging-sensitive-data]
             logger.info(
-                f"Stored tokens for {scrub_log(provider)} account {scrub_log(account_id)} "
-                f"({scrub_log(account_label or 'unnamed')}): {scrub_log(str(list(tokens.keys())))}"
+                "Stored %d token(s) for %s account %s (%s)",
+                len(tokens),
+                scrub_log(provider),
+                scrub_log(account_id),
+                scrub_log(account_label or "unnamed"),
             )
             return account_id
 
