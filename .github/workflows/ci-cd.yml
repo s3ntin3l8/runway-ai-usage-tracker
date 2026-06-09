@@ -104,6 +104,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -114,6 +115,10 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Install cosign
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@v3.5.0
 
       - name: Log in to the Container registry
         if: github.event_name == 'push'
@@ -133,6 +138,7 @@ jobs:
             type=sha
 
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -142,3 +148,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Sign the published Docker image
+        if: github.event_name == 'push'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
