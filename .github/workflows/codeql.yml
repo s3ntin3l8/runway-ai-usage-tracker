@@ -14,6 +14,6 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: s3ntin3l8/.github/.github/workflows/codeql.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/codeql.yml@harden/env-route-inputs
     with:
       languages: '"python", "javascript-typescript"'

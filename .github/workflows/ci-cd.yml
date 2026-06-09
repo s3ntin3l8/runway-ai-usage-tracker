@@ -12,14 +12,14 @@ concurrency:
 
 jobs:
   test-python:
-    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@harden/env-route-inputs
     with:
       python-version: '3.12'
       coverage-fail-under: '70'
     secrets: inherit
 
   test-frontend:
-    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@feat/ci-node-coverage
     with:
       node-version: '22'
       build-script: 'build:css'
