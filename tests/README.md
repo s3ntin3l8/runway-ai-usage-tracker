@@ -141,16 +141,16 @@ pytest -m "not slow"
 async def test_collect_oauth_success(self, mock_http_client, mock_anthropic_oauth_response):
     """Test successful OAuth API collection."""
     collector = AnthropicCollector()
-    
+
     # Setup
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = mock_anthropic_oauth_response
     mock_http_client.get.return_value = mock_response
-    
+
     # Execute
     result = await collector.collect(mock_http_client)
-    
+
     # Verify
     assert isinstance(result, list)
     assert len(result) >= 1

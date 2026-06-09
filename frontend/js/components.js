@@ -740,7 +740,7 @@ export function buildTokenHealthPanel(tokens) {
 
     const rows = tokens.map(t => {
         const s = STATUS_STYLES[t.status] || STATUS_STYLES.unknown;
-        
+
         // Suppress redundant "config" and "default" labels if we have a settings badge or no custom label
         let label = t.account_label || t.account_id || '';
         if (label === 'default' || (t.source === 'config' && (label === 'config' || label === 'config-cookie'))) {
@@ -753,7 +753,7 @@ export function buildTokenHealthPanel(tokens) {
 
         for (const k of rawTypes) {
             let clean = FRIENDLY_TYPES[k] || k;
-            
+
             // Consolidate browser-scraped multi-cookie bundles into a single "Cookie" badge
             if (k.startsWith('COOKIE_') || k.startsWith('__Secure-') || k.toLowerCase().includes('session')) {
                 clean = 'Cookie';
@@ -1187,7 +1187,7 @@ export function buildHorizonCard(card, forecastEntry) {
         const windowMs = durations[card.window_type] || 86400000;
         const elapsed = windowMs - (resetDate - now);
         const glidePct = Math.max(0, Math.min(100, (elapsed / windowMs) * 100));
-        
+
         const isOverPace = usedPct > glidePct;
         const markerColor = isOverPace ? 'var(--warn)' : 'var(--good)';
         glidePathMarker = `<div class="glide-path" style="left:${glidePct}%; background:${markerColor}; width:1px; height:10px; position:absolute; top:-2px; z-index:10; box-shadow: 0 0 4px ${markerColor};"></div>`;
@@ -1225,7 +1225,7 @@ export function buildHorizonCard(card, forecastEntry) {
         <div class="axis"><span>NOW</span><span>+1h</span><span>+2h</span><span>RESET</span></div>
     </div>`;
 
-    const tokenDetails = card.token_usage?.total 
+    const tokenDetails = card.token_usage?.total
         ? `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-top:4px;">Total Tokens: ${_formatTokenShort(card.token_usage.total)}</div>`
         : `<div style="height:18px;"></div>`;
 

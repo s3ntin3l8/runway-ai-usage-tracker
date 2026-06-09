@@ -61,7 +61,7 @@ export async function fetchSessions(params = {}) {
 export async function fetchLimits() {
     try {
         const resp = await fetchWithAuth('/api/v1/usage/limits');
-        
+
         if (!resp.ok) {
             // Provide specific error messages for different HTTP status codes
             const errorMessages = {
@@ -72,13 +72,13 @@ export async function fetchLimits() {
             const message = errorMessages[resp.status] || `HTTP ${resp.status} error`;
             throw new Error(message);
         }
-        
+
         // Check if response is valid JSON
         const contentType = resp.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
             throw new Error('Invalid response format from server');
         }
-        
+
         return await resp.json();
     } catch (err) {
         // Distinguish between different error types

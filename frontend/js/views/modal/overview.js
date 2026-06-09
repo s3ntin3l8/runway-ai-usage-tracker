@@ -637,4 +637,3 @@ export function wireOverviewSparkHover() {
 
     area.addEventListener('mouseleave', () => { tip.hidden = true; });
 }
-

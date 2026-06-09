@@ -83,7 +83,7 @@ async function checkAuth() {
     const nav = document.getElementById('main-nav');
     try {
         const settings = await fetchSettings();
-        
+
         if (settings.is_authenticated) {
             // Authorized (local, proxy, or valid key already in localStorage)
             if (nav) {
@@ -96,17 +96,17 @@ async function checkAuth() {
         // Locked - show Auth Portal
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         document.getElementById('view-auth').classList.remove('hidden');
-        
+
         if (nav) {
             nav.style.display = 'flex';
             nav.classList.add('nav-locked');
         }
-        
+
         // Initializing Auth Form
         const authForm = document.getElementById('auth-form');
         const authError = document.getElementById('auth-error');
         const keyInput = document.getElementById('admin-key-input');
-        
+
         if (authForm && !authForm.dataset.initialized) {
             authForm.dataset.initialized = 'true';
             authForm.addEventListener('submit', async (e) => {
@@ -132,7 +132,7 @@ async function checkAuth() {
                 }
             });
         }
-        
+
         return false;
     } catch (err) {
         console.error('Auth verification failed:', err);
@@ -141,12 +141,12 @@ async function checkAuth() {
         document.getElementById('view-error').classList.remove('hidden');
         const msg = document.getElementById('error-message');
         if (msg) msg.textContent = `Runway could not reach the backend server: ${err.message}`;
-        
+
         if (nav) {
             nav.style.display = 'flex';
             nav.classList.add('nav-locked');
         }
-        
+
         return false;
     }
 }
@@ -422,7 +422,7 @@ async function initUI() {
     // lazily on first switchView() to that tab — keeps their modules off the
     // cold-load critical path.
     initDashboardView();
-    
+
     // Wake Trigger: nudge the poller and refresh data when the tab becomes visible.
     // Poller wake: 30s debounce. Data refresh: only when tab was hidden for >5 min.
     let lastWakeTime = 0;
@@ -477,7 +477,7 @@ async function startGitHubLogin() {
     try {
         const data = await initGitHubOAuth();
         content.innerHTML = buildGitHubOAuthModal(data);
-        
+
         // Re-attach close/cancel listeners
         document.getElementById('close-modal').onclick = cancelGitHubLogin;
         document.getElementById('cancel-github-login').onclick = cancelGitHubLogin;
@@ -485,9 +485,9 @@ async function startGitHubLogin() {
         // Start polling
         let currentInterval = data.interval;
         const expireTime = Date.now() + (data.expires_in * 1000);
-        
+
         if (githubPollTimer) clearTimeout(githubPollTimer);
-        
+
         const poll = async () => {
             if (Date.now() > expireTime) {
                 cancelGitHubLogin();
@@ -500,7 +500,7 @@ async function startGitHubLogin() {
                     githubPollTimer = null;
                     closeModal();
                     await checkGitHubStatus();
-                    
+
                     // Only reload dashboard data if we are actually on the dashboard
                     // to prevent jumping/flickering in other views like Settings
                     if (document.querySelector('.nav-link.active')?.id === 'nav-dashboard') {
@@ -513,10 +513,10 @@ async function startGitHubLogin() {
             } catch (err) {
                 console.error("Polling error:", err);
             }
-            
+
             githubPollTimer = setTimeout(poll, currentInterval * 1000);
         };
-        
+
         githubPollTimer = setTimeout(poll, currentInterval * 1000);
 
     } catch (err) {
@@ -542,7 +542,7 @@ async function handleGitHubLogout() {
     if (ok) {
         await logoutGitHub();
         await checkGitHubStatus();
-        
+
         // Only reload dashboard data if we are actually on the dashboard
         if (document.querySelector('.nav-link.active')?.id === 'nav-dashboard') {
             loadData();
@@ -692,20 +692,20 @@ window.handleResetProvider = async function(event, provider, accountId) {
         btn.disabled = true;
         btn.innerText = 'RESETTING...';
     }
-    
+
     try {
         const query = accountId && accountId !== 'default' ? `?account_id=${accountId}` : '';
         // 1. Reset backoff/failure state
         const resetResp = await fetch(`/api/v1/usage/reset/${provider}${query}`, { method: 'POST' });
         if (!resetResp.ok) throw new Error('Reset failed');
-        
+
         if (btn) btn.innerText = 'COLLECTING...';
-        
+
         // 2. Force immediate re-collection
         const collectResp = await fetch(`/api/v1/usage/collect/${provider}${query}`, { method: 'POST' });
         if (!collectResp.ok) throw new Error('Collection failed');
         const collectData = await collectResp.json();
-        
+
         // 3. Only show SUCCESS if we actually got cards back (not an error card)
         // Note: collect_one returns the raw cards. If the first one is an error, it failed.
         if (collectData.cards > 0) {
@@ -770,15 +770,15 @@ window.viewRawProviderData = async function(providerId) {
             throw new Error(err.detail || 'Failed to fetch raw data');
         }
         const data = await resp.json();
-        
+
         // Populate cache for buttons
         RAW_DATA_CACHE.full = data;
         RAW_DATA_CACHE.bodies = (data.responses || []).map(res => {
             return typeof res.body === 'string' ? res.body : JSON.stringify(res.body, null, 2);
         });
-        
+
         const responses = data.responses || [];
-        
+
         // 1. Build the skeleton via innerHTML
         content.innerHTML = `
             <div style="display:flex;flex-direction:column;gap:0;">
@@ -870,4 +870,3 @@ function bindLazy(viewId, ...names) {
 bindLazy('fleet',    'editSidecarName', 'addSidecarTag', 'deleteSidecar', 'toggleSidecarEnabled');
 bindLazy('history',  'setHistoryDays', 'setHistoryMetric', 'toggleHistoryProvider');
 bindLazy('settings', 'refreshToken', 'deleteToken');
-

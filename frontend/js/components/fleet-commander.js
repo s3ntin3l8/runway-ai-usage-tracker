@@ -638,4 +638,3 @@ function _fcPods(secondaryCards, contributions) {
         <div class="fc-pods-grid">${pods}</div>
     </div>`;
 }
-

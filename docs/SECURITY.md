@@ -9,7 +9,7 @@
 ## 🔑 Credential Management
 
 ### Environment Variables (.env)
-Credentials MUST be stored in a `.env` file at the project root. This file is excluded from version control via `.gitignore`. 
+Credentials MUST be stored in a `.env` file at the project root. This file is excluded from version control via `.gitignore`.
 Refer to [.env.example](file:///.env.example) for the required structure.
 
 ### Automatic Protection (Pre-commit)
@@ -32,7 +32,7 @@ pre-commit run --all-files  # Optional: Test on existing files
 In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message events via `POST /api/v1/fleet/ingest`. To prevent replay attacks and token theft, Runway uses **HMAC-SHA256 Signing**:
 
 1. **Shared Secret**: The `INGEST_API_KEY` (from `.env`) is the HMAC secret.
-2. **Signature Generation**: 
+2. **Signature Generation**:
    - Sidecars calculate a signature over the JSON body and a `X-Timestamp`.
    - The server verifies the signature matches and that the timestamp is within a 5-minute sliding window.
 3. **Rate Limit**: `POST /ingest` is capped at **600 requests/minute per source IP** to bound damage from a stolen key or a misconfigured sidecar.

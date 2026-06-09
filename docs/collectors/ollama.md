@@ -74,7 +74,7 @@ Sidecar can extract cookies. See [sidecar documentation](../sidecar.md).
 
 ### "API Key detected" error
 **Fix:**
-You likely pasted an API key (e.g., starting with `sk-`) into the session cookie field. 
+You likely pasted an API key (e.g., starting with `sk-`) into the session cookie field.
 
 **How to get the correct session cookie:**
 If the cookie doesn't appear in the "Application" tab, use the **Network** tab:

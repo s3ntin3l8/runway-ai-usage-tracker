@@ -26,7 +26,7 @@ The Claude collector supports multiple authentication and data collection method
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api).
 
 3.  **Manual Cookie Entry**: Used for Web API fallback if OAuth token is unavailable.
-    *   **Method**: Log in to [claude.ai](https://claude.ai) in any browser, extract the `sessionKey` cookie, and paste it into the **Runway Settings** UI. 
+    *   **Method**: Log in to [claude.ai](https://claude.ai) in any browser, extract the `sessionKey` cookie, and paste it into the **Runway Settings** UI.
     *   **Details**: See [Manual Cookie Extraction (DevTools)](#manual-cookie-extraction-devtools).
 
 4.  **CLI PTY**:
@@ -50,7 +50,7 @@ This is the preferred method, providing the most reliable and comprehensive data
 **Endpoints:** `claude.ai/api/organizations/.../usage`
 **Auth:** Chrome `sessionKey` cookie or manually provided cookie bundle.
 **Behavior:** Used as a fallback if the OAuth API is unavailable.
-**Endpoints:** 
+**Endpoints:**
 - `claude.ai/api/organizations` (get org UUID)
 - `claude.ai/api/organizations/{orgId}/usage` (get quotas)
 **Auth:** Chrome `sessionKey` cookie OR manually provided cookie in Runway UI.

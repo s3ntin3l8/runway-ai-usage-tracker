@@ -161,7 +161,7 @@ export async function ensureECharts() {
         _echarts = window.echarts;
         return _echarts;
     }
-    
+
     // Check if it was already loaded via script tag in index.html or needs dynamic loading
     if (!window.echarts) {
         await new Promise((resolve, reject) => {
@@ -694,7 +694,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             ],
             series: series
         };
-        
+
         _chart.setOption(option, true);  // true = notMerge: replace all series/axes cleanly
 
         // Prune stale legend state entries, then render the HTML legend.
