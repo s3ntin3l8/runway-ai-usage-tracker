@@ -135,7 +135,7 @@ class BackgroundPoller:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Poller task cancelled during shutdown")
             self._task = None
         logger.info("Background poller stopped.")
 
@@ -258,7 +258,7 @@ class BackgroundPoller:
                 try:
                     limit_cards.append(LimitCard(**card_dict))
                 except Exception:
-                    pass
+                    logger.debug("Skipping malformed card for webhook check", exc_info=True)
             if limit_cards:
                 with Session(engine) as webhook_session:
                     await check_and_fire(limit_cards, webhook_session)

@@ -494,7 +494,7 @@ class AnthropicWebMixin:
                 try:
                     reset_at = parse_iso8601_utc(reset_raw)
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Failed to parse reset_at %r", reset_raw, exc_info=True)
 
             w_type = classify_anthropic_window_type(api_key)
             service_name = "Claude"
@@ -558,7 +558,7 @@ class AnthropicWebMixin:
                     # Found a balance, break to avoid duplicates if multiple keys exist
                     break
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Failed to parse balance tier", exc_info=True)
 
         # 3. Extra usage / overage (Support for credits and spend formats)
         extra_data = data.get("extra_usage") or data.get("overage")

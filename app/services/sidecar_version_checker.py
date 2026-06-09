@@ -55,7 +55,7 @@ class SidecarVersionChecker:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Sidecar version checker task cancelled during shutdown")
             self._task = None
         logger.info("Sidecar version checker stopped.")
 

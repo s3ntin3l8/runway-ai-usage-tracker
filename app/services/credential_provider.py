@@ -68,7 +68,7 @@ class CredentialProvider:
                     results["api_key"] = _cfg.api_key
                     sources["api_key"] = "config"
         except Exception:
-            pass
+            logger.debug("Failed to load API key from DB for %s", provider_id, exc_info=True)
 
         provider_config = registry.get_provider(provider_id)
         rules = provider_config.get("rules", [])
@@ -231,7 +231,7 @@ class CredentialProvider:
                 if cfg and cfg.api_key:
                     return cfg.api_key
         except Exception:
-            pass
+            logger.debug("Failed to read API key from DB for %s", provider_id, exc_info=True)
         return None
 
     @staticmethod
@@ -255,7 +255,7 @@ class CredentialProvider:
                 if cfg and cfg.session_cookie:
                     return cfg.session_cookie
         except Exception:
-            pass
+            logger.debug("Failed to read session cookie from DB for %s", provider_id, exc_info=True)
         return None
 
     @staticmethod

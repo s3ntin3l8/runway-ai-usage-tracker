@@ -1,7 +1,10 @@
 """Shared helpers — _parse_ts and _parse_period_key are needed by
 more than one query module."""
 
+import logging
 from datetime import UTC, datetime
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_ts(value: str | datetime | None) -> datetime | None:
@@ -37,5 +40,5 @@ def _parse_period_key(key: str, period_type: str) -> datetime | None:
         if period_type == "year":
             return datetime.strptime(key, "%Y").replace(month=1, day=1, tzinfo=UTC)
     except ValueError:
-        pass
+        logger.debug("Unrecognised period_key format %r for type %r", key, period_type)
     return None

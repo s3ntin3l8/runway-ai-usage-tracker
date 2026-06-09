@@ -52,7 +52,7 @@ class TokenAutoRefresher:
         try:
             await self._task
         except asyncio.CancelledError:
-            pass
+            logger.debug("Token auto-refresher task cancelled during shutdown")
         self._task = None
 
     async def _run_loop(self) -> None:

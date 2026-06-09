@@ -411,7 +411,7 @@ def upsert_latest_usage(  # noqa: PLR0915
                     else card.reset_at.isoformat()
                 )
             except Exception:
-                pass
+                logger.debug("Failed to parse reset_at for snapshot", exc_info=True)
         record_quota_snapshot(
             session,
             provider_id=card.provider_id,

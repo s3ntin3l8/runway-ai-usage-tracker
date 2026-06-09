@@ -325,7 +325,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 with open(path) as f:
                     return json.load(f)
         except Exception:
-            pass
+            logger.debug("Failed to load ~/.claude.json", exc_info=True)
         return {}
 
     def _parse_oauth_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
@@ -466,7 +466,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     # Only emit one balance card even if multiple keys exist
                     break
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Failed to parse balance tier for key %r", key, exc_info=True)
                 continue
 
             # Skip overage when extra_usage is also present to avoid duplicate
@@ -521,7 +521,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 try:
                     reset_at = parse_iso8601_utc(reset_raw)
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Failed to parse reset_at %r", reset_raw, exc_info=True)
 
             w_type = classify_anthropic_window_type(key)
             service_name = "Claude"
