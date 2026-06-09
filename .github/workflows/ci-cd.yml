@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-python:
     uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@main
@@ -22,6 +26,10 @@ jobs:
 
   build-docker:
     needs: [test-python, test-frontend]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@main
     with:
       image-name: 's3ntin3l8/runway'

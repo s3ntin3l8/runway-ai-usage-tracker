@@ -11,7 +11,7 @@
   "scripts": {
     "build:css": "tailwindcss -i frontend/css/input.css -o frontend/css/styles.css --minify",
     "watch:css": "tailwindcss -i frontend/css/input.css -o frontend/css/styles.css --watch",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/frontend/test_*.mjs && node tests/frontend/test_spark_helpers.js"
   },
   "keywords": [],
   "author": "",
