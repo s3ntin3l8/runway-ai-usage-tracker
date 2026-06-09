@@ -167,7 +167,7 @@ window.toggleTheme = function () {
 
     applyTheme();
     updateThemeIcon();
-}
+};
 
 function updateThemeIcon() {
     const sunIcon = document.getElementById('theme-icon-sun');
@@ -569,21 +569,6 @@ async function handleGitHubLogout() {
 // Alias loadData to loadDashboard for backwards compatibility
 const loadData = loadDashboard;
 
-/**
- * Categorize error types for better debugging
- * @param {Error} err - The error to categorize
- * @returns {string} Error category (network, server, format, unknown)
- */
-function getErrorType(err) {
-    if (err instanceof TypeError) return 'network';
-    if (err instanceof SyntaxError) return 'format';
-    if (err.message?.includes('HTTP')) return 'server';
-    return 'unknown';
-}
-
-/**
- * Close the detail modal
- */
 function closeModal() {
     const container = document.getElementById('modal-container');
     container.classList.remove('active');
@@ -720,13 +705,13 @@ window.handleResetProvider = async function(event, provider, accountId) {
         }
     } catch (err) {
         if (btn) {
-            btn.innerText = 'RETRY';
+            btn.innerText = originalText;
             btn.disabled = false;
         }
         // If still limited, the dashboard will refresh and show the updated backoff anyway
         loadDashboard();
     }
-}
+};
 
 window.copyToClipboard = async function(text, btn) {
     try {

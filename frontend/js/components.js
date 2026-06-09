@@ -1,6 +1,6 @@
 import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
 import { pickBucketSeconds } from './charts.js';
-import { cardKey, applyOrder } from './layout.js';
+import { cardKey } from './layout.js';
 import { formatLocalDateTime } from './utils/tz.js';
 import { escapeHTML, escapeHTMLAttr, safeUrl } from './utils/html.js';
 import { formatNumber, formatCurrency } from './utils/format.js';
@@ -86,29 +86,6 @@ function getTierBadge(tier) {
         color = 'var(--text-dim)'; bg = 'var(--surface-2)'; border = 'var(--hairline-strong)';
     }
     return `<span style="font-size:8px;font-weight:700;padding:1px 5px;border:1px solid ${border};color:${color};background:${bg};text-transform:uppercase;letter-spacing:0.1em;white-space:nowrap;line-height:1.6;">${escapeHTML(String(tier))}</span>`;
-}
-
-/**
- * Returns an icon representing the pace/consumption rate
- * @param {string} pace - Pace descriptor (e.g., "Sustainable", "Fast Burn")
- * @returns {string} Emoji icon for the pace
- */
-function getPaceIcon(pace) {
-    if (!pace) return '';
-    const p = pace.toLowerCase();
-    const icons = {
-        'stable': '🐢',
-        'sustainable': '🌱',
-        'pending reset': '⏳',
-        'exhausted': '🪫',
-        'fast burn': '🔥',
-        'moderate burn': '⚡',
-        'high': '🚀',
-        'fatigue': '😫',
-        'critical': '🚨',
-        'stopped': '⏹️'
-    };
-    return icons[p] || '';
 }
 
 /**
@@ -278,53 +255,6 @@ function formatResetDisplay(resetAt) {
 }
 
 /**
- * Format reset time tooltip with absolute time
- * @param {string|null} resetAt - ISO 8601 timestamp
- * @returns {string|null} Formatted tooltip text or null
- */
-function formatResetTooltip(resetAt) {
-    if (!resetAt || resetAt === '—') return null;
-
-    // If it's not an ISO timestamp, no tooltip needed (e.g., "Rolling", "Manual")
-    if (!resetAt.includes('T') && !resetAt.match(/^\d{4}-\d{2}-\d{2}/)) {
-        return null;
-    }
-
-    try {
-        const date = new Date(resetAt);
-        const now = new Date();
-
-        // Check if date is valid
-        if (isNaN(date.getTime())) return null;
-
-        const diffHours = (date - now) / (1000 * 60 * 60);
-
-        // Don't show tooltip if <24h away - card already shows "Resets at 10:43"
-        if (diffHours < 24) {
-            return null;
-        }
-
-        // Format time locale-aware (12h or 24h based on browser locale)
-        const timeStr = date.toLocaleTimeString(undefined, {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: undefined // Browser decides based on locale
-        });
-
-        // Format date locale-aware (e.g., "10 Jan" or "Jan 10")
-        const dateStr = date.toLocaleDateString(undefined, {
-            day: 'numeric',
-            month: 'short'
-        });
-
-        // If > 24h away, include date
-        return `Resets at ${timeStr} on ${dateStr}`;
-    } catch (e) {
-        return null;
-    }
-}
-
-/**
  * Source color mappings (subtle, glassmorphism-friendly)
  */
 const SOURCE_COLORS = {
@@ -346,18 +276,6 @@ const SOURCE_LABELS = {
     api: 'API',
     sidecar: 'Sidecar'
 };
-
-/**
- * Format data source for display in subtitle
- * @param {string} source - Data source key
- * @returns {string} Formatted source HTML or empty string
- */
-function formatDataSource(source) {
-    if (!source || source === 'unknown') return '';
-    const label = SOURCE_LABELS[source] || source;
-    const colorClass = SOURCE_COLORS[source] || 'text-zinc-400/80';
-    return ` · <span class="${colorClass}">${label}</span>`;
-}
 
 /**
  * Calculate percentage used from raw values
@@ -392,42 +310,6 @@ function calculateUsedPct(item) {
 }
 
 const UNLIMITED_GRADIENT = 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)';
-
-/**
- * Build the progress bar HTML shared by compact and standard card layouts.
- * @param {boolean} isUnlimited
- * @param {number} barWidth - 0-100, ignored when isUnlimited
- * @param {string} barColor - CSS color/gradient for the fill (used when not unlimited)
- * @param {string} trackClasses - CSS classes for the track wrapper div
- * @returns {string} HTML string
- */
-function buildProgressBar(isUnlimited, barWidth, barColor, trackClasses) {
-    const width = isUnlimited ? 100 : barWidth;
-    const bg = isUnlimited ? UNLIMITED_GRADIENT : barColor;
-    const unlimitedClass = isUnlimited ? ' progress-unlimited' : '';
-    return `<div class="${trackClasses}${unlimitedClass}"><div class="progress-fill h-full" style="width:${width}%;background:${bg};"></div></div>`;
-}
-
-/**
- * Build the main display value (∞, percentage, or raw remaining) for a card.
- * @param {boolean} isUnlimited
- * @param {boolean} hasPercentage
- * @param {number} displayPct
- * @param {string} remaining - raw remaining string (item.remaining)
- * @param {boolean} isPlaceholder
- * @param {string} sizeClass - e.g. 'text-2xl leading-none' or 'text-4xl'
- * @param {string} [trailing=''] - optional HTML appended after the value span (e.g. unit label)
- * @returns {string} HTML string
- */
-function buildMainDisplay(isUnlimited, hasPercentage, displayPct, remaining, isPlaceholder, sizeClass, trailing = '') {
-    const valueClass = isPlaceholder ? 'text-zinc-600' : 'text-zinc-50';
-    if (isUnlimited)
-        return `<span class="${sizeClass} font-black tracking-tighter text-violet-400">∞</span>`;
-    if (hasPercentage)
-        return `<span class="${sizeClass} font-black tracking-tighter ${valueClass}">${displayPct.toFixed(1)}%</span>`;
-    return `<span class="${sizeClass} font-black tracking-tighter ${valueClass}">${escapeHTML(remaining)}</span>${trailing}`;
-}
-
 
 /**
  * Build HTML for the detail modal content
@@ -919,10 +801,6 @@ export function buildFleetView(sidecars) {
 
     return `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">${rows}</div>`;
 }
-
-
-/** Health severity for sorting (higher = worse) */
-const HEALTH_SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
 
 
 /**

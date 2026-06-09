@@ -1,5 +1,5 @@
 // Dashboard view module - lazy loaded via dynamic import
-import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchHistoryChart, fetchHistoryWindowDetail, fetchUsageFleet, fetchCumulative, fetchTokenHealth } from '../api.js';
+import { fetchLimits, fetchForecast, fetchHistoryRaw, fetchHistoryWindowDetail, fetchUsageFleet, fetchCumulative, fetchTokenHealth } from '../api.js';
 import { STATE } from '../state.js';
 import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFleetCommanderCard } from '../components.js';
 import { cardKey, applyOrder } from '../layout.js';
