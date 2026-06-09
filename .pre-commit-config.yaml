@@ -1,5 +1,5 @@
 # Pre-commit hooks configuration
-# Install with: pre-commit install
+# Install with: make install-hooks (or pre-commit install && pre-commit install --hook-type pre-push)
 # Run manually: pre-commit run --all-files
 
 repos:
@@ -36,17 +36,30 @@ repos:
         args: [ --fix ]
       - id: ruff-format
 
-  # Static type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [
-          "types-PyYAML",
-          "types-cryptography",
-          "pydantic",
-          "fastapi",
-          "sqlmodel",
-          "httpx"
-        ]
-        args: [--config-file=pyproject.toml]
+        name: mypy
+        entry: .venv/bin/mypy . --ignore-missing-imports
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # Local hooks for tests
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest (unit tests)
+        entry: .venv/bin/pytest tests/unit/ --ignore=tests/unit/test_browser_cookies.py -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: pytest-all
+        name: pytest (all tests)
+        entry: .venv/bin/pytest --ignore=tests/unit/test_browser_cookies.py -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
