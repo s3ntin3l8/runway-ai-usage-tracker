@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/s3ntin3l8/runway/compare/v1.0.0...v1.1.0) (2026-06-09)
+
+
+### Features
+
+* **cost:** fall back to family rate for versioned model ids ([b4e1d7e](https://github.com/s3ntin3l8/runway/commit/b4e1d7eb6f251545a86c50d8a9281c856351db94))
+* **display:** add selectable accent color themes ([8fc6c59](https://github.com/s3ntin3l8/runway/commit/8fc6c59fd3d81a7fce515552568db46a613d238b))
+* **display:** replace letter-box provider badges with SVG icons ([653670d](https://github.com/s3ntin3l8/runway/commit/653670ddf2e9ab8dc8c4163fedee03a241365654))
+* **fleet:** flag sidecars running an outdated release ([c956b6f](https://github.com/s3ntin3l8/runway/commit/c956b6f9ecc0f0a0e96ffb7148cd20b226660488))
+* **frontend:** show Claude model version in model-mix legend ([020e091](https://github.com/s3ntin3l8/runway/commit/020e091c9e26fe690764d7bcb07b2c9d996d8956))
+* **sidecar:** preserve Claude model version in model_id slug ([1ecabf1](https://github.com/s3ntin3l8/runway/commit/1ecabf1acd0819a9997f5205702f6141527a4aa9))
+* **sidecar:** slim local settings UI, drop vestigial polling config ([2b9a242](https://github.com/s3ntin3l8/runway/commit/2b9a2425ad807cb40ea626e6b96ba6497afa4280))
+
+
+### Bug Fixes
+
+* add hidden username field to auth form for accessibility ([6d376c4](https://github.com/s3ntin3l8/runway/commit/6d376c45f0e443bde6146e19075153f83255e418))
+* await checkAuth before initUI to prevent auth portal being hidden by race condition ([4f02127](https://github.com/s3ntin3l8/runway/commit/4f02127ceeb9edf6796862fab7c252fed8db5073))
+* **ci:** gate on secrets instead of silently rewriting the baseline ([f460001](https://github.com/s3ntin3l8/runway/commit/f46000124578326b456316a33bcb1baa2db7603c))
+* **ci:** gate on secrets instead of silently rewriting the baseline ([6b51ec5](https://github.com/s3ntin3l8/runway/commit/6b51ec54782dcf739d88bd0b064b03e6b3e70930))
+* **codeql:** clear all 129 open code-scanning alerts in code ([#30](https://github.com/s3ntin3l8/runway/issues/30)) ([f33d8d5](https://github.com/s3ntin3l8/runway/commit/f33d8d54ad8c31edfac0b31c655cde7824b8386f))
+* correct Anthropic Opus/Haiku seed rates to effective pricing ([c3dd778](https://github.com/s3ntin3l8/runway/commit/c3dd778f0a7494a1da9507e4d6314f08a81b2034))
+* **display:** remove icon box border; add opencode-free icon mapping ([9217fcb](https://github.com/s3ntin3l8/runway/commit/9217fcb758a1f42562f65f1c40bd768486bd89ab))
+* **display:** token expiry banner follows accent color ([f1b065e](https://github.com/s3ntin3l8/runway/commit/f1b065ecc088f6cb875c8ad0e683eee473775b8f))
+* **display:** wire --accent-soft to --accent-dim so tints follow accent ([ab079a9](https://github.com/s3ntin3l8/runway/commit/ab079a9e98833449ecdf26143684c3be052364d9))
+* **fleet:** always use calendar-month data for per-model and sidecar attribution ([27c68c6](https://github.com/s3ntin3l8/runway/commit/27c68c6afff451ec1a2eb363018a5b861fb6c7d2))
+* **forecast:** align batch and per-card boundary-bucket handling ([e2b7a9c](https://github.com/s3ntin3l8/runway/commit/e2b7a9cfb51d890e1a09496cbf4d8c3f5c87080d))
+* **forecast:** label insufficient-data cards "Gathering data" ([9ecb667](https://github.com/s3ntin3l8/runway/commit/9ecb6677bde8c3619953325d19db2e328ea4f1f5))
+* **forecast:** report near-limit cards instead of "Won't exhaust" ([a987464](https://github.com/s3ntin3l8/runway/commit/a98746471f1a927bb68c968a986b7a818cafcaac))
+* **frontend:** send admin key when fetching provider debug data ([e9c417a](https://github.com/s3ntin3l8/runway/commit/e9c417a729a5e4c7e151e1ef5bd5d71023a3486d))
+* **frontend:** send admin key when fetching provider debug data ([2108586](https://github.com/s3ntin3l8/runway/commit/2108586bc6d79e217ae19a80cf49c927ac8f9cdd))
+* **frontend:** vendor Sortable.js — CSP script-src 'self' blocked the CDN ([c137014](https://github.com/s3ntin3l8/runway/commit/c137014fbcfe7f4acd0fd477108a9f3c737d0939))
+* remove Claude Design / Cowork quota cards ([cbebb36](https://github.com/s3ntin3l8/runway/commit/cbebb367b396d55d3b3730eab39cfb5a1f80c46a))
+* reset "This period"/"Yearly" gauges on the user's local timezone ([8a444cc](https://github.com/s3ntin3l8/runway/commit/8a444ccc505c8a88f3fae16e363e35260904f9aa))
+* **tokens:** forward codex refresh_token and suppress redundant expired-token banner ([f383b60](https://github.com/s3ntin3l8/runway/commit/f383b60f24fc126dedc03a5cee6a5e04beb62489))
+* update Codex usage window from weekly to monthly ([5b6e0ed](https://github.com/s3ntin3l8/runway/commit/5b6e0ed1a27f3431e09583c1b69728e33f3d066b))
+* vendor Sortable.js (CSP) + de-flake heatmap-tz tests ([32136af](https://github.com/s3ntin3l8/runway/commit/32136af09f5c4c2ea2f1e61c761510237b5c58b2))
+
 ## [1.0.0](https://github.com/s3ntin3l8/runway/compare/v0.13.0...v1.0.0) (2026-05-26)
 
 
