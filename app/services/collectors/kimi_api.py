@@ -127,16 +127,4 @@ class KimiApiCollector(BaseCollector):
             return []
 
     async def _strategy_history(self, client: httpx.AsyncClient, key: str) -> list[dict[str, Any]]:
-        """
-        Collect Kimi usage history for daily spend breakdown.
-
-        Note: Moonshot API usage endpoint often requires specific dates.
-        We poll the last 30 days of usage.
-        """
-        try:
-            # Usage endpoint: /v1/users/me/usage (if available) or specific model usage
-            # For now, we'll implement a robust placeholder for the history API
-            # as per standard patterns for prepaid collectors.
-            return []  # History API logic would go here once endpoint is confirmed
-        except Exception:
-            return []
+        return []

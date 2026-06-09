@@ -13,6 +13,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
+from app.core.utils import scrub_log
 from app.models.db import LatestUsage, ProviderConfig, SidecarRegistry, SystemConfig
 from app.models.schemas import IngestRequest
 from app.services import audit_log
@@ -100,7 +101,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     ).hexdigest()
 
     if not hmac.compare_digest(x_signature, expected_sig):
-        logger.warning(f"HMAC mismatch. Received: {x_signature[:8]}... (len: {len(x_signature)})")
+        logger.warning(
+            f"HMAC mismatch. Received: {scrub_log(x_signature[:8])}... (len: {len(x_signature)})"
+        )
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
     # 4. Parse request
@@ -469,7 +472,7 @@ def _set_sidecar_collection_enabled(
     row.collection_enabled = enabled
     session.commit()
     session.refresh(row)
-    logger.info(f"Sidecar '{sidecar_id}' collection_enabled set to {enabled}")
+    logger.info(f"Sidecar '{scrub_log(sidecar_id)}' collection_enabled set to {enabled}")
     return row
 
 

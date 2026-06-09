@@ -114,3 +114,63 @@ async def test_cache_expiration(cache):
 
     # Should be cleared
     assert await short_cache.get_token("anthropic", "api_key", account_id="acc_1") is None
+
+
+def _jwt_exp(exp: float) -> str:
+    return _make_id_token({"exp": exp, "sub": "test"})
+
+
+@pytest.mark.asyncio
+async def test_purge_removes_expired_unrefreshable(cache):
+    """A past-exp oauth_token with no refresh_token can never recover — evict it."""
+    await cache.store(
+        "chatgpt",
+        {"oauth_token": _jwt_exp(time.time() - 60)},
+        account_id="dead-orphan",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 1
+    assert await cache.get("chatgpt", "dead-orphan") is None
+
+
+@pytest.mark.asyncio
+async def test_purge_keeps_refreshable_expired(cache):
+    """Expired but with a refresh_token — the auto-refresher will roll it; keep it."""
+    await cache.store(
+        "chatgpt",
+        {"oauth_token": _jwt_exp(time.time() - 60), "refresh_token": "rt"},
+        account_id="refreshable",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 0
+    assert await cache.get("chatgpt", "refreshable") is not None
+
+
+@pytest.mark.asyncio
+async def test_purge_keeps_valid_token(cache):
+    """A token whose exp is in the future must not be evicted."""
+    await cache.store(
+        "chatgpt",
+        {"oauth_token": _jwt_exp(time.time() + 3600)},
+        account_id="still-good",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 0
+    assert await cache.get("chatgpt", "still-good") is not None
+
+
+@pytest.mark.asyncio
+async def test_purge_keeps_opaque_token(cache):
+    """Opaque tokens (API keys, cookies) have no exp signal — never evict them."""
+    await cache.store("openai", {"api_key": "sk-opaque"}, account_id="cfg")
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 0
+    assert await cache.get("openai", "cfg") is not None

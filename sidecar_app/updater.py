@@ -12,7 +12,6 @@ from sidecar_app import __version__
 
 logger = logging.getLogger(__name__)
 
-_RELEASES_URL = "https://github.com/s3ntin3l8/runway/releases"
 _API_URL = "https://api.github.com/repos/s3ntin3l8/runway/releases/latest"
 _CHECK_INTERVAL_SECONDS = 86400  # 24h
 

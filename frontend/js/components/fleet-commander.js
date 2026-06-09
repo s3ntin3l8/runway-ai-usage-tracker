@@ -238,11 +238,9 @@ function _fcPoolStack(quotaCards, forecastMap) {
         .sort((a, b) => b.used - a.used);
 
     const head = pools[0];
-    const headStatus = _poolStatus(head.used);
 
     const rows = pools.map((p, i) => {
         const status = _poolStatus(p.used);
-        const isHead = i === 0;
         const glideHtml = p.glide != null
             ? `<div class="pglide" style="left:${p.glide.toFixed(1)}%" title="Glide-path target ${Math.round(p.glide)}%: where you should be if pacing usage evenly across this window"></div>`
             : '';
@@ -675,4 +673,3 @@ function _fcPods(secondaryCards, contributions) {
         <div class="fc-pods-grid">${pods}</div>
     </div>`;
 }
-

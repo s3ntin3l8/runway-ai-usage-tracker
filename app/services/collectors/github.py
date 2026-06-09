@@ -262,7 +262,7 @@ class GitHubCollector(BaseCollector):
                 try:
                     identity = await asyncio.to_thread(_read_gh_identity, gh_config_path)
                 except Exception:
-                    pass
+                    logger.debug("Failed to read GitHub identity from config", exc_info=True)
 
             if identity:
                 self._identity = identity

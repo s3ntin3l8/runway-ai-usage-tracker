@@ -191,7 +191,7 @@ async def get_status() -> DeviceFlowStatusResponse:
                             emails = email_resp.json()
                             fresh_email = IdentityExtractor.extract_best_email(emails)
                     except Exception:
-                        pass
+                        logger.debug("Failed to fetch additional GitHub email", exc_info=True)
 
                     new_info = {
                         "login": user_data.get("login"),
@@ -219,7 +219,6 @@ async def get_status() -> DeviceFlowStatusResponse:
             logger.error(f"Error checking GitHub status: {e}")
             # If we failed to read file or something else, but file exists,
             # we might still be authenticated if the token is valid elsewhere
-            pass
     return DeviceFlowStatusResponse(authenticated=False)
 
 

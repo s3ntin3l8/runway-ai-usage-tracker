@@ -141,19 +141,18 @@ def query_cost_forecast(
     daily_rows = list(session.exec(daily_stmt).all())
 
     # Group by (provider_id, account_id)
-    AccountKey = tuple[str, str]
-    mtd_by_account: dict[AccountKey, float] = {}
+    mtd_by_account: dict[tuple[str, str], float] = {}
     for r in mtd_rows:
-        key: AccountKey = (r.provider_id, r.account_id)
+        key: tuple[str, str] = (r.provider_id, r.account_id)
         mtd_by_account[key] = mtd_by_account.get(key, 0.0) + r.cost_usd
 
-    daily_sum_by_account: dict[AccountKey, float] = {}
+    daily_sum_by_account: dict[tuple[str, str], float] = {}
     for r in daily_rows:
         key = (r.provider_id, r.account_id)
         daily_sum_by_account[key] = daily_sum_by_account.get(key, 0.0) + r.cost_usd
 
     # Build per-account breakdown
-    all_keys: set[AccountKey] = set(mtd_by_account.keys()) | set(daily_sum_by_account.keys())
+    all_keys: set[tuple[str, str]] = set(mtd_by_account.keys()) | set(daily_sum_by_account.keys())
     by_provider: list[dict[str, Any]] = []
     total_mtd = 0.0
     total_7d_sum = 0.0

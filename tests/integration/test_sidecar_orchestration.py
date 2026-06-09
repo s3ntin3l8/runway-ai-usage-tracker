@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import time
 
@@ -51,10 +53,6 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     settings.INGEST_API_KEY = "test-key"
 
     def get_signed_payload(payload: dict, key: str):
-        import hashlib
-        import hmac
-        import json
-
         ts = str(time.time())
         body_bytes = json.dumps(payload, separators=(",", ":")).encode()
         sig = hmac.new(key.encode(), ts.encode() + body_bytes, hashlib.sha256).hexdigest()

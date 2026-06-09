@@ -4,7 +4,7 @@ import { updateCharts, destroyCharts, colorFor } from '../charts.js';
 import { providerDisplayLabel } from '../components/_shared.js';
 import { openSheet, closeSheet } from '../components/sheet.js';
 import { STATE } from '../state.js';
-import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
+import { formatLocalDateTime } from '../utils/tz.js';
 import { escapeHTML } from '../utils/html.js';
 import { formatCost } from '../utils/format.js';
 import {
@@ -225,54 +225,6 @@ function updateCsvHref() {
 // ---------------------------------------------------------------------------
 // Summary tiles (uses deltas data)
 // ---------------------------------------------------------------------------
-
-function groupBySeries(rows) {
-    const groups = new Map();
-    rows.forEach(r => {
-        const key = `${r.provider_id || ''}|${r.account_id || ''}|${r.window_type || ''}|${r.model_id || ''}|${r.unit_type || ''}`;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(r);
-    });
-    groups.forEach(arr => arr.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)));
-    return groups;
-}
-
-function positiveTokenDeltas(seriesRows) {
-    if (seriesRows.length === 0) return 0;
-    let total = 0;
-    let maxSeen = seriesRows[0].token_usage?.total ?? seriesRows[0].used_value ?? 0;
-    const GLITCH_THRESHOLD = 0.5;
-    for (let i = 1; i < seriesRows.length; i++) {
-        const curr = seriesRows[i].token_usage?.total ?? seriesRows[i].used_value ?? 0;
-        if (maxSeen === 0 && curr > 0) { maxSeen = curr; continue; }
-        if (curr > maxSeen) { total += curr - maxSeen; maxSeen = curr; }
-        else if (curr < maxSeen * GLITCH_THRESHOLD) { maxSeen = curr; }
-    }
-    return total;
-}
-
-function positiveCurrencyDeltas(seriesRows) {
-    if (seriesRows.length === 0) return 0;
-    let total = 0;
-    let maxSeen = seriesRows[0].used_value ?? 0;
-    const GLITCH_THRESHOLD = 0.5;
-    for (let i = 1; i < seriesRows.length; i++) {
-        const curr = seriesRows[i].used_value ?? 0;
-        if (maxSeen === 0 && curr > 0) { maxSeen = curr; continue; }
-        if (curr > maxSeen) { total += curr - maxSeen; maxSeen = curr; }
-        else if (curr < maxSeen * GLITCH_THRESHOLD) { maxSeen = curr; }
-    }
-    return total;
-}
-
-function hasCriticalReading(seriesRows) {
-    return seriesRows.some(r => {
-        if (r.used_value == null) return false;
-        if (r.unit_type === 'percent') return r.used_value >= 90;
-        if (r.limit_value > 0) return (r.used_value / r.limit_value) >= 0.9;
-        return false;
-    });
-}
 
 function renderHistoryTiles(deltas) {
     const container = document.getElementById('history-tiles');

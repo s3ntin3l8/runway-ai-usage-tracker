@@ -2,8 +2,11 @@
 See app/services/queries/__init__.py for the public surface.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import bindparam, text
 from sqlmodel import Session, select
@@ -206,7 +209,7 @@ def query_windows(
                 if reset_dt < since:
                     continue
             except Exception:
-                pass
+                logger.debug("Failed to parse reset_at in snapshot window filter", exc_info=True)
 
         token_usage = card.get("token_usage") or {}
         base_name = card.get("service_name", lu.provider_id.capitalize())

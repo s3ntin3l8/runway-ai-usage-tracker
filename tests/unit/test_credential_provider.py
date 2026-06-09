@@ -45,7 +45,7 @@ def test_github_token_gh_cli():
         patch("builtins.open", mock_open(read_data=mock_yaml)),
         patch(
             "app.services.credential_provider.yaml",
-            MagicMock(safe_load=lambda f: yaml.safe_load(f)),
+            MagicMock(safe_load=yaml.safe_load),
         ),
     ):
         token = CredentialProvider.get_github_token()
@@ -97,3 +97,23 @@ def test_claude_token_file():
         CredentialProvider._claude_token_cache = None
         token = CredentialProvider.get_claude_token()
         assert token == "claude_file_token"
+
+
+def test_db_read_failures_are_swallowed():
+    """A DB error while reading ProviderConfig must degrade gracefully, not raise.
+
+    Exercises the defensive ``except Exception`` branches in get_credentials,
+    get_provider_api_key, and get_provider_session_cookie by making the local
+    ``Session(...)`` construction blow up.
+    """
+    with patch("sqlmodel.Session", side_effect=RuntimeError("db down")):
+        # get_credentials still returns a CredentialMap without raising
+        # (the DB override block is skipped; env/file sources, if any, still apply)
+        creds = CredentialProvider.get_credentials("provider-with-no-env-or-file")
+        assert isinstance(creds, dict)
+
+        # The single-value getters fall back to None when the DB read fails
+        assert CredentialProvider.get_provider_api_key("provider-with-no-env-or-file") is None
+        assert (
+            CredentialProvider.get_provider_session_cookie("provider-with-no-env-or-file") is None
+        )

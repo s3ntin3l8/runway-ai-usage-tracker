@@ -46,10 +46,13 @@ Error Handling:
 - Invalid response: Returns error card
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
@@ -245,7 +248,7 @@ class KimiCodingCollector(BaseCollector):
                     reset_dt = parse_iso8601_utc(reset_str)
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("Failed to parse Kimi reset time %r", reset_str, exc_info=True)
 
             # Detect tier from limit
             tier = self._detect_tier(limit)
@@ -296,7 +299,9 @@ class KimiCodingCollector(BaseCollector):
                     reset_dt = parse_iso8601_utc(reset_str)
                     reset_delta = human_delta(reset_dt)
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug(
+                        "Failed to parse Kimi session reset time %r", reset_str, exc_info=True
+                    )
 
             return {
                 "service_name": "Kimi Coding",

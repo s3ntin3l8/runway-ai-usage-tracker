@@ -27,11 +27,7 @@ def _make_png_pure(r: int, g: int, b: int, size: int = 16) -> bytes:
             struct.pack(">I", len(data)) + chunk + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
         )
 
-    # IHDR
-    ihdr_data = struct.pack(
-        ">IIBBBBB", size, size, 8, 2, 0, 0, 0
-    )  # 8-bit RGB + alpha=RGBA -> use 6
-    # Actually use colour type 6 = RGBA (8-bit per channel)
+    # IHDR — colour type 6 = RGBA (8-bit per channel)
     ihdr_data = struct.pack(">II", size, size) + bytes([8, 6, 0, 0, 0])
 
     cx = cy = size / 2

@@ -209,6 +209,37 @@ class TestRefreshOAuthTokenGemini:
         # Untouched fields preserved
         assert written["scope"] == "openid profile email"
 
+    async def test_persist_to_local_file_handles_non_numeric_exp(self, tmp_path, monkeypatch):
+        """A non-numeric JWT exp must not raise — expiry_date is left untouched."""
+        import base64
+        import json
+
+        from app.services import token_refresher
+
+        path = tmp_path / "oauth_creds.json"
+        path.write_text(json.dumps({"access_token": "old_at", "expiry_date": 0}))
+        monkeypatch.setattr(token_refresher.settings, "GEMINI_OAUTH_PATH", str(path))
+
+        def _jwt(payload):
+            def b64(d):
+                return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+            return f"{b64({'alg': 'none'})}.{b64(payload)}.sig"
+
+        bad_idt = _jwt({"exp": "not-a-number", "email": "u@example.com"})
+
+        # Must not raise despite the unparseable exp claim
+        token_refresher.persist_to_local_file(
+            "gemini",
+            {"oauth_token": "new_at", "id_token": bad_idt},
+            source="server",
+        )
+
+        written = json.loads(path.read_text())
+        assert written["access_token"] == "new_at"
+        # exp was unparseable → expiry_date was not overwritten
+        assert written["expiry_date"] == 0
+
     async def test_persist_to_local_file_skips_non_server_source(self, tmp_path, monkeypatch):
         """Tokens that didn't come from the local file must not overwrite it."""
         import json

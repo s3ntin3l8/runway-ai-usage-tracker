@@ -159,7 +159,7 @@ def upsert_latest_usage(  # noqa: PLR0915
     from app.models.db import LatestUsage
     from app.models.schemas import LimitCard
     from app.services.account_identity import resolve_account_id
-    from app.services.poller import _maybe_close_previous_window
+    from app.services.window_closer import _maybe_close_previous_window
 
     try:
         card = LimitCard(**card_dict)
@@ -411,7 +411,7 @@ def upsert_latest_usage(  # noqa: PLR0915
                     else card.reset_at.isoformat()
                 )
             except Exception:
-                pass
+                logger.debug("Failed to parse reset_at for snapshot", exc_info=True)
         record_quota_snapshot(
             session,
             provider_id=card.provider_id,

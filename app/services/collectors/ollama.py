@@ -320,7 +320,7 @@ class OllamaCollector(BaseCollector):
                     # ISO 8601 parsing
                     resets_at = parse_iso8601_utc(raw_date)
                 except ValueError:
-                    pass
+                    logger.debug("Failed to parse Ollama reset date %r", raw_date, exc_info=True)
 
             return {"used_percent": pct, "resets_at": resets_at}
         return None
@@ -366,7 +366,9 @@ class OllamaCollector(BaseCollector):
                 try:
                     resets_at = parse_iso8601_utc(raw_date)
                 except ValueError:
-                    pass
+                    logger.debug(
+                        "Failed to parse Ollama block reset date %r", raw_date, exc_info=True
+                    )
 
             block = {"used_percent": pct, "resets_at": resets_at}
 

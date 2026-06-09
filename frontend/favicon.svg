@@ -6,7 +6,7 @@
       <stop offset="0.95" stop-color="#09090b"/>
       <stop offset="1" stop-color="#000000"/>
     </radialGradient>
-    
+
     <!-- Vivid gradient for the capsule -->
     <linearGradient id="pillGrad" x1="512" y1="280" x2="512" y2="744" gradientUnits="userSpaceOnUse">
       <stop stop-color="#60a5fa"/>
@@ -26,7 +26,7 @@
       <feGaussianBlur stdDeviation="30" result="blur"/>
       <feComposite in="SourceGraphic" in2="blur" operator="over"/>
     </filter>
-    
+
     <filter id="innerGlow">
       <feGaussianBlur stdDeviation="15" result="blur"/>
     </filter>

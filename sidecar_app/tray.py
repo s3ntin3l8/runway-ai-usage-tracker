@@ -16,11 +16,6 @@ from sidecar_app.daemon import TrayDaemon
 
 RELEASES_URL = "https://github.com/s3ntin3l8/runway/releases"
 
-if getattr(sys, "frozen", False):
-    _ASSETS_DIR = pathlib.Path(sys._MEIPASS) / "assets"  # type: ignore[attr-defined]
-else:
-    _ASSETS_DIR = pathlib.Path(__file__).parent / "assets"
-
 # Logo used as the base tray icon (bundled from assets/logo_reference.png)
 if getattr(sys, "frozen", False):
     _LOGO_PATH = pathlib.Path(sys._MEIPASS) / "assets" / "logo_reference.png"  # type: ignore[attr-defined]

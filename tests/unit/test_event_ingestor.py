@@ -168,7 +168,7 @@ def test_partial_batch_failure_rolls_back_all_rollups(monkeypatch):
     try:
         EventIngestor(s).ingest(batch, sidecar_id="dev-01")
     except RuntimeError:
-        pass
+        pass  # expected — injected failure; we verify the rollback below
 
     # Re-open the session view of the database. The failed ingest must not
     # have left events 1..49 (or their rollups) visible.

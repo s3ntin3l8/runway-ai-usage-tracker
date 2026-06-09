@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import Request
 from sqlmodel import Session
 
+from app.core.utils import scrub_log
 from app.models.db import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def record(
     except Exception as exc:  # noqa: BLE001 — never let logging break the caller
         logger.warning(
             "audit_log write failed for action=%s target=%s: %s",
-            action,
-            target_id,
+            scrub_log(action),
+            scrub_log(target_id),
             exc,
         )

@@ -7,7 +7,6 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
-from app.services.queries._shared import _parse_ts  # noqa: F401 (re-exported for callers)
 
 # ---------------------------------------------------------------------------
 # 7.1  query_events

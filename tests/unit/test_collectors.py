@@ -1107,9 +1107,6 @@ class TestAnthropicCollector:
     @pytest.mark.skip(reason="local strategy moved to sidecar")
     def test_enrichment_respects_primary_reset_at(self, tmp_path):
         """Enrichment should only count tokens since the primary card's reset_at."""
-        import json
-        from datetime import UTC, datetime, timedelta
-
         now = datetime.now(UTC)
         # Two messages: one before reset, one after
         ts_before = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -1768,9 +1765,6 @@ class TestOpenCodeCollector:
     @pytest.mark.asyncio
     async def test_opencode_state_persistence(self, tmp_path):
         """OpenCodeCollector saves and loads window state from file."""
-        import json
-        from datetime import UTC, datetime, timedelta
-
         # 1. Setup mock state
         data_dir = tmp_path / "runway_data_persistence"
         data_dir.mkdir()
@@ -1848,9 +1842,7 @@ class TestOpenCodeCollector:
     @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
     async def test_get_opencode_tui_per_window_enrichment(self, tmp_path):
         """_get_opencode_tui emits enrichment dicts, not plain cards."""
-        import json
         import sqlite3
-        from datetime import UTC, datetime, timedelta
 
         db_path = str(tmp_path / "opencode.db")
         # Ensure a clean state directory for this test

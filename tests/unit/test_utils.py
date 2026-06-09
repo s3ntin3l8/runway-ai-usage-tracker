@@ -89,6 +89,51 @@ class TestIdentityExtractorGetClientId:
         assert IdentityExtractor.get_client_id_from_jwt(token) is None
 
 
+class TestIdentityExtractorExtractJwtExp:
+    def test_extracts_exp_from_valid_jwt(self):
+        exp = 1_780_000_000.0
+        assert IdentityExtractor.extract_jwt_exp(_make_jwt({"exp": exp})) == exp
+
+    def test_returns_none_when_exp_missing(self):
+        assert IdentityExtractor.extract_jwt_exp(_make_jwt({"sub": "x"})) is None
+
+    def test_returns_none_for_malformed_or_opaque_token(self):
+        assert IdentityExtractor.extract_jwt_exp("not.a.jwt.with.extra.parts") is None
+        assert IdentityExtractor.extract_jwt_exp("onlyone") is None
+        assert IdentityExtractor.extract_jwt_exp("") is None
+        assert IdentityExtractor.extract_jwt_exp("sk-ant-api03-abcdefg") is None
+
+    def test_coerces_string_exp_to_float(self):
+        assert (
+            IdentityExtractor.extract_jwt_exp(_make_jwt({"exp": "1780000000"})) == 1_780_000_000.0
+        )
+
+
+class TestIdentityExtractorExpFromTokens:
+    def test_reads_exp_from_oauth_token(self):
+        tokens = {"oauth_token": _make_jwt({"exp": 100.0})}
+        assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
+
+    def test_prefers_oauth_token_over_id_token(self):
+        tokens = {
+            "oauth_token": _make_jwt({"exp": 100.0}),
+            "id_token": _make_jwt({"exp": 200.0}),
+        }
+        assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
+
+    def test_falls_through_to_id_token_when_oauth_is_opaque(self):
+        tokens = {"oauth_token": "opaque-no-exp", "id_token": _make_jwt({"exp": 200.0})}
+        assert IdentityExtractor.exp_from_tokens(tokens) == 200.0
+
+    def test_returns_none_when_no_field_carries_exp(self):
+        assert IdentityExtractor.exp_from_tokens({"api_key": "sk-opaque"}) is None
+        assert IdentityExtractor.exp_from_tokens({}) is None
+
+    def test_skips_empty_values(self):
+        tokens = {"oauth_token": "", "access_token": _make_jwt({"exp": 50.0})}
+        assert IdentityExtractor.exp_from_tokens(tokens) == 50.0
+
+
 # ─── PaceCalculator ───────────────────────────────────────────────────────────
 
 

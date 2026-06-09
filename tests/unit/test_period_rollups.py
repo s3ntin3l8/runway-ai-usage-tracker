@@ -179,7 +179,7 @@ def test_concurrent_rollup_updates_do_not_lose_increments(tmp_path):
                 session.flush()
                 update_rollups_for_event(session, ev)
                 session.commit()
-        except BaseException as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(exc)
         finally:
             session.close()

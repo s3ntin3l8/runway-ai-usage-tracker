@@ -176,6 +176,8 @@
           "format": "json",
           "mapping": {
             "tokens.access_token": "oauth_token",
+            "tokens.refresh_token": "refresh_token",
+            "tokens.id_token": "id_token",
             "tokens.account_id": "account_id"
           }
         },

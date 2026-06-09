@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runway"
-version = "1.0.0" # x-release-please-version
+version = "1.1.0" # x-release-please-version
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.111.0,!=0.136.3",
@@ -170,7 +170,7 @@ warn_no_return = true
 warn_unreachable = false
 strict_equality = false
 ignore_missing_imports = true
-exclude = ["tests", "scripts", "sidecar_app"]
+exclude = ["tests", "scripts", "sidecar_app", "scratch"]
 
 [[tool.mypy.overrides]]
 module = "app.services.collectors.*"

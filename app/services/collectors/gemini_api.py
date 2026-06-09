@@ -184,7 +184,7 @@ class GeminiApiMixin:
                         reset_dt = parse_iso8601_utc(reset_time)
                         reset_at = reset_dt.isoformat()
                     except (ValueError, TypeError):
-                        pass
+                        logger.debug("Failed to parse resetTime %r", reset_time, exc_info=True)
 
                 health = HealthCalculator.from_percentage(percent_used)
                 pace = PaceCalculator.estimate_longevity(percent_used, reset_dt)

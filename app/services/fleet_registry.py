@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session
 
+from app.core.utils import scrub_log
 from app.models.db import SidecarRegistry
 
 logger = logging.getLogger(__name__)
@@ -136,7 +137,7 @@ class FleetRegistryService:
             return False
         session.delete(row)
         session.commit()
-        logger.info(f"Deleted sidecar from registry: '{sidecar_id}'")
+        logger.info(f"Deleted sidecar from registry: '{scrub_log(sidecar_id)}'")
         return True
 
     def to_dict(self, row: SidecarRegistry) -> dict:

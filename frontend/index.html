@@ -279,8 +279,9 @@
                         <p style="font-size:11px;color:var(--text-dim);margin-bottom:24px;">Enter your <code>ADMIN_API_KEY</code> to continue.</p>
 
                         <form id="auth-form" class="space-y-3">
+                            <input type="text" name="username" autocomplete="username" style="display:none" aria-hidden="true" tabindex="-1">
                             <div>
-                                <input type="password" id="admin-key-input" placeholder="e1t3MtTjm…"
+                                <input type="password" id="admin-key-input" placeholder="e1t3MtTjm…" autocomplete="current-password"
                                     style="width:100%;background:var(--surface-2);border:1px solid var(--hairline-strong);padding:10px 14px;color:var(--text);font-size:12px;text-align:center;outline:none;transition:border-color var(--dur) var(--ease);"
                                     onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--hairline-strong)'">
                             </div>

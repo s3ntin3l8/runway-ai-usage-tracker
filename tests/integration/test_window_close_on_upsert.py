@@ -15,8 +15,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import LatestUsage, UsageEvent, UsageWindow
-from app.services.poller import _maybe_close_previous_window
 from app.services.pricing_seed import seed_pricing_table
+from app.services.window_closer import _maybe_close_previous_window
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -240,3 +240,63 @@ def test_window_close_idempotent_on_double_trigger():
 
     assert first_count > 0
     assert second_count == first_count, "Second call should not add duplicate rows"
+
+
+def test_window_close_not_triggered_when_card_json_has_no_reset_at():
+    """When card_json exists but has no reset_at field, no window-close occurs."""
+    s = _seeded_session()
+
+    card_json = json.dumps({"provider_id": "anthropic", "window_type": "weekly"})
+    row = LatestUsage(
+        provider_id="anthropic",
+        account_id="user@example.com",
+        sidecar_id="local",
+        window_type="weekly",
+        variant="default",
+        model_id="",
+        card_json=card_json,
+    )
+    s.add(row)
+    s.commit()
+
+    _maybe_close_previous_window(
+        s,
+        existing=row,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        new_reset_at=_NEW_RESET,
+    )
+
+    windows = s.exec(select(UsageWindow)).all()
+    assert len(windows) == 0, "No reset_at in card_json should be a no-op"
+
+
+def test_window_close_handles_invalid_card_json_gracefully():
+    """Invalid card_json (unparseable) must not raise — returns 0."""
+    s = _seeded_session()
+
+    row = LatestUsage(
+        provider_id="anthropic",
+        account_id="user@example.com",
+        sidecar_id="local",
+        window_type="weekly",
+        variant="default",
+        model_id="",
+        card_json="not valid json {{{",
+    )
+    s.add(row)
+    s.commit()
+
+    result = _maybe_close_previous_window(
+        s,
+        existing=row,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        new_reset_at=_NEW_RESET,
+    )
+
+    assert result == 0, "Malformed card_json should be silently skipped"
+    windows = s.exec(select(UsageWindow)).all()
+    assert len(windows) == 0

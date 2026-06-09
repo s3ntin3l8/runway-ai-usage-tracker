@@ -164,6 +164,7 @@ class TestIngestEndpoint:
         """Generate HMAC headers for testing."""
         key = api_key or settings.INGEST_API_KEY
         timestamp = str(int(time.time()))
+        # codeql[py/weak-sensitive-data-hashing]
         signature = hmac.new(
             key.encode(), f"{timestamp}".encode() + body.encode(), hashlib.sha256
         ).hexdigest()

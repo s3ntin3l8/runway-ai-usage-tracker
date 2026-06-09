@@ -67,6 +67,37 @@ class IdentityExtractor:
         except Exception:
             return {}
 
+    # Token fields that may carry a JWT `exp`, in preference order.
+    _EXP_TOKEN_KEYS = ("oauth_token", "access_token", "id_token")
+
+    @classmethod
+    def extract_jwt_exp(cls, token: str) -> float | None:
+        """Extract the `exp` claim (seconds since epoch) from a JWT, or None."""
+        exp = cls.extract_jwt_payload(token).get("exp")
+        if exp is None:
+            return None
+        try:
+            return float(exp)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def exp_from_tokens(cls, tokens: dict[str, str]) -> float | None:
+        """Find the JWT `exp` on the first token field that carries one.
+
+        Single source of truth for "when does this credential expire" across the
+        token cache, auto-refresher, and Token Health. Opaque fields (no exp) are
+        skipped; returns None when no field carries a parseable exp.
+        """
+        for key in cls._EXP_TOKEN_KEYS:
+            tok = tokens.get(key)
+            if not tok:
+                continue
+            exp = cls.extract_jwt_exp(tok)
+            if exp is not None:
+                return exp
+        return None
+
     @classmethod
     def get_email_from_jwt(cls, token: str) -> str | None:
         """Extract email claim from JWT payload."""
@@ -179,6 +210,11 @@ def extract_token_regex(detail: str, prefix: str) -> str | None:
     pattern = rf"{re.escape(prefix)}\s*([^\s·\[\]]+)"
     match = re.search(pattern, detail)
     return match.group(1) if match else None
+
+
+def scrub_log(value: object) -> str:
+    """Strip CR/LF from user-controlled values before interpolating into log messages."""
+    return str(value).replace("\r", " ").replace("\n", " ")
 
 
 class HealthCalculator:

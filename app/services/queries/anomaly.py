@@ -45,10 +45,9 @@ def query_anomalies(
     rows = list(session.exec(stmt).all())
 
     # Group by (provider_id, account_id, model_id)
-    GroupKey = tuple[str, str, str]
-    by_group: dict[GroupKey, dict[str, Any]] = {}
+    by_group: dict[tuple[str, str, str], dict[str, Any]] = {}
     for r in rows:
-        key: GroupKey = (r.provider_id, r.account_id, r.model_id)
+        key: tuple[str, str, str] = (r.provider_id, r.account_id, r.model_id)
         group = by_group.setdefault(key, {"today": None, "history": []})
         tokens = (
             r.tokens_input

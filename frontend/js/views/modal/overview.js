@@ -9,7 +9,6 @@
  */
 
 import { providerDisplayLabel, modelDisplayName } from '../../components.js';
-import { formatLocalTime } from '../../utils/tz.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
 import { buildSessionCard } from './usage.js';
@@ -293,7 +292,6 @@ function _bucketTotalTokens(bucket) {
  */
 export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData, sidecarLastSeen = null) {
     const critical = entry.critical_gauge || {};
-    const allCards = [critical, ...(entry.secondary_limits || [])].filter(Boolean);
     const isPayg = critical.is_unlimited || (!critical.limit_value && !critical.pct_used);
 
     // Hero gauge values
@@ -629,4 +627,3 @@ export function wireOverviewSparkHover() {
 
     area.addEventListener('mouseleave', () => { tip.hidden = true; });
 }
-

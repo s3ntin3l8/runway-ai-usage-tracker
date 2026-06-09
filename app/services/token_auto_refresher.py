@@ -52,7 +52,7 @@ class TokenAutoRefresher:
         try:
             await self._task
         except asyncio.CancelledError:
-            pass
+            logger.debug("Token auto-refresher task cancelled during shutdown")
         self._task = None
 
     async def _run_loop(self) -> None:
@@ -74,6 +74,11 @@ class TokenAutoRefresher:
 
         Returns the number of tokens successfully refreshed (useful for tests).
         """
+        # Evict any already-expired tokens that carry no refresh_token first —
+        # they can never be rolled, so leaving them keeps Token Health stuck on
+        # a stale "expired" entry (and the dashboard banner lit).
+        await token_cache.purge_expired_unrefreshable()
+
         accounts = await token_cache.get_all_active_accounts()
         now = time.time()
         refreshed = 0
@@ -89,7 +94,7 @@ class TokenAutoRefresher:
             if "refresh_token" not in tokens:
                 continue
 
-            exp = self._extract_exp(tokens)
+            exp = IdentityExtractor.exp_from_tokens(tokens)
             if exp is None:
                 continue  # Opaque token — can't tell when it expires.
             seconds_left = exp - now
@@ -116,23 +121,6 @@ class TokenAutoRefresher:
                 )
 
         return refreshed
-
-    @staticmethod
-    def _extract_exp(tokens: dict[str, str]) -> float | None:
-        """Find the JWT `exp` claim on any token field that carries one."""
-        for key in ("oauth_token", "access_token", "id_token"):
-            tok = tokens.get(key)
-            if not tok:
-                continue
-            payload = IdentityExtractor.extract_jwt_payload(tok)
-            exp = payload.get("exp")
-            if exp is None:
-                continue
-            try:
-                return float(exp)
-            except (TypeError, ValueError):
-                continue
-        return None
 
 
 def build_default() -> TokenAutoRefresher:

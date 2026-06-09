@@ -16,6 +16,7 @@ from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
+from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
@@ -340,7 +341,7 @@ async def get_raw_provider_data(
 
         return {"provider_id": provider_id, "responses": raw_responses, "timestamp": time.time()}
     except Exception as e:
-        logger.error(f"Raw debug collection failed for {provider_id}: {e}")
+        logger.error(f"Raw debug collection failed for {scrub_log(provider_id)}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -376,7 +377,7 @@ async def refresh_token(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Token refresh failed for {provider}/{account_id}: {e}")
+        logger.error(f"Token refresh failed for {scrub_log(provider)}/{scrub_log(account_id)}: {e}")
         raise HTTPException(status_code=502, detail="Upstream token refresh failed")
 
 
@@ -810,7 +811,9 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
         await manager._sync_collectors()
         await manager.collect_one(provider_id)
     except Exception as e:
-        logger.warning(f"Failed to trigger sync after config update for {provider_id}: {e}")
+        logger.warning(
+            f"Failed to trigger sync after config update for {scrub_log(provider_id)}: {e}"
+        )
 
     # Wake poller so a per-provider interval change applies on the next tick.
     from app.services.poller import poller
