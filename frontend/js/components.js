@@ -714,10 +714,15 @@ export function buildFleetView(sidecars) {
                 <div class="flex items-center gap-2 min-w-0">
                     <div class="lamp ${lampClass}" title="${dotTitle}"></div>
                     <div class="flex flex-col min-w-0">
-                        <span class="fleet-name truncate cursor-pointer transition-colors"
-                              style="font-size:0.85rem;font-weight:700;color:var(--text);"
-                              onclick="window.editSidecarName('${escapeHTMLAttr(s.sidecar_id)}')"
-                              title="Click to rename">${escapeHTML(displayName)}</span>
+                        <div class="flex items-center gap-1.5 min-w-0">
+                            <span class="fleet-name truncate cursor-pointer transition-colors"
+                                  style="font-size:0.85rem;font-weight:700;color:var(--text);"
+                                  onclick="window.editSidecarName('${escapeHTMLAttr(s.sidecar_id)}')"
+                                  title="Click to rename">${escapeHTML(displayName)}</span>
+                            ${s.channel === 'edge'
+                                ? `<span class="shrink-0" style="padding:1px 5px;background:color-mix(in srgb,var(--accent) 15%,transparent);border:1px solid var(--accent);color:var(--accent);font-size:9px;font-weight:700;letter-spacing:0.05em;" title="Tracking the edge (rolling prerelease) channel">EDGE</span>`
+                                : ''}
+                        </div>
                         <span class="mono truncate" style="font-size:10px;color:var(--text-dim);">${escapeHTML(s.sidecar_id)}</span>
                     </div>
                 </div>
@@ -758,10 +763,6 @@ export function buildFleetView(sidecars) {
                 <div><span style="color:var(--text-dim);">IP</span><br/>${escapeHTML(s.last_ip || '—')}</div>
                 <div><span style="color:var(--text-dim);">ERRORS</span><br/>${s.error_count ?? 0}</div>
                 <div><span style="color:var(--text-dim);">VERSION</span><br/>${escapeHTML(s.sidecar_version || '—')}${
-                    s.channel === 'edge'
-                        ? ` <span style="margin-left:4px;padding:1px 5px;background:color-mix(in srgb,var(--accent) 15%,transparent);border:1px solid var(--accent);color:var(--accent);font-size:9px;font-weight:700;letter-spacing:0.05em;" title="Tracking the edge (rolling prerelease) channel">EDGE</span>`
-                        : ''
-                }${
                     s.update_available
                         ? ` <span style="margin-left:4px;padding:1px 5px;background:color-mix(in srgb,var(--warn) 15%,transparent);border:1px solid var(--warn);color:var(--warn);font-size:9px;font-weight:700;letter-spacing:0.05em;" title="Update available: ${escapeHTMLAttr(s.latest_version || '')}">↑ UPDATE</span>`
                         : ''
