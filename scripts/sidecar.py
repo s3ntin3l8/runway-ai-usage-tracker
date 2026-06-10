@@ -51,9 +51,17 @@ def _resolve_sidecar_version() -> str:
     `sys._MEIPASS` for PyInstaller-frozen binaries (the spec files bundle
     it as a data file), and at the repo root when running from source.
     Falls back to the baked constant only if neither path resolves.
+
+    Frozen binaries report exactly what the build stamped — release binaries
+    carry a plain `X.Y.Z`; the edge workflow stamps `X.Y.Z+edge.<sha>`. A
+    from-source run instead self-classifies from its git position: `main` is
+    the edge line and `vX.Y.Z` tags are positions on it, so a checkout sitting
+    past the latest release tag is running edge code and gets the same
+    `+edge.<sha>` stamp an edge binary would (see `_from_source_edge_suffix`).
     """
-    candidates: list[Path] = []
+    base = _SIDECAR_VERSION_FALLBACK
     meipass = getattr(sys, "_MEIPASS", None)
+    candidates: list[Path] = []
     if meipass:
         candidates.append(Path(meipass) / "package.json")
     candidates.append(_REPO_ROOT / "package.json")
@@ -62,11 +70,59 @@ def _resolve_sidecar_version() -> str:
             try:
                 with open(pkg_json) as _f:
                     version = json.load(_f).get("version")
-                if isinstance(version, str) and version:
-                    return version
             except (OSError, ValueError):
                 continue
-    return _SIDECAR_VERSION_FALLBACK
+            if isinstance(version, str) and version:
+                base = version
+                break
+    if meipass:
+        # Frozen build — trust the stamp baked in at build time.
+        return base
+    return base + _from_source_edge_suffix()
+
+
+def _from_source_edge_suffix() -> str:
+    """`+edge.<sha>` when this source checkout is past the latest release tag.
+
+    Trunk-based model: `main` is the edge line and `vX.Y.Z` tags are positions
+    on it. A from-source run sitting exactly on a clean release tag is that
+    release (stable); anything ahead of it — or untagged, or dirty — is edge
+    code, mirroring what the edge build stamps. Returns '' when git is
+    unavailable or the position can't be determined, so we never mislabel.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(_REPO_ROOT),
+                "describe",
+                "--tags",
+                "--match",
+                "v*",
+                "--long",
+                "--dirty",
+                "--always",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    desc = result.stdout.strip()
+    # 'vX.Y.Z-<ahead>-g<sha>' (+ optional '-dirty'); ahead==0 and clean ⇒ on the tag.
+    m = re.match(r"^v.+-(\d+)-g([0-9a-f]+)(-dirty)?$", desc)
+    if m:
+        ahead, sha, dirty = int(m.group(1)), m.group(2), m.group(3)
+        return "" if (ahead == 0 and not dirty) else f"+edge.{sha}"
+    # No reachable v* tag: bare '<sha>' (+ optional '-dirty') ⇒ edge/dev checkout.
+    m = re.match(r"^([0-9a-f]{7,})(?:-dirty)?$", desc)
+    if m:
+        return f"+edge.{m.group(1)[:12]}"
+    return ""
 
 
 _SIDECAR_VERSION_FALLBACK = (
