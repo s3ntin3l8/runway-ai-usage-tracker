@@ -118,8 +118,9 @@ class TokenCache:
                 if name:
                     metadata["account_label"] = name
                 self._cache[provider][account_id] = (tokens, metadata, timestamp)
-                # Log only non-sensitive identifiers — never the account name/email value.
-                logger.debug("Updated metadata for %s:%s", scrub_log(provider), account_id)
+                # Log neither the account name/email nor account_id (token-derived);
+                # provider alone is enough to trace and is the only non-sensitive field.
+                logger.debug("Updated account metadata for provider %s", scrub_log(provider))
 
     async def get_accounts(self, provider: str) -> list[dict[str, Any]]:
         """
