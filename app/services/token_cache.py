@@ -118,8 +118,8 @@ class TokenCache:
                 if name:
                     metadata["account_label"] = name
                 self._cache[provider][account_id] = (tokens, metadata, timestamp)
-                # codeql[py/clear-text-logging-sensitive-data]
-                logger.debug(f"Updated metadata for {provider}:{account_id} -> name={name}")
+                # Log only non-sensitive identifiers — never the account name/email value.
+                logger.debug("Updated metadata for %s:%s", scrub_log(provider), account_id)
 
     async def get_accounts(self, provider: str) -> list[dict[str, Any]]:
         """

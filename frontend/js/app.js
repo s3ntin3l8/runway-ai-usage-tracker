@@ -1,9 +1,8 @@
-import { fetchWithAuth, fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh, forceCollect, fetchProviderConfigs, putProviderConfig, fetchAppConfig, putAppConfig, collectProvider, getDashboardLayout, putDashboardLayout } from './api.js';
-import { STATE, HEALTH_CONFIG } from './state.js';
-import { applyOrder, cardKey, extractProviderOrder, extractCardOrder } from './layout.js';
+import { fetchWithAuth, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchSettings, forceCollect, fetchAppConfig, getDashboardLayout, putDashboardLayout } from './api.js';
+import { STATE } from './state.js';
+import { extractProviderOrder, extractCardOrder } from './layout.js';
 import { ensureSortable } from './sortable.js';
-import { buildGitHubOAuthModal, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildProviderSparklineStrip } from './components.js';
-import { updateCharts, destroyCharts } from './charts.js';
+import { buildGitHubOAuthModal } from './components.js';
 import { escapeHTML } from './utils/html.js';
 import { showConfirm } from './utils/modal-dialog.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
@@ -26,7 +25,6 @@ window.loadDashboard = loadDashboard;
 // Auto-refresh timer reference
 let refreshTimer = null;
 let githubPollTimer = null;
-let loadDataGeneration = 0; // Prevents stale fetch responses from overwriting newer data
 
 /**
  * View Management
