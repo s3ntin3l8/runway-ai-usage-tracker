@@ -254,19 +254,6 @@ function formatResetDisplay(resetAt) {
     }
 }
 
-/**
- * Source color mappings (subtle, glassmorphism-friendly)
- */
-const SOURCE_COLORS = {
-    oauth: 'text-blue-400/80',
-    web_api: 'text-violet-400/80',
-    local: 'text-emerald-400/80',
-    cache: 'text-orange-400/80',
-    fallback: 'text-amber-400/80',
-    api: 'text-cyan-400/80',
-    sidecar: 'text-pink-400/80'
-};
-
 const SOURCE_LABELS = {
     oauth: 'OAuth',
     web_api: 'Web API',
