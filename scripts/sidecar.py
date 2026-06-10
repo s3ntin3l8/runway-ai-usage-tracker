@@ -645,6 +645,7 @@ def remove_pid_file() -> None:
         try:
             _pid_file_path.unlink()
         except Exception:
+            # Best-effort cleanup; ignore if the PID file is already gone or unwritable.
             pass
 
 

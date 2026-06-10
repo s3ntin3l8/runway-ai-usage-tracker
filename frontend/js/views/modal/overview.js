@@ -8,7 +8,7 @@
  *   - recentSessions : fetchSessions({sort_by:'recent'}) response (3 most recent sessions)
  */
 
-import { providerDisplayLabel, modelDisplayName } from '../../components.js';
+import { modelDisplayName } from '../../components.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
 import { formatTokens as _fmtTokens, formatCost as _fmtCost } from '../../utils/format.js';
 import { buildSessionCard } from './usage.js';

@@ -309,8 +309,6 @@ function calculateUsedPct(item) {
     return null;
 }
 
-const UNLIMITED_GRADIENT = 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)';
-
 /**
  * Build HTML for the detail modal content
  * @param {LimitCard} item - The limit card data
@@ -326,14 +324,6 @@ export function buildModalContent(item) {
         h = { ...h, badge: errConfig.color, label: errConfig.label };
     }
 
-    const healthBoxClasses = {
-        good:      'bg-emerald-500/10 border-emerald-500/20',
-        warning:   'bg-amber-500/10 border-amber-500/20',
-        critical:  'bg-red-500/10 border-red-500/20',
-        unknown:   'bg-zinc-800/50 border-zinc-700/50',
-        unlimited: 'bg-violet-500/10 border-violet-500/20',
-    };
-
     const usedPct = calculateUsedPct(item);
 
     const formatted = formatUsageValues(
@@ -344,7 +334,6 @@ export function buildModalContent(item) {
     );
 
     const sourceLabel = SOURCE_LABELS[item.data_source] || item.data_source;
-    const sourceColor = SOURCE_COLORS[item.data_source] || 'text-zinc-400';
     const resetTime = item.reset_at ? formatLocalDateTime(item.reset_at, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
     const updatedTime = formatRelativeTime(item.updated_at);
 

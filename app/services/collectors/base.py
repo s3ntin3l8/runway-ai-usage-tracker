@@ -525,7 +525,7 @@ class BaseCollector(ABC):
             # Enforce the canonical window_type enum: surface stale values loudly.
             wt = card_data.get("window_type", "unknown")
             if wt not in WINDOW_TYPES:
-                # codeql[py/clear-text-logging-sensitive-data]
+                # window_type is a short enum string from card_data, not a credential.
                 logger.warning(
                     "%s emitted card with non-canonical window_type=%r; coercing to 'unknown'",
                     self.PROVIDER_ID,

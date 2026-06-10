@@ -107,7 +107,7 @@ async def test_github_api():
                 headers={"Authorization": f"Bearer {token}"},
             )
             print(f"Status: {resp.status_code}")
-            # codeql[py/clear-text-logging-sensitive-data]
+            # Prints the X-OAuth-Scopes response header (a scope list), not the token.
             print(f"X-OAuth-Scopes: {resp.headers.get('x-oauth-scopes', 'N/A')}")
             user_data = resp.json()
             print(f"User: {user_data.get('login')}")
