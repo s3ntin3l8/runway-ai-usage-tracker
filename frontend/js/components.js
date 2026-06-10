@@ -758,6 +758,10 @@ export function buildFleetView(sidecars) {
                 <div><span style="color:var(--text-dim);">IP</span><br/>${escapeHTML(s.last_ip || '—')}</div>
                 <div><span style="color:var(--text-dim);">ERRORS</span><br/>${s.error_count ?? 0}</div>
                 <div><span style="color:var(--text-dim);">VERSION</span><br/>${escapeHTML(s.sidecar_version || '—')}${
+                    s.channel === 'edge'
+                        ? ` <span style="margin-left:4px;padding:1px 5px;background:color-mix(in srgb,var(--accent) 15%,transparent);border:1px solid var(--accent);color:var(--accent);font-size:9px;font-weight:700;letter-spacing:0.05em;" title="Tracking the edge (rolling prerelease) channel">EDGE</span>`
+                        : ''
+                }${
                     s.update_available
                         ? ` <span style="margin-left:4px;padding:1px 5px;background:color-mix(in srgb,var(--warn) 15%,transparent);border:1px solid var(--warn);color:var(--warn);font-size:9px;font-weight:700;letter-spacing:0.05em;" title="Update available: ${escapeHTMLAttr(s.latest_version || '')}">↑ UPDATE</span>`
                         : ''
