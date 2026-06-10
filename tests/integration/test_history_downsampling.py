@@ -304,10 +304,14 @@ def test_query_snapshots_window_stats_join_uses_reset_at_minute_bucket(session):
     still matches via the minute-bucket join key."""
     now = datetime.now(UTC)
     reset_naive = _naive(now + timedelta(hours=1))  # past for the snapshot
-    # Make the snapshot's reset_at < now so this is a closed window.
-    snap_reset = _naive(now - timedelta(seconds=10))
-    # window_end differs by 800ms (sub-minute jitter)
-    window_end = snap_reset - timedelta(microseconds=800_000)
+    # Pin reset_at / window_end to :30 of a recent *past* minute so the 800ms jitter
+    # between them can't straddle a minute boundary into different buckets — the test
+    # otherwise flakes when run near the top of a minute. The snapshot ts stays at
+    # real `now` (never future) so the days=1 window still includes it.
+    reset_anchor = (now - timedelta(minutes=1)).replace(second=30, microsecond=0)
+    snap_reset = _naive(reset_anchor)
+    # window_end differs by 800ms (sub-minute jitter) but stays in the same minute.
+    window_end = _naive(reset_anchor - timedelta(microseconds=800_000))
 
     session.add(
         QuotaSnapshot(
