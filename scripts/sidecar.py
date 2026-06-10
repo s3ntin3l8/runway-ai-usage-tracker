@@ -395,6 +395,11 @@ _pid_file_path: Path | None = None
 _hostname: str | None = None
 _windows_cred_cache: dict = {}
 _windows_cred_ttl_seconds: int = 300
+# Update channel the server tells us to track ("stable" | "edge"), refreshed
+# from each /fleet/ingest response. None until the first successful check-in;
+# the update-check thread then falls back to the channel inferred from our own
+# version string.
+_UPDATE_CHANNEL: str | None = None
 
 
 def get_sidecar_dir() -> Path:
@@ -2601,6 +2606,15 @@ class DaemonRunner:
                         _GLOBAL_RESET_ANCHORS.update(reset_anchors)
                         logging.debug(f"Server reset_anchors: {reset_anchors}")
 
+                    # Update channel the dashboard wants this sidecar to track
+                    # for the (notify-only) update check.
+                    update_channel = result.get("sidecar_update_channel")
+                    if update_channel:
+                        global _UPDATE_CHANNEL
+                        if update_channel != _UPDATE_CHANNEL:
+                            logging.debug(f"Server update channel: {update_channel}")
+                        _UPDATE_CHANNEL = update_channel
+
                     # The server is the cadence authority. Each ingest response
                     # tells the sidecar exactly which providers to collect on
                     # the *next* heartbeat tick:
@@ -2779,11 +2793,29 @@ def main():
         runner.run_once()
     else:
         runner.start()
+
+        # Notify-only update check: logs a warning when a newer build is
+        # available on the active channel. Channel priority: RUNWAY_UPDATE_CHANNEL
+        # env override > server-synced setting > channel inferred from our version.
+        update_thread = None
+        try:
+            from scripts.sidecar_pkg.update_check import UpdateCheckThread
+
+            update_thread = UpdateCheckThread(
+                _SIDECAR_VERSION,
+                channel_getter=lambda: os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL,
+            )
+            update_thread.start()
+        except Exception:
+            logging.debug("Update-check thread not started", exc_info=True)
+
         try:
             # Block until signal handler sets _daemon_running = False
             while _daemon_running:
                 time.sleep(1)
         finally:
+            if update_thread is not None:
+                update_thread.stop()
             runner.stop()
 
     logging.info("Sidecar stopping...")

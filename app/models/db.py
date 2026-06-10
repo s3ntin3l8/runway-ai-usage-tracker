@@ -146,6 +146,10 @@ class SystemConfig(SQLModel, table=True):
     user_timezone: str | None = (
         None  # IANA name, e.g. "Europe/Berlin"; None = use TZ env / browser detect
     )
+    # Update channel sidecars track for the "update available" check: "stable"
+    # (default) or "edge" (rolling prerelease). Pushed to sidecars via the
+    # /fleet/ingest response. None = "stable".
+    sidecar_update_channel: str | None = None
 
 
 class LatestUsage(SQLModel, table=True):

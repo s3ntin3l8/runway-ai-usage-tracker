@@ -305,6 +305,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "collection_enabled": collection_enabled,
         "identities": _get_active_identities(session),  # For sidecar identity propagation
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
+        # Update channel the sidecar should track for its "update available"
+        # check ("stable" | "edge"). The dashboard owns this setting.
+        "sidecar_update_channel": (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable",
     }
 
 

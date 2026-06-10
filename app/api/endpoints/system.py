@@ -564,6 +564,8 @@ class _AppConfigUpdate(BaseModel):
     default_poll_interval_seconds: int | None = None  # 0 = clear override
     # IANA tz name (e.g. "Europe/Berlin"); "" or null = clear override (use TZ env / browser detect)
     user_timezone: str | None = None
+    # Sidecar update channel: "stable" (default) or "edge"; "" = clear → stable.
+    sidecar_update_channel: str | None = None
 
 
 class _DashboardLayout(BaseModel):
@@ -832,6 +834,7 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         or settings.BROWSER_PREFERENCE,
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
         "user_timezone": cfg.user_timezone if cfg else None,
+        "sidecar_update_channel": (cfg.sidecar_update_channel if cfg else None) or "stable",
         "env_timezone": settings.env_timezone,
     }
 
@@ -869,6 +872,17 @@ async def upsert_app_config(
                     detail=f"Invalid IANA timezone: {body.user_timezone!r}",
                 ) from e
             cfg.user_timezone = body.user_timezone
+    if body.sidecar_update_channel is not None:
+        channel = body.sidecar_update_channel.strip().lower()
+        if channel in ("", "stable"):
+            cfg.sidecar_update_channel = None
+        elif channel == "edge":
+            cfg.sidecar_update_channel = "edge"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid update channel: {body.sidecar_update_channel!r} (expected 'stable' or 'edge')",
+            )
     session.commit()
 
     # Wake poller so the new interval applies on the next tick rather than

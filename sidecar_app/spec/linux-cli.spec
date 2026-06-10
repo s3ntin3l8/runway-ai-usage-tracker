@@ -41,6 +41,8 @@ a = Analysis(
         "urllib",
         "urllib.error",
         "urllib.request",
+        # Notify-only update check (function-local import in scripts/sidecar.py).
+        "scripts.sidecar_pkg.update_check",
         # Lazy imports inside the Linux browser-cookie decryption branch.
         "secretstorage",
         "cryptography.hazmat.primitives.ciphers",

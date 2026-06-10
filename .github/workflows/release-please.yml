@@ -87,8 +87,21 @@ jobs:
         if: runner.os == 'Linux'
         run: tar -czf "${{ env.ARTIFACT }}" -C dist "$(basename '${{ matrix.dist_path }}')"
 
+      - name: Checksum (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: shasum -a 256 "${{ env.ARTIFACT }}" > "${{ env.ARTIFACT }}.sha256"
+
+      - name: Checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash "${{ env.ARTIFACT }}" -Algorithm SHA256).Hash.ToLower()
+          "$h  ${{ env.ARTIFACT }}" | Out-File -Encoding ascii "${{ env.ARTIFACT }}.sha256"
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: ${{ env.ARTIFACT }}
+          files: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256

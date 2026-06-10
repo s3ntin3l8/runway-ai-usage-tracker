@@ -47,6 +47,8 @@ a = Analysis(
         "urllib",
         "urllib.error",
         "urllib.request",
+        # Notify-only update check, shared by the CLI and the tray updater.
+        "scripts.sidecar_pkg.update_check",
         # Linux browser-cookie decryption path inside scripts/sidecar.py imports
         # these lazily; PyInstaller's static scan won't catch them.
         "secretstorage",

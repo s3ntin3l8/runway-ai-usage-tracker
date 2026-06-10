@@ -726,6 +726,7 @@ async function renderSystemSection(pane) {
         const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
         const globalPollVal = cfg.default_poll_interval_seconds ?? '';
         const userTz = cfg.user_timezone || '';
+        const updateChannel = cfg.sidecar_update_channel || 'stable';
         const envTz = cfg.env_timezone || '';
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
         const tzList = COMMON_TIMEZONES.includes(userTz) || !userTz
@@ -797,6 +798,19 @@ async function renderSystemSection(pane) {
                         <button id="save-user-tz-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
                     </div>
                 </div>
+                <div class="sys-row">
+                    <div>
+                        <div class="sys-k">Sidecar Update Channel</div>
+                        <div class="sys-s">Which builds sidecars check for. <strong>Stable</strong> = tagged releases; <strong>Edge</strong> = rolling per-commit prerelease. Notify-only — synced to sidecars on their next heartbeat.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="field-update-channel" class="inp" style="width:auto;">
+                            <option value="stable" ${updateChannel === 'stable' ? 'selected' : ''}>Stable</option>
+                            <option value="edge" ${updateChannel === 'edge' ? 'selected' : ''}>Edge</option>
+                        </select>
+                        <button id="save-update-channel-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
+                    </div>
+                </div>
             </div>
             <div class="glass" style="margin-top:16px;padding:14px;border-left:2px solid var(--accent);font-size:11px;line-height:1.6;">
                 <strong>Tip:</strong> Core configuration is still managed via <code style="background:var(--surface-2);padding:1px 5px;color:var(--accent);">.env</code>. Provider-specific overrides can be set in the Providers section above.
@@ -842,6 +856,19 @@ async function renderSystemSection(pane) {
             } catch (err) {
                 this.textContent = 'Error'; this.disabled = false;
                 console.error('user_timezone save failed:', err);
+            }
+        });
+
+        pane.querySelector('#save-update-channel-btn')?.addEventListener('click', async function () {
+            const select = pane.querySelector('#field-update-channel');
+            const val = select?.value || 'stable';
+            this.textContent = 'Saving…'; this.disabled = true;
+            try {
+                await putAppConfig({ sidecar_update_channel: val });
+                this.textContent = 'Saved';
+                setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
+            } catch {
+                this.textContent = 'Error'; this.disabled = false;
             }
         });
 

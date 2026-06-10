@@ -139,6 +139,7 @@ class TestToDict:
         assert d["last_ip"] == "192.168.1.1"
         assert "last_seen" in d
         assert "first_seen" in d
+        assert d["channel"] == "stable"  # no version → stable
 
 
 class TestToDictUpdateAvailable:
@@ -186,3 +187,20 @@ class TestToDictUpdateAvailable:
         assert d["update_available"] is False
         assert d["latest_version"] == "1.5.0"
         assert d["sidecar_version"] is None
+
+    def test_edge_sidecar_flagged_when_tag_moved(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest_edge_sha", "bbb2222ffffffff")
+        d = service.to_dict(self._row("1.5.0+edge.aaa1111"))
+        assert d["channel"] == "edge"
+        assert d["update_available"] is True
+
+    def test_edge_sidecar_not_flagged_when_same_build(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest_edge_sha", "aaa1111ffffffff")
+        d = service.to_dict(self._row("1.5.0+edge.aaa1111"))
+        assert d["channel"] == "edge"
+        assert d["update_available"] is False

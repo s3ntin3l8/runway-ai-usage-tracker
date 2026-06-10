@@ -1,44 +1,41 @@
-"""GitHub Releases update checker for the Runway sidecar desktop app."""
+"""GitHub Releases update checker for the Runway sidecar desktop app.
+
+Notify-only: surfaces "(update available)" in the tray; the user downloads and
+replaces the app manually. The actual stable/edge decision is delegated to
+``scripts.sidecar_pkg.update_check`` so the tray and the headless CLI agree.
+"""
 
 from __future__ import annotations
 
-import json
 import logging
+import os
 import threading
-import urllib.request
 from collections.abc import Callable
 
+from scripts.sidecar_pkg.update_check import check_once
 from sidecar_app import __version__
 
 logger = logging.getLogger(__name__)
 
-_API_URL = "https://api.github.com/repos/s3ntin3l8/runway/releases/latest"
 _CHECK_INTERVAL_SECONDS = 86400  # 24h
 
 
-def _get_latest_version() -> str | None:
-    """Fetch latest release tag from GitHub API. Returns None on any failure."""
+def _resolve_channel() -> str | None:
+    """Active update channel: env override > server-synced > inferred from version.
+
+    The synced value is the channel the dashboard pushed to the running daemon
+    (stored on ``scripts.sidecar._UPDATE_CHANNEL``); None lets ``check_once``
+    infer it from this build's own version string.
+    """
+    env = os.environ.get("RUNWAY_UPDATE_CHANNEL")
+    if env:
+        return env
     try:
-        req = urllib.request.Request(  # noqa: S310
-            _API_URL,
-            headers={"User-Agent": f"Runway-Sidecar-Updater/{__version__}"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-            data = json.loads(resp.read().decode())
-        return data["tag_name"].lstrip("v")
+        import scripts.sidecar as _sidecar
+
+        return _sidecar._UPDATE_CHANNEL
     except Exception:
-        logger.debug("Update check failed", exc_info=True)
         return None
-
-
-def _is_newer(latest: str, current: str) -> bool:
-    """Return True if latest version is newer than current."""
-    try:
-        from packaging.version import Version
-
-        return Version(latest) > Version(current)
-    except Exception:
-        return latest != current  # fallback
 
 
 class UpdateChecker:
@@ -46,7 +43,7 @@ class UpdateChecker:
 
     def __init__(
         self,
-        on_update_available: Callable[[str, str], None],  # (current_version, latest_version)
+        on_update_available: Callable[[str, str], None],  # (current_version, latest_or_description)
         check_interval: int = _CHECK_INTERVAL_SECONDS,
     ) -> None:
         self._on_update_available = on_update_available
@@ -70,9 +67,13 @@ class UpdateChecker:
 
     def check_now(self) -> None:
         """Run a single update check synchronously."""
-        latest = _get_latest_version()
-        if latest and _is_newer(latest, __version__):
-            self._on_update_available(__version__, latest)
+        try:
+            available = check_once(__version__, _resolve_channel())
+        except Exception:
+            logger.debug("Update check failed", exc_info=True)
+            return
+        if available:
+            self._on_update_available(__version__, available)
 
     def _loop(self) -> None:
         """Background thread loop: check on start, then every interval."""

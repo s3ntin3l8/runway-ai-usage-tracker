@@ -1,0 +1,108 @@
+name: Sidecar Edge Build
+
+# Rolling per-commit sidecar build — the sidecar analog of the Docker :edge tag.
+# Publishes Linux binaries to a single, always-overwritten `edge` GitHub
+# *prerelease* so the download URLs stay constant. Because it is a prerelease,
+# GitHub's /releases/latest never returns it, so the stable update-notify
+# channel is untouched.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/sidecar.py'
+      - 'scripts/sidecar_pkg/**'
+      - 'sidecar_app/**'
+      - 'package.json'
+  workflow_dispatch:
+
+concurrency:
+  # Rolling release — only the newest main push needs to win.
+  group: sidecar-edge
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - spec: sidecar_app/spec/linux.spec
+            platform: Linux
+            dist_path: dist/RunwaySidecar
+          - spec: sidecar_app/spec/linux-cli.spec
+            platform: Linux-CLI
+            dist_path: dist/runway-sidecar-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-edge.tar.gz
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e . pystray Pillow pyinstaller packaging
+
+      - name: Stamp edge version
+        # Mark the bundled package.json so the binary reports `<base>+edge.<sha>`.
+        # Working-copy only — never committed.
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BASE=$(jq -r .version package.json)
+          jq --arg v "${BASE}+edge.${SHORT_SHA}" '.version=$v' package.json > pkg.tmp
+          mv pkg.tmp package.json
+          echo "Stamped version: ${BASE}+edge.${SHORT_SHA}"
+
+      - name: Generate icons
+        run: python sidecar_app/assets/generate_icons.py
+
+      - name: Build with PyInstaller
+        run: pyinstaller ${{ matrix.spec }}
+
+      - name: Package artifact + checksum
+        run: |
+          tar -czf "${ARTIFACT}" -C dist "$(basename '${{ matrix.dist_path }}')"
+          sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-${{ matrix.platform }}
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: edge-*
+          path: edge-dist
+          merge-multiple: true
+
+      - name: Move rolling edge tag
+        # softprops/action-gh-release does not move an existing tag; force it to
+        # this commit so the auto-attached source archive matches the binaries.
+        run: |
+          git tag -f edge
+          git push -f origin edge
+
+      - name: Publish to rolling edge prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: edge
+          prerelease: true
+          name: "Edge (rolling)"
+          body: "Rolling sidecar build from ${{ github.sha }}. Not a stable release."
+          files: edge-dist/*

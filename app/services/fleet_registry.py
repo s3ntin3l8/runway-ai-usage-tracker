@@ -146,12 +146,14 @@ class FleetRegistryService:
         # the global FastAPI startup wiring.
         from app.services.sidecar_version_checker import (
             is_update_available,
+            parse_channel,
             sidecar_version_checker,
         )
 
         last_seen_utc = row.last_seen.replace(tzinfo=UTC)
         stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
         latest_version = sidecar_version_checker.get_latest()
+        latest_edge_sha = sidecar_version_checker.get_latest_edge_sha()
         return {
             "sidecar_id": row.sidecar_id,
             "hostname": row.hostname,
@@ -164,7 +166,10 @@ class FleetRegistryService:
             "ingest_count": row.ingest_count,
             "sidecar_version": row.sidecar_version,
             "latest_version": latest_version,
-            "update_available": is_update_available(row.sidecar_version, latest_version),
+            "channel": parse_channel(row.sidecar_version)[0],
+            "update_available": is_update_available(
+                row.sidecar_version, latest_version, latest_edge_sha
+            ),
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
             "stale": stale,

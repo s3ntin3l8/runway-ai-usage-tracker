@@ -10,6 +10,26 @@ Download the latest release from the [GitHub Releases page](https://github.com/s
 - **Linux (desktop tray)**: `Runway-Sidecar-Linux.tar.gz` → `tar -xzf …` → run `./RunwaySidecar`. Requires a tray host (AppIndicator on GNOME/Unity, GTK on KDE/Xfce) and a DBus session. For headless servers / Docker, use the CLI binary below instead.
 - **Linux (headless CLI)**: `Runway-Sidecar-Linux-CLI.tar.gz` → `tar -xzf …` → run `./runway-sidecar-cli --daemon`. Single-file binary, no Python install needed, no GUI dependencies. Use this on servers, in Docker, and on CI agents.
 
+Each release asset ships a matching `*.sha256` checksum file. Verify with `shasum -a 256 -c <file>.sha256` (macOS/Linux).
+
+### Edge builds (rolling, Linux)
+
+Edge is the sidecar analog of the Docker `:edge` image — a rolling build published on every push to `main` that touches sidecar code. It lives in a single, always-overwritten `edge` **prerelease**, so the download URLs are stable:
+
+- **Linux (desktop tray)**: <https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-edge.tar.gz>
+- **Linux (headless CLI)**: <https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz>
+
+```bash
+# Deploy the latest edge CLI sidecar to another Linux box:
+curl -fsSL -O https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz
+curl -fsSL -O https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
+shasum -a 256 -c Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
+tar -xzf Runway-Sidecar-Linux-CLI-edge.tar.gz
+./runway-sidecar-cli --daemon
+```
+
+Edge binaries report their version as `<base>+edge.<short-sha>` (e.g. `1.1.0+edge.abc1234`); `--version` shows the exact build. Because the `edge` release is a prerelease, it is **never** returned by GitHub's "latest release" API, so stable sidecars and the dashboard's "update available" flag ignore it entirely. To have edge sidecars notified when a newer edge build lands, set the update channel to **Edge** (see below).
+
 ### First Run
 
 On first launch, if no config file exists, the app creates a template config and opens it in the default editor.

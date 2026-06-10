@@ -43,6 +43,8 @@ a = Analysis(
         "urllib",
         "urllib.error",
         "urllib.request",
+        # Notify-only update check, shared by the CLI and the tray updater.
+        "scripts.sidecar_pkg.update_check",
     ],
     hookspath=[],
     hooksconfig={},
