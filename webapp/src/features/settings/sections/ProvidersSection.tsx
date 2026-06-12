@@ -1,0 +1,214 @@
+// Provider configuration: enable/disable, credentials, account label, poll
+// interval, per-strategy toggles. Credentials are write-only (server stores
+// them encrypted and only reports *_set flags).
+
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { putProviderConfig, type ProviderConfigUpdate } from '@/api/endpoints';
+import type { ProviderConfig } from '@/api/types';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { HelperText, Input, Label } from '@/components/ui/Input';
+import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
+import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { Switch } from '@/components/ui/Switch';
+import { useProviderConfigs } from '@/features/home/queries';
+
+export function ProvidersSection() {
+  const configs = useProviderConfigs();
+  const [editing, setEditing] = useState<ProviderConfig | null>(null);
+
+  if (configs.isPending) {
+    return (
+      <div className="flex flex-col gap-2">
+        {Array.from({ length: 5 }, (_, i) => (
+          <Skeleton key={i} className="h-16" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex max-w-2xl flex-col gap-2">
+      {(configs.data?.providers ?? []).map((p) => (
+        <Card
+          key={p.provider_id}
+          role="button"
+          tabIndex={0}
+          onClick={() => setEditing(p)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') setEditing(p);
+          }}
+          className="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors duration-150 hover:border-edge-strong"
+        >
+          <ProviderGlyph providerId={p.provider_id} name={p.name} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium">{p.name}</p>
+            <p className="truncate text-[11px] text-fg-subtle">
+              {p.account_label || p.provider_id} · poll{' '}
+              {p.effective_poll_interval ?? p.default_ttl_seconds ?? '—'}s
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {p.api_key_set ? <Badge variant="ok">key</Badge> : null}
+            {p.session_cookie_set ? <Badge variant="ok">cookie</Badge> : null}
+            <Badge variant={p.enabled ? 'accent' : 'neutral'}>
+              {p.enabled ? 'enabled' : 'disabled'}
+            </Badge>
+          </div>
+        </Card>
+      ))}
+
+      <ResponsiveDialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+        title={editing?.name ?? ''}
+        description="Configuration is stored encrypted on the server."
+      >
+        {editing ? (
+          <ProviderForm
+            key={editing.provider_id}
+            provider={editing}
+            onSaved={() => setEditing(null)}
+          />
+        ) : null}
+      </ResponsiveDialog>
+    </div>
+  );
+}
+
+function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved: () => void }) {
+  const queryClient = useQueryClient();
+  const [enabled, setEnabled] = useState(provider.enabled ?? true);
+  const [apiKey, setApiKey] = useState('');
+  const [cookie, setCookie] = useState('');
+  const [label, setLabel] = useState(provider.account_label ?? '');
+  const [pollInterval, setPollInterval] = useState(
+    provider.poll_interval_seconds != null ? String(provider.poll_interval_seconds) : '',
+  );
+  const [strategies, setStrategies] = useState(
+    (provider.collection_strategies ?? provider.supported_strategies ?? []).map((s) => ({
+      id: s.id,
+      enabled: s.enabled,
+      label: (s as { label?: string }).label ?? s.id,
+    })),
+  );
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body: ProviderConfigUpdate = {
+        enabled,
+        account_label: label,
+        poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
+        collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
+      };
+      // Only send credentials the user actually typed — empty string means
+      // "clear" server-side, absence means "keep".
+      if (apiKey !== '') body.api_key = apiKey;
+      if (cookie !== '') body.session_cookie = cookie;
+      return putProviderConfig(provider.provider_id, body);
+    },
+    onSuccess: () => {
+      toast.success(`${provider.name} saved — collection triggered`);
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+      queryClient.invalidateQueries({ queryKey: ['usage'] });
+      onSaved();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate();
+      }}
+      className="flex flex-col gap-4"
+    >
+      <div className="flex items-center justify-between">
+        <Label htmlFor="prov-enabled">Collection enabled</Label>
+        <Switch id="prov-enabled" checked={enabled} onCheckedChange={setEnabled} />
+      </div>
+
+      {provider.supports_api_key ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-key">{provider.api_key_label || 'API key'}</Label>
+          <Input
+            id="prov-key"
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={provider.api_key_set ? '••••••••  (set — leave blank to keep)' : ''}
+          />
+          {provider.api_key_help ? <HelperText>{provider.api_key_help}</HelperText> : null}
+        </div>
+      ) : null}
+
+      {provider.supports_session_cookie ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-cookie">{provider.session_cookie_label || 'Session cookie'}</Label>
+          <Input
+            id="prov-cookie"
+            type="password"
+            autoComplete="off"
+            value={cookie}
+            onChange={(e) => setCookie(e.target.value)}
+            placeholder={provider.session_cookie_set ? '••••••••  (set — leave blank to keep)' : ''}
+          />
+          {provider.session_cookie_help ? (
+            <HelperText>{provider.session_cookie_help}</HelperText>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-label">Account label</Label>
+          <Input id="prov-label" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-poll">Poll interval (s)</Label>
+          <Input
+            id="prov-poll"
+            type="number"
+            inputMode="numeric"
+            min={30}
+            value={pollInterval}
+            onChange={(e) => setPollInterval(e.target.value)}
+            placeholder={`default ${provider.effective_poll_interval ?? ''}`}
+          />
+        </div>
+      </div>
+
+      {strategies.length > 0 ? (
+        <fieldset className="flex flex-col gap-2 rounded-sm border border-edge p-3">
+          <legend className="px-1 text-xs font-medium text-fg-muted">Collection strategies</legend>
+          {strategies.map((s, i) => (
+            <div key={s.id} className="flex items-center justify-between">
+              <span className="text-[13px]">{s.label}</span>
+              <Switch
+                checked={s.enabled}
+                onCheckedChange={(on) =>
+                  setStrategies((prev) =>
+                    prev.map((x, j) => (j === i ? { ...x, enabled: on } : x)),
+                  )
+                }
+                aria-label={s.label}
+              />
+            </div>
+          ))}
+        </fieldset>
+      ) : null}
+
+      <Button type="submit" variant="primary" loading={save.isPending}>
+        Save
+      </Button>
+    </form>
+  );
+}
