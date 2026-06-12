@@ -4,11 +4,11 @@
 
 # Runway — AI Subscription Limits Dashboard
 
-**Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, high-performance aviation HUD dashboard with persistent history and fleet management.
+**Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, clean dashboard with persistent history and fleet management.
 
 ![Runway Dashboard](assets/screenshots/dashboard.png)
 
-<p align="center"><sub>Dark "aviation-HUD" theme shown. <a href="assets/screenshots/dashboard-light.png">Light theme</a> is one click away via the sun/moon toggle in the top bar.</sub></p>
+<p align="center"><sub>Dark theme shown. Light theme follows your OS preference or Settings → Display.</sub></p>
 
 ## Screenshots
 
@@ -86,7 +86,7 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 | `make test-cov` | Run tests with coverage report (`term-missing`) |
 | `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
 | `make format` | Automatically fix linting and formatting issues |
-| `make css` / `make watch` | Build Tailwind CSS once / rebuild on change |
+| `make web` / `make web-dev` | Build the SPA (`webapp/dist`) / run the Vite dev server |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make clean` | Remove virtual environments and build artifacts |
 

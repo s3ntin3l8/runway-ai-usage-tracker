@@ -1,10 +1,10 @@
-# Stage 1: Build CSS
+# Stage 1: Build the SPA
 FROM node:22-slim AS frontend-builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY frontend/ ./frontend/
-RUN npm run build:css
+COPY webapp/package*.json ./webapp/
+RUN npm --prefix webapp ci
+COPY webapp/ ./webapp/
+RUN npm --prefix webapp run build
 
 # Stage 2: Build Python dependencies
 FROM python:3.12-slim-bookworm@sha256:d193c6f51a7dbd10395d6328de3a7edb0516fb0608ca138036576f574c3e07d2 AS python-builder
@@ -33,12 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=python-builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
+# Copy application code + built SPA
 COPY app/ ./app/
-COPY frontend/ ./frontend/
-
-# Copy built CSS from frontend-builder stage
-COPY --from=frontend-builder /app/frontend/css/styles.css ./frontend/css/styles.css
+COPY --from=frontend-builder /app/webapp/dist/ ./webapp/dist/
 
 # Set ownership to non-root user
 RUN chown -R runway:runway /app

@@ -6,7 +6,7 @@ PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 
-.PHONY: help install install-hooks dev dev-all run sidecar test test-cov lint format css watch secrets secrets-baseline clean
+.PHONY: help install install-hooks dev dev-all run sidecar test test-cov lint format web web-dev web-test secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -19,7 +19,7 @@ install: install-hooks ## Set up venv, install Python and Node dependencies
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements-dev.txt
-	npm ci
+	npm --prefix webapp ci
 
 dev: ## Run development server (hot reload, port 8765)
 	set -a; [ -f .env ] && . ./.env; set +a; \
@@ -52,11 +52,14 @@ format: ## Auto-fix ruff lint and formatting issues
 	$(RUFF) check --fix .
 	$(RUFF) format .
 
-css: ## Build Tailwind CSS (one-shot)
-	npm run build:css
+web: ## Build the SPA (webapp/dist — what `make run` serves)
+	npm --prefix webapp run build
 
-watch: ## Watch and rebuild Tailwind CSS on change
-	npm run watch:css
+web-dev: ## Run the Vite dev server (proxies /api to the dev server)
+	npm --prefix webapp run dev
+
+web-test: ## Run frontend unit tests (vitest)
+	npm --prefix webapp test
 
 secrets: ## Gate: fail if any tracked file has a secret not in the baseline (matches CI)
 	git ls-files -z | xargs -0 $(VENV)/bin/detect-secrets-hook --baseline .secrets.baseline
@@ -65,4 +68,4 @@ secrets-baseline: ## Regenerate/update .secrets.baseline (run after vetting new 
 	$(VENV)/bin/detect-secrets scan --baseline .secrets.baseline
 
 clean: ## Remove venv, caches, and build artifacts
-	rm -rf $(VENV) .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml node_modules
+	rm -rf $(VENV) .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml node_modules webapp/node_modules webapp/dist

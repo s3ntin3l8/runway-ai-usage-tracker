@@ -5,21 +5,19 @@ import sys
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlmodel import Session, select
 from starlette.responses import Response
 
 from app.api.routes import router as api_router
 from app.core.config import settings
-from app.core.db import get_session, init_db
+from app.core.db import init_db
 from app.core.rate_limit import limiter
-from app.models.db import SystemConfig
 from app.services.collector_manager import manager
 from app.services.poller import poller
 from app.services.sidecar_version_checker import sidecar_version_checker
@@ -129,18 +127,16 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
 
-# Defence-in-depth security headers on every response. CSP is the meaningful
-# guard against the dashboard's `innerHTML` exposure: even if escapeHTML*
-# misses something, a CSP-blocked external <script> can't run. We keep
-# 'unsafe-inline' for now because components.js emits `onclick="..."` strings;
-# migrating those to addEventListener is a follow-up. fonts.googleapis.com
-# and fonts.gstatic.com are whitelisted to keep the existing B612 font load.
+# Defence-in-depth security headers on every response. The v2 SPA bundles
+# all scripts and fonts (no CDN, no inline handlers), so script-src is a
+# strict 'self'. style-src keeps 'unsafe-inline' for the style *attributes*
+# that ECharts and Radix set at runtime — scripts are the meaningful guard.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src 'self' data: https://fonts.gstatic.com; "
-    "img-src 'self' data: https://cdn.jsdelivr.net; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self' data:; "
+    "img-src 'self' data:; "
     "connect-src 'self'; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
@@ -181,13 +177,44 @@ async def global_exception_handler(request: Request, exc: Exception):
 # API routes
 app.include_router(api_router, prefix="/api")
 
-# Serve static files (frontend). Default StaticFiles sets ETag/Last-Modified so
-# the browser can do conditional If-Modified-Since requests and receive 304s
-# when nothing changed. index.html already cache-busts subresources via
-# ?v=N query params (see <link href="/static/css/styles.css?v=7">), so bumping
-# that param is the explicit signal to force a re-download on real updates.
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+# Serve the built SPA (webapp/dist). Vite emits content-hashed filenames
+# under /assets, so those get an immutable cache policy; index.html itself
+# is always revalidated and is returned for every non-API path (the SPA
+# router owns deep links like /provider/anthropic). The app fetches its
+# timezone config from /api/v1/system/app-config at boot, which is what
+# allows script-src to stay 'self' (no injected inline script).
+frontend_path = os.path.join(os.path.dirname(__file__), "..", "webapp", "dist")
+_assets_path = os.path.join(frontend_path, "assets")
+if os.path.isdir(_assets_path):
+    app.mount("/assets", StaticFiles(directory=_assets_path), name="assets")
+
+
+class _ImmutableAssetsMiddleware:
+    """Long-lived caching for hashed /assets files."""
+
+    def __init__(self, app):  # noqa: ANN001
+        self.app = app
+
+    async def __call__(self, scope, receive, send):  # noqa: ANN001
+        if scope["type"] == "http" and scope["path"].startswith("/assets/"):
+
+            async def send_with_cache(message):  # noqa: ANN001
+                if message["type"] == "http.response.start":
+                    headers = [
+                        (k, v)
+                        for k, v in message.get("headers", [])
+                        if k.lower() != b"cache-control"
+                    ]
+                    headers.append((b"cache-control", b"public, max-age=31536000, immutable"))
+                    message = {**message, "headers": headers}
+                await send(message)
+
+            await self.app(scope, receive, send_with_cache)
+            return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_ImmutableAssetsMiddleware)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -200,34 +227,46 @@ async def favicon():
     return Response(status_code=204)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(db: Session = Depends(get_session)):
-    """Serve the main dashboard page, always reading from disk."""
+_SPA_NO_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def _spa_index() -> HTMLResponse:
     index_file = os.path.join(frontend_path, "index.html")
     if not os.path.exists(index_file):
-        return HTMLResponse("<h1>Frontend index.html not found!</h1>", status_code=404)
+        return HTMLResponse(
+            "<h1>Frontend build not found — run `make web` (npm run web:build).</h1>",
+            status_code=404,
+        )
     with open(index_file) as f:
-        content = f.read()
+        return HTMLResponse(content=f.read(), headers=_SPA_NO_CACHE)
 
-    # Inject timezone config synchronously so getUserTz() works before any
-    # async fetch completes — avoids charts rendering in UTC on first load.
-    cfg = db.exec(select(SystemConfig)).first()
-    user_tz = (cfg.user_timezone if cfg else None) or ""
-    env_tz = settings.env_timezone or ""
-    tz_script = (
-        f"<script>window.runwayConfig="
-        f'{{"user_timezone":{user_tz!r},"env_timezone":{env_tz!r}}};</script>'
-    )
-    content = content.replace("</head>", f"{tz_script}</head>", 1)
 
-    return HTMLResponse(
-        content=content,
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """Serve the SPA entry, always reading from disk."""
+    return _spa_index()
+
+
+@app.get("/{path:path}", response_class=HTMLResponse, include_in_schema=False)
+async def spa_catch_all(path: str):
+    """SPA fallback: client-side routes resolve to index.html.
+
+    Registered after the API router, so /api/* never lands here. Dotted
+    paths are real files: serve them from dist (Vite `public/` output like
+    favicon.svg) or 404 — never HTML, which would mask missing assets.
+    """
+    if path.startswith(("api/", "assets/")) or "." in path.rsplit("/", 1)[-1]:
+        file_path = os.path.realpath(os.path.join(frontend_path, path))
+        if file_path.startswith(os.path.realpath(frontend_path) + os.sep) and os.path.isfile(
+            file_path
+        ):
+            return FileResponse(file_path)
+        return Response(status_code=404)
+    return _spa_index()
 
 
 if __name__ == "__main__":
