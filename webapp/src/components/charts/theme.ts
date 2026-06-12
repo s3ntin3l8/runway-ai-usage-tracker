@@ -7,6 +7,7 @@ import { useTheme } from '@/hooks/useTheme';
 
 export interface ChartTokens {
   series: string[];
+  heat: string[];
   grid: string;
   axis: string;
   fg: string;
@@ -14,7 +15,6 @@ export interface ChartTokens {
   surface: string;
   edge: string;
   accent: string;
-  accentMuted: string;
   critical: string;
   warning: string;
   ok: string;
@@ -32,6 +32,9 @@ export function readChartTokens(): ChartTokens {
     series: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6'].map(
       (v) => cssVar(styles, v),
     ),
+    heat: ['--chart-heat-0', '--chart-heat-1', '--chart-heat-2', '--chart-heat-3', '--chart-heat-4'].map(
+      (v) => cssVar(styles, v),
+    ),
     grid: cssVar(styles, '--chart-grid'),
     axis: cssVar(styles, '--chart-axis'),
     fg: cssVar(styles, '--fg'),
@@ -39,7 +42,6 @@ export function readChartTokens(): ChartTokens {
     surface: cssVar(styles, '--surface-1'),
     edge: cssVar(styles, '--edge'),
     accent: cssVar(styles, '--accent'),
-    accentMuted: cssVar(styles, '--accent-muted'),
     critical: cssVar(styles, '--critical'),
     warning: cssVar(styles, '--warning'),
     ok: cssVar(styles, '--ok'),

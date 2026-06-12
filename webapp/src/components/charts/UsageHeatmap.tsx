@@ -12,13 +12,16 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; className?: string }) {
   const t = useChartTokens();
   const option = useMemo(() => {
-    const data = cells.map((c) => [c.hour, c.dow, c.tokens]);
-    const max = Math.max(1, ...cells.map((c) => c.tokens));
+    // Token volume per hour is heavily skewed (one busy hour dwarfs the rest),
+    // which flattens a linear color scale. Drive the color by sqrt(tokens) for
+    // a perceptual spread, but keep the true count (index 3) for tooltip/legend.
+    const data = cells.map((c) => [c.hour, c.dow, Math.sqrt(c.tokens), c.tokens]);
+    const max = Math.sqrt(Math.max(1, ...cells.map((c) => c.tokens)));
     return {
       tooltip: {
         ...baseTooltip(t),
-        formatter: (p: { value: [number, number, number] }) =>
-          `${DAYS[p.value[1]]} ${String(p.value[0]).padStart(2, '0')}:00 — ${formatTokens(p.value[2])} tokens`,
+        formatter: (p: { value: [number, number, number, number] }) =>
+          `${DAYS[p.value[1]]} ${String(p.value[0]).padStart(2, '0')}:00 — ${formatTokens(p.value[3])} tokens`,
       },
       grid: { left: 40, right: 8, top: 8, bottom: 44 },
       xAxis: {
@@ -42,6 +45,10 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
         axisLabel: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily },
       },
       visualMap: {
+        // Map on the sqrt-scaled value (index 2), NOT the raw count we stash at
+        // index 3 for the tooltip — otherwise ECharts defaults to the last
+        // dimension and every active cell clamps to max (uniform color).
+        dimension: 2,
         min: 0,
         max,
         calculable: false,
@@ -50,11 +57,12 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
         bottom: 0,
         itemHeight: 80,
         textStyle: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily },
-        formatter: (v: number) => formatTokens(v),
-        // Faint-accent → accent ramp. Using --accent-muted (a low-alpha tint
-        // of the accent) keeps low cells readable in BOTH themes; the old
-        // --chart-grid floor rendered near-black on the light surface.
-        inRange: { color: [t.accentMuted, t.accent] },
+        // Legend maps the sqrt-scaled domain, so square the ticks back to the
+        // real token count.
+        formatter: (v: number) => formatTokens(v * v),
+        // Sequential ramp from design tokens — light→dark in light mode,
+        // dark→bright in dark mode, so intensity reads on either surface.
+        inRange: { color: t.heat },
       },
       series: [
         {

@@ -50,6 +50,12 @@
   --chart-6: #8e6ee0;
   --chart-grid: rgb(255 255 255 / 0.06);
   --chart-axis: #70707b;
+  /* Sequential heatmap ramp (low → high). Dark: dark → bright. */
+  --chart-heat-0: #1b1b2e;
+  --chart-heat-1: #2c2a55;
+  --chart-heat-2: #4a48a8;
+  --chart-heat-3: #6e79db;
+  --chart-heat-4: #aab4fc;
 
   /* Focus ring */
   --ring: #5e6ad2;
@@ -90,6 +96,12 @@
 
   --chart-grid: rgb(0 0 0 / 0.06);
   --chart-axis: #8e8e96;
+  /* Sequential heatmap ramp (low → high). Light: light → dark. */
+  --chart-heat-0: #eef2ff;
+  --chart-heat-1: #c7d2fe;
+  --chart-heat-2: #818cf8;
+  --chart-heat-3: #5b63d3;
+  --chart-heat-4: #3730a3;
 
   color-scheme: light;
 }
