@@ -12,6 +12,11 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind on all interfaces so the dev server is reachable when Runway runs
+    // on a remote/headless host (matches APP_HOST=0.0.0.0). Override the port
+    // with VITE_PORT if 5173 is taken.
+    host: true,
+    port: Number(process.env.VITE_PORT ?? 5173),
     proxy: {
       // Dev: Vite serves the SPA, FastAPI (make dev) serves the API. The
       // proxy originates from localhost so the server's localhost admin

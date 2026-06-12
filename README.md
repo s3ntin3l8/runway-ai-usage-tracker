@@ -62,11 +62,11 @@ make install
 # 2. Configure (add your API keys)
 cp .env.example .env
 
-# 3. Run server + local sidecar together (port 8765, Ctrl-C stops both)
+# 3. Run the full dev stack — server + Vite frontend + local sidecar (Ctrl-C stops all)
 make dev-all
 ```
 
-Access at `http://localhost:8765`. Use `make dev` if you only want the server (no cookie/local collectors).
+Access the dev UI at `http://localhost:5173` (Vite hot-reloads the frontend and proxies `/api` to the backend on :8765). Use `make dev` for the server only (no frontend, no cookie/local collectors), or `make run-all` to serve the production-built SPA from the backend at `http://localhost:8765`.
 
 > [!TIP]
 > Facing issues with cookie collection or setup? Check the [Troubleshooting Guide](docs/troubleshooting.md).
@@ -79,14 +79,15 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 |---------|-------------|
 | `make install` | Setup venv, install Python/Node dependencies, and wire up git hooks |
 | `make dev` | Start the development server with hot-reload (port 8765) |
-| `make dev-all` | Run the dev server and sidecar together (Ctrl-C stops both) |
-| `make run` | Start the production server |
+| `make dev-all` | Run the full dev stack — server + Vite frontend (:5173) + sidecar (Ctrl-C stops all) |
+| `make run` | Start the production server (serves the built SPA at :8765) |
+| `make run-all` | Build the SPA, then run the production server + sidecar (no hot reload) |
 | `make sidecar` | Run the sidecar agent script |
 | `make test` | Run the test suite (standard pytest; automatically ignores macOS-only cookie tests on Linux/WSL) |
 | `make test-cov` | Run tests with coverage report (`term-missing`) |
 | `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
 | `make format` | Automatically fix linting and formatting issues |
-| `make web` / `make web-dev` | Build the SPA (`webapp/dist`) / run the Vite dev server |
+| `make web` / `make web-dev` | Build the SPA for production (`webapp/dist`) / run the live Vite dev server on :5173 (HMR) |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make clean` | Remove virtual environments and build artifacts |
 
