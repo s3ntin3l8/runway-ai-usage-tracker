@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
+import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
 import { formatCost, formatTokens } from '@/lib/format';
@@ -64,24 +65,41 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
 
         <Card>
           <CardHeader>
-            <CardTitle>Activity by hour (14 days)</CardTitle>
-            {heatmap.data ? (
-              <span className="text-[11px] text-fg-subtle">{heatmap.data.tz}</span>
-            ) : null}
+            <CardTitle>Tokens by model (month)</CardTitle>
           </CardHeader>
           <CardContent>
-            {heatmap.isPending ? (
+            {cumulative.isPending ? (
               <Skeleton className="h-56 w-full" />
-            ) : heatmap.data && heatmap.data.cells.some((c) => c.tokens > 0) ? (
-              <UsageHeatmap cells={heatmap.data.cells} />
+            ) : monthBucket?.by_model && Object.keys(monthBucket.by_model).length > 0 ? (
+              <ModelDonut byModel={monthBucket.by_model} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">
-                No event activity in the last 14 days.
+                No per-model usage this month.
               </p>
             )}
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Activity by hour (14 days)</CardTitle>
+          {heatmap.data ? (
+            <span className="text-[11px] text-fg-subtle">{heatmap.data.tz}</span>
+          ) : null}
+        </CardHeader>
+        <CardContent>
+          {heatmap.isPending ? (
+            <Skeleton className="h-56 w-full" />
+          ) : heatmap.data && heatmap.data.cells.some((c) => c.tokens > 0) ? (
+            <UsageHeatmap cells={heatmap.data.cells} />
+          ) : (
+            <p className="py-8 text-center text-xs text-fg-subtle">
+              No event activity in the last 14 days.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
