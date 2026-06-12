@@ -56,10 +56,46 @@ export function statusForPct(pct: number | null | undefined): QuotaStatus {
   return 'ok';
 }
 
-// Card → semantic status token. Error cards and unlimited cards take
-// precedence over the percentage thresholds.
+// Effective percentage: pct_used when the collector provided one, otherwise
+// derived from used/limit (many quota cards ship only the raw pair).
+export function cardPct(card: LimitCard): number | null {
+  if (card.pct_used !== null && card.pct_used !== undefined) return card.pct_used;
+  if (
+    card.used_value !== null &&
+    card.used_value !== undefined &&
+    card.limit_value !== null &&
+    card.limit_value !== undefined &&
+    card.limit_value > 0
+  ) {
+    return (card.used_value / card.limit_value) * 100;
+  }
+  return null;
+}
+
+// Card → semantic status token. Precedence: error cards > unlimited >
+// collector-asserted health > percentage thresholds.
 export function cardStatus(card: LimitCard): QuotaStatus {
   if (card.error_type) return 'critical';
   if (card.is_unlimited) return 'unlimited';
-  return statusForPct(card.pct_used);
+  if (card.health === 'critical') return 'critical';
+  if (card.health === 'warning') return 'warning';
+  return statusForPct(cardPct(card));
+}
+
+// "weekly" → "Weekly", "session" → "Session"; null for unknown windows.
+export function windowLabel(card: LimitCard): string | null {
+  const w = card.window_type;
+  if (!w || w === 'unknown') return null;
+  return w.charAt(0).toUpperCase() + w.slice(1);
+}
+
+// Label for a secondary-limit chip. Falls back to the window when the
+// service name would just repeat its siblings (Claude weekly vs Claude
+// session both render "Claude" otherwise).
+export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
+  const name = card.service_name || card.model_id || '';
+  const duplicated = siblings.filter((s) => (s.service_name || s.model_id) === name).length > 1;
+  const win = windowLabel(card);
+  const base = duplicated && win ? win : name || win || '?';
+  return card.variant ? `${base} ${card.variant}` : base;
 }

@@ -9,6 +9,7 @@ import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { formatPct } from '@/lib/format';
+import { cardPct, windowLabel } from '@/lib/quota';
 import { forecastLabel, type RiskItem } from './risk';
 
 interface AtRiskRailProps {
@@ -76,11 +77,14 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
       </div>
       <div className="mt-4 flex items-baseline justify-between gap-2">
         <span className="font-mono text-2xl font-semibold tabular">
-          {formatPct(gauge.pct_used)}
+          {formatPct(cardPct(gauge))}
         </span>
-        <span className="truncate text-[11px] text-fg-muted">{gauge.service_name}</span>
+        <span className="truncate text-[11px] text-fg-muted">
+          {gauge.service_name}
+          {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ''}
+        </span>
       </div>
-      <Gauge pct={gauge.pct_used} status={status} size="lg" className="mt-2" />
+      <Gauge pct={cardPct(gauge)} status={status} size="lg" className="mt-2" />
       <div className="mt-2 flex items-center justify-between">
         <Countdown until={gauge.reset_at} />
         {gauge.error_type ? (

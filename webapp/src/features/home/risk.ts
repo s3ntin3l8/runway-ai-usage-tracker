@@ -6,7 +6,7 @@
 // exhaustion before the window resets.
 
 import type { FleetEntry, ForecastEntry, ForecastStatus } from '@/api/types';
-import { cardStatus, type QuotaStatus } from '@/lib/quota';
+import { cardPct, cardStatus, type QuotaStatus } from '@/lib/quota';
 
 export type RiskLevel = 'critical' | 'warning' | 'ok';
 
@@ -55,7 +55,7 @@ export function buildRiskItems(fleet: FleetEntry[], forecasts: ForecastEntry[]):
     const forecastLevel = forecast ? (FORECAST_SEVERITY[forecast.status] ?? 'ok') : 'ok';
     if (LEVEL_RANK[forecastLevel] > LEVEL_RANK[level]) level = forecastLevel;
 
-    const pct = entry.critical_gauge.pct_used ?? 0;
+    const pct = cardPct(entry.critical_gauge) ?? 0;
     const projected = forecast?.projected_pct ?? 0;
     return {
       key: `${entry.provider_id}:${entry.account_id}`,

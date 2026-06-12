@@ -28,7 +28,7 @@ import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { formatPct, timeAgo } from '@/lib/format';
-import { cardStatus } from '@/lib/quota';
+import { cardPct, cardStatus, chipLabel, windowLabel } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
 
@@ -94,7 +94,7 @@ function SortableProviderCard({
       {...listeners}
       role="button"
       tabIndex={0}
-      aria-label={`${name}, ${formatPct(gauge.pct_used)} used`}
+      aria-label={`${name}, ${formatPct(cardPct(gauge))} used`}
       onClick={() => {
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
       }}
@@ -113,16 +113,21 @@ function SortableProviderCard({
         <StatusDot status={status} pulse={status === 'critical'} />
       </div>
       <div className="mt-3 flex items-baseline justify-between gap-2">
-        <span className="font-mono text-lg font-semibold tabular">{formatPct(gauge.pct_used)}</span>
-        <span className="truncate text-[11px] text-fg-subtle">{gauge.service_name}</span>
+        <span className="font-mono text-lg font-semibold tabular">
+          {formatPct(cardPct(gauge))}
+        </span>
+        <span className="truncate text-[11px] text-fg-subtle">
+          {gauge.service_name}
+          {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ''}
+        </span>
       </div>
-      <Gauge pct={gauge.pct_used} status={status} className="mt-1.5" />
+      <Gauge pct={cardPct(gauge)} status={status} className="mt-1.5" />
       {secondaries.length > 0 ? (
         <div className="mt-2.5 flex flex-wrap gap-1">
           {secondaries.map((card, i) => (
             <Badge key={`${card.service_name}-${i}`} variant={cardStatus(card)}>
-              {card.service_name}
-              {card.pct_used != null ? ` ${Math.round(card.pct_used)}%` : ''}
+              {chipLabel(card, entry.secondary_limits)}
+              {cardPct(card) != null ? ` ${Math.round(cardPct(card)!)}%` : ''}
             </Badge>
           ))}
           {overflow > 0 ? <Badge variant="neutral">+{overflow}</Badge> : null}

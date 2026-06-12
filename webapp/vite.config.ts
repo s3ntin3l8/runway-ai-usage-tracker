@@ -15,8 +15,9 @@ export default defineConfig({
     proxy: {
       // Dev: Vite serves the SPA, FastAPI (make dev) serves the API. The
       // proxy originates from localhost so the server's localhost admin
-      // bypass applies — no key setup needed in dev.
-      '/api': 'http://127.0.0.1:8765',
+      // bypass applies — no key setup needed in dev. Override the target
+      // with RUNWAY_API_URL when the backend runs elsewhere.
+      '/api': process.env.RUNWAY_API_URL ?? 'http://127.0.0.1:8765',
     },
   },
   build: {
