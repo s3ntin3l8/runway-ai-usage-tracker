@@ -102,7 +102,7 @@ export function SettingsPage() {
             {SECTIONS.map((s) => (
               <NavLink
                 key={s.slug}
-                to={s.slug}
+                to={`/settings/${s.slug}`}
                 className={({ isActive }) =>
                   cn(
                     'flex min-h-11 items-center gap-3 rounded-sm px-2.5 py-2 transition-colors duration-150',
@@ -129,7 +129,7 @@ export function SettingsPage() {
           <Routes>
             <Route
               index
-              element={isDesktop ? <Navigate to="providers" replace /> : <span />}
+              element={isDesktop ? <Navigate to="/settings/providers" replace /> : <span />}
             />
             {SECTIONS.map((s) => (
               <Route
@@ -138,7 +138,7 @@ export function SettingsPage() {
                 element={<div className="p-4 lg:p-8">{s.element}</div>}
               />
             ))}
-            <Route path="*" element={<Navigate to="." replace />} />
+            <Route path="*" element={<Navigate to="/settings" replace />} />
           </Routes>
         </div>
       </div>
