@@ -1,6 +1,6 @@
 import { cn } from '@/lib/cn';
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+export function Card({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn('rounded-md border border-edge bg-surface-1', className)}

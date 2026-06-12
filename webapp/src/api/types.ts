@@ -137,8 +137,23 @@ export interface ForecastResponse {
   summary?: Record<string, number>;
 }
 
+export interface CostForecastByProvider {
+  provider_id: string;
+  account_id: string;
+  current_month_to_date: number;
+  daily_burn_avg_7d: number;
+  projected_eom: number;
+}
+
 export interface CostForecastResponse {
-  [key: string]: unknown;
+  as_of: string;
+  current_month_to_date: number;
+  daily_burn_avg_7d: number;
+  projected_eom: number;
+  days_in_month: number;
+  day_of_month: number;
+  days_remaining: number;
+  by_provider: CostForecastByProvider[];
 }
 
 export interface HeatmapCell {
@@ -167,9 +182,22 @@ export interface UsageEvent {
 }
 
 export interface AnomalyEntry {
-  provider_id?: string;
-  account_id?: string;
-  [key: string]: unknown;
+  provider_id: string;
+  account_id: string;
+  model_id: string;
+  today_tokens: number;
+  today_cost_usd: number;
+  historical_mean_tokens: number;
+  historical_stddev_tokens: number;
+  z_score_tokens: number;
+  verdict: string;
+}
+
+export interface AnomaliesResponse {
+  as_of: string;
+  lookback_days: number;
+  z_threshold: number;
+  anomalies: AnomalyEntry[];
 }
 
 export interface HistoryWindow {
@@ -266,10 +294,18 @@ export interface Webhook {
   last_fired_at?: string | null;
 }
 
+export type TokenHealthStatus = 'valid' | 'expiring' | 'expired' | 'unknown' | string;
+
 export interface TokenHealthEntry {
-  provider?: string;
-  account_id?: string;
-  [key: string]: unknown;
+  provider: string;
+  account_id: string;
+  account_label?: string | null;
+  source?: string | null;
+  token_types?: string[];
+  status: TokenHealthStatus;
+  expires_at?: string | null;
+  ttl_remaining_seconds?: number;
+  can_refresh?: boolean;
 }
 
 export interface AuditEntry {

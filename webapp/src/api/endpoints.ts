@@ -3,7 +3,7 @@
 
 import { api, qs } from './client';
 import type {
-  AnomalyEntry,
+  AnomaliesResponse,
   AppConfig,
   AuditEntry,
   CollectorStatus,
@@ -54,7 +54,7 @@ export const fetchEvents = (params: Params) =>
   );
 
 export const fetchAnomalies = (params: Params = {}) =>
-  api<{ anomalies: AnomalyEntry[] }>(`/api/v1/usage/anomalies${qs(params)}`);
+  api<AnomaliesResponse>(`/api/v1/usage/anomalies${qs(params)}`);
 
 export const fetchHistoryChart = (params: Params) =>
   api<Record<string, unknown>>(`/api/v1/usage/history/chart${qs(params)}`);
