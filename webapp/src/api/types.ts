@@ -245,6 +245,66 @@ export interface HistoryWindow {
   [key: string]: unknown;
 }
 
+// /usage/history/chart — metric=percent returns line series, tokens/cost
+// return stacked time buckets.
+export interface ChartSeriesPoint {
+  ts: string;
+  pct_used: number | null;
+}
+
+export interface ChartSeries {
+  key: string;
+  provider_id: string;
+  window_type: string;
+  model_id: string;
+  label: string;
+  color_hint?: string;
+  points: ChartSeriesPoint[];
+}
+
+export interface ChartBarSegment {
+  provider_id: string;
+  model_id: string;
+  label: string;
+  value: number;
+  value_cache?: number;
+}
+
+export interface ChartBar {
+  date: string;
+  ts: string;
+  segments: ChartBarSegment[];
+}
+
+export interface HistoryChartResponse {
+  series?: ChartSeries[];
+  bars?: ChartBar[];
+}
+
+// /usage/history/windows — flat per-window rows (open + closed).
+export interface HistoryWindowRow {
+  provider_id: string;
+  account_id: string;
+  account_label?: string | null;
+  service_name?: string;
+  window_type?: string;
+  window_start?: string | null;
+  window_end?: string | null;
+  is_open?: boolean;
+  pct_used?: number | null;
+  limit_value?: number | null;
+  unit_type?: string | null;
+  tokens_total?: number | null;
+  cost_usd?: number | null;
+  msgs?: number | null;
+  top_model?: string | null;
+}
+
+export interface WindowDetailResponse {
+  fill_series: ChartSeriesPoint[];
+  fill_by_model: { model_id: string; series: ChartSeriesPoint[] }[];
+}
+
 export interface HistoryDeltas {
   token_delta_total?: number;
   cost_delta_total?: number;

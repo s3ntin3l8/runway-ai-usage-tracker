@@ -13,8 +13,10 @@ import type {
   FleetResponse,
   ForecastResponse,
   HeatmapResponse,
+  HistoryChartResponse,
   HistoryDeltas,
   HistoryWindow,
+  HistoryWindowRow,
   LimitCard,
   ProviderConfig,
   SessionEntry,
@@ -23,6 +25,7 @@ import type {
   TokenHealthEntry,
   UsageEvent,
   Webhook,
+  WindowDetailResponse,
 } from './types';
 
 type Params = Record<string, string | number | boolean | null | undefined>;
@@ -57,16 +60,16 @@ export const fetchAnomalies = (params: Params = {}) =>
   api<AnomaliesResponse>(`/api/v1/usage/anomalies${qs(params)}`);
 
 export const fetchHistoryChart = (params: Params) =>
-  api<Record<string, unknown>>(`/api/v1/usage/history/chart${qs(params)}`);
+  api<HistoryChartResponse>(`/api/v1/usage/history/chart${qs(params)}`);
 
 export const fetchHistoryWindows = (params: Params = {}) =>
-  api<{ windows: HistoryWindow[] }>(`/api/v1/usage/history/windows${qs(params)}`);
+  api<{ windows: HistoryWindowRow[] }>(`/api/v1/usage/history/windows${qs(params)}`);
 
 export const fetchHistorySnapshots = (params: Params = {}) =>
   api<Record<string, unknown>>(`/api/v1/usage/history/snapshots${qs(params)}`);
 
 export const fetchHistoryWindowDetail = (params: Params) =>
-  api<Record<string, unknown>>(`/api/v1/usage/history/window-detail${qs(params)}`);
+  api<WindowDetailResponse>(`/api/v1/usage/history/window-detail${qs(params)}`);
 
 export const fetchHistoryDeltas = (params: Params = {}) =>
   api<HistoryDeltas>(`/api/v1/usage/history/deltas${qs(params)}`);
