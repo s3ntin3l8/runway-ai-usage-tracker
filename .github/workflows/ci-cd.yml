@@ -22,7 +22,9 @@ jobs:
     uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@main
     with:
       node-version: '22'
-      build-script: 'build:css'
+      working-directory: 'webapp'
+      cache-dependency-path: 'webapp/package-lock.json'
+      build-script: 'build'
 
   build-docker:
     needs: [test-python, test-frontend]

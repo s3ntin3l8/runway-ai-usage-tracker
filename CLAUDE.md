@@ -15,12 +15,12 @@ A `Makefile` wraps all common tasks — run `make help` for the full list. Key t
 - **Tests**: `make test` (ignores `test_browser_cookies.py` — macOS-only crypto, fails on Linux/WSL). `make test-cov` for coverage.
 - **Single test**: `pytest tests/path/to/test_file.py`
 - **Lint**: `make lint` (ruff + mypy + pip-audit). `make format` to auto-fix.
-- **CSS**: `make css` (one-shot) / `make watch` (rebuild Tailwind on change).
+- **Frontend**: `make web` (build the SPA into `webapp/dist` — what the server serves), `make web-dev` (Vite dev server on :5173, proxies `/api` to :8765; override target via `RUNWAY_API_URL`), `make web-test` (vitest).
 - **Sidecar**: `make sidecar` (sources `.env` so `RUNWAY_CONFIG_DIR` + `INGEST_API_KEY` align with the dev server).
 - **Secrets**: `make secrets` (gates — fails on any unbaselined credential in a tracked file; same check as CI). `make secrets-baseline` regenerates the baseline after vetting new detections.
 
 ## Schema Fields
-When adding new card fields, update both `LimitCard` in `app/models/schemas.py` and the README.md TypeScript interface. Token breakdown fields:
+When adding new card fields, update `LimitCard` in `app/models/schemas.py`, the mirror in `webapp/src/api/types.ts`, and the README.md TypeScript interface. Token breakdown fields:
 - `token_usage`: dict with input/output/reasoning/cache_read/total
 - `by_model`: dict with per-model cost/msgs/tokens
 - `msgs`: int
@@ -63,7 +63,7 @@ Three workflows live in `.github/workflows/`:
 - **`ci-cd.yml`** — runs on push/PR to `main` and version tags (`v*`):
   - **lint-python**: ruff, mypy, detect-secrets, pip-audit
   - **lint-docker**: hadolint
-  - **frontend-check**: Tailwind CSS build
+  - **frontend-check**: webapp typecheck + Vite build + vitest (reusable ci-node workflow, working-directory `webapp/`)
   - **test**: pytest with coverage uploaded to Codecov
   - **build-and-push**: Docker image to GHCR (tags only)
 - **`release-please.yml`** — opens / merges release PRs from Conventional Commits (see *Releases* below).
@@ -80,7 +80,7 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 
 ## Code Style & Patterns
 - **Backend**: Python 3.12+, FastAPI, Pydantic v2, `httpx` (async).
-- **Frontend**: Vanilla CSS (aviation HUD) + Tailwind CSS v4.
+- **Frontend**: React 19 + TypeScript SPA in `webapp/` (Vite, Tailwind CSS v4, TanStack Query, Radix primitives, ECharts). Dark-first semantic tokens live in `webapp/src/styles/tokens.css` — components use token utilities (`bg-surface-1`, `text-fg-muted`), never raw hex.
 - **Async Required**: Everything from endpoints to collectors MUST be `async`.
 - **Typing**: Explicit type hints on all API responses and internal models.
 - **Error Handling**: Graceful degradation — return "Error Card" states instead of crashing.

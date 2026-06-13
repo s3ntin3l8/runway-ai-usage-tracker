@@ -1,0 +1,107 @@
+/*
+ * Runway UI v2 — semantic design tokens.
+ * Dark is the primary theme (:root); light overrides via [data-theme="light"].
+ * Components never use raw hex — only these variables (exposed as Tailwind
+ * utilities through @theme inline in index.css).
+ */
+
+:root {
+  /* Surfaces (page → card → raised → overlay) */
+  --canvas: #0a0a0b;
+  --surface-1: #111113;
+  --surface-2: #18181b;
+  --surface-3: #1f1f23;
+  --overlay: #18181b;
+  --scrim: rgb(0 0 0 / 0.6);
+
+  /* Hairlines */
+  --edge: rgb(255 255 255 / 0.08);
+  --edge-strong: rgb(255 255 255 / 0.16);
+
+  /* Text */
+  --fg: #f7f8f8;
+  --fg-muted: #a1a1aa;
+  --fg-subtle: #70707b;
+
+  /* Accent (single, restrained indigo) */
+  --accent: #5e6ad2;
+  --accent-fg: #ffffff;
+  --accent-muted: rgb(94 106 210 / 0.16);
+  --accent-hover: #6e79db;
+
+  /* Quota status semantics (from utils/quota health buckets) */
+  --critical: #f0524f;
+  --critical-muted: rgb(240 82 79 / 0.14);
+  --warning: #e8a33d;
+  --warning-muted: rgb(232 163 61 / 0.14);
+  --ok: #4cb782;
+  --ok-muted: rgb(76 183 130 / 0.13);
+  --unlimited: #4ea7fc;
+  --unlimited-muted: rgb(78 167 252 / 0.13);
+  --unknown: #8b8b93;
+  --unknown-muted: rgb(139 139 147 / 0.13);
+
+  /* Charts */
+  --chart-1: #5e6ad2;
+  --chart-2: #4ea7fc;
+  --chart-3: #4cb782;
+  --chart-4: #e8a33d;
+  --chart-5: #d75fa1;
+  --chart-6: #8e6ee0;
+  --chart-grid: rgb(255 255 255 / 0.06);
+  --chart-axis: #70707b;
+  /* Sequential heatmap ramp (low → high). Dark: dark → bright. */
+  --chart-heat-0: #1b1b2e;
+  --chart-heat-1: #2c2a55;
+  --chart-heat-2: #4a48a8;
+  --chart-heat-3: #6e79db;
+  --chart-heat-4: #aab4fc;
+
+  /* Focus ring */
+  --ring: #5e6ad2;
+
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --canvas: #fafafa;
+  --surface-1: #ffffff;
+  --surface-2: #f4f4f5;
+  --surface-3: #e9e9eb;
+  --overlay: #ffffff;
+  --scrim: rgb(0 0 0 / 0.4);
+
+  --edge: rgb(0 0 0 / 0.08);
+  --edge-strong: rgb(0 0 0 / 0.16);
+
+  --fg: #18181b;
+  --fg-muted: #52525b;
+  --fg-subtle: #8e8e96;
+
+  --accent: #5e6ad2;
+  --accent-fg: #ffffff;
+  --accent-muted: rgb(94 106 210 / 0.12);
+  --accent-hover: #4f5bc4;
+
+  --critical: #d8302d;
+  --critical-muted: rgb(216 48 45 / 0.1);
+  --warning: #b97a10;
+  --warning-muted: rgb(185 122 16 / 0.12);
+  --ok: #21845a;
+  --ok-muted: rgb(33 132 90 / 0.1);
+  --unlimited: #1771c7;
+  --unlimited-muted: rgb(23 113 199 / 0.1);
+  --unknown: #6e6e76;
+  --unknown-muted: rgb(110 110 118 / 0.1);
+
+  --chart-grid: rgb(0 0 0 / 0.06);
+  --chart-axis: #8e8e96;
+  /* Sequential heatmap ramp (low → high). Light: light → dark. */
+  --chart-heat-0: #eef2ff;
+  --chart-heat-1: #c7d2fe;
+  --chart-heat-2: #818cf8;
+  --chart-heat-3: #5b63d3;
+  --chart-heat-4: #3730a3;
+
+  color-scheme: light;
+}

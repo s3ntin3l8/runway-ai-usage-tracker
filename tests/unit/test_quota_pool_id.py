@@ -1,6 +1,6 @@
 """Schema + clustering signal for quota_pool_id.
 
-The dashboard's frontend pool aggregator (frontend/js/utils/quota.js) clusters
+The dashboard's frontend pool aggregator (webapp/src/lib/quota.ts) clusters
 cards by exact `quota_pool_id` equality. These tests pin the field's schema
 defaults (so we don't accidentally regress to behavioral clustering) and
 verify that the Antigravity sidecar emitters populate it.

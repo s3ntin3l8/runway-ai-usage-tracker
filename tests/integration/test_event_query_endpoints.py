@@ -197,6 +197,30 @@ class TestEventsEndpoint:
         assert len(data["events"]) == 3
         assert data["limit"] == 3
 
+    def test_events_offset_pagination(self, session):
+        # 10 events, newest-first by ts. Page through them 3 at a time and
+        # confirm offset slides the window while total stays the full count.
+        now = datetime.now(UTC)
+        for i in range(10):
+            session.add(_event(event_id=f"msg_{i:02d}", ts=now - timedelta(seconds=i)))
+        session.commit()
+
+        base = {"provider_id": "anthropic", "account_id": "user@example.com", "limit": 3}
+
+        page0 = _client().get("/api/v1/usage/events", params={**base, "offset": 0}).json()
+        page1 = _client().get("/api/v1/usage/events", params={**base, "offset": 3}).json()
+
+        # total is the full filtered count regardless of the page size...
+        assert page0["total"] == 10
+        assert page1["total"] == 10
+        assert page0["offset"] == 0
+        assert page1["offset"] == 3
+        # ...and the two pages are disjoint, contiguous slices of the desc order.
+        ids0 = [e["event_id"] for e in page0["events"]]
+        ids1 = [e["event_id"] for e in page1["events"]]
+        assert ids0 == ["msg_00", "msg_01", "msg_02"]
+        assert ids1 == ["msg_03", "msg_04", "msg_05"]
+
     def test_events_filters_by_model_and_sidecar(self, session):
         now = datetime.now(UTC)
         session.add(_event(event_id="s1", model_id="sonnet", sidecar_id="dev-01", ts=now))

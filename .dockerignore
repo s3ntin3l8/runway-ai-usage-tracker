@@ -63,7 +63,9 @@ htmlcov/
 
 # --- FRONTEND ---
 node_modules/
-# frontend/css/styles.css is already built in the context
+webapp/node_modules/
+webapp/dist/
+webapp/e2e/shots/
 
 # --- IDE & TOOLS ---
 .vscode/

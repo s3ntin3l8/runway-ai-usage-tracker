@@ -1,0 +1,236 @@
+// System: global app config (timezone, default poll interval, browser
+// preference) and the maintenance actions (force-collect, wake, cleanup).
+
+import { useEffect, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { forceCollect, postCleanup, postWake, putAppConfig } from '@/api/endpoints';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { HelperText, Input, Label } from '@/components/ui/Input';
+import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/Select';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { Switch } from '@/components/ui/Switch';
+import { useQuery } from '@tanstack/react-query';
+import { fetchAppConfig } from '@/api/endpoints';
+import { setTzConfig } from '@/lib/tz';
+
+export function SystemSection() {
+  const queryClient = useQueryClient();
+  const appConfig = useQuery({ queryKey: ['system', 'app-config'], queryFn: fetchAppConfig });
+
+  const [timezone, setTimezone] = useState('');
+  const [pollInterval, setPollInterval] = useState('');
+  const [browserPref, setBrowserPref] = useState('');
+  const [channel, setChannel] = useState<'stable' | 'edge'>('stable');
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+
+  useEffect(() => {
+    if (!appConfig.data) return;
+    setTimezone(appConfig.data.user_timezone ?? '');
+    setPollInterval(
+      appConfig.data.default_poll_interval_seconds != null
+        ? String(appConfig.data.default_poll_interval_seconds)
+        : '',
+    );
+    setBrowserPref(appConfig.data.browser_preference ?? '');
+    setChannel(appConfig.data.sidecar_update_channel === 'edge' ? 'edge' : 'stable');
+  }, [appConfig.data]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      putAppConfig({
+        user_timezone: timezone.trim() || null,
+        default_poll_interval_seconds:
+          pollInterval.trim() === '' ? undefined : Number(pollInterval),
+        browser_preference: browserPref.trim() || null,
+        sidecar_update_channel: channel,
+      }),
+    onSuccess: () => {
+      toast.success('System settings saved');
+      setTzConfig({ user_timezone: timezone.trim() || null });
+      queryClient.invalidateQueries({ queryKey: ['system', 'app-config'] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const collect = useMutation({
+    mutationFn: forceCollect,
+    onSuccess: (r) =>
+      toast.success(`Collection triggered — ${r.cards} cards, ${r.sidecars_triggered} sidecars`),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const wake = useMutation({
+    mutationFn: postWake,
+    onSuccess: () => toast.success('Poller woken'),
+  });
+
+  if (appConfig.isPending) return <Skeleton className="h-64 max-w-2xl" />;
+
+  return (
+    <div className="flex max-w-2xl flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Configuration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              save.mutate();
+            }}
+            className="flex flex-col gap-4"
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="sys-tz">Timezone (IANA)</Label>
+                <Input
+                  id="sys-tz"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  placeholder={appConfig.data?.env_timezone || 'auto-detect'}
+                />
+                <HelperText>
+                  Drives "this month" buckets, heatmaps and chart labels. Empty = TZ env var, then
+                  browser.
+                </HelperText>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="sys-poll">Default poll interval (s)</Label>
+                <Input
+                  id="sys-poll"
+                  type="number"
+                  inputMode="numeric"
+                  min={30}
+                  value={pollInterval}
+                  onChange={(e) => setPollInterval(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sys-browser">Browser preference</Label>
+              <Input
+                id="sys-browser"
+                value={browserPref}
+                onChange={(e) => setBrowserPref(e.target.value)}
+                placeholder="e.g. firefox, chrome (cookie extraction)"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sys-channel">Sidecar update channel</Label>
+              <Select value={channel} onValueChange={(v) => setChannel(v as 'stable' | 'edge')}>
+                <SelectTrigger id="sys-channel" className="w-full sm:max-w-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stable">Stable</SelectItem>
+                  <SelectItem value="edge">Edge (rolling prerelease)</SelectItem>
+                </SelectContent>
+              </Select>
+              <HelperText>
+                Which release sidecars compare against for the "update available" check. Edge tracks
+                the rolling prerelease build.
+              </HelperText>
+            </div>
+            <Button type="submit" variant="primary" className="self-start" loading={save.isPending}>
+              Save
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Maintenance</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button onClick={() => collect.mutate()} loading={collect.isPending}>
+            Force collect
+          </Button>
+          <Button onClick={() => wake.mutate()} loading={wake.isPending}>
+            Wake poller
+          </Button>
+          <Button variant="danger-ghost" onClick={() => setCleanupOpen(true)}>
+            Database cleanup…
+          </Button>
+        </CardContent>
+      </Card>
+
+      <CleanupDialog open={cleanupOpen} onOpenChange={setCleanupOpen} />
+    </div>
+  );
+}
+
+function CleanupDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const [clearCache, setClearCache] = useState(true);
+  const [pruneSnapshots, setPruneSnapshots] = useState('');
+  const [removeSidecars, setRemoveSidecars] = useState('');
+
+  const run = useMutation({
+    mutationFn: () =>
+      postCleanup({
+        clear_cache: clearCache,
+        prune_snapshots_days: pruneSnapshots.trim() === '' ? null : Number(pruneSnapshots),
+        remove_inactive_sidecars_days: removeSidecars.trim() === '' ? null : Number(removeSidecars),
+      }),
+    onSuccess: (r) => {
+      toast.success(`Cleanup done: ${JSON.stringify(r.results)}`);
+      onOpenChange(false);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Database cleanup"
+      description="Destructive — pruned rows are gone. Leave a field empty to skip that step."
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <Label htmlFor="cl-cache">Clear collector cache</Label>
+          <Switch id="cl-cache" checked={clearCache} onCheckedChange={setClearCache} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="cl-snap">Prune snapshots older than (days)</Label>
+          <Input
+            id="cl-snap"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            value={pruneSnapshots}
+            onChange={(e) => setPruneSnapshots(e.target.value)}
+            placeholder="skip"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="cl-side">Remove sidecars inactive for (days)</Label>
+          <Input
+            id="cl-side"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            value={removeSidecars}
+            onChange={(e) => setRemoveSidecars(e.target.value)}
+            placeholder="skip"
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="danger" onClick={() => run.mutate()} loading={run.isPending}>
+            Run cleanup
+          </Button>
+        </div>
+      </div>
+    </ResponsiveDialog>
+  );
+}

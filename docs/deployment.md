@@ -28,13 +28,15 @@ For local development and single-machine setups:
 ```bash
 make install                # venv, deps, git hooks
 cp .env.example .env        # add API keys
-make dev-all                # server + local sidecar, hot reload, Ctrl-C stops both
+make dev-all                # server + Vite frontend (:5173) + local sidecar, hot reload, Ctrl-C stops all
 ```
 
-For production-style runs (no hot reload, no sidecar autostart):
+For production-style runs (no hot reload — server serves the built SPA at :8765):
 
 ```bash
-make run                    # server only
+make run-all                # build SPA, then server + sidecar in one command
+# or run the pieces separately:
+make run                    # server only (serves webapp/dist)
 make sidecar                # in a second shell, or run via a process manager
 ```
 
@@ -130,7 +132,7 @@ Runs alongside a Python server during development, or alongside a Dockerised ser
 make sidecar
 ```
 
-`make sidecar` sources `.env`, so `RUNWAY_CONFIG_DIR` and `INGEST_API_KEY` automatically align with the local server. `make dev-all` does this in one command (server + sidecar in parallel, Ctrl-C stops both).
+`make sidecar` sources `.env`, so `RUNWAY_CONFIG_DIR` and `INGEST_API_KEY` automatically align with the local server. `make dev-all` does this in one command (server + Vite frontend + sidecar in parallel, Ctrl-C stops all); `make run-all` is the production-build equivalent (built SPA served by the server + sidecar).
 
 ### Remote hosts
 
