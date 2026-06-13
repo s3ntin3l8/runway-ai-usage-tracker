@@ -6,10 +6,13 @@ PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 
-.PHONY: help install install-hooks dev dev-all run sidecar test test-cov lint format css watch secrets secrets-baseline clean
+# Source .env (if present) into the recipe shell, exporting every var.
+LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
+
+.PHONY: help install install-hooks dev dev-all run run-all sidecar test test-cov lint format web web-dev web-test secrets secrets-baseline clean
 
 help:
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 install-hooks: ## Install pre-commit hooks for commit and push stages
 	$(VENV)/bin/pre-commit install
@@ -19,22 +22,25 @@ install: install-hooks ## Set up venv, install Python and Node dependencies
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements-dev.txt
-	npm ci
+	npm --prefix webapp ci
 
 dev: ## Run development server (hot reload, port 8765)
-	set -a; [ -f .env ] && . ./.env; set +a; \
+	$(LOAD_ENV); \
 	$(VENV)/bin/uvicorn app.main:app --reload \
 	  --host "$${APP_HOST:-127.0.0.1}" \
 	  --port "$${APP_PORT:-8765}"
 
-dev-all: ## Run dev server and sidecar together (Ctrl-C stops both)
-	$(MAKE) -j2 dev sidecar
+dev-all: ## Run the full dev stack — server + Vite frontend (:5173) + sidecar (Ctrl-C stops all)
+	$(MAKE) -j3 dev web-dev sidecar
 
-run: ## Run production server
+run: ## Run production server (serves the built SPA from webapp/dist at :8765)
 	$(PYTHON) -m app.main
 
+run-all: web ## Build the SPA, then run the production server + sidecar (no hot reload)
+	$(MAKE) -j2 run sidecar
+
 sidecar: ## Run the sidecar agent (sources .env so RUNWAY_CONFIG_DIR + INGEST_API_KEY align with the dev server)
-	set -a; [ -f .env ] && . ./.env; set +a; \
+	$(LOAD_ENV); \
 	$(PYTHON) scripts/sidecar.py
 
 test: ## Run test suite (matches CI)
@@ -52,11 +58,15 @@ format: ## Auto-fix ruff lint and formatting issues
 	$(RUFF) check --fix .
 	$(RUFF) format .
 
-css: ## Build Tailwind CSS (one-shot)
-	npm run build:css
+web: ## Build the SPA for production into webapp/dist (served by `make run`/`make run-all` at :8765)
+	npm --prefix webapp run build
 
-watch: ## Watch and rebuild Tailwind CSS on change
-	npm run watch:css
+web-dev: ## Live Vite dev server on :5173 with HMR (sources .env so RUNWAY_API_URL/VITE_PORT apply)
+	$(LOAD_ENV); \
+	npm --prefix webapp run dev
+
+web-test: ## Run frontend unit tests (vitest)
+	npm --prefix webapp test
 
 secrets: ## Gate: fail if any tracked file has a secret not in the baseline (matches CI)
 	git ls-files -z | xargs -0 $(VENV)/bin/detect-secrets-hook --baseline .secrets.baseline
@@ -65,4 +75,4 @@ secrets-baseline: ## Regenerate/update .secrets.baseline (run after vetting new 
 	$(VENV)/bin/detect-secrets scan --baseline .secrets.baseline
 
 clean: ## Remove venv, caches, and build artifacts
-	rm -rf $(VENV) .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml node_modules
+	rm -rf $(VENV) .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml node_modules webapp/node_modules webapp/dist

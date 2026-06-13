@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Runway</title>
+    <script type="module">
+      // Apply the persisted theme before first paint to avoid a flash.
+      // Bundled by Vite (no inline script in the final HTML would be ideal,
+      // but Vite inlines module scripts < threshold as external assets — this
+      // stays a separate hashed file, satisfying script-src 'self').
+      const stored = localStorage.getItem('runway_theme');
+      const system = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      const theme = stored === 'light' || stored === 'dark' ? stored : system;
+      document.documentElement.dataset.theme = theme;
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

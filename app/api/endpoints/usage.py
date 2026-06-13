@@ -27,7 +27,7 @@ from app.services.event_query import (
     query_windows,
 )
 from app.services.forecast import compute_all_forecasts
-from app.services.queries import query_cumulative_live
+from app.services.queries import count_events, query_cumulative_live
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
@@ -628,15 +628,18 @@ async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; c
     sidecar_id: str | None = Query(default=None),
     kind: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     order: str = Query(default="desc"),
     include_raw: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Recent event tail for a (provider_id, account_id) pair.
 
-    Supports filtering by time range, model, sidecar, and kind. Returns events
-    newest-first by default. raw_json is excluded unless include_raw=true.
-    Use kind=error to retrieve only provider failure events.
+    Supports filtering by time range, model, sidecar, and kind, plus
+    offset/limit pagination. Returns events newest-first by default. ``total``
+    is the full count of matching rows (not the page size), so callers can page.
+    raw_json is excluded unless include_raw=true. Use kind=error to retrieve
+    only provider failure events.
     """
     since_dt: datetime | None = None
     until_dt: datetime | None = None
@@ -655,7 +658,19 @@ async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; c
         sidecar_id=sidecar_id,
         kind=kind,
         limit=limit,
+        offset=offset,
         order=order,
+    )
+
+    total = count_events(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since_dt,
+        until=until_dt,
+        model_id=model_id,
+        sidecar_id=sidecar_id,
+        kind=kind,
     )
 
     rows = []
@@ -665,7 +680,7 @@ async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; c
             d.pop("raw_json", None)
         rows.append(d)
 
-    return {"events": rows, "total": len(rows), "limit": limit}
+    return {"events": rows, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/window-history")

@@ -58,6 +58,7 @@ def query_sessions(
             SUM(tokens_cache_create)                           AS tokens_cache_create,
             SUM(tokens_reasoning)                              AS tokens_reasoning,
             SUM(cost_usd)                                      AS cost_usd,
+            SUM(tool_calls)                                    AS tool_calls,
             MAX(sidecar_id)                                    AS sidecar_id,
             GROUP_CONCAT(DISTINCT model_id)                    AS models_csv,
             SUM(CASE WHEN subagent_type IS NOT NULL THEN 1 ELSE 0 END) AS subagent_msgs
@@ -80,6 +81,12 @@ def query_sessions(
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                             AS tokens_total,
+            SUM(tokens_input)                                   AS tokens_input,
+            SUM(tokens_output)                                  AS tokens_output,
+            SUM(tokens_cache_read)                              AS tokens_cache_read,
+            SUM(tokens_cache_create)                            AS tokens_cache_create,
+            SUM(tokens_reasoning)                               AS tokens_reasoning,
+            SUM(tool_calls)                                     AS tool_calls,
             SUM(cost_usd)                                       AS cost_usd
         FROM usage_events
         WHERE provider_id = :provider_id
@@ -104,6 +111,7 @@ def query_sessions(
             SUM(tokens_cache_read)                              AS tokens_cache_read,
             SUM(tokens_cache_create)                            AS tokens_cache_create,
             SUM(tokens_reasoning)                               AS tokens_reasoning,
+            SUM(tool_calls)                                     AS tool_calls,
             SUM(cost_usd)                                       AS cost_usd
         FROM usage_events
         WHERE provider_id = :provider_id
@@ -158,9 +166,15 @@ def query_sessions(
             ).all()
             subagents = [
                 {
-                    "type": sa.subagent_type,
+                    "subagent_type": sa.subagent_type,
                     "turns": int(sa.turns or 0),
                     "tokens_total": int(sa.tokens_total or 0),
+                    "tokens_input": int(sa.tokens_input or 0),
+                    "tokens_output": int(sa.tokens_output or 0),
+                    "tokens_cache_read": int(sa.tokens_cache_read or 0),
+                    "tokens_cache_create": int(sa.tokens_cache_create or 0),
+                    "tokens_reasoning": int(sa.tokens_reasoning or 0),
+                    "tool_calls": int(sa.tool_calls or 0),
                     "cost_usd": float(sa.cost_usd or 0.0),
                 }
                 for sa in sa_rows
@@ -186,6 +200,7 @@ def query_sessions(
                     "tokens_cache_read": int(bm.tokens_cache_read or 0),
                     "tokens_cache_create": int(bm.tokens_cache_create or 0),
                     "tokens_reasoning": int(bm.tokens_reasoning or 0),
+                    "tool_calls": int(bm.tool_calls or 0),
                     "cost_usd": float(bm.cost_usd or 0.0),
                 }
                 for bm in bm_rows
@@ -207,6 +222,7 @@ def query_sessions(
                 "tokens_cache_create": cache_create,
                 "tokens_cache": tokens_cache,
                 "tokens_reasoning": tokens_reasoning,
+                "tool_calls": int(row.tool_calls or 0),
                 "cache_pct": cache_pct,
                 "cost_usd": float(row.cost_usd or 0.0),
                 "sidecar_id": row.sidecar_id,

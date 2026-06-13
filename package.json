@@ -2,22 +2,13 @@
   "name": "runway",
   "type": "module",
   "version": "1.1.0",
-  "description": "<p align=\"center\">   <img src=\"assets/logo.svg\" width=\"128\" alt=\"Runway Logo\"> </p>",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs",
-    "test": "tests"
-  },
+  "description": "Local-first monitoring for AI provider quotas",
+  "private": true,
   "scripts": {
-    "build:css": "tailwindcss -i frontend/css/input.css -o frontend/css/styles.css --minify",
-    "watch:css": "tailwindcss -i frontend/css/input.css -o frontend/css/styles.css --watch",
-    "test": "node --test tests/frontend/test_*.mjs && node tests/frontend/test_spark_helpers.js"
+    "web:install": "npm --prefix webapp ci",
+    "web:dev": "npm --prefix webapp run dev",
+    "web:build": "npm --prefix webapp run build",
+    "web:test": "npm --prefix webapp test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "@tailwindcss/cli": "^4.3.0",
-    "tailwindcss": "^4.2.2"
-  }
+  "license": "ISC"
 }

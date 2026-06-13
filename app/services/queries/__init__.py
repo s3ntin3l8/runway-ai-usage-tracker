@@ -18,7 +18,7 @@ Modules:
 
 from app.services.queries.anomaly import query_anomalies
 from app.services.queries.cumulative import query_cumulative_live
-from app.services.queries.events import query_events
+from app.services.queries.events import count_events, query_events
 from app.services.queries.forecast import query_cost_forecast
 from app.services.queries.heatmap import query_heatmap
 from app.services.queries.history import (
@@ -39,6 +39,7 @@ from app.services.queries.windows import (
 )
 
 __all__ = [
+    "count_events",
     "query_anomalies",
     "query_chart",
     "query_cost_forecast",

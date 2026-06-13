@@ -2,8 +2,11 @@ coverage:
   status:
     project:
       default:
-        target: 63%       # current baseline is 65%; 2% buffer for variance
-        threshold: 2%     # allow up to 2% drop before failing
+        # 'auto' compares against the PR base rather than a fixed number, so the
+        # combined backend+frontend baseline doesn't sit permanently red now that
+        # vitest coverage is uploaded too. Threshold = max tolerated drop vs base.
+        target: auto
+        threshold: 2%
     patch:
       default:
         target: 70%       # new/changed lines in a PR should be well-covered
