@@ -55,4 +55,27 @@ describe('FleetPage', () => {
     renderWithProviders(<FleetPage />);
     expect(await screen.findByRole('button', { name: /resume collection/i })).toBeInTheDocument();
   });
+
+  it('exposes Rename / tags as a button', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByRole('button', { name: /rename/i })).toBeInTheDocument();
+  });
+
+  it('shows an EDGE badge for an edge-channel sidecar', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ channel: 'edge' })],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByText('edge')).toBeInTheDocument();
+  });
+
+  it('omits the EDGE badge for a stable-channel sidecar', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ channel: 'stable' })],
+    });
+    renderWithProviders(<FleetPage />);
+    await screen.findByText('laptop');
+    expect(screen.queryByText('edge')).not.toBeInTheDocument();
+  });
 });

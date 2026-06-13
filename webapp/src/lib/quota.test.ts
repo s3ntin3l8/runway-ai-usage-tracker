@@ -6,6 +6,7 @@ import {
   chipLabel,
   clusterModelLabel,
   clusterPools,
+  modelLabel,
   sameQuota,
   statusForPct,
   windowLabel,
@@ -99,5 +100,23 @@ describe('chipLabel', () => {
     const b = card({ service_name: 'Sonnet', window_type: 'weekly', variant: '1M' });
     expect(chipLabel(a, [a, b])).toBe('Opus');
     expect(chipLabel(b, [a, b])).toBe('Sonnet 1M');
+  });
+  it('appends the model when two same-name windows collide (Claude weekly vs Sonnet weekly)', () => {
+    const generic = card({ service_name: 'Claude', window_type: 'weekly', model_id: null });
+    const sonnet = card({ service_name: 'Claude', window_type: 'weekly', model_id: 'sonnet' });
+    expect(chipLabel(generic, [generic, sonnet])).toBe('Weekly');
+    expect(chipLabel(sonnet, [generic, sonnet])).toBe('Weekly · Sonnet');
+  });
+  it('does not append a model that already is the label', () => {
+    const c = card({ service_name: 'Sonnet', window_type: 'weekly', model_id: 'sonnet' });
+    expect(chipLabel(c, [c])).toBe('Sonnet');
+  });
+});
+
+describe('modelLabel', () => {
+  it('humanizes model ids', () => {
+    expect(modelLabel('sonnet')).toBe('Sonnet');
+    expect(modelLabel('gemini-flash')).toBe('Gemini Flash');
+    expect(modelLabel('claude_opus')).toBe('Claude Opus');
   });
 });
