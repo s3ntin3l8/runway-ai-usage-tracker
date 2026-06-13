@@ -39,6 +39,7 @@ export function FleetPage() {
   });
   const [editing, setEditing] = useState<Sidecar | null>(null);
   const [deleting, setDeleting] = useState<Sidecar | null>(null);
+  const [updating, setUpdating] = useState<Sidecar | null>(null);
 
   return (
     <>
@@ -63,6 +64,7 @@ export function FleetPage() {
                 sidecar={s}
                 onEdit={() => setEditing(s)}
                 onDelete={() => setDeleting(s)}
+                onUpdate={() => setUpdating(s)}
               />
             ))}
           </div>
@@ -70,6 +72,7 @@ export function FleetPage() {
       </div>
       <EditSidecarDialog sidecar={editing} onClose={() => setEditing(null)} />
       <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
+      <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
     </>
   );
 }
@@ -78,10 +81,12 @@ function SidecarCard({
   sidecar,
   onEdit,
   onDelete,
+  onUpdate,
 }: {
   sidecar: Sidecar;
   onEdit: () => void;
   onDelete: () => void;
+  onUpdate: () => void;
 }) {
   const queryClient = useQueryClient();
   const online = isOnline(sidecar);
@@ -94,13 +99,6 @@ function SidecarCard({
       toast.success(paused ? 'Sidecar resumed' : 'Sidecar paused');
       queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const update = useMutation({
-    mutationFn: () => triggerSidecarUpdate(sidecar.sidecar_id),
-    onSuccess: () =>
-      toast.success('Update pushed — the sidecar installs it on its next check-in'),
     onError: (err) => toast.error(err.message),
   });
 
@@ -122,25 +120,9 @@ function SidecarCard({
               <p className="truncate text-[13px] font-semibold">
                 {sidecar.custom_name || sidecar.hostname || sidecar.sidecar_id}
               </p>
-              <p className="flex items-center gap-1.5 truncate text-[11px] text-fg-subtle">
-                <span className="truncate">
-                  {sidecar.hostname && sidecar.custom_name ? `${sidecar.hostname} · ` : ''}
-                  {sidecar.os_platform ?? '—'} · v{sidecar.sidecar_version ?? '?'}
-                </span>
-                {sidecar.update_available ? (
-                  <Badge variant="warning" className="shrink-0">
-                    update{sidecar.latest_version ? ` → v${sidecar.latest_version}` : ''}
-                  </Badge>
-                ) : null}
-                {sidecar.channel === 'edge' ? (
-                  <Badge
-                    variant="accent"
-                    className="shrink-0 px-1.5 py-0 text-[9px] font-bold tracking-wider uppercase"
-                    title="Rolling prerelease channel"
-                  >
-                    edge
-                  </Badge>
-                ) : null}
+              <p className="truncate text-[11px] text-fg-subtle">
+                {sidecar.hostname && sidecar.custom_name ? `${sidecar.hostname} · ` : ''}
+                {sidecar.os_platform ?? '—'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
@@ -179,6 +161,22 @@ function SidecarCard({
           ) : null}
 
           <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
+            <div className="col-span-3 min-w-0">
+              <dt className="text-fg-subtle">Version</dt>
+              <dd className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span className="font-mono tabular">v{sidecar.sidecar_version ?? '?'}</span>
+                {sidecar.channel === 'edge' ? (
+                  <Badge
+                    variant="accent"
+                    className="uppercase tracking-wide"
+                    title="Rolling prerelease channel"
+                  >
+                    edge
+                  </Badge>
+                ) : null}
+                {sidecar.update_available ? <Badge variant="warning">update</Badge> : null}
+              </dd>
+            </div>
             <div>
               <dt className="text-fg-subtle">Last seen</dt>
               <dd className="mt-0.5 font-mono tabular">{timeAgo(sidecar.last_seen)}</dd>
@@ -206,13 +204,8 @@ function SidecarCard({
               </Button>
             ) : null}
             {sidecar.update_available ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => update.mutate()}
-                loading={update.isPending}
-              >
-                <ArrowUpCircle className="size-3.5" />
+              <Button size="sm" variant="secondary" onClick={onUpdate}>
+                <ArrowUpCircle className="size-3.5" aria-hidden />
                 Update now
               </Button>
             ) : null}
@@ -352,6 +345,49 @@ function DeleteSidecarDialog({
           loading={del.isPending}
         >
           Remove
+        </Button>
+      </div>
+    </ResponsiveDialog>
+  );
+}
+
+function UpdateSidecarDialog({
+  sidecar,
+  onClose,
+}: {
+  sidecar: Sidecar | null;
+  onClose: () => void;
+}) {
+  const update = useMutation({
+    mutationFn: (id: string) => triggerSidecarUpdate(id),
+    onSuccess: () => {
+      toast.success('Update pushed — the sidecar installs it on its next check-in');
+      onClose();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <ResponsiveDialog
+      open={sidecar !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Push update?"
+      description={sidecar?.custom_name || sidecar?.hostname || sidecar?.sidecar_id}
+    >
+      <p className="text-sm text-fg-muted">
+        Queues the latest build for this sidecar. It downloads, verifies, and installs the
+        update on its next check-in, then restarts itself. Collection resumes automatically.
+      </p>
+      <div className="mt-4 flex justify-end gap-2">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="primary"
+          onClick={() => sidecar && update.mutate(sidecar.sidecar_id)}
+          loading={update.isPending}
+        >
+          Update
         </Button>
       </div>
     </ResponsiveDialog>

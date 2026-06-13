@@ -80,6 +80,17 @@ def _is_docker() -> bool:
     return pathlib.Path("/.dockerenv").exists()
 
 
+def self_update_supported() -> bool:
+    """True when this build can replace its own binary in place.
+
+    Frozen PyInstaller builds only — Docker images update by repulling and
+    from-source checkouts update via git, so both report False. Mirrors the
+    gate in ``self_update()`` so the server is told the same thing the apply
+    path enforces, and won't offer a meaningless update push.
+    """
+    return _is_frozen() and not _is_docker()
+
+
 def _detect_target() -> str:
     """Classify the running binary as ``"cli"`` or ``"tray"``.
 

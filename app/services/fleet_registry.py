@@ -94,6 +94,7 @@ class FleetRegistryService:
         session: Session,
         sidecar_version: str | None = None,
         os_platform: str | None = None,
+        self_update_capable: bool | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
     ) -> SidecarRegistry:
@@ -107,6 +108,8 @@ class FleetRegistryService:
                 row.sidecar_version = sidecar_version
             if os_platform is not None:
                 row.os_platform = os_platform
+            if self_update_capable is not None:
+                row.self_update_capable = self_update_capable
             if collection_errors > 0:
                 row.error_count += collection_errors
             if last_log_lines is not None:
@@ -119,6 +122,7 @@ class FleetRegistryService:
                 last_ip=source_ip,
                 sidecar_version=sidecar_version,
                 os_platform=os_platform,
+                self_update_capable=self_update_capable,
                 error_count=collection_errors,
                 recent_logs=json.dumps(last_log_lines[-20:]) if last_log_lines else None,
             )
@@ -171,6 +175,12 @@ class FleetRegistryService:
         stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
         latest_version = sidecar_version_checker.get_latest()
         latest_edge_sha = sidecar_version_checker.get_latest_edge_sha()
+        # Only offer an update when the build can actually self-update in place.
+        # `None` (not reported) stays permissive so already-deployed frozen
+        # sidecars keep working; `False` (from-source / Docker) suppresses it.
+        update_available = row.self_update_capable is not False and is_update_available(
+            row.sidecar_version, latest_version, latest_edge_sha
+        )
         return {
             "sidecar_id": row.sidecar_id,
             "hostname": row.hostname,
@@ -184,9 +194,8 @@ class FleetRegistryService:
             "sidecar_version": row.sidecar_version,
             "latest_version": latest_version,
             "channel": parse_channel(row.sidecar_version)[0],
-            "update_available": is_update_available(
-                row.sidecar_version, latest_version, latest_edge_sha
-            ),
+            "update_available": update_available,
+            "self_update_capable": row.self_update_capable,
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
             "stale": stale,

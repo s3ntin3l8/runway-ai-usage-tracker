@@ -129,7 +129,15 @@ export function SystemSection() {
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="sys-channel">Sidecar update channel</Label>
-              <Select value={channel} onValueChange={(v) => setChannel(v as 'stable' | 'edge')}>
+              {/* Guard the spurious empty-string Radix emits when the controlled
+                  value updates while the (portalled) items aren't mounted — it
+                  was clobbering a loaded "edge" back to "" on every reload. */}
+              <Select
+                value={channel}
+                onValueChange={(v) => {
+                  if (v) setChannel(v as 'stable' | 'edge');
+                }}
+              >
                 <SelectTrigger id="sys-channel" className="w-full sm:max-w-xs">
                   <SelectValue />
                 </SelectTrigger>

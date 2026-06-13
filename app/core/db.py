@@ -119,6 +119,7 @@ def init_db() -> None:
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, sql_type_with_default)
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("sidecar_registry", "self_update_capable", "BOOLEAN"),
     ("system_config", "user_timezone", "VARCHAR"),
     ("system_config", "sidecar_update_channel", "VARCHAR"),
     ("system_config", "sidecar_auto_update", "BOOLEAN"),

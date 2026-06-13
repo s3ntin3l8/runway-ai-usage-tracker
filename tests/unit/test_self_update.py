@@ -148,6 +148,23 @@ class TestDetectTarget:
         assert self_update._detect_target() == "tray"
 
 
+class TestSelfUpdateSupported:
+    def test_false_when_not_frozen(self, monkeypatch):
+        # From-source checkout (the common dev case): not frozen → not capable.
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: False)
+        assert self_update.self_update_supported() is False
+
+    def test_false_in_docker(self, monkeypatch):
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: True)
+        assert self_update.self_update_supported() is False
+
+    def test_true_for_frozen_non_docker(self, monkeypatch):
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        assert self_update.self_update_supported() is True
+
+
 # ---------------------------------------------------------------------------
 # self_update guards
 # ---------------------------------------------------------------------------

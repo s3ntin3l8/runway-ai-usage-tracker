@@ -121,6 +121,9 @@ class IngestRequest(BaseModel):
     sidecar_id: str | None = None  # Originating host identifier (Phase 4B fleet mgmt)
     sidecar_version: str | None = None  # App version from package.json
     os_platform: str | None = None  # platform.system() + "/" + platform.release()
+    # Whether this build can self-update in place (frozen, non-Docker). None for
+    # sidecars that don't report it yet → server stays permissive.
+    self_update_capable: bool | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     last_log_lines: list[str] = Field(default_factory=list)
     # api_key is now passed via X-Signature header for security

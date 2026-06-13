@@ -71,6 +71,21 @@ describe('SystemSection', () => {
     });
   });
 
+  it('reflects a loaded edge channel and keeps it on save (read-back regression)', async () => {
+    // Guards the "channel resets on reload" bug: a config loaded as edge must
+    // render as edge and survive a save unchanged.
+    vi.mocked(api.fetchAppConfig).mockResolvedValue(appConfig({ sidecar_update_channel: 'edge' }));
+    vi.mocked(api.putAppConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<SystemSection />);
+
+    // Save without touching the selector: if the loaded 'edge' weren't read
+    // into state, this would send the 'stable' useState default.
+    await userEvent.click(await screen.findByRole('button', { name: /^save$/i }));
+    expect(vi.mocked(api.putAppConfig).mock.calls[0][0]).toMatchObject({
+      sidecar_update_channel: 'edge',
+    });
+  });
+
   it('triggers a force collect', async () => {
     vi.mocked(api.fetchAppConfig).mockResolvedValue(appConfig());
     vi.mocked(api.forceCollect).mockResolvedValue({

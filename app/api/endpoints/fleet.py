@@ -171,6 +171,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 session,
                 sidecar_version=payload.sidecar_version,
                 os_platform=payload.os_platform,
+                self_update_capable=payload.self_update_capable,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
             )

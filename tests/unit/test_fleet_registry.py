@@ -50,6 +50,21 @@ class TestUpsertSidecar:
         mock_session.add.assert_not_called()
         mock_session.commit.assert_called_once()
 
+    def test_persists_self_update_capable_on_create(self, service, mock_session):
+        mock_session.get.return_value = None
+        service.upsert_sidecar("host-1", "10.0.0.1", mock_session, self_update_capable=False)
+        assert mock_session.add.call_args[0][0].self_update_capable is False
+
+    def test_persists_self_update_capable_on_update(self, service, mock_session):
+        existing = SidecarRegistry(
+            sidecar_id="host-1",
+            last_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            first_seen=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_session.get.return_value = existing
+        service.upsert_sidecar("host-1", "10.0.0.2", mock_session, self_update_capable=True)
+        assert existing.self_update_capable is True
+
 
 class TestUpdateSidecar:
     def test_updates_custom_name_and_tags(self, service, mock_session):
@@ -204,3 +219,25 @@ class TestToDictUpdateAvailable:
         d = service.to_dict(self._row("1.5.0+edge.aaa1111"))
         assert d["channel"] == "edge"
         assert d["update_available"] is False
+
+    def test_suppressed_when_not_self_update_capable(self, service, monkeypatch):
+        # A from-source / Docker build (self_update_capable=False) must not be
+        # told to update, even when the version check would otherwise fire.
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
+        row = self._row("1.4.0")
+        row.self_update_capable = False
+        d = service.to_dict(row)
+        assert d["update_available"] is False
+        assert d["self_update_capable"] is False
+
+    def test_permissive_when_capability_unknown(self, service, monkeypatch):
+        # Legacy sidecars that don't report capability (None) stay permissive.
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
+        row = self._row("1.4.0")  # self_update_capable defaults to None
+        d = service.to_dict(row)
+        assert d["update_available"] is True
+        assert d["self_update_capable"] is None
