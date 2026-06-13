@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Sidecar } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
@@ -77,5 +77,38 @@ describe('FleetPage', () => {
     renderWithProviders(<FleetPage />);
     await screen.findByText('laptop');
     expect(screen.queryByText('edge')).not.toBeInTheDocument();
+  });
+
+  it('shows the version in its own field', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ sidecar_version: '1.1.0+edge.899db312' })],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByText('Version')).toBeInTheDocument();
+    expect(screen.getByText('v1.1.0+edge.899db312')).toBeInTheDocument();
+  });
+
+  it('hides Update now when no update is available', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ update_available: false })],
+    });
+    renderWithProviders(<FleetPage />);
+    await screen.findByText('laptop');
+    expect(screen.queryByRole('button', { name: /update now/i })).not.toBeInTheDocument();
+  });
+
+  it('confirms before pushing an update, then calls triggerSidecarUpdate', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ update_available: true })],
+    });
+    vi.mocked(api.triggerSidecarUpdate).mockResolvedValue({ status: 'queued' } as never);
+    renderWithProviders(<FleetPage />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /update now/i }));
+    // A confirm dialog opens; nothing is pushed until the user confirms.
+    expect(api.triggerSidecarUpdate).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^update$/i }));
+    expect(api.triggerSidecarUpdate).toHaveBeenCalledWith('laptop');
   });
 });

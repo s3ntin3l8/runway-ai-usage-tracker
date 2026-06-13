@@ -2572,6 +2572,15 @@ class DaemonRunner:
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version") or _SIDECAR_VERSION
+            # Whether this build can replace its own binary (frozen, non-Docker).
+            # From-source / Docker report False so the server won't offer a
+            # self-update push. None on any failure → server stays permissive.
+            try:
+                from scripts.sidecar_pkg.self_update import self_update_supported
+
+                self_update_capable: bool | None = self_update_supported()
+            except Exception:
+                self_update_capable = None
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event)
@@ -2600,6 +2609,7 @@ class DaemonRunner:
                     "sidecar_id": get_hostname(),
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
+                    "self_update_capable": self_update_capable if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
                     "last_log_lines": (_tail_log(20) if not providers else [])
                     if first_batch

@@ -386,6 +386,9 @@ export interface Sidecar {
   // Update status computed server-side by fleet_registry.to_dict().
   update_available?: boolean;
   latest_version?: string | null;
+  // Whether the build can self-update in place (frozen, non-Docker). null = not
+  // reported; false = from-source/Docker (no update push offered).
+  self_update_capable?: boolean | null;
   [key: string]: unknown;
 }
 
