@@ -180,7 +180,12 @@ export function ProviderPage() {
               <CostTab providerId={providerId} accountId={accountId} />
             </TabsContent>
             <TabsContent value="debug">
-              <DebugTab providerId={providerId} active={tab === 'debug'} />
+              <DebugTab
+                providerId={providerId}
+                accountId={accountId}
+                entry={entry}
+                active={tab === 'debug'}
+              />
             </TabsContent>
           </Tabs>
         )}

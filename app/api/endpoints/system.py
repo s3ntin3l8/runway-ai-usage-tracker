@@ -339,6 +339,10 @@ async def get_raw_provider_data(
             await target_collectors[0].collect(client)
 
         return {"provider_id": provider_id, "responses": raw_responses, "timestamp": time.time()}
+    except HTTPException:
+        # Deliberate status (e.g. 404 no collector) — propagate as-is rather
+        # than masking it behind a generic 500.
+        raise
     except Exception as e:
         logger.error(f"Raw debug collection failed for {scrub_log(provider_id)}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

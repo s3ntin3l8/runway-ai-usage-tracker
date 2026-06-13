@@ -38,6 +38,10 @@ export interface LimitCard {
   tier?: string | null;
   usage_url?: string | null;
   updated_at?: string | null;
+  // Poll timing — set by /usage/fleet on the critical_gauge card only.
+  fetched_at?: string | null;
+  next_poll_at?: string | null;
+  cache_ttl_seconds?: number | null;
   metadata?: Record<string, unknown> | null;
   provider_id?: string | null;
   account_id?: string | null;
@@ -373,6 +377,8 @@ export interface Sidecar {
   error_count?: number;
   ingest_count?: number;
   sidecar_version?: string;
+  // Release channel derived from the version string ("1.0.0+edge.<sha>" → edge).
+  channel?: 'stable' | 'edge';
   os_platform?: string;
   collection_enabled?: boolean;
   collection_errors?: string[] | null;
@@ -380,7 +386,6 @@ export interface Sidecar {
   // Update status computed server-side by fleet_registry.to_dict().
   update_available?: boolean;
   latest_version?: string | null;
-  channel?: 'stable' | 'edge';
   [key: string]: unknown;
 }
 

@@ -38,7 +38,26 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'node',
+    // jsdom by default so component tests render; pure-logic tests run fine in
+    // it too. `globals: true` enables RTL auto-cleanup + jest-dom matchers.
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['src/test/setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    coverage: {
+      provider: 'v8',
+      // json-summary feeds the CI coverage gate (coverage/coverage-summary.json);
+      // lcov is what Codecov ingests; text prints a local summary.
+      reporter: ['text', 'json-summary', 'lcov'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/test/**',
+        'src/main.tsx',
+        'src/**/*.d.ts',
+        'src/api/types.ts',
+      ],
+    },
   },
 });

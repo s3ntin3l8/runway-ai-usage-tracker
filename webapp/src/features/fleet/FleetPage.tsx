@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpCircle, Pause, Play, Server, Trash2 } from 'lucide-react';
+import { ArrowUpCircle, Pause, Pencil, Play, Server, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   deleteSidecar,
@@ -108,101 +108,116 @@ function SidecarCard({
 
   return (
     <Card className="p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <StatusDot
-            status={paused ? 'unknown' : online ? 'ok' : 'warning'}
-            label={paused ? 'paused' : online ? 'online' : 'stale'}
-          />
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold">
-              {sidecar.custom_name || sidecar.hostname || sidecar.sidecar_id}
-            </p>
-            <p className="truncate text-[11px] text-fg-subtle">
-              {sidecar.hostname && sidecar.custom_name ? `${sidecar.hostname} · ` : ''}
-              {sidecar.os_platform ?? '—'} · v{sidecar.sidecar_version ?? '?'}
-              {sidecar.update_available ? (
-                <span className="ml-1.5 align-middle">
-                  <Badge variant="warning">
+      {/* Status dot is a leading rail so the title, metrics, and footer all
+          share one left edge. */}
+      <div className="flex items-start gap-2.5">
+        <StatusDot
+          status={paused ? 'unknown' : online ? 'ok' : 'warning'}
+          label={paused ? 'paused' : online ? 'online' : 'stale'}
+          className="mt-1.5"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold">
+                {sidecar.custom_name || sidecar.hostname || sidecar.sidecar_id}
+              </p>
+              <p className="flex items-center gap-1.5 truncate text-[11px] text-fg-subtle">
+                <span className="truncate">
+                  {sidecar.hostname && sidecar.custom_name ? `${sidecar.hostname} · ` : ''}
+                  {sidecar.os_platform ?? '—'} · v{sidecar.sidecar_version ?? '?'}
+                </span>
+                {sidecar.update_available ? (
+                  <Badge variant="warning" className="shrink-0">
                     update{sidecar.latest_version ? ` → v${sidecar.latest_version}` : ''}
                   </Badge>
-                </span>
-              ) : null}
-            </p>
+                ) : null}
+                {sidecar.channel === 'edge' ? (
+                  <Badge
+                    variant="accent"
+                    className="shrink-0 px-1.5 py-0 text-[9px] font-bold tracking-wider uppercase"
+                    title="Rolling prerelease channel"
+                  >
+                    edge
+                  </Badge>
+                ) : null}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={paused ? 'Resume collection' : 'Pause collection'}
+                title={paused ? 'Resume collection' : 'Pause collection'}
+                onClick={() => toggle.mutate()}
+                loading={toggle.isPending}
+              >
+                {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Delete sidecar"
+                title="Delete sidecar"
+                onClick={onDelete}
+                className="text-critical hover:bg-critical-muted"
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {(sidecar.tags?.length ?? 0) > 0 || paused ? (
+            <div className="mt-2.5 flex flex-wrap gap-1">
+              {paused ? <Badge variant="warning">paused</Badge> : null}
+              {(sidecar.tags ?? []).map((tag) => (
+                <Badge key={tag} variant="neutral">
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+
+          <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
+            <div>
+              <dt className="text-fg-subtle">Last seen</dt>
+              <dd className="mt-0.5 font-mono tabular">{timeAgo(sidecar.last_seen)}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-subtle">Pushes</dt>
+              <dd className="mt-0.5 font-mono tabular">{sidecar.ingest_count ?? 0}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-subtle">Errors</dt>
+              <dd className={`mt-0.5 font-mono tabular ${(sidecar.error_count ?? 0) > 0 ? 'text-warning' : ''}`}>
+                {sidecar.error_count ?? 0}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="mt-3 flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={onEdit}>
+              <Pencil className="size-3.5" aria-hidden />
+              Rename / tags
+            </Button>
+            {logs.length > 0 ? (
+              <Button size="sm" variant="ghost" onClick={() => setShowLogs(true)}>
+                Logs
+              </Button>
+            ) : null}
+            {sidecar.update_available ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => update.mutate()}
+                loading={update.isPending}
+              >
+                <ArrowUpCircle className="size-3.5" />
+                Update now
+              </Button>
+            ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={paused ? 'Resume collection' : 'Pause collection'}
-            title={paused ? 'Resume collection' : 'Pause collection'}
-            onClick={() => toggle.mutate()}
-            loading={toggle.isPending}
-          >
-            {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label="Delete sidecar"
-            title="Delete sidecar"
-            onClick={onDelete}
-            className="text-critical hover:bg-critical-muted"
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
-      </div>
-
-      {(sidecar.tags?.length ?? 0) > 0 || paused ? (
-        <div className="mt-2.5 flex flex-wrap gap-1">
-          {paused ? <Badge variant="warning">paused</Badge> : null}
-          {(sidecar.tags ?? []).map((tag) => (
-            <Badge key={tag} variant="neutral">
-              {tag}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-
-      <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-        <div>
-          <dt className="text-fg-subtle">Last seen</dt>
-          <dd className="mt-0.5 font-mono tabular">{timeAgo(sidecar.last_seen)}</dd>
-        </div>
-        <div>
-          <dt className="text-fg-subtle">Pushes</dt>
-          <dd className="mt-0.5 font-mono tabular">{sidecar.ingest_count ?? 0}</dd>
-        </div>
-        <div>
-          <dt className="text-fg-subtle">Errors</dt>
-          <dd className={`mt-0.5 font-mono tabular ${(sidecar.error_count ?? 0) > 0 ? 'text-warning' : ''}`}>
-            {sidecar.error_count ?? 0}
-          </dd>
-        </div>
-      </dl>
-
-      <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={onEdit}>
-          Rename / tags
-        </Button>
-        {logs.length > 0 ? (
-          <Button size="sm" variant="ghost" onClick={() => setShowLogs(true)}>
-            Logs
-          </Button>
-        ) : null}
-        {sidecar.update_available ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => update.mutate()}
-            loading={update.isPending}
-          >
-            <ArrowUpCircle className="size-3.5" />
-            Update now
-          </Button>
-        ) : null}
       </div>
 
       <ResponsiveDialog

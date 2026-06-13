@@ -89,13 +89,32 @@ export function windowLabel(card: LimitCard): string | null {
   return w.charAt(0).toUpperCase() + w.slice(1);
 }
 
+// Humanize a model id for display: de-separate and capitalize each word
+// ("sonnet" → "Sonnet", "gemini-flash" → "Gemini Flash").
+export function modelLabel(modelId: string): string {
+  return modelId
+    .split(/[-_/]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 // Label for a secondary-limit chip. Falls back to the window when the
 // service name would just repeat its siblings (Claude weekly vs Claude
-// session both render "Claude" otherwise).
+// session both render "Claude" otherwise). When a window is model-scoped
+// (e.g. Claude's Sonnet-specific weekly alongside the generic weekly) the
+// base would still collapse to "Weekly" for both, so append the model.
 export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
   const name = card.service_name || card.model_id || '';
   const duplicated = siblings.filter((s) => (s.service_name || s.model_id) === name).length > 1;
   const win = windowLabel(card);
-  const base = duplicated && win ? win : name || win || '?';
+  let base = duplicated && win ? win : name || win || '?';
+  if (
+    card.model_id &&
+    name !== card.model_id &&
+    base.toLowerCase() !== card.model_id.toLowerCase()
+  ) {
+    base = `${base} · ${modelLabel(card.model_id)}`;
+  }
   return card.variant ? `${base} ${card.variant}` : base;
 }

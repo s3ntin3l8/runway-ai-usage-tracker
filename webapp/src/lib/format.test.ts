@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { formatDuration, formatNumber, formatTokens } from './format';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  formatCost,
+  formatCurrency,
+  formatDuration,
+  formatNumber,
+  formatPct,
+  formatTokens,
+  timeAgo,
+  timeUntil,
+} from './format';
 
 describe('formatNumber', () => {
   it('keeps integers untouched below 1K', () => {
@@ -38,5 +47,62 @@ describe('formatDuration', () => {
   });
   it('renders past boundaries as now', () => {
     expect(formatDuration(-5)).toBe('now');
+  });
+});
+
+describe('formatCurrency', () => {
+  it('renders a dash for nullish / NaN', () => {
+    expect(formatCurrency(null)).toBe('—');
+    expect(formatCurrency(undefined)).toBe('—');
+    expect(formatCurrency(NaN)).toBe('—');
+  });
+  it('formats a USD amount', () => {
+    expect(formatCurrency(12.5, 'USD')).toBe('$12.50');
+  });
+});
+
+describe('formatCost', () => {
+  it('distinguishes missing, zero, and sub-cent', () => {
+    expect(formatCost(null)).toBe('—');
+    expect(formatCost(0)).toBe('$0.00');
+    expect(formatCost(0.004)).toBe('< $0.01');
+  });
+  it('formats a normal amount', () => {
+    expect(formatCost(3.2)).toBe('$3.20');
+  });
+});
+
+describe('formatPct', () => {
+  it('renders a dash for nullish / NaN', () => {
+    expect(formatPct(null)).toBe('—');
+    expect(formatPct(NaN)).toBe('—');
+  });
+  it('honours the digits argument', () => {
+    expect(formatPct(42.567)).toBe('43%');
+    expect(formatPct(42.567, 1)).toBe('42.6%');
+  });
+});
+
+describe('timeUntil / timeAgo', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('timeUntil returns null for missing / unparseable', () => {
+    expect(timeUntil(null)).toBeNull();
+    expect(timeUntil('not-a-date')).toBeNull();
+  });
+
+  it('timeUntil compacts the remaining duration', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T00:00:00Z'));
+    expect(timeUntil('2026-06-13T04:12:00Z')).toBe('4h 12m');
+  });
+
+  it('timeAgo renders just now / dash / relative', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T00:00:00Z'));
+    expect(timeAgo(null)).toBe('—');
+    expect(timeAgo('bad')).toBe('—');
+    expect(timeAgo('2026-06-12T23:59:30Z')).toBe('just now');
+    expect(timeAgo('2026-06-12T20:00:00Z')).toBe('4h ago');
   });
 });
