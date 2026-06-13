@@ -30,6 +30,7 @@ export function SystemSection() {
   const [pollInterval, setPollInterval] = useState('');
   const [browserPref, setBrowserPref] = useState('');
   const [channel, setChannel] = useState<'stable' | 'edge'>('stable');
+  const [autoUpdate, setAutoUpdate] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export function SystemSection() {
     );
     setBrowserPref(appConfig.data.browser_preference ?? '');
     setChannel(appConfig.data.sidecar_update_channel === 'edge' ? 'edge' : 'stable');
+    setAutoUpdate(appConfig.data.sidecar_auto_update === true);
   }, [appConfig.data]);
 
   const save = useMutation({
@@ -52,6 +54,7 @@ export function SystemSection() {
           pollInterval.trim() === '' ? undefined : Number(pollInterval),
         browser_preference: browserPref.trim() || null,
         sidecar_update_channel: channel,
+        sidecar_auto_update: autoUpdate,
       }),
     onSuccess: () => {
       toast.success('System settings saved');
@@ -138,6 +141,21 @@ export function SystemSection() {
               <HelperText>
                 Which release sidecars compare against for the "update available" check. Edge tracks
                 the rolling prerelease build.
+              </HelperText>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="sys-auto-update">Auto-install updates</Label>
+                <Switch
+                  id="sys-auto-update"
+                  checked={autoUpdate}
+                  onCheckedChange={setAutoUpdate}
+                />
+              </div>
+              <HelperText>
+                When on, sidecars self-install available updates on their next check. A sidecar's
+                explicit local <code>auto_update</code> config overrides this. Packaged builds only —
+                from-source and Docker sidecars never self-update.
               </HelperText>
             </div>
             <Button type="submit" variant="primary" className="self-start" loading={save.isPending}>

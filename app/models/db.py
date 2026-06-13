@@ -150,6 +150,10 @@ class SystemConfig(SQLModel, table=True):
     # (default) or "edge" (rolling prerelease). Pushed to sidecars via the
     # /fleet/ingest response. None = "stable".
     sidecar_update_channel: str | None = None
+    # Fleet-wide opt-in: when true, sidecars self-install available updates.
+    # Pushed via the /fleet/ingest response; a sidecar's explicit local
+    # `auto_update` config overrides this. None/False = off.
+    sidecar_auto_update: bool | None = None
 
 
 class LatestUsage(SQLModel, table=True):

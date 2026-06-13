@@ -56,3 +56,24 @@ def test_clear_channel_returns_to_stable(client: TestClient):
 def test_invalid_channel_rejected(client: TestClient):
     r = client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "nightly"})
     assert r.status_code == 400
+
+
+def test_default_auto_update_is_off(client: TestClient):
+    r = client.get("/api/v1/system/app-config")
+    assert r.status_code == 200
+    assert r.json()["sidecar_auto_update"] is False
+
+
+def test_set_auto_update_roundtrip(client: TestClient):
+    r = client.put("/api/v1/system/app-config", json={"sidecar_auto_update": True})
+    assert r.status_code == 200
+    assert client.get("/api/v1/system/app-config").json()["sidecar_auto_update"] is True
+    client.put("/api/v1/system/app-config", json={"sidecar_auto_update": False})
+    assert client.get("/api/v1/system/app-config").json()["sidecar_auto_update"] is False
+
+
+def test_auto_update_unset_preserves_value(client: TestClient):
+    # Omitting the field in a PUT must not clobber the stored value.
+    client.put("/api/v1/system/app-config", json={"sidecar_auto_update": True})
+    client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "edge"})
+    assert client.get("/api/v1/system/app-config").json()["sidecar_auto_update"] is True

@@ -441,9 +441,10 @@ DEFAULT_CONFIG = {
     "queue_max_size_mb": 10,
     "log_level": "INFO",
     "log_file_enabled": True,
-    # Opt-in: when true, a frozen sidecar self-installs newer builds in the
-    # background (notify-only otherwise). See scripts/sidecar_pkg/self_update.py.
-    "auto_update": False,
+    # NOTE: `auto_update` is intentionally NOT defaulted here. It is tri-state:
+    # explicitly true/false in the user's config is a local override, while
+    # absent (the default) defers to the server's fleet-wide `sidecar_auto_update`
+    # flag. See _auto_update_enabled() and scripts/sidecar_pkg/self_update.py.
 }
 
 REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
@@ -459,9 +460,17 @@ _windows_cred_ttl_seconds: int = 300
 # the update-check thread then falls back to the channel inferred from our own
 # version string.
 _UPDATE_CHANNEL: str | None = None
-# Whether to self-install available updates (from the `auto_update` config key).
-# Set once in main(); the update-check thread's callback consults it.
-_AUTO_UPDATE: bool = False
+# Auto-update preference, resolved with "local override wins" precedence:
+#   _AUTO_UPDATE_LOCAL  — explicit local config (`auto_update`); None = defer to server.
+#   _AUTO_UPDATE_SERVER — fleet-wide flag from the /fleet/ingest response.
+# Effective value comes from _auto_update_enabled().
+_AUTO_UPDATE_LOCAL: bool | None = None
+_AUTO_UPDATE_SERVER: bool = False
+
+
+def _auto_update_enabled() -> bool:
+    """Effective auto-update setting: explicit local config overrides the server."""
+    return _AUTO_UPDATE_LOCAL if _AUTO_UPDATE_LOCAL is not None else _AUTO_UPDATE_SERVER
 
 
 def get_sidecar_dir() -> Path:
@@ -2677,6 +2686,31 @@ class DaemonRunner:
                             logging.debug(f"Server update channel: {update_channel}")
                         _UPDATE_CHANNEL = update_channel
 
+                    # Fleet-wide auto-update flag from the dashboard. A sidecar's
+                    # explicit local `auto_update` config still wins (see
+                    # _auto_update_enabled); this only sets the server side.
+                    global _AUTO_UPDATE_SERVER
+                    server_auto = bool(result.get("sidecar_auto_update", False))
+                    if server_auto != _AUTO_UPDATE_SERVER:
+                        logging.debug(f"Server auto-update flag: {server_auto}")
+                    _AUTO_UPDATE_SERVER = server_auto
+
+                    # One-shot admin "Update now" push: self-install immediately,
+                    # regardless of the auto-update toggle. self_update's own
+                    # frozen/Docker/single-flight guards make this safe and a
+                    # no-op where it doesn't apply.
+                    if result.get("update_now"):
+                        logging.info("Server pushed an update; installing now")
+                        try:
+                            from scripts.sidecar_pkg.self_update import self_update
+
+                            self_update(
+                                _SIDECAR_VERSION,
+                                os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL,
+                            )
+                        except Exception:
+                            logging.warning("Pushed self-update failed", exc_info=True)
+
                     # The server is the cadence authority. Each ingest response
                     # tells the sidecar exactly which providers to collect on
                     # the *next* heartbeat tick:
@@ -2853,8 +2887,11 @@ def main():
         ok = self_update(_SIDECAR_VERSION, channel, restart=False)
         sys.exit(0 if ok else 1)
 
-    global _AUTO_UPDATE
-    _AUTO_UPDATE = bool(config.get("auto_update", False))
+    # Tri-state local override: explicit true/false wins over the server flag;
+    # absent (None) defers to the server's fleet-wide setting.
+    global _AUTO_UPDATE_LOCAL
+    local_auto = config.get("auto_update")
+    _AUTO_UPDATE_LOCAL = None if local_auto is None else bool(local_auto)
 
     if not write_pid_file():
         sys.exit(1)
@@ -2888,7 +2925,7 @@ def main():
                 return os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
 
             def _maybe_self_update(_desc: str) -> None:
-                if not _AUTO_UPDATE:
+                if not _auto_update_enabled():
                     return
                 from scripts.sidecar_pkg.self_update import self_update
 

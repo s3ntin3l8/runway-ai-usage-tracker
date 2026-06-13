@@ -566,6 +566,8 @@ class _AppConfigUpdate(BaseModel):
     user_timezone: str | None = None
     # Sidecar update channel: "stable" (default) or "edge"; "" = clear → stable.
     sidecar_update_channel: str | None = None
+    # Fleet-wide opt-in: when true, sidecars self-install available updates.
+    sidecar_auto_update: bool | None = None
 
 
 class _DashboardLayout(BaseModel):
@@ -835,6 +837,7 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
         "user_timezone": cfg.user_timezone if cfg else None,
         "sidecar_update_channel": (cfg.sidecar_update_channel if cfg else None) or "stable",
+        "sidecar_auto_update": bool(cfg.sidecar_auto_update) if cfg else False,
         "env_timezone": settings.env_timezone,
     }
 
@@ -883,6 +886,8 @@ async def upsert_app_config(
                 status_code=400,
                 detail=f"Invalid update channel: {body.sidecar_update_channel!r} (expected 'stable' or 'edge')",
             )
+    if body.sidecar_auto_update is not None:
+        cfg.sidecar_auto_update = bool(body.sidecar_auto_update)
     session.commit()
 
     # Wake poller so the new interval applies on the next tick rather than

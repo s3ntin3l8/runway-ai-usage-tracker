@@ -121,6 +121,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("system_config", "user_timezone", "VARCHAR"),
     ("system_config", "sidecar_update_channel", "VARCHAR"),
+    ("system_config", "sidecar_auto_update", "BOOLEAN"),
     ("usage_events", "subagent_type", "VARCHAR"),
     ("quota_snapshots", "variant", "TEXT NOT NULL DEFAULT ''"),
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session

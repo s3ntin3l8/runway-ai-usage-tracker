@@ -30,8 +30,8 @@ def get_config_path() -> pathlib.Path:
 _TEMPLATE_CONFIG: dict = {
     "api_url": "http://localhost:8765",
     "api_key": "REPLACE_ME",
-    # Opt-in background self-install of newer builds (notify-only when false).
-    "auto_update": False,
+    # `auto_update` is omitted on purpose: absent = defer to the dashboard's
+    # fleet-wide setting. Add `"auto_update": true|false` to force per-machine.
 }
 
 

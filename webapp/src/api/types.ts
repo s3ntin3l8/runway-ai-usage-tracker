@@ -377,6 +377,10 @@ export interface Sidecar {
   collection_enabled?: boolean;
   collection_errors?: string[] | null;
   last_log_lines?: string[] | null;
+  // Update status computed server-side by fleet_registry.to_dict().
+  update_available?: boolean;
+  latest_version?: string | null;
+  channel?: 'stable' | 'edge';
   [key: string]: unknown;
 }
 
@@ -400,6 +404,9 @@ export interface AppConfig {
   env_timezone?: string | null;
   // Update channel sidecars track for the "update available" check.
   sidecar_update_channel?: 'stable' | 'edge' | null;
+  // Fleet-wide opt-in: when true, sidecars self-install available updates
+  // (a sidecar's explicit local config overrides this).
+  sidecar_auto_update?: boolean | null;
 }
 
 export interface CollectionStrategy {

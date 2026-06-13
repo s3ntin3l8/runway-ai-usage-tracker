@@ -86,7 +86,12 @@ The sidecar checks for updates daily. When a newer version is available, the men
 You can install the update without leaving the app:
 - **Tray app**: click **Download & Install Update** (shown once an update is detected). It downloads the matching release asset, verifies its `.sha256` checksum, swaps the binary/`.app`, and relaunches.
 - **Headless CLI**: run `runway-sidecar-cli --self-update` (alias `--update`) for a one-shot download → verify → install, then relaunch under your supervisor (systemd/launchd).
-- **Background auto-install**: set `"auto_update": true` in `config.json` (default `false`). The daily check then self-installs newer builds automatically. Leave it `false` to stay notify-only.
+- **Background auto-install**: enable it locally or fleet-wide (see below). The daily check then self-installs newer builds automatically.
+- **Push from the dashboard**: on the Fleet page, a sidecar with an available update shows an **Update now** button — clicking it makes that sidecar self-install on its next heartbeat.
+
+**Auto-update control (local vs server):**
+- **Server (fleet-wide):** the dashboard's *System → Auto-install updates* toggle (default off) is pushed to every sidecar on its next heartbeat.
+- **Local (per-machine):** an explicit `"auto_update": true|false` in `config.json` **overrides** the server toggle — `true` always auto-installs, `false` never does. Omit the key (the default) to defer to the server toggle. This preserves per-machine consent: a machine can hard-opt-out regardless of the fleet setting.
 
 **Constraints & safety:**
 - Self-update only runs for the packaged (PyInstaller) binaries. **From-source runs (`python3 scripts/sidecar.py`) and Docker containers are notify-only** — update them with `git pull` / by repulling the image.

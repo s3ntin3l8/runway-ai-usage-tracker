@@ -779,3 +779,27 @@ class TestSelfUpdateCLIFlag:
         assert exc.value.code == 1  # self_update returned False
         assert su_calls["n"] == 1
         assert pid_called["n"] == 0  # never reached write_pid_file
+
+
+class TestAutoUpdatePrecedence:
+    """Local `auto_update` config overrides the server's fleet-wide flag."""
+
+    def _set(self, monkeypatch, local, server):
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", local)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", server)
+
+    def test_local_true_overrides_server_false(self, monkeypatch):
+        self._set(monkeypatch, True, False)
+        assert sidecar._auto_update_enabled() is True
+
+    def test_local_false_overrides_server_true(self, monkeypatch):
+        self._set(monkeypatch, False, True)
+        assert sidecar._auto_update_enabled() is False
+
+    def test_unset_local_defers_to_server_true(self, monkeypatch):
+        self._set(monkeypatch, None, True)
+        assert sidecar._auto_update_enabled() is True
+
+    def test_unset_local_defers_to_server_false(self, monkeypatch):
+        self._set(monkeypatch, None, False)
+        assert sidecar._auto_update_enabled() is False

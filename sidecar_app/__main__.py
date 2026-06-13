@@ -60,12 +60,25 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
     daemon.on_status_change = tray._update_icon
 
     # 6. Wire update checker
+    def _auto_update_enabled() -> bool:
+        """Local override wins: explicit `auto_update` config beats the server's
+        fleet-wide flag (synced onto scripts.sidecar by the daemon ingest loop)."""
+        local = config.get("auto_update")
+        if local is not None:
+            return bool(local)
+        try:
+            import scripts.sidecar as _sidecar
+
+            return bool(_sidecar._AUTO_UPDATE_SERVER)
+        except Exception:
+            return False
+
     def on_update_available(current: str, latest: str) -> None:
         tray.set_update_available(True)
-        # Opt-in: self-install in the background when auto_update is on. The
+        # Self-install in the background when auto-update is effectively on. The
         # checker already runs on a daemon thread, so a direct call is fine; the
         # apply layer no-ops on non-frozen / Docker runs.
-        if config.get("auto_update", False):
+        if _auto_update_enabled():
             try:
                 from scripts.sidecar_pkg.self_update import self_update
                 from sidecar_app.updater import _resolve_channel

@@ -23,6 +23,10 @@ class FleetRegistryService:
         # The flag is consumed (cleared) the first time the sidecar polls after it is set.
         self._pending_triggers: set[str] = set()
 
+        # In-memory set of sidecar IDs awaiting a one-shot "update now" push.
+        # Consumed (cleared) on the sidecar's next heartbeat after it is set.
+        self._pending_updates: set[str] = set()
+
         # In-memory tracking of the last time each sidecar was asked to poll a specific provider.
         # Key: sidecar_id -> dict(provider_id -> unix_timestamp)
         self._last_provider_polls: dict[str, dict[str, float]] = {}
@@ -67,6 +71,19 @@ class FleetRegistryService:
         if sidecar_id in self._pending_triggers:
             self._pending_triggers.discard(sidecar_id)
             logger.info(f"Remote trigger delivered to sidecar '{sidecar_id}'")
+            return True
+        return False
+
+    def set_pending_update(self, sidecar_id: str) -> None:
+        """Schedule a one-shot self-update for the given sidecar."""
+        self._pending_updates.add(sidecar_id)
+        logger.info(f"Remote update queued for sidecar '{sidecar_id}'")
+
+    def consume_pending_update(self, sidecar_id: str) -> bool:
+        """Return True (and clear the flag) if an update push is pending for this sidecar."""
+        if sidecar_id in self._pending_updates:
+            self._pending_updates.discard(sidecar_id)
+            logger.info(f"Remote update delivered to sidecar '{sidecar_id}'")
             return True
         return False
 

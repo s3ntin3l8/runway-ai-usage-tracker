@@ -109,6 +109,18 @@ def test_patch_writes_audit_row(client, session):
     assert rows[0].target_id == "patch-host"
 
 
+def test_update_now_writes_audit_row(client, session):
+    _add_sidecar(session, "upd-host")
+    r = client.post("/api/v1/fleet/sidecars/upd-host/update")
+    assert r.status_code == 200
+    assert r.json()["status"] == "update_queued"
+
+    rows = _audit_rows(session)
+    assert len(rows) == 1
+    assert rows[0].action == "sidecar.update_now"
+    assert rows[0].target_id == "upd-host"
+
+
 def test_failed_mutation_does_not_write_audit_row(client, session):
     """A 404 (sidecar not found) must NOT leave a row — audit logs are for
     successful state changes, not failed attempts."""

@@ -134,3 +134,15 @@ def test_delete_sidecar(client, session):
 def test_delete_sidecar_not_found(client):
     response = client.delete("/api/v1/fleet/sidecars/nonexistent")
     assert response.status_code == 404
+
+
+def test_update_now_sets_pending_flag(client):
+    from app.services.fleet_registry import fleet_registry
+
+    response = client.post("/api/v1/fleet/sidecars/upd-host/update")
+    assert response.status_code == 200
+    assert response.json() == {"status": "update_queued", "sidecar_id": "upd-host"}
+
+    # The flag is delivered exactly once (consumed on the next heartbeat).
+    assert fleet_registry.consume_pending_update("upd-host") is True
+    assert fleet_registry.consume_pending_update("upd-host") is False

@@ -108,6 +108,13 @@ export const setSidecarEnabled = (sidecarId: string, enabled: boolean) =>
     { method: 'POST' },
   );
 
+// Push a one-shot self-update to a sidecar; it installs on its next heartbeat.
+export const triggerSidecarUpdate = (sidecarId: string) =>
+  api<{ status: string; sidecar_id: string }>(
+    `/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/update`,
+    { method: 'POST' },
+  );
+
 // --- System ----------------------------------------------------------------
 
 export const fetchSettings = () => api<SystemSettings>('/api/v1/system/settings');

@@ -291,6 +291,12 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             if poll_providers:
                 logger.info(f"Instructing sidecar '{payload.sidecar_id}' to poll: {poll_providers}")
 
+    # One-shot admin "Update now" push: consumed once so the sidecar self-updates
+    # on this heartbeat (independent of the auto-update toggle / pause state).
+    update_now = (
+        fleet_registry.consume_pending_update(payload.sidecar_id) if payload.sidecar_id else False
+    )
+
     return {
         "status": "ok",
         "provider": payload.provider,
@@ -308,6 +314,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # Update channel the sidecar should track for its "update available"
         # check ("stable" | "edge"). The dashboard owns this setting.
         "sidecar_update_channel": (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable",
+        # Fleet-wide opt-in auto-update flag; a sidecar's explicit local config wins.
+        "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
+        # One-shot: self-update immediately on this heartbeat (admin pushed it).
+        "update_now": update_now,
     }
 
 
@@ -506,6 +516,22 @@ async def resume_sidecar(
     _set_sidecar_collection_enabled(sidecar_id, True, session)
     audit_log.record(session, request, action="sidecar.resume", target_id=sidecar_id)
     return {"status": "resumed", "sidecar_id": sidecar_id, "collection_enabled": True}
+
+
+@router.post("/sidecars/{sidecar_id}/update")
+@limiter.limit("10/minute")
+async def update_sidecar_now(
+    request: Request,
+    sidecar_id: str,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Push a one-shot self-update to the named sidecar. It self-installs on its
+    next heartbeat (independent of the auto-update toggle); a no-op on non-frozen
+    or Docker sidecars."""
+    fleet_registry.set_pending_update(sidecar_id)
+    audit_log.record(session, request, action="sidecar.update_now", target_id=sidecar_id)
+    return {"status": "update_queued", "sidecar_id": sidecar_id}
 
 
 @router.get("/config")
