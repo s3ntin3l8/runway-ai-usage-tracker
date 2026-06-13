@@ -284,6 +284,31 @@ class SidecarTray:
         def on_check_updates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             webbrowser.open(RELEASES_URL)
 
+        def on_install_update(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            """Download, verify and install the available update on a worker thread."""
+
+            def _run() -> None:
+                from sidecar_app import __version__
+                from sidecar_app.updater import _resolve_channel
+
+                try:
+                    from scripts.sidecar_pkg.self_update import self_update
+
+                    ok = self_update(__version__, _resolve_channel())
+                except Exception:
+                    ok = False
+                if not ok:
+                    try:
+                        icon.notify(
+                            "Could not install the update automatically — "
+                            "use Check for Updates… to download it.",
+                            "Runway Sidecar",
+                        )
+                    except Exception:
+                        pass  # notifications not supported on all platforms
+
+            threading.Thread(target=_run, name="runway-self-update", daemon=True).start()
+
         def on_launch_at_login(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             if is_login_item_installed():
                 remove_login_item()
@@ -319,6 +344,11 @@ class SidecarTray:
             pystray.MenuItem("Reload Config", on_reload_config),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check for Updates…", on_check_updates),
+            pystray.MenuItem(
+                "Download & Install Update",
+                on_install_update,
+                visible=lambda item: self._update_available,  # noqa: ARG005
+            ),
             pystray.MenuItem("About", on_about),
             pystray.MenuItem("Quit", on_quit),
         )

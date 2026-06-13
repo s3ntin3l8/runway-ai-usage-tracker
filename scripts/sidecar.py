@@ -441,6 +441,9 @@ DEFAULT_CONFIG = {
     "queue_max_size_mb": 10,
     "log_level": "INFO",
     "log_file_enabled": True,
+    # Opt-in: when true, a frozen sidecar self-installs newer builds in the
+    # background (notify-only otherwise). See scripts/sidecar_pkg/self_update.py.
+    "auto_update": False,
 }
 
 REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
@@ -456,6 +459,9 @@ _windows_cred_ttl_seconds: int = 300
 # the update-check thread then falls back to the channel inferred from our own
 # version string.
 _UPDATE_CHANNEL: str | None = None
+# Whether to self-install available updates (from the `auto_update` config key).
+# Set once in main(); the update-check thread's callback consults it.
+_AUTO_UPDATE: bool = False
 
 
 def get_sidecar_dir() -> Path:
@@ -2821,6 +2827,13 @@ def main():
     parser.add_argument("--run-once", action="store_true", help="Run once and exit")
     parser.add_argument("--daemon", action="store_true", help="Run as daemon (default)")
     parser.add_argument(
+        "--self-update",
+        "--update",
+        dest="self_update",
+        action="store_true",
+        help="Download, verify and install the latest build, then exit",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {_SIDECAR_VERSION}",
@@ -2829,6 +2842,19 @@ def main():
 
     config = load_config(args.config)
     setup_logging(config.get("log_level", "INFO"), config.get("log_file_enabled", True))
+
+    # Manual self-update runs one synchronous download→verify→install and exits.
+    # Handled before write_pid_file() so a running daemon's PID lock can't block
+    # an explicit `--self-update` invocation.
+    if args.self_update:
+        from scripts.sidecar_pkg.self_update import self_update
+
+        channel = os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
+        ok = self_update(_SIDECAR_VERSION, channel, restart=False)
+        sys.exit(0 if ok else 1)
+
+    global _AUTO_UPDATE
+    _AUTO_UPDATE = bool(config.get("auto_update", False))
 
     if not write_pid_file():
         sys.exit(1)
@@ -2850,16 +2876,28 @@ def main():
     else:
         runner.start()
 
-        # Notify-only update check: logs a warning when a newer build is
-        # available on the active channel. Channel priority: RUNWAY_UPDATE_CHANNEL
-        # env override > server-synced setting > channel inferred from our version.
+        # Background update check. Logs a warning when a newer build is
+        # available on the active channel; when `auto_update` is on (frozen
+        # builds only), it also self-installs. Channel priority:
+        # RUNWAY_UPDATE_CHANNEL env override > server-synced > inferred.
         update_thread = None
         try:
             from scripts.sidecar_pkg.update_check import UpdateCheckThread
 
+            def _channel_getter() -> str | None:
+                return os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
+
+            def _maybe_self_update(_desc: str) -> None:
+                if not _AUTO_UPDATE:
+                    return
+                from scripts.sidecar_pkg.self_update import self_update
+
+                self_update(_SIDECAR_VERSION, _channel_getter())
+
             update_thread = UpdateCheckThread(
                 _SIDECAR_VERSION,
-                channel_getter=lambda: os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL,
+                channel_getter=_channel_getter,
+                on_update_available=_maybe_self_update,
             )
             update_thread.start()
         except Exception:

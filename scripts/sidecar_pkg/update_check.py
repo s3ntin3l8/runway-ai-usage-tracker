@@ -109,17 +109,25 @@ def check_once(current_version: str, channel: str | None = None) -> str | None:
 
 
 class UpdateCheckThread:
-    """Background daemon thread: check on start, then every 24h. Logs only."""
+    """Background daemon thread: check on start, then every 24h.
+
+    Logs a warning when a newer build is available. If *on_update_available* is
+    supplied it is also invoked with the update description — the self-update
+    apply layer hooks in here when the ``auto_update`` config flag is on; with no
+    callback the behaviour is notify-only.
+    """
 
     def __init__(
         self,
         current_version: str,
         channel_getter: Callable[[], str | None] | None = None,
         interval: int = _CHECK_INTERVAL_SECONDS,
+        on_update_available: Callable[[str], None] | None = None,
     ) -> None:
         self._current = current_version
         self._channel_getter = channel_getter or (lambda: None)
         self._interval = interval
+        self._on_update_available = on_update_available
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -141,6 +149,11 @@ class UpdateCheckThread:
             logger.warning(
                 f"A newer Runway sidecar is available ({available}). Download: {_RELEASES_URL}"
             )
+            if self._on_update_available is not None:
+                try:
+                    self._on_update_available(available)
+                except Exception:
+                    logger.debug("on_update_available callback failed", exc_info=True)
 
     def _loop(self) -> None:
         self._check()

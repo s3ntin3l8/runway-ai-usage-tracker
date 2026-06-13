@@ -745,3 +745,37 @@ def test_ag_parse_lsp_response_credit_card():
     assert card["remaining"] == "500"
     assert card["model_id"] is None
     assert card["reset_at"] is None
+
+
+class TestSelfUpdateCLIFlag:
+    """`--self-update` runs one synchronous update and exits before the PID lock."""
+
+    def test_self_update_flag_exits_without_pid_lock(self, monkeypatch):
+        import scripts.sidecar_pkg.self_update as su_mod
+
+        monkeypatch.setattr(sys, "argv", ["sidecar", "--self-update"])
+        monkeypatch.setattr(
+            sidecar, "load_config", lambda *a, **k: {"api_url": "x", "api_key": "y"}
+        )
+        monkeypatch.setattr(sidecar, "setup_logging", lambda *a, **k: None)
+
+        pid_called = {"n": 0}
+        monkeypatch.setattr(
+            sidecar, "write_pid_file", lambda: pid_called.__setitem__("n", pid_called["n"] + 1)
+        )
+
+        su_calls = {"n": 0}
+
+        def _fake_self_update(version, channel, *, restart=True):
+            su_calls["n"] += 1
+            assert restart is False  # one-shot manual run must not re-exec
+            return False
+
+        monkeypatch.setattr(su_mod, "self_update", _fake_self_update)
+
+        with pytest.raises(SystemExit) as exc:
+            sidecar.main()
+
+        assert exc.value.code == 1  # self_update returned False
+        assert su_calls["n"] == 1
+        assert pid_called["n"] == 0  # never reached write_pid_file

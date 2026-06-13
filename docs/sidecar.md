@@ -71,7 +71,8 @@ The sidecar runs as a background app with a menu icon showing its status:
 - **Launch at Login**: Register the app to start automatically on system boot
 - **Edit Config**: Open the config file in your default editor
 - **View Logs**: Open the log file for debugging
-- **Check for Updates…**: Open the releases page to download a newer version
+- **Check for Updates…**: Open the releases page to download a newer version manually
+- **Download & Install Update**: Appears only when an update is available — downloads, verifies, installs, and relaunches in place
 - **Quit**: Exit the app
 
 ### Automatic Startup
@@ -80,7 +81,19 @@ Click **Launch at Login** in the menu to register the sidecar as a login item (m
 
 ### Updates
 
-The sidecar checks for updates daily. When a newer version is available, the menu title shows **(update available)**. Click **Check for Updates…** to open the releases page and download the latest version.
+The sidecar checks for updates daily. When a newer version is available, the menu title shows **(update available)**.
+
+You can install the update without leaving the app:
+- **Tray app**: click **Download & Install Update** (shown once an update is detected). It downloads the matching release asset, verifies its `.sha256` checksum, swaps the binary/`.app`, and relaunches.
+- **Headless CLI**: run `runway-sidecar-cli --self-update` (alias `--update`) for a one-shot download → verify → install, then relaunch under your supervisor (systemd/launchd).
+- **Background auto-install**: set `"auto_update": true` in `config.json` (default `false`). The daily check then self-installs newer builds automatically. Leave it `false` to stay notify-only.
+
+**Constraints & safety:**
+- Self-update only runs for the packaged (PyInstaller) binaries. **From-source runs (`python3 scripts/sidecar.py`) and Docker containers are notify-only** — update them with `git pull` / by repulling the image.
+- The checksum is **mandatory**: a missing or mismatched `.sha256` aborts the install, leaving the running copy untouched.
+- The previous binary/bundle is kept alongside as `*.old` — a rollback breadcrumb you can restore by hand if a build misbehaves.
+- Edge-channel self-update is **Linux-only** (edge builds are published for Linux only).
+- If the install path isn't writable (e.g. a system-wide `/Applications` or `/usr/local/bin` location), the update is skipped with a log message and you update manually via **Check for Updates…**.
 
 ---
 
@@ -149,7 +162,8 @@ The default location for Runway's (and Sidecar's) configuration files is platfor
   "retry_backoff_seconds": 5,
   "queue_max_size_mb": 10,
   "log_level": "INFO",
-  "log_file_enabled": true
+  "log_file_enabled": true,
+  "auto_update": false
 }
 ```
 

@@ -62,6 +62,17 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
     # 6. Wire update checker
     def on_update_available(current: str, latest: str) -> None:
         tray.set_update_available(True)
+        # Opt-in: self-install in the background when auto_update is on. The
+        # checker already runs on a daemon thread, so a direct call is fine; the
+        # apply layer no-ops on non-frozen / Docker runs.
+        if config.get("auto_update", False):
+            try:
+                from scripts.sidecar_pkg.self_update import self_update
+                from sidecar_app.updater import _resolve_channel
+
+                self_update(__version__, _resolve_channel())
+            except Exception:
+                logging.warning("Background self-update failed", exc_info=True)
 
     checker = UpdateChecker(on_update_available=on_update_available)
     checker.start()
