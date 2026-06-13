@@ -203,13 +203,31 @@ def verify_sha256(path: pathlib.Path, expected_hex: str) -> bool:
     return h.hexdigest().lower() == expected_hex.lower()
 
 
+def _is_within(base: pathlib.Path, target: pathlib.Path) -> bool:
+    """True when *target* resolves to a path inside *base* (no traversal/escape)."""
+    try:
+        target.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _extract(archive: pathlib.Path, dest: pathlib.Path) -> None:
+    """Extract *archive* into *dest*, rejecting any member that would escape it.
+
+    Defence-in-depth: the archive is already checksum-verified, but we still
+    guard against path traversal (zip-slip / tar-slip).
+    """
     if archive.name.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
-            zf.extractall(dest)  # noqa: S202 — trusted, checksum-verified GitHub asset
+            for name in zf.namelist():
+                if not _is_within(dest, dest / name):
+                    raise SelfUpdateError(f"unsafe path in archive: {name!r}")
+            zf.extractall(dest)
     else:
         with tarfile.open(archive) as tf:
-            tf.extractall(dest)  # noqa: S202 — trusted, checksum-verified GitHub asset
+            # PEP 706 "data" filter blocks absolute paths, "..", and unsafe links.
+            tf.extractall(dest, filter="data")
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +263,7 @@ def _single_flight() -> Iterator[bool]:
             try:
                 lock_path.unlink()
             except OSError:
+                # Lock file already gone (or not removable); nothing to clean up.
                 pass
 
 
@@ -300,7 +319,9 @@ def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> boo
         os.rename(install, old)
         shutil.move(str(staged), str(install))
         if install.is_file():
-            os.chmod(install, 0o755)
+            # Owner-only rwx: the binary is re-exec'd as the user that runs it,
+            # so it needs no group/world bits.
+            os.chmod(install, 0o700)
     except PermissionError:
         logger.error(
             "Self-update aborted: install path %s is not writable; update manually", install
@@ -310,6 +331,7 @@ def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> boo
             try:
                 os.rename(old, install)
             except OSError:
+                # Restore is best-effort; nothing more we can do if it also fails.
                 pass
         return False
     except OSError:
@@ -398,6 +420,7 @@ def _rm(path: pathlib.Path) -> None:
         try:
             path.unlink()
         except OSError:
+            # Already absent or not removable; safe to ignore for a cleanup helper.
             pass
 
 
@@ -461,7 +484,13 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             extracted.mkdir()
             _extract(archive, extracted)
             return apply_update(target, extracted, restart=restart)
-        except (error.URLError, OSError):
+        except (
+            error.URLError,
+            OSError,
+            SelfUpdateError,
+            tarfile.TarError,
+            zipfile.BadZipFile,
+        ):
             logger.exception("Self-update: download/extract failed")
             return False
         finally:

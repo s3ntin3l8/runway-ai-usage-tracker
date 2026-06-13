@@ -7,7 +7,10 @@ NOT unit-tested — it is verified manually per platform during release QA.
 """
 
 import hashlib
+import io
 import sys
+import tarfile
+import zipfile
 
 import pytest
 
@@ -15,6 +18,7 @@ from scripts.sidecar_pkg import self_update
 from scripts.sidecar_pkg.self_update import (
     SelfUpdateError,
     SelfUpdateUnsupportedError,
+    _extract,
     find_asset_urls,
     resolve_asset_name,
     verify_sha256,
@@ -192,3 +196,57 @@ class TestSelfUpdateGuards:
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("lock held; no work")),
         )
         assert self_update.self_update("1.1.0", "stable") is False
+
+
+# ---------------------------------------------------------------------------
+# _extract — path-traversal hardening (CodeQL py/unsafe-unpacking)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSafety:
+    def _make_tar(self, path, members):
+        with tarfile.open(path, "w:gz") as tf:
+            for name in members:
+                data = b"x"
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+
+    def _make_zip(self, path, members):
+        with zipfile.ZipFile(path, "w") as zf:
+            for name in members:
+                zf.writestr(name, "x")
+
+    def test_tar_extracts_safe_members(self, tmp_path):
+        archive = tmp_path / "ok.tar.gz"
+        self._make_tar(archive, ["runway-sidecar-cli"])
+        dest = tmp_path / "out"
+        dest.mkdir()
+        _extract(archive, dest)
+        assert (dest / "runway-sidecar-cli").is_file()
+
+    def test_tar_rejects_traversal(self, tmp_path):
+        archive = tmp_path / "evil.tar.gz"
+        self._make_tar(archive, ["../evil"])
+        dest = tmp_path / "out"
+        dest.mkdir()
+        with pytest.raises(tarfile.TarError):  # data filter raises a FilterError
+            _extract(archive, dest)
+        assert not (tmp_path / "evil").exists()  # nothing escaped dest
+
+    def test_zip_extracts_safe_members(self, tmp_path):
+        archive = tmp_path / "ok.zip"
+        self._make_zip(archive, ["RunwaySidecar"])
+        dest = tmp_path / "out"
+        dest.mkdir()
+        _extract(archive, dest)
+        assert (dest / "RunwaySidecar").is_file()
+
+    def test_zip_rejects_traversal(self, tmp_path):
+        archive = tmp_path / "evil.zip"
+        self._make_zip(archive, ["../evil"])
+        dest = tmp_path / "out"
+        dest.mkdir()
+        with pytest.raises(SelfUpdateError):
+            _extract(archive, dest)
+        assert not (tmp_path / "evil").exists()  # nothing escaped dest
