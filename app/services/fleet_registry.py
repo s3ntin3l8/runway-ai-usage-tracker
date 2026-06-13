@@ -77,13 +77,13 @@ class FleetRegistryService:
     def set_pending_update(self, sidecar_id: str) -> None:
         """Schedule a one-shot self-update for the given sidecar."""
         self._pending_updates.add(sidecar_id)
-        logger.info(f"Remote update queued for sidecar '{sidecar_id}'")
+        logger.info(f"Remote update queued for sidecar '{scrub_log(sidecar_id)}'")
 
     def consume_pending_update(self, sidecar_id: str) -> bool:
         """Return True (and clear the flag) if an update push is pending for this sidecar."""
         if sidecar_id in self._pending_updates:
             self._pending_updates.discard(sidecar_id)
-            logger.info(f"Remote update delivered to sidecar '{sidecar_id}'")
+            logger.info(f"Remote update delivered to sidecar '{scrub_log(sidecar_id)}'")
             return True
         return False
 
