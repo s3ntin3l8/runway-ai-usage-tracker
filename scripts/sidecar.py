@@ -26,6 +26,7 @@ import re
 import signal
 import socket
 import sqlite3
+import ssl
 import struct
 import subprocess
 import sys
@@ -886,11 +887,32 @@ def queue_flush(
 # --- HTTP Utilities ---
 
 
+def build_ssl_context(api_url: str, config: dict[str, Any] | None = None) -> ssl.SSLContext | None:
+    """Resolve a TLS trust store for HTTPS pushes to the Runway server.
+
+    Returns ``None`` for plaintext ``http://`` URLs (urllib needs no context).
+    Honours the ``ca_bundle`` / ``tls_insecure`` config keys (and their
+    ``RUNWAY_CA_BUNDLE`` / ``RUNWAY_INSECURE`` env equivalents); see
+    ``scripts.sidecar_pkg.tls.build_context`` for the full resolution order. The
+    frozen sidecar bundles ``certifi`` so a valid public cert verifies without a
+    system CA store.
+    """
+    from scripts.sidecar_pkg.tls import build_context
+
+    config = config or {}
+    cfg_insecure = str(config.get("tls_insecure", "")).strip().lower() in ("1", "true", "yes", "on")
+    return build_context(
+        api_url,
+        ca_bundle=config.get("ca_bundle"),
+        insecure=True if cfg_insecure else None,
+    )
+
+
 def health_check(api_url: str, timeout: int = 5) -> bool:
     """Check if server is healthy before pushing."""
     try:
         req = request.Request(f"{api_url.rstrip('/')}/api/health", method="GET")
-        with request.urlopen(req, timeout=timeout) as resp:
+        with request.urlopen(req, timeout=timeout, context=build_ssl_context(api_url)) as resp:
             return resp.getcode() == 200
     except Exception:
         return False
@@ -911,7 +933,7 @@ def http_post_signed(url: str, data: dict[str, Any], api_key: str) -> tuple[bool
 
     req = request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with request.urlopen(req, timeout=15) as resp:
+        with request.urlopen(req, timeout=15, context=build_ssl_context(url)) as resp:
             return True, json.loads(resp.read().decode("utf-8")), resp.getcode()
     except error.HTTPError as e:
         try:

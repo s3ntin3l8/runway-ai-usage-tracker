@@ -154,11 +154,22 @@ def resolve_asset_name(target: str, channel: str, version: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _github_ssl_context(url: str):  # type: ignore[no-untyped-def]
+    """certifi-backed TLS context so the frozen binary trusts GitHub's cert.
+
+    GitHub always presents a valid public cert, so verification is never
+    disabled here even if the user set ``RUNWAY_INSECURE`` for their own server.
+    """
+    from scripts.sidecar_pkg.tls import build_context
+
+    return build_context(url, insecure=False)
+
+
 def _get_json(url: str) -> dict:
     req = request.Request(  # noqa: S310 — fixed https GitHub API URL
         url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"}
     )
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
+    with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=_github_ssl_context(url)) as resp:  # noqa: S310
         return json.loads(resp.read().decode())
 
 
@@ -190,14 +201,18 @@ def find_asset_urls(release: dict, asset_name: str) -> tuple[str, str]:
 
 def _download(url: str, dest: pathlib.Path) -> None:
     req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp, open(dest, "wb") as fh:  # noqa: S310
+    ctx = _github_ssl_context(url)
+    with (
+        request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp,
+        open(dest, "wb") as fh,
+    ):  # noqa: S310
         shutil.copyfileobj(resp, fh)
 
 
 def _fetch_expected_sha(url: str) -> str:
     """Download a ``.sha256`` file and return the lowercased hex digest."""
     req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
+    with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=_github_ssl_context(url)) as resp:  # noqa: S310
         text = resp.read().decode().strip()
     # shasum format: "<hex>  <filename>" — take the first token.
     return text.split()[0].lower() if text else ""

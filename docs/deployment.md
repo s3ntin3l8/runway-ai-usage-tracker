@@ -121,6 +121,7 @@ Two things to know:
 
 - **Rate-limit bucketing.** The ingest limiter (600/min) keys on client IP. Behind a proxy that IP is Traefik's, so every sidecar collapses into one bucket unless you set `TRUSTED_PROXY_IPS` to Traefik's container IP — then Runway honors the `X-Forwarded-For` Traefik sets and buckets per real client (this also gates `X-Forwarded-User` admin auth). Harmless for a couple of sidecars; set it for a fleet. The match is exact (not CIDR), so pin Traefik to a static IP if you depend on it.
 - **Same-host shortcut.** To let a local native sidecar skip the public DNS → Traefik round-trip, add a loopback publish to the `runway` service — `ports: ["127.0.0.1:8765:8765"]` — and point that sidecar at `http://localhost:8765`. Remote sidecars keep using the public URL.
+- **Certificate trust.** The sidecar bundles [`certifi`](https://pypi.org/project/certifi/), so a valid public cert (Let's Encrypt via Traefik) verifies with no extra setup. If you terminate TLS with a **self-signed or internal-CA** cert, hand the sidecar your CA chain via `ca_bundle` in its config (or `RUNWAY_CA_BUNDLE` / `SSL_CERT_FILE` env); `RUNWAY_INSECURE=1` disables verification entirely as a trusted-network last resort. See [sidecar.md → TLS / certificate errors](sidecar.md#tls--certificate-errors-certificate_verify_failed).
 
 ## Continuous deployment & the dev/prod split
 

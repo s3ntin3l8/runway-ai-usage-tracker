@@ -384,6 +384,29 @@ env | grep -E "(GITHUB|ZAI|KIMI|CLAUDE)"
 - View logs: `tail -f ~/.config/runway/sidecar/sidecar.log`
 - Check queue: `ls -la ~/.config/runway/sidecar/queue/`
 
+### TLS / certificate errors (`CERTIFICATE_VERIFY_FAILED`)
+The error `<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] ...>` on an `https://`
+`api_url` means the sidecar couldn't verify the server's certificate against a
+trusted CA. Builds from **v…+** bundle [`certifi`](https://pypi.org/project/certifi/),
+so a valid public (e.g. Let's Encrypt) cert verifies out of the box. If you hit
+this:
+
+- **Older frozen build (macOS), valid public cert** — point the bundled OpenSSL
+  at the system CA store, then relaunch the app:
+  ```sh
+  launchctl setenv SSL_CERT_FILE /etc/ssl/cert.pem
+  ```
+- **Self-signed / internal-CA server** — give the sidecar your CA chain:
+  - config `~/.config/runway/sidecar/config.json`: `"ca_bundle": "/path/to/ca.pem"`
+  - or env: `RUNWAY_CA_BUNDLE=/path/to/ca.pem` (`SSL_CERT_FILE` also honoured)
+- **Last resort (trusted network only)** — disable verification entirely:
+  config `"tls_insecure": true` or env `RUNWAY_INSECURE=1`. HMAC still
+  authenticates payloads, but the channel is no longer confidential — prefer a
+  real CA bundle.
+
+These knobs apply only to the push to *your* Runway server; the sidecar's GitHub
+self-update always verifies GitHub's public cert regardless.
+
 ### Daemon not starting
 - Check PID file: `cat ~/.config/runway/sidecar/sidecar.pid`
 - Kill stale process: `kill $(cat ~/.config/runway/sidecar/sidecar.pid)`

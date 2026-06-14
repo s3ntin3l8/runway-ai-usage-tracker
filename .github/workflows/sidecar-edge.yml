@@ -44,7 +44,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install -e . pystray Pillow pyinstaller packaging
+        run: pip install -e . pystray Pillow pyinstaller packaging certifi
 
       - name: Stamp edge version
         # Mark the bundled package.json so the binary reports `<base>+edge.<sha>`.

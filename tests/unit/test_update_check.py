@@ -17,7 +17,7 @@ def _urlopen_returning(payload: dict):
 def _make_urlopen(by_url: dict):
     """Dispatch urlopen by a substring of the requested URL; OSError otherwise."""
 
-    def _open(req, timeout=None):
+    def _open(req, timeout=None, context=None):
         url = getattr(req, "full_url", req)
         for key, payload in by_url.items():
             if key in url:

@@ -47,10 +47,15 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
 
 
 def _get_json(url: str) -> dict:
+    from scripts.sidecar_pkg.tls import build_context
+
     req = request.Request(  # noqa: S310 — fixed https GitHub API URL
         url, headers={"User-Agent": "Runway-Sidecar-UpdateCheck"}
     )
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
+    # certifi-backed context so the frozen binary trusts GitHub's public cert;
+    # GitHub always presents a valid cert, so never honour the insecure opt-in.
+    ctx = build_context(url, insecure=False)
+    with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp:  # noqa: S310
         return json.loads(resp.read().decode())
 
 
