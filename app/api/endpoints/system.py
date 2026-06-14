@@ -28,7 +28,9 @@ from app.models.db import (
     WebhookConfig,
 )
 from app.models.schemas import LimitCard
+from app.services import audit_log
 from app.services.collector_manager import manager
+from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import token_cache
 from app.services.token_health import token_health_service
 
@@ -90,9 +92,16 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         user_context or is_local_trust or is_valid_admin_key or not settings.ADMIN_API_KEY
     )
 
+    # The shared version checker caches the repo's latest release tag, which —
+    # since release-please tags the whole repo — is also the latest server
+    # release. `latest` is None until the first successful GitHub poll (or while
+    # offline), and is_update_available treats None as "unknown → don't flag".
+    latest = sidecar_version_checker.get_latest()
     response: dict[str, Any] = {
         "project_name": settings.PROJECT_NAME,
         "version": __version__,
+        "latest_version": latest,
+        "update_available": is_update_available(__version__, latest),
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
@@ -189,6 +198,29 @@ async def force_collect(
     except Exception as e:
         logger.error(f"Force collect failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/check-updates")
+@limiter.limit("6/minute")
+async def check_updates(
+    request: Request,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Force an immediate GitHub release poll for both the server and sidecars.
+
+    Refreshes the shared version-checker cache that `/settings` (server banner)
+    and `fleet_registry.to_dict()` (per-sidecar "update available" badges) both
+    read, so the user doesn't have to wait for the 24h background poll. Returns
+    the server-update verdict; sidecar badges refresh on the next fleet fetch.
+    """
+    latest = await sidecar_version_checker.check_now()
+    audit_log.record(session, request, action="system.check_updates", target_id=None)
+    return {
+        "current_version": __version__,
+        "latest_version": latest,
+        "update_available": is_update_available(__version__, latest),
+    }
 
 
 class CleanupRequest(BaseModel):

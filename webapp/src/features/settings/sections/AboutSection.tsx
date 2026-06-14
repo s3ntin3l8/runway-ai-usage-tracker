@@ -1,17 +1,37 @@
 // About: server identity, version, collector status snapshot.
 
-import { useQuery } from '@tanstack/react-query';
-import { fetchSettings, fetchStatus } from '@/api/endpoints';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
+import { checkForUpdates, fetchSettings, fetchStatus } from '@/api/endpoints';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 
+const RELEASES_URL = 'https://github.com/s3ntin3l8/runway/releases';
+
 export function AboutSection() {
+  const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
   const status = useQuery({
     queryKey: ['system', 'status'],
     queryFn: fetchStatus,
     refetchInterval: 60_000,
+  });
+
+  const check = useMutation({
+    mutationFn: checkForUpdates,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['system', 'settings'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+      toast.success(
+        res.update_available
+          ? `Runway v${res.latest_version} is available`
+          : `You're on the latest release (v${res.current_version})`,
+      );
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   if (settings.isPending) return <Skeleton className="h-48 max-w-2xl" />;
@@ -23,7 +43,23 @@ export function AboutSection() {
       <Card>
         <CardHeader>
           <CardTitle>{s?.project_name ?? 'Runway'}</CardTitle>
-          <Badge variant="accent">v{s?.version ?? '?'}</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="accent">v{s?.version ?? '?'}</Badge>
+            {s?.update_available ? (
+              <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+                <Badge variant="warning">v{s.latest_version} available</Badge>
+              </a>
+            ) : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => check.mutate()}
+              loading={check.isPending}
+            >
+              <RefreshCw className="size-3.5" aria-hidden />
+              Check for updates
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[13px] sm:grid-cols-3">

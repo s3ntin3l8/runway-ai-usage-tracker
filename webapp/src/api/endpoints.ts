@@ -25,6 +25,7 @@ import type {
   Sidecar,
   SystemSettings,
   TokenHealthEntry,
+  UpdateCheckResult,
   Webhook,
   WindowDetailResponse,
 } from './types';
@@ -122,6 +123,10 @@ export const triggerSidecarUpdate = (sidecarId: string) =>
 // --- System ----------------------------------------------------------------
 
 export const fetchSettings = () => api<SystemSettings>('/api/v1/system/settings');
+
+// Force an immediate GitHub release poll (server + sidecars); admin-gated.
+export const checkForUpdates = () =>
+  api<UpdateCheckResult>('/api/v1/system/check-updates', { method: 'POST' });
 
 export const fetchStatus = () => api<CollectorStatus>('/api/v1/system/status');
 

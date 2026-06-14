@@ -3,9 +3,10 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpCircle, Pause, Pencil, Play, Server, Trash2 } from 'lucide-react';
+import { ArrowUpCircle, Pause, Pencil, Play, RefreshCw, Server, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  checkForUpdates,
   deleteSidecar,
   fetchSidecars,
   patchSidecar,
@@ -32,6 +33,7 @@ function isOnline(s: Sidecar): boolean {
 }
 
 export function FleetPage() {
+  const queryClient = useQueryClient();
   const sidecars = useQuery({
     queryKey: ['fleet', 'sidecars'],
     queryFn: fetchSidecars,
@@ -41,9 +43,39 @@ export function FleetPage() {
   const [deleting, setDeleting] = useState<Sidecar | null>(null);
   const [updating, setUpdating] = useState<Sidecar | null>(null);
 
+  // Force a GitHub release poll, then refresh both the sidecar badges and the
+  // server-update banner (both read the same server-side cache).
+  const check = useMutation({
+    mutationFn: checkForUpdates,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+      queryClient.invalidateQueries({ queryKey: ['system', 'settings'] });
+      toast.success(
+        res.update_available
+          ? `Runway v${res.latest_version} is available`
+          : `You're on the latest release (v${res.current_version})`,
+      );
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   return (
     <>
-      <PageHeader title="Fleet" description="Sidecar registry" />
+      <PageHeader
+        title="Fleet"
+        description="Sidecar registry"
+        actions={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => check.mutate()}
+            loading={check.isPending}
+          >
+            <RefreshCw className="size-3.5" aria-hidden />
+            Check for updates
+          </Button>
+        }
+      />
       <div className="p-4 lg:p-8">
         {sidecars.isPending ? (
           <div className="grid gap-3 lg:grid-cols-2">

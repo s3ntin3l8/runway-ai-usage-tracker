@@ -404,12 +404,23 @@ export interface SystemSettings {
   app_host?: string;
   app_port?: number;
   version?: string;
+  // Latest published Runway release tag (no `v` prefix); null until the server
+  // has polled GitHub at least once. update_available compares it to `version`.
+  latest_version?: string | null;
+  update_available?: boolean;
   encryption_enabled?: boolean;
   admin_auth_required?: boolean;
   auth_methods?: string[];
   user_context?: string | null;
   is_authenticated?: boolean;
   ingest_api_key_is_default?: boolean;
+}
+
+// Result of POST /system/check-updates — an on-demand GitHub release poll.
+export interface UpdateCheckResult {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
 }
 
 export interface AppConfig {

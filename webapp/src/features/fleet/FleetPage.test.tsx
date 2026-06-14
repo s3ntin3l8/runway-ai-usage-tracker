@@ -111,4 +111,17 @@ describe('FleetPage', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /^update$/i }));
     expect(api.triggerSidecarUpdate).toHaveBeenCalledWith('laptop');
   });
+
+  it('forces a release poll via the Check for updates header button', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+    vi.mocked(api.checkForUpdates).mockResolvedValue({
+      current_version: '2.1.0',
+      latest_version: '2.1.0',
+      update_available: false,
+    });
+    renderWithProviders(<FleetPage />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /check for updates/i }));
+    expect(api.checkForUpdates).toHaveBeenCalled();
+  });
 });

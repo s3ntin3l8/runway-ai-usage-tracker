@@ -5,6 +5,11 @@ the latest tag in memory, and exposes a `get_latest()` accessor so the fleet
 API can flag sidecars running an older version. Network failures keep the
 previous cache (or `None` if we have never succeeded) — the fleet API treats
 `None` as "unknown latest, don't flag anything."
+
+Because release-please tags the whole repo, the cached latest tag doubles as the
+latest **server** release — `app/api/endpoints/system.py` reuses `get_latest()`
+(and `check_now()` for the manual "check for updates" trigger) to drive the
+in-app server-update banner.
 """
 
 from __future__ import annotations
