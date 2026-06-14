@@ -3,10 +3,11 @@
 // critical window so the answer to "am I on pace?" is visible without a tab
 // switch.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { CumulativeBucket, FleetEntry, ForecastEntry, LimitCard } from '@/api/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Switch } from '@/components/ui/Switch';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
@@ -35,6 +36,9 @@ function findForecast(card: LimitCard, forecasts: ForecastEntry[]): ForecastEntr
 }
 
 export function OverviewTab({ entry }: { entry: FleetEntry }) {
+  // Cache read/create is ~95% of tokens and skews the headline stats; let the
+  // user drop it from the month totals and both token donuts.
+  const [excludeCache, setExcludeCache] = useState(false);
   const forecast = useProviderForecast(entry.provider_id, entry.account_id);
   const cumulative = useProviderCumulative(entry.provider_id, entry.account_id);
   const cards = [entry.critical_gauge, ...entry.secondary_limits];
@@ -69,7 +73,13 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <ProviderKpis entry={entry} />
+      <div className="flex items-center justify-end gap-2">
+        <label htmlFor="exclude-cache" className="text-[12px] text-fg-muted">
+          Exclude cache
+        </label>
+        <Switch id="exclude-cache" checked={excludeCache} onCheckedChange={setExcludeCache} />
+      </div>
+      <ProviderKpis entry={entry} excludeCache={excludeCache} />
       <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -130,7 +140,7 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
             {cumulative.isPending ? (
               <Skeleton className="h-44 w-full" />
             ) : monthBucket ? (
-              <TokenDonut bucket={monthBucket} className="h-44" />
+              <TokenDonut bucket={monthBucket} className="h-44" excludeCache={excludeCache} />
             ) : (
               <p className="py-12 text-center text-xs text-fg-subtle">No usage this month.</p>
             )}
@@ -146,7 +156,7 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
           </CardHeader>
           <CardContent>
             {hasSourceSplit ? (
-              <ModelDonut byModel={sourceSplit} className="h-44" />
+              <ModelDonut byModel={sourceSplit} className="h-44" excludeCache={excludeCache} />
             ) : (
               <p className="py-12 text-center text-xs text-fg-subtle">
                 No activity in the current window.

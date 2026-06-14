@@ -1,18 +1,17 @@
 // Per-model token split donut: one slice per model_id in a period bucket's
 // by_model map, sized by that model's total tokens.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { CumulativeModelBucket } from '@/api/types';
 import { formatTokens } from '@/lib/format';
 import { EChart } from './EChart';
 import { baseTooltip, useChartTokens } from './theme';
 
-function modelTokens(b: CumulativeModelBucket): number {
+function modelTokens(b: CumulativeModelBucket, excludeCache: boolean): number {
   return (
     (b.tokens_input ?? 0) +
     (b.tokens_output ?? 0) +
-    (b.tokens_cache_read ?? 0) +
-    (b.tokens_cache_create ?? 0) +
+    (excludeCache ? 0 : (b.tokens_cache_read ?? 0) + (b.tokens_cache_create ?? 0)) +
     (b.tokens_reasoning ?? 0)
   );
 }
@@ -20,17 +19,23 @@ function modelTokens(b: CumulativeModelBucket): number {
 export function ModelDonut({
   byModel,
   className,
+  excludeCache = false,
 }: {
   byModel: Record<string, CumulativeModelBucket>;
   className?: string;
+  excludeCache?: boolean;
 }) {
   const t = useChartTokens();
+  // Track legend deselection so the center total reflects only visible slices.
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
   const option = useMemo(() => {
     const data = Object.entries(byModel)
-      .map(([model, b]) => ({ name: model, value: modelTokens(b) }))
+      .map(([model, b]) => ({ name: model, value: modelTokens(b, excludeCache) }))
       .filter((d) => d.value > 0)
       .sort((a, b) => b.value - a.value);
-    const total = data.reduce((sum, d) => sum + d.value, 0);
+    const total = data
+      .filter((d) => selected[d.name] !== false)
+      .reduce((sum, d) => sum + d.value, 0);
     return {
       color: t.series,
       tooltip: {
@@ -44,6 +49,7 @@ export function ModelDonut({
         itemWidth: 8,
         itemHeight: 8,
         textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
+        selected,
       },
       series: [
         {
@@ -66,7 +72,17 @@ export function ModelDonut({
         },
       ],
     };
-  }, [byModel, t]);
+  }, [byModel, t, excludeCache, selected]);
 
-  return <EChart option={option} className={className ?? 'h-56'} />;
+  return (
+    <EChart
+      option={option}
+      className={className ?? 'h-56'}
+      onReady={(chart) =>
+        chart.on('legendselectchanged', (e) =>
+          setSelected((e as { selected: Record<string, boolean> }).selected),
+        )
+      }
+    />
+  );
 }

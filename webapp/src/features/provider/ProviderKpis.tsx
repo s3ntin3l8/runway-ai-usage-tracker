@@ -9,18 +9,23 @@ import { formatCost, formatPct, formatTokens } from '@/lib/format';
 import { cardPct, cardStatus, windowLabel } from '@/lib/quota';
 import { useProviderCostForecast, useProviderCumulative, useProviderForecast } from './queries';
 
-function sumTokens(b: CumulativeModelBucket | null | undefined): number {
+function sumTokens(b: CumulativeModelBucket | null | undefined, excludeCache = false): number {
   if (!b) return 0;
   return (
     (b.tokens_input ?? 0) +
     (b.tokens_output ?? 0) +
-    (b.tokens_cache_read ?? 0) +
-    (b.tokens_cache_create ?? 0) +
+    (excludeCache ? 0 : (b.tokens_cache_read ?? 0) + (b.tokens_cache_create ?? 0)) +
     (b.tokens_reasoning ?? 0)
   );
 }
 
-export function ProviderKpis({ entry }: { entry: FleetEntry }) {
+export function ProviderKpis({
+  entry,
+  excludeCache = false,
+}: {
+  entry: FleetEntry;
+  excludeCache?: boolean;
+}) {
   const { provider_id: providerId, account_id: accountId, critical_gauge: critical } = entry;
   const cumulative = useProviderCumulative(providerId, accountId);
   const cost = useProviderCostForecast(providerId, accountId);
@@ -42,9 +47,12 @@ export function ProviderKpis({ entry }: { entry: FleetEntry }) {
     return fs.find((f) => f.window_type === critical.window_type) ?? fs[0] ?? null;
   }, [forecast.data, critical.window_type]);
 
-  const monthTokens = sumTokens(monthBucket);
+  const monthTokens = sumTokens(monthBucket, excludeCache);
+  // Cache-hit is inherently a cache metric — always computed against the full
+  // total so it stays meaningful regardless of the "Exclude cache" toggle.
+  const fullTokens = sumTokens(monthBucket);
   const cacheTokens = (monthBucket?.tokens_cache_read ?? 0) + (monthBucket?.tokens_cache_create ?? 0);
-  const cacheHitPct = monthTokens > 0 ? (cacheTokens / monthTokens) * 100 : null;
+  const cacheHitPct = fullTokens > 0 ? (cacheTokens / fullTokens) * 100 : null;
   const pct = cardPct(critical);
 
   return (

@@ -1,7 +1,7 @@
 // Token composition donut: input / output / cache read / cache create /
 // reasoning split for a period bucket.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { CumulativeModelBucket } from '@/api/types';
 import { formatTokens } from '@/lib/format';
 import { EChart } from './EChart';
@@ -15,14 +15,30 @@ const SLICES: { key: keyof CumulativeModelBucket; label: string }[] = [
   { key: 'tokens_reasoning', label: 'Reasoning' },
 ];
 
-export function TokenDonut({ bucket, className }: { bucket: CumulativeModelBucket; className?: string }) {
+const CACHE_KEYS = new Set<keyof CumulativeModelBucket>(['tokens_cache_read', 'tokens_cache_create']);
+
+export function TokenDonut({
+  bucket,
+  className,
+  excludeCache = false,
+}: {
+  bucket: CumulativeModelBucket;
+  className?: string;
+  excludeCache?: boolean;
+}) {
   const t = useChartTokens();
+  // Track legend deselection so the center total reflects only visible slices.
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
   const option = useMemo(() => {
-    const data = SLICES.map(({ key, label }) => ({
-      name: label,
-      value: (bucket[key] as number | undefined) ?? 0,
-    })).filter((d) => d.value > 0);
-    const total = data.reduce((sum, d) => sum + d.value, 0);
+    const data = SLICES.filter(({ key }) => !excludeCache || !CACHE_KEYS.has(key))
+      .map(({ key, label }) => ({
+        name: label,
+        value: (bucket[key] as number | undefined) ?? 0,
+      }))
+      .filter((d) => d.value > 0);
+    const total = data
+      .filter((d) => selected[d.name] !== false)
+      .reduce((sum, d) => sum + d.value, 0);
     return {
       color: t.series,
       tooltip: {
@@ -36,6 +52,7 @@ export function TokenDonut({ bucket, className }: { bucket: CumulativeModelBucke
         itemWidth: 8,
         itemHeight: 8,
         textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
+        selected,
       },
       series: [
         {
@@ -58,7 +75,17 @@ export function TokenDonut({ bucket, className }: { bucket: CumulativeModelBucke
         },
       ],
     };
-  }, [bucket, t]);
+  }, [bucket, t, excludeCache, selected]);
 
-  return <EChart option={option} className={className ?? 'h-56'} />;
+  return (
+    <EChart
+      option={option}
+      className={className ?? 'h-56'}
+      onReady={(chart) =>
+        chart.on('legendselectchanged', (e) =>
+          setSelected((e as { selected: Record<string, boolean> }).selected),
+        )
+      }
+    />
+  );
 }

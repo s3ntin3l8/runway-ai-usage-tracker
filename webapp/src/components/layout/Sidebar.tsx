@@ -1,9 +1,15 @@
 import { NavLink } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
+import { fetchSettings } from '@/api/endpoints';
 import { cn } from '@/lib/cn';
 import { NAV_ITEMS } from './nav';
 import { RunwayMark } from './RunwayMark';
 
 export function Sidebar() {
+  // Reuses the cached settings query (primed at boot — no extra request). The
+  // whole aside is desktop-only (hidden lg:flex), so this footer is too.
+  const { data } = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
+  const version = data?.version;
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-edge bg-surface-1 lg:flex">
       <div className="flex h-14 items-center gap-2.5 px-4">
@@ -30,6 +36,9 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      {version ? (
+        <div className="px-4 py-3 text-[11px] text-fg-subtle">v{version}</div>
+      ) : null}
     </aside>
   );
 }
