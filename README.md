@@ -31,11 +31,11 @@
 </tr>
 <tr>
 <td width="50%"><a href="assets/screenshots/fleet.png"><img src="assets/screenshots/fleet.png" alt="Fleet view showing sidecar registry" /></a></td>
-<td width="50%"></td>
+<td width="50%"><a href="assets/screenshots/dashboard-light.png"><img src="assets/screenshots/dashboard-light.png" alt="Dashboard in light theme" /></a></td>
 </tr>
 <tr>
 <td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume <br/><a href="assets/screenshots/fleet-light.png">(light)</a></sub></td>
-<td></td>
+<td align="center"><sub><b>Light theme</b> — the dashboard following your OS preference or Settings → Display</sub></td>
 </tr>
 </table>
 
