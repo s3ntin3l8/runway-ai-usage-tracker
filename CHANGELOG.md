@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/s3ntin3l8/runway/compare/v1.1.0...v2.0.0) (2026-06-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* the server now serves webapp/dist (Vite/React SPA).
+    - app/main.py: /assets mount with immutable caching, SPA catch-all for
+      deep links (serves dist files for dotted paths, guards traversal),
+      CSP tightened to script-src 'self' (no inline tz injection — the app
+      fetches /system/app-config at boot), Google Fonts hosts removed
+    - delete frontend/ + tests/frontend/ + node wrapper test (React escapes
+      by default; the html.js innerHTML guard is obsolete)
+    - Dockerfile stage 1 builds webapp; final image ships webapp/dist only
+    - CI frontend job: working-directory webapp (typecheck + vite build + vitest)
+    - Makefile: css/watch → web/web-dev/web-test; root package.json is a
+      thin web:* delegator; CLAUDE.md + README updated
+
+### Features
+
+* **api:** offset/total pagination on /usage/events ([7a11fa1](https://github.com/s3ntin3l8/runway/commit/7a11fa1f4224ccb5d596a0d26ecaa2444ea33a57))
+* cut over to the v2 SPA — retire the vanilla-JS frontend ([bc4d6aa](https://github.com/s3ntin3l8/runway/commit/bc4d6aa0a5dcd65cf3ad1d07255da64336e0c094))
+* **fleet:** server-initiated sidecar auto-update + per-sidecar push ([d959215](https://github.com/s3ntin3l8/runway/commit/d959215f0bc16fd41ef4db4364c7665958bfbea6))
+* **fleet:** server-initiated sidecar auto-update + per-sidecar push ([f7730d4](https://github.com/s3ntin3l8/runway/commit/f7730d4c138420d50a2d92a5b4beb9ccc7165c6f))
+* **pricing:** add Claude Fable 5 pricing and fix model-name truncation ([1336c7a](https://github.com/s3ntin3l8/runway/commit/1336c7a126f05eaa92be1a6c5575800c7a08e5b9))
+* **pricing:** add Claude Fable 5 pricing and fix model-name truncation ([d9a0108](https://github.com/s3ntin3l8/runway/commit/d9a010869d2c23d9f8822cda6ede7ece3b0c6a19))
+* **sidecar:** classify from-source runs as edge when ahead of the latest tag ([c477246](https://github.com/s3ntin3l8/runway/commit/c477246b86c91bd6f9bdc1328ea991d08cd1d51e))
+* **sidecar:** classify from-source runs as edge when ahead of the latest tag ([dab2790](https://github.com/s3ntin3l8/runway/commit/dab279092ab5f194ca29e4e5140fab2345d65b80))
+* **sidecar:** rolling edge builds, dashboard update channel, CLI update check ([28075ab](https://github.com/s3ntin3l8/runway/commit/28075ab496c67554c9e3af425c8a92c8d6573894))
+* **sidecar:** rolling edge builds, dashboard update channel, CLI update check ([5d8750b](https://github.com/s3ntin3l8/runway/commit/5d8750b1bfb5ab045dd030e915e263b7ee705658))
+* **sidecar:** self-update — download, verify, swap & restart ([3538117](https://github.com/s3ntin3l8/runway/commit/35381171adfbdb4252a60c6cc8522f57eec66f1b))
+* **sidecar:** self-update — download, verify, swap & restart ([a0dc603](https://github.com/s3ntin3l8/runway/commit/a0dc603b10195f1ff5e5d9d52f8d6b71760465d7))
+* **ui:** show per-sidecar update channel in the Fleet view ([4152195](https://github.com/s3ntin3l8/runway/commit/41521957043280c317740d9f83a76349c3493922))
+* **ui:** show per-sidecar update channel in the Fleet view ([b304f66](https://github.com/s3ntin3l8/runway/commit/b304f666f8f12a52d569910ed4e9d3bcf4fd8b4d))
+* **webapp:** design-system primitives, chart theme bridge, dev kit gallery ([64a9f02](https://github.com/s3ntin3l8/runway/commit/64a9f022ab36d78510e49011ec6e637cd0eda7e0))
+* **webapp:** fleet registry and settings sections ([9f32865](https://github.com/s3ntin3l8/runway/commit/9f328657f645d8cab14c3018bce6987f31447f1e))
+* **webapp:** global month selector across provider detail tabs ([#48](https://github.com/s3ntin3l8/runway/issues/48)) ([3f0ae80](https://github.com/s3ntin3l8/runway/commit/3f0ae8090d91020bf53a5e130634eb1d1275e037))
+* **webapp:** history view — fill curves, token/cost stacks, window archive ([2a5312e](https://github.com/s3ntin3l8/runway/commit/2a5312e638c0c6fd5a2c24d68f5aa365a1f729df))
+* **webapp:** per-model token donut on the activity page ([f966c44](https://github.com/s3ntin3l8/runway/commit/f966c44d99d8f820b7d8447796310857edea7643))
+* **webapp:** provider detail route — overview, activity, forecast, cost, debug ([7c3a67e](https://github.com/s3ntin3l8/runway/commit/7c3a67e1efc0f5924525d2ec315f396810a4c306))
+* **webapp:** provider logos, expandable sessions, light-mode heatmap fix ([899db31](https://github.com/s3ntin3l8/runway/commit/899db312e086df4767e505af865002da4b8a8f90))
+* **webapp:** restore sidecar update channel selector ([7b3c832](https://github.com/s3ntin3l8/runway/commit/7b3c8326f255c00f3e7e494d4fd0cdad62573e32))
+* **webapp:** restructure provider detail view ([18653f4](https://github.com/s3ntin3l8/runway/commit/18653f4534b8be31f8f5cb0af8a3c1b66c1f5795))
+* **webapp:** revamp provider detail — Events tab, richer Overview, glide-path forecast ([a6c6d8b](https://github.com/s3ntin3l8/runway/commit/a6c6d8bb17b79a211aec089bf05660dcbce3c0f1))
+* **webapp:** risk-first home — at-risk rail, provider grid, aggregates, banners ([2606250](https://github.com/s3ntin3l8/runway/commit/2606250af55fa677a2890e16b06631a3a62d6ef8))
+* **webapp:** scaffold UI v2 — Vite + React + Tailwind v4 with semantic theme tokens ([e7992d7](https://github.com/s3ntin3l8/runway/commit/e7992d75724a684d1e16a64220a2ece4443f1f8f))
+* **webapp:** surface model on quotas, restore debug panes, fleet polish ([620c1db](https://github.com/s3ntin3l8/runway/commit/620c1db22981a41eecf7d35dae8e02ead9b69074))
+
+
+### Bug Fixes
+
+* **fleet:** channel persistence + gate update for non-self-updatable sidecars + card polish ([e42b224](https://github.com/s3ntin3l8/runway/commit/e42b224cc4f4b88155d564476321b4361af8dc0e))
+* **fleet:** channel persistence, gate update for non-self-updatable sidecars, card polish ([7cca229](https://github.com/s3ntin3l8/runway/commit/7cca229a8ef1d8e4f0ad00a7679a196891a722a3))
+* **fleet:** sanitize sidecar_id in update-push logs (CodeQL log injection) ([b2afaec](https://github.com/s3ntin3l8/runway/commit/b2afaece2eacda894a8cad49d409b7f5ba80e447))
+* move EDGE badge to sidecar name + de-flake minute-bucket test ([05aa124](https://github.com/s3ntin3l8/runway/commit/05aa124e5c6fae80c2ad69054de84a3ed3b7c5c8))
+* **sidecar:** resolve CodeQL findings in self_update ([a64f25f](https://github.com/s3ntin3l8/runway/commit/a64f25fcc4f6376688a862227a14a29a440ce48d))
+* **sidecar:** resolve CodeQL findings in self_update ([0774b80](https://github.com/s3ntin3l8/runway/commit/0774b806b6909828eb22827658e98b86389792bf))
+* **token_cache:** drop token-derived account_id from metadata log ([4fcf972](https://github.com/s3ntin3l8/runway/commit/4fcf972233f7bb191039b8568b76b2897c9259c9))
+* **ui:** move the EDGE channel badge next to the sidecar name ([bbc4b8a](https://github.com/s3ntin3l8/runway/commit/bbc4b8a376b56ddccc46970f56f080629a6f0dc0))
+* **webapp:** derive pct from used/limit, honor collector health, window chips ([1054c03](https://github.com/s3ntin3l8/runway/commit/1054c037c986f98bab14896770aecf148151c4e9))
+* **webapp:** don't offer raw capture for sidecar-only providers ([25bbfa8](https://github.com/s3ntin3l8/runway/commit/25bbfa873784ae72e8c2454ac99b805640920460))
+* **webapp:** readable activity heatmap in light mode ([5bfdb32](https://github.com/s3ntin3l8/runway/commit/5bfdb32bae4878d5019a536f606e8230316a3e80))
+* **webapp:** settings nav appends segments and blanks content ([6ca8fcf](https://github.com/s3ntin3l8/runway/commit/6ca8fcf6544e15984a462f1a87c6366c30da9e83))
+* **webapp:** stray scrollbar arrows on tab strips ([27b795e](https://github.com/s3ntin3l8/runway/commit/27b795e025acc9fcb4fdbf6a00c1f7d3de3759ff))
+* **webapp:** use function-form manualChunks for Vite 8 Rollup typing ([10d274d](https://github.com/s3ntin3l8/runway/commit/10d274d2ec1e68d4c9b8d5a466e99d1cc2b011d6))
+
 ## [1.1.0](https://github.com/s3ntin3l8/runway/compare/v1.0.0...v1.1.0) (2026-06-09)
 
 
