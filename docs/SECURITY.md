@@ -56,7 +56,7 @@ The `["*"]` CORS fallback only takes effect when `APP_HOST` resolves to `127.0.0
 
 Every response carries a defence-in-depth header set:
 
-- `Content-Security-Policy`: `default-src 'self'`, with `'unsafe-inline'` for scripts and styles (required while `components.js` still emits inline `onclick="…"`), and the Google Fonts origins allow-listed. `frame-ancestors 'none'` blocks framing.
+- `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. The v2 SPA bundles all scripts and fonts (no CDN, no inline handlers), so `script-src` is a strict `'self'`; `style-src` keeps `'unsafe-inline'` only for the runtime style *attributes* ECharts/Radix set. `frame-ancestors 'none'` blocks framing.
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY` (for older user agents that ignore `frame-ancestors`)
 - `Referrer-Policy: no-referrer`

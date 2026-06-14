@@ -14,38 +14,49 @@
 
 <table>
 <tr>
-<td width="50%"><a href="assets/screenshots/claude-modal.png"><img src="assets/screenshots/claude-modal.png" alt="Per-provider detail modal" /></a></td>
-<td width="50%"><a href="assets/screenshots/history.png"><img src="assets/screenshots/history.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
+<td width="50%"><a href="assets/screenshots/provider.png"><img src="assets/screenshots/provider.png" alt="Per-provider detail page — Overview tab" /></a></td>
+<td width="50%"><a href="assets/screenshots/provider-activity.png"><img src="assets/screenshots/provider-activity.png" alt="Provider Activity tab scoped to a past month via the month selector" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>Per-provider modal</b> — gauge, per-model donut, sidecar split, burn history <br/><a href="assets/screenshots/claude-modal-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Provider detail page</b> — gauges, current-window forecast, per-model & per-window donuts, recent sessions <br/><a href="assets/screenshots/provider-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Month selector</b> — Activity / Cost / Events scope to any past month (token trend, composition, heatmap, sessions) <br/><a href="assets/screenshots/provider-activity-light.png">(light)</a></sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/screenshots/history.png"><img src="assets/screenshots/history.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
+<td width="50%"><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" alt="Settings panel with provider config, token health, alerts, audit log" /></a></td>
+</tr>
+<tr>
 <td align="center"><sub><b>History</b> — % used / tokens / cost across windows with forecast overlay <br/><a href="assets/screenshots/history-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, token health, alerts, audit log, version <br/><a href="assets/screenshots/settings-light.png">(light)</a></sub></td>
 </tr>
 <tr>
 <td width="50%"><a href="assets/screenshots/fleet.png"><img src="assets/screenshots/fleet.png" alt="Fleet view showing sidecar registry" /></a></td>
-<td width="50%"><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" alt="Settings panel with provider config, token health, webhooks, audit log" /></a></td>
+<td width="50%"></td>
 </tr>
 <tr>
 <td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume <br/><a href="assets/screenshots/fleet-light.png">(light)</a></sub></td>
-<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, token health, webhooks, audit log <br/><a href="assets/screenshots/settings-light.png">(light)</a></sub></td>
+<td></td>
 </tr>
 </table>
 
 ## Key Features
 
-- **14 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
+- **13 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
 - **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
 - **Event-Sourced History**: One immutable row per assistant message in `usage_events` — rollups, windows, and cost are all derived views over the same authoritative log
 - **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 45 min of no quota change
 - **Instant Serving**: `/limits` returns from an in-memory registry — never blocks on collection
-- **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider modal
+- **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider detail page
 - **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling, hourly resolution on ≤7-day windows
+- **Provider Detail Page**: A deep-linked per-provider view with Overview, Activity (token trend, composition, heatmap, sessions), Events (per-message stream), Forecast, and Cost tabs
+- **Month/Period Selector**: Browse any past month's tokens, spend, and events from the detail page — deep-linkable via `?period=YYYY-MM`, with boundaries on your local timezone
 - **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
 - **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, and activity tracking
 - **Token Health**: Settings panel shows OAuth/cookie expiry status with one-click refresh for supported providers
 - **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
 - **Webhook Alerts**: Per-provider threshold alerts to Discord or Slack
 - **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
+- **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status
 - **Display Settings**: Compact mode, 2-column layout, soft chrome — configurable per browser
 - **Resilient Rendering**: Individual API failures show "Error Cards" instead of breaking the dashboard
 - **Docker Ready**: Headless-first architecture for containerized environments with fail-fast multi-host startup gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`)
@@ -216,4 +227,4 @@ Runway provides a flexible, multi-layered security model:
 
 MIT License - see [LICENSE](LICENSE) file.
 
-*Last updated: 2026-05-21*
+*Last updated: 2026-06-14*
