@@ -31,8 +31,11 @@ export default defineConfig({
     outDir: 'dist',
     rollupOptions: {
       output: {
-        manualChunks: {
-          echarts: ['echarts'],
+        // Function form (not the record form) so the type stays valid under
+        // Vite 8's Rollup: split echarts into its own chunk to keep the main
+        // bundle small.
+        manualChunks(id) {
+          if (id.includes('node_modules/echarts')) return 'echarts';
         },
       },
     },
