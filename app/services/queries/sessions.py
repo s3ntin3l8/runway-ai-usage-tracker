@@ -22,6 +22,7 @@ def query_sessions(
     provider_id: str,
     account_id: str,
     since: datetime | None = None,
+    until: datetime | None = None,
     limit: int = 20,
     sort_by: str = "tokens",
 ) -> list[dict[str, Any]]:
@@ -40,6 +41,9 @@ def query_sessions(
         since = datetime.now(UTC) - timedelta(days=7)
 
     order_clause = "ts_end DESC" if sort_by == "recent" else "tokens_total DESC"
+    # Exclusive upper bound — only emitted when an `until` is supplied so the
+    # default (open-ended) window is byte-identical to the original query.
+    until_clause = "AND ts < :until" if until is not None else ""
 
     # Main aggregation query
     agg_sql = text(
@@ -67,6 +71,7 @@ def query_sessions(
           AND account_id  = :account_id
           AND session_id IS NOT NULL
           AND ts >= :since
+          {until_clause}
         GROUP BY session_id
         ORDER BY {order_clause}
         LIMIT :limit
@@ -129,6 +134,7 @@ def query_sessions(
             "provider_id": provider_id,
             "account_id": account_id,
             "since": since.isoformat(),
+            **({"until": until.isoformat()} if until is not None else {}),
             "limit": limit,
         },
     ).all()

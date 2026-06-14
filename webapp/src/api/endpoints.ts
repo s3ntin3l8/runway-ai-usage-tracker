@@ -10,6 +10,7 @@ import type {
   CostForecastResponse,
   CumulativeResponse,
   DashboardLayout,
+  EventRangeResponse,
   EventsResponse,
   FleetResponse,
   ForecastResponse,
@@ -53,6 +54,9 @@ export const fetchSessions = (params: Params) =>
 
 export const fetchEvents = (params: Params) =>
   api<EventsResponse>(`/api/v1/usage/events${qs(params)}`);
+
+export const fetchEventRange = (params: Params) =>
+  api<EventRangeResponse>(`/api/v1/usage/events/range${qs(params)}`);
 
 export const fetchAnomalies = (params: Params = {}) =>
   api<AnomaliesResponse>(`/api/v1/usage/anomalies${qs(params)}`);

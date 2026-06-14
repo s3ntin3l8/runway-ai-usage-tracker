@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -10,6 +11,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.utils import resolve_user_tz
+from app.models._datetime import iso_utc
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 from app.services.event_query import (
@@ -27,7 +29,7 @@ from app.services.event_query import (
     query_windows,
 )
 from app.services.forecast import compute_all_forecasts
-from app.services.queries import count_events, query_cumulative_live
+from app.services.queries import count_events, event_time_range, query_cumulative_live
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
@@ -53,6 +55,24 @@ def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[
         "current_month": now_local.strftime("%Y-%m"),
         "current_year": now_local.strftime("%Y"),
     }
+
+
+_MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime]:
+    """[start, end) UTC instants for a 'YYYY-MM' month on the user's local calendar.
+
+    Mirrors the frontend's startOfMonthISO/endOfMonthISO so historical month
+    drill-downs share the same tz-correct boundaries the live current-month
+    gauge uses — the UTC-keyed rollup can land on the wrong calendar month for
+    users far from UTC.
+    """
+    year, month = (int(part) for part in period_key.split("-"))
+    start_local = datetime(year, month, 1, tzinfo=tz)
+    end_year, end_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    end_local = datetime(end_year, end_month, 1, tzinfo=tz)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
 @router.get("/limits")
@@ -286,8 +306,23 @@ async def get_cumulative_usage(
     - provider_id / account_id: identity filter
     - period_type: one of 'lifetime' | 'year' | 'month'
     - period_key: a specific bucket (e.g. '2026', '2026-05', 'all')
+
+    Requesting a specific month (period_type='month', period_key='YYYY-MM')
+    takes a tz-correct path: the month bucket is aggregated live from
+    usage_events on the user's local-calendar boundaries (see
+    `_month_bounds_utc`), matching the live current-month gauge. The UTC-keyed
+    rollup is intentionally bypassed here because its month boundaries can land
+    on the wrong calendar month for users far from UTC. `current_month_key`
+    points at the requested month so callers read it the same way as the
+    default response.
     """
     from app.models.db import UsagePeriodRollup
+
+    now = datetime.now(UTC)
+    is_default = period_type is None and period_key is None
+    is_month_live = (
+        period_type == "month" and bool(period_key) and bool(_MONTH_KEY_RE.match(period_key or ""))
+    )
 
     stmt = select(UsagePeriodRollup)
     if provider_id:
@@ -298,20 +333,34 @@ async def get_cumulative_usage(
         stmt = stmt.where(UsagePeriodRollup.period_type == period_type)
     if period_key:
         stmt = stmt.where(UsagePeriodRollup.period_key == period_key)
-    rows = session.exec(stmt).all()
+    # The tz-correct month path ignores the rollup rows in favour of a live
+    # aggregation, so don't bother fetching them.
+    rows = [] if is_month_live else session.exec(stmt).all()
 
-    now = datetime.now(UTC)
     # The default (unfiltered) call powers the live "This period" / "Yearly"
     # gauges, which reset on the user's local calendar. Anchor those two
     # buckets at local-tz period starts and compute them live from events;
     # lifetime + historical drill-downs stay on the UTC rollup.
-    is_default = period_type is None and period_key is None
+    month_live: dict[tuple[str, str], dict[str, Any]] = {}
     if is_default:
         anchors = _local_period_anchors(resolve_user_tz(session))
         current_year = anchors["current_year"]
         current_month = anchors["current_month"]
         live_month = query_cumulative_live(session, since=anchors["month_start_utc"])
         live_year = query_cumulative_live(session, since=anchors["year_start_utc"])
+    elif is_month_live:
+        since_utc, until_utc = _month_bounds_utc(resolve_user_tz(session), period_key or "")
+        month_live = query_cumulative_live(
+            session,
+            since=since_utc,
+            until=until_utc,
+            provider_id=provider_id,
+            account_id=account_id,
+        )
+        current_year = (period_key or "")[:4]
+        current_month = period_key or ""
+        live_month = {}
+        live_year = {}
     else:
         # Filtered (historical drill-down) path: serve the rollup as-is. The
         # returned current_*_key here are UTC-based and only meaningful on the
@@ -395,7 +444,7 @@ async def get_cumulative_usage(
     # Union identities from the rollup and the live windows so an account that
     # only has events in the current period (not yet in any historical rollup
     # bucket beyond lifetime) still gets an entry.
-    idents = set(grouped) | set(live_month) | set(live_year)
+    idents = set(grouped) | set(live_month) | set(live_year) | set(month_live)
     cumulative = []
     for pid, aid in sorted(idents):
         buckets = grouped.get((pid, aid), {})
@@ -404,6 +453,11 @@ async def get_cumulative_usage(
         if is_default:
             entry[year_key_out] = live_year.get((pid, aid), _empty_bucket())
             entry[month_key_out] = live_month.get((pid, aid), _empty_bucket())
+        elif is_month_live:
+            # tz-correct historical month from the live aggregation; the rollup
+            # year bucket isn't fetched on this path, so report it empty.
+            entry[year_key_out] = _empty_bucket()
+            entry[month_key_out] = month_live.get((pid, aid), _empty_bucket())
         else:
             entry[year_key_out] = buckets.get(year_key_out, _empty_bucket())
             entry[month_key_out] = buckets.get(month_key_out, _empty_bucket())
@@ -550,15 +604,23 @@ async def get_history_chart(
     account_id: str | None = None,
     days: float = Query(default=30.0, ge=0.01, le=365.0),
     metric: str = Query(default="percent", pattern="^(percent|tokens|cost)$"),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Chart data: percent → fill curves; tokens/cost → daily bars."""
+    """Chart data: percent → fill curves; tokens/cost → daily bars.
+
+    Defaults to the last `days`; an explicit `since`/`until` (exclusive) pair
+    scopes the chart to a closed period (e.g. a selected past month).
+    """
     return query_chart(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
         metric=metric,
+        since=parse_iso8601_utc(since) if since else None,
+        until=parse_iso8601_utc(until) if until else None,
     )
 
 
@@ -683,6 +745,23 @@ async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; c
     return {"events": rows, "total": total, "limit": limit, "offset": offset}
 
 
+@router.get("/events/range")
+@limiter.limit("30/minute")
+async def get_usage_events_range(
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    session: Session = Depends(get_session),
+) -> dict[str, str | None]:
+    """Earliest/latest event timestamps for a (provider_id, account_id) pair.
+
+    Bounds the month selector — there's no point paging back before the first
+    recorded event. Both fields are null when the pair has no events yet.
+    """
+    earliest, latest = event_time_range(session, provider_id=provider_id, account_id=account_id)
+    return {"earliest": iso_utc(earliest), "latest": iso_utc(latest)}
+
+
 @router.get("/window-history")
 @limiter.limit("30/minute")
 async def get_window_history(
@@ -715,11 +794,15 @@ async def get_usage_heatmap(
     provider_id: str = Query(...),
     account_id: str = Query(...),
     days: int = Query(default=14, ge=1, le=90),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     tz: str | None = Query(default=None, description="IANA timezone (e.g. Europe/Berlin)"),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """7×24 hour-of-day token activity grid over the last N days.
+    """7×24 hour-of-day token activity grid.
 
+    Defaults to the last N `days`; an explicit `since`/`until` (exclusive) pair
+    scopes the grid to a closed period (e.g. a selected past month) instead.
     Always returns all 168 cells (7 days × 24 hours). Cells with no events
     have tokens=0. dow follows SQLite convention: 0=Sunday … 6=Saturday.
 
@@ -727,11 +810,15 @@ async def get_usage_heatmap(
     grid reflects local hour-of-day). Invalid or missing `tz` falls back to
     UTC bucketing.
     """
+    since_dt = parse_iso8601_utc(since) if since else None
+    until_dt = parse_iso8601_utc(until) if until else None
     cells = query_heatmap(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
+        since=since_dt,
+        until=until_dt,
         tz=tz,
     )
     return {"cells": cells, "tz": tz or "UTC"}
@@ -744,25 +831,31 @@ async def get_usage_sessions(
     provider_id: str = Query(...),
     account_id: str = Query(...),
     since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     sort_by: Literal["tokens", "recent"] = Query(default="tokens"),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Top-N sessions within the requested time window.
 
-    Defaults to the last 7 days when 'since' is not provided. Events
-    without a session_id are excluded.
+    Defaults to the last 7 days when 'since' is not provided. An optional
+    'until' (exclusive) upper bound scopes the window to a closed period (e.g.
+    a selected past month). Events without a session_id are excluded.
     sort_by='tokens' (default) orders by token total desc; 'recent' orders by ts_end desc.
     """
     since_dt: datetime | None = None
+    until_dt: datetime | None = None
     if since:
         since_dt = parse_iso8601_utc(since)
+    if until:
+        until_dt = parse_iso8601_utc(until)
 
     sessions = query_sessions(
         session,
         provider_id=provider_id,
         account_id=account_id,
         since=since_dt,
+        until=until_dt,
         limit=limit,
         sort_by=sort_by,
     )

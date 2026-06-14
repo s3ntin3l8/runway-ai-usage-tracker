@@ -271,6 +271,31 @@ class TestEventsEndpoint:
         assert len(events) == 1
         assert events[0]["event_id"] == "in_window"
 
+    def test_events_range_returns_min_max(self, session):
+        first = datetime(2026, 3, 2, 9, 0, 0, tzinfo=UTC)
+        last = datetime(2026, 5, 8, 18, 0, 0, tzinfo=UTC)
+        session.add(_event(event_id="first", ts=first))
+        session.add(_event(event_id="mid", ts=datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)))
+        session.add(_event(event_id="last", ts=last))
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/events/range",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["earliest"].startswith("2026-03-02T09:00:00")
+        assert body["latest"].startswith("2026-05-08T18:00:00")
+
+    def test_events_range_null_when_empty(self, session):
+        r = _client().get(
+            "/api/v1/usage/events/range",
+            params={"provider_id": "anthropic", "account_id": "nobody@nowhere"},
+        )
+        assert r.status_code == 200
+        assert r.json() == {"earliest": None, "latest": None}
+
     def test_events_excludes_raw_json_by_default(self, session):
         session.add(_event(event_id="r1"))
         session.commit()
@@ -532,6 +557,66 @@ class TestHeatmapEndpoint:
         assert total_tokens == 150
         assert 9999 not in [c["tokens"] for c in cells]
 
+    def test_heatmap_since_until_scopes_to_closed_range(self, session):
+        # Three events in three different months; scope to April only.
+        session.add(
+            _event(event_id="mar", ts=datetime(2026, 3, 15, 10, 0, 0, tzinfo=UTC), tokens_input=999)
+        )
+        session.add(
+            _event(
+                event_id="apr",
+                ts=datetime(2026, 4, 10, 10, 0, 0, tzinfo=UTC),
+                tokens_input=100,
+                tokens_output=50,
+            )
+        )
+        session.add(
+            _event(event_id="may", ts=datetime(2026, 5, 2, 10, 0, 0, tzinfo=UTC), tokens_input=888)
+        )
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/heatmap",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "since": "2026-04-01T00:00:00Z",
+                "until": "2026-05-01T00:00:00Z",
+            },
+        )
+        assert r.status_code == 200, r.text
+        total = sum(c["tokens"] for c in r.json()["cells"])
+        assert total == 150  # only the April event (100 + 50)
+
+    def test_heatmap_since_until_local_tz_scopes_to_closed_range(self, session):
+        # Same as above but exercises the local-tz bucketing path (tz set).
+        session.add(
+            _event(event_id="mar", ts=datetime(2026, 3, 15, 10, 0, 0, tzinfo=UTC), tokens_input=999)
+        )
+        session.add(
+            _event(
+                event_id="apr",
+                ts=datetime(2026, 4, 10, 10, 0, 0, tzinfo=UTC),
+                tokens_input=100,
+                tokens_output=50,
+            )
+        )
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/heatmap",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "since": "2026-04-01T00:00:00Z",
+                "until": "2026-05-01T00:00:00Z",
+                "tz": "Europe/Berlin",
+            },
+        )
+        assert r.status_code == 200, r.text
+        total = sum(c["tokens"] for c in r.json()["cells"])
+        assert total == 150
+
     def test_heatmap_filters_by_provider_account(self, session):
         now = datetime.now(UTC)
         # Other provider should not appear
@@ -697,6 +782,39 @@ class TestSessionsEndpoint:
         session_ids = {s["session_id"] for s in sessions}
         assert "new-sess" in session_ids
         assert "old-sess" not in session_ids
+
+    def test_sessions_filters_by_until(self, session):
+        # Session in April (in range) and one in May (above the until bound).
+        session.add(
+            _event(
+                event_id="apr",
+                session_id="apr-sess",
+                ts=datetime(2026, 4, 10, 12, 0, 0, tzinfo=UTC),
+                tokens_input=100,
+            )
+        )
+        session.add(
+            _event(
+                event_id="may",
+                session_id="may-sess",
+                ts=datetime(2026, 5, 2, 12, 0, 0, tzinfo=UTC),
+                tokens_input=200,
+            )
+        )
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "since": "2026-04-01T00:00:00Z",
+                "until": "2026-05-01T00:00:00Z",
+            },
+        )
+        assert r.status_code == 200, r.text
+        session_ids = {s["session_id"] for s in r.json()["sessions"]}
+        assert session_ids == {"apr-sess"}
 
     def test_sessions_excludes_null_session_id(self, session):
         now = datetime.now(UTC)

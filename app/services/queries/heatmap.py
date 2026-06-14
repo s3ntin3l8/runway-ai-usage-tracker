@@ -21,6 +21,8 @@ def query_heatmap(
     provider_id: str,
     account_id: str,
     days: int = 14,
+    since: datetime | None = None,
+    until: datetime | None = None,
     tz: str | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, float]]:
@@ -37,8 +39,11 @@ def query_heatmap(
     local time). When `tz` is None or invalid, falls back to UTC bucketing
     via the original SQLite `strftime` aggregation.
 
-    `now` anchors the rolling `days` window (UTC); None means the current
-    time. Production never passes it — it exists so tests with fixed event
+    By default the grid covers a rolling `days` window. Passing an explicit
+    `since` (and optional exclusive `until`) scopes it to a closed range
+    instead — used by the month selector. `now` anchors the rolling `days`
+    window (UTC) and is ignored when `since` is given; None means the current
+    time. Production never passes `now` — it exists so tests with fixed event
     timestamps don't age out of the window.
     """
     zone: ZoneInfo | None = None
@@ -50,10 +55,23 @@ def query_heatmap(
 
     if zone is None:
         return _heatmap_utc(
-            session, provider_id=provider_id, account_id=account_id, days=days, now=now
+            session,
+            provider_id=provider_id,
+            account_id=account_id,
+            days=days,
+            since=since,
+            until=until,
+            now=now,
         )
     return _heatmap_local(
-        session, provider_id=provider_id, account_id=account_id, days=days, zone=zone, now=now
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+        zone=zone,
+        since=since,
+        until=until,
+        now=now,
     )
 
 
@@ -63,15 +81,29 @@ def _heatmap_utc(
     provider_id: str,
     account_id: str,
     days: int,
+    since: datetime | None = None,
+    until: datetime | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, float]]:
-    since_clause = f"-{days} days"
-    # SQLite treats a bound 'now' string the same as the literal, so the
-    # default is byte-identical to the original datetime('now', ...) query.
-    anchor = now.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S") if now else "now"
+    params: dict[str, object] = {"provider_id": provider_id, "account_id": account_id}
+    if since is not None:
+        # Closed range: bound by absolute instants (stored as naive UTC).
+        lower_sql = "ts >= :since"
+        params["since"] = since.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        upper_sql = ""
+        if until is not None:
+            upper_sql = "AND ts < :until"
+            params["until"] = until.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        where_range = f"AND {lower_sql} {upper_sql}"
+    else:
+        # SQLite treats a bound 'now' string the same as the literal, so the
+        # default is byte-identical to the original datetime('now', ...) query.
+        params["anchor"] = now.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S") if now else "now"
+        params["since_clause"] = f"-{days} days"
+        where_range = "AND ts >= datetime(:anchor, :since_clause)"
 
     sql = text(
-        """
+        f"""
         SELECT
             CAST(strftime('%w', ts) AS INTEGER) AS dow,
             CAST(strftime('%H', ts) AS INTEGER) AS hour,
@@ -80,20 +112,12 @@ def _heatmap_utc(
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
-          AND ts >= datetime(:anchor, :since_clause)
+          {where_range}
         GROUP BY dow, hour
         """
     )
 
-    rows = session.exec(
-        sql,
-        params={
-            "provider_id": provider_id,
-            "account_id": account_id,
-            "anchor": anchor,
-            "since_clause": since_clause,
-        },
-    ).all()  # type: ignore[call-overload]
+    rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
 
     tokens_heat: dict[tuple[int, int], int] = {}
     cost_heat: dict[tuple[int, int], float] = {}
@@ -112,24 +136,28 @@ def _heatmap_local(
     account_id: str,
     days: int,
     zone: ZoneInfo,
+    since: datetime | None = None,
+    until: datetime | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, float]]:
-    since = (now or datetime.now(UTC)) - timedelta(days=days)
+    lower = since if since is not None else (now or datetime.now(UTC)) - timedelta(days=days)
 
-    rows = session.exec(  # type: ignore[call-overload]
-        select(  # type: ignore[call-overload]
-            UsageEvent.ts,
-            UsageEvent.tokens_input,
-            UsageEvent.tokens_output,
-            UsageEvent.tokens_cache_read,
-            UsageEvent.tokens_cache_create,
-            UsageEvent.cost_usd,
-        ).where(
-            UsageEvent.provider_id == provider_id,
-            UsageEvent.account_id == account_id,
-            UsageEvent.ts >= since,
-        )
-    ).all()
+    stmt = select(  # type: ignore[call-overload]
+        UsageEvent.ts,
+        UsageEvent.tokens_input,
+        UsageEvent.tokens_output,
+        UsageEvent.tokens_cache_read,
+        UsageEvent.tokens_cache_create,
+        UsageEvent.cost_usd,
+    ).where(
+        UsageEvent.provider_id == provider_id,
+        UsageEvent.account_id == account_id,
+        UsageEvent.ts >= lower,
+    )
+    if until is not None:
+        stmt = stmt.where(UsageEvent.ts < until)
+
+    rows = session.exec(stmt).all()  # type: ignore[call-overload]
 
     tokens_heat: dict[tuple[int, int], int] = {}
     cost_heat: dict[tuple[int, int], float] = {}

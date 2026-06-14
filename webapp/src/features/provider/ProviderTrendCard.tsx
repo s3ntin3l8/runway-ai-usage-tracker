@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { HistoryChart } from '@/features/history/HistoryChart';
-import { useProviderHistoryChart } from './queries';
+import { useProviderHistoryChart, type DateRange } from './queries';
 import type { Metric } from '@/features/history/queries';
 
 const RANGES = [7, 14, 30, 90];
@@ -19,6 +19,7 @@ export function ProviderTrendCard({
   title,
   defaultDays = 30,
   compact = false,
+  range,
 }: {
   providerId: string;
   accountId: string;
@@ -26,24 +27,29 @@ export function ProviderTrendCard({
   title: string;
   defaultDays?: number;
   compact?: boolean;
+  // When set, the bars are scoped to this closed period and the day-range tabs
+  // are hidden (the period is fixed by the shared month selector instead).
+  range?: DateRange;
 }) {
   const [days, setDays] = useState(defaultDays);
-  const chart = useProviderHistoryChart(providerId, accountId, days, metric);
+  const chart = useProviderHistoryChart(providerId, accountId, days, metric, range);
   const hasData = (chart.data?.bars?.length ?? 0) > 0;
 
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <CardTitle>{title}</CardTitle>
-        <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))}>
-          <TabsList className="border-0">
-            {RANGES.map((d) => (
-              <TabsTrigger key={d} value={String(d)} className="h-8 px-2">
-                {d}d
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        {range ? null : (
+          <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+            <TabsList className="border-0">
+              {RANGES.map((d) => (
+                <TabsTrigger key={d} value={String(d)} className="h-8 px-2">
+                  {d}d
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        )}
       </CardHeader>
       <CardContent>
         {chart.isPending ? (

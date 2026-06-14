@@ -1,12 +1,14 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { ActivityTab } from './ActivityTab';
 import * as api from '@/api/endpoints';
 import {
+  currentPeriod,
   cumulativeResponse,
   emptyCumulative,
   heatmapResponse,
   historyChart,
+  pastPeriod,
   session,
 } from './test-fixtures';
 
@@ -34,9 +36,11 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [session()] } as never);
-    renderWithProviders(<ActivityTab providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
 
-    expect(await screen.findByText('Token composition (month)')).toBeInTheDocument();
+    expect(await screen.findByText(/^Token composition ·/)).toBeInTheDocument();
     expect(await screen.findByTestId('token-donut')).toBeInTheDocument();
     expect(await screen.findByTestId('model-donut')).toBeInTheDocument();
   });
@@ -45,7 +49,9 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
-    renderWithProviders(<ActivityTab providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
     expect(await screen.findByTestId('heatmap')).toBeInTheDocument();
   });
 
@@ -53,9 +59,11 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(false));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
-    renderWithProviders(<ActivityTab providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
 
-    expect(await screen.findByText(/no usage recorded this month/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no usage recorded in/i)).toBeInTheDocument();
     expect(await screen.findByText(/no event activity in the last 14 days/i)).toBeInTheDocument();
     expect(await screen.findByText(/no sessions recorded/i)).toBeInTheDocument();
   });
@@ -64,8 +72,33 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [session()] } as never);
-    renderWithProviders(<ActivityTab providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
     expect(await screen.findByText('Top sessions (7 days)')).toBeInTheDocument();
     expect(await screen.findByText('Session')).toBeInTheDocument();
+  });
+
+  it('scopes heatmap and sessions to the selected past month', async () => {
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
+    vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
+    const period = pastPeriod('2026-01');
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" period={period} />,
+    );
+
+    await waitFor(() =>
+      expect(api.fetchHeatmap).toHaveBeenCalledWith(
+        expect.objectContaining({ since: period.range.since, until: period.range.until }),
+      ),
+    );
+    // A past month reads the tz-correct month-scoped cumulative bucket.
+    expect(api.fetchCumulative).toHaveBeenCalledWith(
+      expect.objectContaining({ period_type: 'month', period_key: '2026-01' }),
+    );
+    expect(api.fetchSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ since: period.range.since, until: period.range.until }),
+    );
   });
 });

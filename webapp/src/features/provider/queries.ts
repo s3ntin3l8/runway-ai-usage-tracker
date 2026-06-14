@@ -6,6 +6,7 @@ import {
   fetchCostForecast,
   fetchCumulative,
   fetchDebugRaw,
+  fetchEventRange,
   fetchEvents,
   fetchForecast,
   fetchHeatmap,
@@ -14,6 +15,13 @@ import {
   fetchWindowHistory,
 } from '@/api/endpoints';
 import type { Metric } from '@/features/history/queries';
+
+// A closed [since, until) instant range (ISO strings) used to scope a tab to a
+// selected past month. `undefined` means "use the endpoint's rolling default".
+export interface DateRange {
+  since: string;
+  until: string;
+}
 
 export const useProviderForecast = (providerId: string, accountId: string) =>
   useQuery({
@@ -30,18 +38,69 @@ export const useProviderCumulative = (providerId: string, accountId: string) =>
     refetchInterval: 120_000,
   });
 
-export const useProviderHeatmap = (providerId: string, accountId: string, tz: string) =>
+// tz-correct cumulative totals for a specific past month ('YYYY-MM'). The
+// server aggregates this bucket live from usage_events on the user's local
+// calendar (see the /cumulative month-live path), so it matches the live
+// current-month gauge. Read the bucket at `month_${periodKey}`.
+export const useProviderCumulativeMonth = (
+  providerId: string,
+  accountId: string,
+  periodKey: string,
+  enabled = true,
+) =>
   useQuery({
-    queryKey: ['usage', 'heatmap', providerId, accountId, tz],
-    queryFn: () => fetchHeatmap({ provider_id: providerId, account_id: accountId, days: 14, tz }),
+    queryKey: ['usage', 'cumulative', providerId, accountId, 'month', periodKey],
+    queryFn: () =>
+      fetchCumulative({
+        provider_id: providerId,
+        account_id: accountId,
+        period_type: 'month',
+        period_key: periodKey,
+      }),
+    enabled,
+    refetchInterval: 120_000,
+  });
+
+// Earliest/latest event timestamps — bounds the month selector's reach.
+export const useProviderEventRange = (providerId: string, accountId: string) =>
+  useQuery({
+    queryKey: ['usage', 'events', 'range', providerId, accountId],
+    queryFn: () => fetchEventRange({ provider_id: providerId, account_id: accountId }),
+    staleTime: 300_000,
+  });
+
+export const useProviderHeatmap = (
+  providerId: string,
+  accountId: string,
+  tz: string,
+  range?: DateRange,
+) =>
+  useQuery({
+    queryKey: ['usage', 'heatmap', providerId, accountId, tz, range?.since, range?.until],
+    queryFn: () =>
+      fetchHeatmap(
+        range
+          ? { provider_id: providerId, account_id: accountId, since: range.since, until: range.until, tz }
+          : { provider_id: providerId, account_id: accountId, days: 14, tz },
+      ),
     refetchInterval: 300_000,
   });
 
-export const useProviderSessions = (providerId: string, accountId: string) =>
+export const useProviderSessions = (
+  providerId: string,
+  accountId: string,
+  range?: DateRange,
+) =>
   useQuery({
-    queryKey: ['usage', 'sessions', providerId, accountId],
+    queryKey: ['usage', 'sessions', providerId, accountId, range?.since, range?.until],
     queryFn: () =>
-      fetchSessions({ provider_id: providerId, account_id: accountId, limit: 10, sort_by: 'tokens' }),
+      fetchSessions({
+        provider_id: providerId,
+        account_id: accountId,
+        limit: 10,
+        sort_by: 'tokens',
+        ...(range ? { since: range.since, until: range.until } : {}),
+      }),
     refetchInterval: 120_000,
   });
 
@@ -64,16 +123,18 @@ export const useProviderEventsPage = (
     page,
     pageSize,
     since,
+    until,
     enabled,
-  }: { page: number; pageSize: number; since: string; enabled: boolean },
+  }: { page: number; pageSize: number; since: string; until?: string; enabled: boolean },
 ) =>
   useQuery({
-    queryKey: ['usage', 'events', providerId, accountId, since, page, pageSize],
+    queryKey: ['usage', 'events', providerId, accountId, since, until, page, pageSize],
     queryFn: () =>
       fetchEvents({
         provider_id: providerId,
         account_id: accountId,
         since,
+        ...(until ? { until } : {}),
         limit: pageSize,
         offset: page * pageSize,
       }),
@@ -95,17 +156,26 @@ export const useWindowHistory = (providerId: string, accountId: string, windowTy
     enabled: windowType !== 'unknown' && windowType !== '',
   });
 
-// Per-day token / cost bars for this account (drives the trend cards).
+// Per-day token / cost bars for this account (drives the trend cards). A
+// `range` scopes the bars to a closed period (a selected past month) and the
+// server renders them as daily bars; otherwise the rolling `days` window is used.
 export const useProviderHistoryChart = (
   providerId: string,
   accountId: string,
   days: number,
   metric: Metric,
+  range?: DateRange,
 ) =>
   useQuery({
-    queryKey: ['usage', 'history-chart', providerId, accountId, days, metric],
+    queryKey: ['usage', 'history-chart', providerId, accountId, days, metric, range?.since, range?.until],
     queryFn: () =>
-      fetchHistoryChart({ provider_id: providerId, account_id: accountId, days, metric }),
+      fetchHistoryChart({
+        provider_id: providerId,
+        account_id: accountId,
+        days,
+        metric,
+        ...(range ? { since: range.since, until: range.until } : {}),
+      }),
     refetchInterval: 120_000,
   });
 

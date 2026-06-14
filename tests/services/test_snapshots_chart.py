@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models.db import QuotaSnapshot
+from app.models.db import QuotaSnapshot, UsagePeriodRollup
 from app.services.queries.snapshots import query_chart
 
 
@@ -108,6 +108,49 @@ class TestPeakSurvivesEndOfBucketReset:
         assert pro is not None
         pcts = sorted(p["pct_used"] for p in pro["points"])
         assert pcts == [20.0, 46.0]
+
+
+def _add_day_rollup(
+    session: Session,
+    *,
+    provider_id: str = "anthropic",
+    account_id: str = "acc1",
+    day: str,
+    tokens_input: int,
+) -> None:
+    session.add(
+        UsagePeriodRollup(
+            provider_id=provider_id,
+            account_id=account_id,
+            period_type="day",
+            period_key=day,
+            model_id="",
+            sidecar_id="",
+            tokens_input=tokens_input,
+            last_updated=_NOW,
+        )
+    )
+    session.commit()
+
+
+class TestChartSinceUntilScoping:
+    """An explicit since/until pair scopes token bars to a closed period and
+    forces daily granularity."""
+
+    def test_tokens_bars_bounded_by_since_until(self, db_session):
+        _add_day_rollup(db_session, day="2026-03-31", tokens_input=11)  # before
+        _add_day_rollup(db_session, day="2026-04-05", tokens_input=100)  # in
+        _add_day_rollup(db_session, day="2026-04-20", tokens_input=50)  # in
+        _add_day_rollup(db_session, day="2026-05-01", tokens_input=77)  # at/after until
+
+        result = query_chart(
+            db_session,
+            metric="tokens",
+            since=datetime(2026, 4, 1, tzinfo=UTC),
+            until=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        dates = sorted(b["date"] for b in result["bars"])
+        assert dates == ["2026-04-05", "2026-04-20"]
 
 
 class TestNullsAreIgnored:

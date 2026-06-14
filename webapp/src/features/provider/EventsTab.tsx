@@ -1,8 +1,8 @@
 // Events: the raw per-message event stream for this account, scoped to the
-// current month and paged 50 at a time. Promoted out of the Activity tab so the
-// "what did I actually do?" data is a first-class, browsable view.
+// selected month (defaults to the current month) and paged. Promoted out of the
+// Activity tab so the "what did I actually do?" data is a first-class view.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { formatCost, formatTokens } from '@/lib/format';
-import { formatLocalDateTime, startOfCurrentMonthISO } from '@/lib/tz';
+import { formatLocalDate, formatLocalDateTime } from '@/lib/tz';
+import type { SelectedPeriod } from './period';
 import { useProviderEventsPage } from './queries';
 
 const PAGE_SIZE = 25;
@@ -18,21 +19,27 @@ const PAGE_SIZE = 25;
 export function EventsTab({
   providerId,
   accountId,
+  period,
   active,
 }: {
   providerId: string;
   accountId: string;
+  period: SelectedPeriod;
   active: boolean;
 }) {
   const [page, setPage] = useState(0);
-  const since = useMemo(() => startOfCurrentMonthISO(), []);
+  // Reset to the first page whenever the selected month changes — the old
+  // offset is meaningless against a different month's total.
+  useEffect(() => setPage(0), [period.key]);
   const q = useProviderEventsPage(providerId, accountId, {
     page,
     pageSize: PAGE_SIZE,
-    since,
+    since: period.range.since,
+    until: period.range.until,
     enabled: active,
   });
 
+  const monthLabel = formatLocalDate(period.range.since, { month: 'long', year: 'numeric' });
   const total = q.data?.total ?? 0;
   const events = q.data?.events ?? [];
   const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
@@ -42,7 +49,7 @@ export function EventsTab({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Events this month</CardTitle>
+        <CardTitle>Events · {monthLabel}</CardTitle>
         {q.data ? (
           <span className="text-[11px] text-fg-subtle tabular">
             {total > 0 ? `${start}–${end} of ${total}` : '0'}
@@ -57,7 +64,7 @@ export function EventsTab({
       ) : total === 0 ? (
         <CardContent>
           <p className="py-12 text-center text-xs text-fg-subtle">
-            No events this month — per-message events arrive via sidecar ingest.
+            No events in {monthLabel} — per-message events arrive via sidecar ingest.
           </p>
         </CardContent>
       ) : (

@@ -12,7 +12,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import UsageEvent, UsagePeriodRollup
+from app.models.db import SystemConfig, UsageEvent, UsagePeriodRollup
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -295,6 +295,43 @@ def test_query_param_filters_period_type(session):
 
     # Year bucket is the zero-stub
     assert entry[f"year_{year_key}"]["msgs"] == 0
+
+
+def test_month_live_aggregates_from_events_not_rollup(session):
+    """?period_type=month&period_key=YYYY-MM takes the tz-correct live path:
+    the month bucket is aggregated from usage_events, not the UTC rollup."""
+    # A stale/wrong rollup row for the month — must be ignored by the live path.
+    _rollup(session, period_type="month", period_key="2026-04", msgs=999, tokens_input=999_999)
+    # Real events in April and a neighbouring month.
+    _event(session, "apr1", datetime(2026, 4, 5, 12, 0, tzinfo=UTC), tokens_input=100)
+    _event(session, "apr2", datetime(2026, 4, 20, 12, 0, tzinfo=UTC), tokens_input=50)
+    _event(session, "may1", datetime(2026, 5, 1, 12, 0, tzinfo=UTC), tokens_input=7)
+
+    resp = _client().get("/api/v1/usage/cumulative?period_type=month&period_key=2026-04")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["current_month_key"] == "month_2026-04"
+    entry = body["cumulative"][0]
+    bucket = entry["month_2026-04"]
+    assert bucket["tokens_input"] == 150  # apr1 + apr2, not the rollup's 999_999
+    assert bucket["msgs"] == 2
+
+
+def test_month_live_respects_user_local_boundary(session):
+    """An event after local-month midnight but before UTC midnight lands in the
+    new local month — the crux of the tz-correct path."""
+    session.add(SystemConfig(id=1, user_timezone="Europe/Berlin"))
+    session.commit()
+    # 23:30 UTC on Apr 30 == 01:30 May 1 in Berlin (UTC+2) → belongs to May.
+    _event(session, "boundary", datetime(2026, 4, 30, 23, 30, tzinfo=UTC), tokens_input=11)
+    # Clearly-April event.
+    _event(session, "april", datetime(2026, 4, 10, 12, 0, tzinfo=UTC), tokens_input=5)
+
+    april = _client().get("/api/v1/usage/cumulative?period_type=month&period_key=2026-04").json()
+    may = _client().get("/api/v1/usage/cumulative?period_type=month&period_key=2026-05").json()
+
+    assert april["cumulative"][0]["month_2026-04"]["tokens_input"] == 5
+    assert may["cumulative"][0]["month_2026-05"]["tokens_input"] == 11
 
 
 def test_query_param_filters_provider_id(session):

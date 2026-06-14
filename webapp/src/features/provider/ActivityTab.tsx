@@ -9,15 +9,42 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
-import { getUserTz } from '@/lib/tz';
+import { formatLocalDate, getUserTz } from '@/lib/tz';
+import type { SelectedPeriod } from './period';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { SessionsTable } from './SessionsTable';
-import { useProviderCumulative, useProviderHeatmap, useProviderSessions } from './queries';
+import {
+  useProviderCumulative,
+  useProviderCumulativeMonth,
+  useProviderHeatmap,
+  useProviderSessions,
+} from './queries';
 
-export function ActivityTab({ providerId, accountId }: { providerId: string; accountId: string }) {
-  const heatmap = useProviderHeatmap(providerId, accountId, getUserTz());
-  const sessions = useProviderSessions(providerId, accountId);
-  const cumulative = useProviderCumulative(providerId, accountId);
+export function ActivityTab({
+  providerId,
+  accountId,
+  period,
+}: {
+  providerId: string;
+  accountId: string;
+  period: SelectedPeriod;
+}) {
+  // Current month keeps the live (rolling) calls; a past month is scoped to its
+  // closed [since, until) range so every panel reflects that month.
+  const range = period.isCurrentMonth ? undefined : period.range;
+  const heatmap = useProviderHeatmap(providerId, accountId, getUserTz(), range);
+  const sessions = useProviderSessions(providerId, accountId, range);
+  // Both the live and month-scoped cumulative responses set `current_month_key`
+  // to the bucket that holds the data, so the read below is branch-agnostic.
+  const liveCumulative = useProviderCumulative(providerId, accountId);
+  const monthCumulative = useProviderCumulativeMonth(
+    providerId,
+    accountId,
+    period.key,
+    !period.isCurrentMonth,
+  );
+  const cumulative = period.isCurrentMonth ? liveCumulative : monthCumulative;
+  const monthLabel = formatLocalDate(period.range.since, { month: 'long', year: 'numeric' });
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
@@ -35,13 +62,14 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
         providerId={providerId}
         accountId={accountId}
         metric="tokens"
-        title="Tokens per day"
+        title={`Tokens per day · ${monthLabel}`}
+        range={range}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Token composition (month)</CardTitle>
+            <CardTitle>Token composition · {monthLabel}</CardTitle>
           </CardHeader>
           <CardContent>
             {cumulative.isPending ? (
@@ -50,7 +78,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
               <TokenDonut bucket={monthBucket} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">
-                No usage recorded this month.
+                No usage recorded in {monthLabel}.
               </p>
             )}
           </CardContent>
@@ -58,7 +86,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
 
         <Card>
           <CardHeader>
-            <CardTitle>Tokens by model (month)</CardTitle>
+            <CardTitle>Tokens by model · {monthLabel}</CardTitle>
           </CardHeader>
           <CardContent>
             {cumulative.isPending ? (
@@ -67,7 +95,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
               <ModelDonut byModel={monthBucket.by_model} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">
-                No per-model usage this month.
+                No per-model usage in {monthLabel}.
               </p>
             )}
           </CardContent>
@@ -76,7 +104,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
 
       <Card>
         <CardHeader>
-          <CardTitle>Activity by hour (14 days)</CardTitle>
+          <CardTitle>{range ? `Activity by hour · ${monthLabel}` : 'Activity by hour (14 days)'}</CardTitle>
           {heatmap.data ? (
             <span className="text-[11px] text-fg-subtle">{heatmap.data.tz}</span>
           ) : null}
@@ -88,7 +116,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
             <UsageHeatmap cells={heatmap.data.cells} />
           ) : (
             <p className="py-8 text-center text-xs text-fg-subtle">
-              No event activity in the last 14 days.
+              {range ? `No event activity in ${monthLabel}.` : 'No event activity in the last 14 days.'}
             </p>
           )}
         </CardContent>
@@ -96,7 +124,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
 
       <Card>
         <CardHeader>
-          <CardTitle>Top sessions (7 days)</CardTitle>
+          <CardTitle>{range ? `Top sessions · ${monthLabel}` : 'Top sessions (7 days)'}</CardTitle>
         </CardHeader>
         {sessions.isPending ? (
           <CardContent>

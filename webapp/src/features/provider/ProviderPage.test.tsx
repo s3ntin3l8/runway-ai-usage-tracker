@@ -106,4 +106,31 @@ describe('ProviderPage', () => {
     renderPage('/provider/anthropic?account=b@x.com');
     expect(await screen.findByTestId('overview-tab')).toHaveTextContent('b@x.com');
   });
+
+  it('hides the month selector on non-period tabs (Overview)', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderPage();
+    await screen.findByTestId('overview-tab');
+    expect(screen.queryByRole('button', { name: /previous month/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the month selector on period-aware tabs and reflects the ?period param', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderPage('/provider/anthropic?tab=events&period=2026-03');
+    await screen.findByTestId('events-tab');
+    expect(screen.getByRole('button', { name: /previous month/i })).toBeInTheDocument();
+    expect(screen.getByText('March 2026')).toBeInTheDocument();
+  });
+
+  it('steps the selected month forward and back', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderPage('/provider/anthropic?tab=events&period=2026-03');
+    await screen.findByTestId('events-tab');
+
+    await userEvent.click(screen.getByRole('button', { name: /previous month/i }));
+    expect(await screen.findByText('February 2026')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /next month/i }));
+    expect(await screen.findByText('March 2026')).toBeInTheDocument();
+  });
 });

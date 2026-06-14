@@ -1,4 +1,5 @@
 // Shared test fixtures for provider-feature tests.
+import { resolvePeriod, type SelectedPeriod } from './period';
 import type {
   AnomaliesResponse,
   CostForecastResponse,
@@ -13,6 +14,11 @@ import type {
   LimitCard,
   SessionEntry,
 } from '@/api/types';
+
+// The current-month selection (default the tabs receive). Pass a 'YYYY-MM' key
+// for a past month to exercise the scoped-range code paths.
+export const currentPeriod = (): SelectedPeriod => resolvePeriod(null);
+export const pastPeriod = (key = '2026-01'): SelectedPeriod => resolvePeriod(key);
 
 export const limitCard = (o: Partial<LimitCard> = {}): LimitCard => ({
   service_name: 'Claude',

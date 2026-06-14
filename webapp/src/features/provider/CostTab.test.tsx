@@ -1,8 +1,15 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { CostTab } from './CostTab';
 import * as api from '@/api/endpoints';
-import { costForecast, cumulativeResponse, emptyCumulative, historyChart } from './test-fixtures';
+import {
+  costForecast,
+  currentPeriod,
+  cumulativeResponse,
+  emptyCumulative,
+  historyChart,
+  pastPeriod,
+} from './test-fixtures';
 
 vi.mock('@/api/endpoints');
 vi.mock('@/features/history/HistoryChart', () => ({
@@ -18,7 +25,9 @@ describe('CostTab', () => {
   it('renders the stat tiles with formatted cost', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(<CostTab providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
 
     expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected EOM')).toBeInTheDocument();
@@ -29,18 +38,40 @@ describe('CostTab', () => {
   it('renders the per-model split table with a row', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(<CostTab providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
 
-    expect(await screen.findByText('Cost by model (this month)')).toBeInTheDocument();
+    expect(await screen.findByText(/^Cost by model ·/)).toBeInTheDocument();
     expect(await screen.findByText('claude-opus')).toBeInTheDocument();
-    expect(screen.getByText('Cost by sidecar (this month)')).toBeInTheDocument();
+    expect(screen.getByText(/^Cost by sidecar ·/)).toBeInTheDocument();
     expect(await screen.findByText('laptop')).toBeInTheDocument();
   });
 
   it('shows the empty split message with no month bucket', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
-    renderWithProviders(<CostTab providerId="anthropic" accountId="me@example.com" />);
-    expect((await screen.findAllByText(/no cost data this month/i)).length).toBeGreaterThan(0);
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+    expect((await screen.findAllByText(/no cost data in/i)).length).toBeGreaterThan(0);
+  });
+
+  it('falls back to recorded spend and hides projections for a past month', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={pastPeriod('2026-01')} />,
+    );
+
+    // Spend tile is month-scoped; EOM/burn are not applicable.
+    expect(await screen.findByText(/^Spend ·/)).toBeInTheDocument();
+    expect((await screen.findAllByText('current month only')).length).toBeGreaterThan(0);
+    // Past month reads the tz-correct month-scoped cumulative bucket.
+    await waitFor(() =>
+      expect(api.fetchCumulative).toHaveBeenCalledWith(
+        expect.objectContaining({ period_type: 'month', period_key: '2026-01' }),
+      ),
+    );
   });
 });

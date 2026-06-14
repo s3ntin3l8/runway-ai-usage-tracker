@@ -266,6 +266,13 @@ export interface EventsResponse {
   offset: number;
 }
 
+// Earliest/latest event timestamps for a (provider, account) pair. Bounds how
+// far back the month selector can page. Both null when the pair has no events.
+export interface EventRangeResponse {
+  earliest: string | null;
+  latest: string | null;
+}
+
 export interface AnomalyEntry {
   provider_id: string;
   account_id: string;

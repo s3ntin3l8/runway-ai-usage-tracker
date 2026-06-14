@@ -59,25 +59,46 @@ export function formatLocalDate(
   return new Date(iso).toLocaleDateString([], { ...opts, timeZone: getUserTz() });
 }
 
-// UTC ISO instant for the 1st of the current month at 00:00 *in the resolved
-// user tz* — the lower bound for "current month" scoped queries. Computed via
-// the toLocaleString offset round-trip so it stays correct across DST and tz
-// changes (the backend is sensitive to month-boundary tz skew).
-export function startOfCurrentMonthISO(): string {
-  const tz = getUserTz();
-  const now = new Date();
+// The current calendar year + (1-based) month *in the resolved user tz*. Backs
+// the default period and the `isCurrentMonth` check for the month selector.
+export function currentYearMonth(): { year: number; month: number } {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
+    timeZone: getUserTz(),
     year: 'numeric',
     month: 'numeric',
-  }).formatToParts(now);
-  const year = Number(parts.find((p) => p.type === 'year')?.value);
-  const month = Number(parts.find((p) => p.type === 'month')?.value); // 1-based
+  }).formatToParts(new Date());
+  return {
+    year: Number(parts.find((p) => p.type === 'year')?.value),
+    month: Number(parts.find((p) => p.type === 'month')?.value), // 1-based
+  };
+}
+
+// UTC ISO instant for the 1st of the given (year, 1-based month) at 00:00 *in
+// the resolved user tz*. Computed via the toLocaleString offset round-trip so it
+// stays correct across DST and tz changes (the backend is sensitive to
+// month-boundary tz skew). Month values outside 1..12 roll over naturally
+// (e.g. month=13 → January of year+1), which `endOfMonthISO` relies on.
+export function startOfMonthISO(year: number, month: number): string {
+  const tz = getUserTz();
   const utcGuess = Date.UTC(year, month - 1, 1, 0, 0, 0);
   const offset =
     new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: 'UTC' })).getTime() -
     new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: tz })).getTime();
   return new Date(utcGuess + offset).toISOString();
+}
+
+// UTC ISO instant for the *exclusive* upper bound of the given month — i.e. the
+// start of the following month — matching the `until` (exclusive) semantics of
+// the events/sessions/heatmap queries.
+export function endOfMonthISO(year: number, month: number): string {
+  return startOfMonthISO(year, month + 1);
+}
+
+// UTC ISO instant for the 1st of the current month at 00:00 in the user tz — the
+// lower bound for "current month" scoped queries.
+export function startOfCurrentMonthISO(): string {
+  const { year, month } = currentYearMonth();
+  return startOfMonthISO(year, month);
 }
 
 // Format a Unix epoch (seconds) the same way — used by chart bucket labels

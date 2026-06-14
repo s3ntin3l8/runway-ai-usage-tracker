@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  currentYearMonth,
+  endOfMonthISO,
   formatLocalDate,
   formatLocalDateTime,
   formatLocalFromEpoch,
@@ -7,6 +9,7 @@ import {
   getUserTz,
   setTzConfig,
   startOfCurrentMonthISO,
+  startOfMonthISO,
 } from './tz';
 
 // getUserTz() memoizes; setTzConfig() clears the cache, so reset before each
@@ -79,5 +82,44 @@ describe('startOfCurrentMonthISO', () => {
     setTzConfig({ user_timezone: 'America/New_York' });
     // June → EDT (UTC-4): local 2026-06-01T00:00 == 2026-06-01T04:00Z.
     expect(startOfCurrentMonthISO()).toBe('2026-06-01T04:00:00.000Z');
+  });
+
+  it('equals the generalized startOfMonthISO(...currentYearMonth())', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T15:30:00Z'));
+    setTzConfig({ user_timezone: 'America/New_York' });
+    const { year, month } = currentYearMonth();
+    expect(startOfCurrentMonthISO()).toBe(startOfMonthISO(year, month));
+  });
+});
+
+describe('startOfMonthISO / endOfMonthISO', () => {
+  it('brackets a normal month at local midnight (UTC zone)', () => {
+    setTzConfig({ user_timezone: 'UTC' });
+    expect(startOfMonthISO(2026, 3)).toBe('2026-03-01T00:00:00.000Z');
+    expect(endOfMonthISO(2026, 3)).toBe('2026-04-01T00:00:00.000Z');
+  });
+
+  it('rolls Dec over into the next January for the exclusive upper bound', () => {
+    setTzConfig({ user_timezone: 'UTC' });
+    expect(startOfMonthISO(2026, 12)).toBe('2026-12-01T00:00:00.000Z');
+    expect(endOfMonthISO(2026, 12)).toBe('2027-01-01T00:00:00.000Z');
+  });
+
+  it('applies the tz offset to the boundary instants', () => {
+    setTzConfig({ user_timezone: 'America/New_York' });
+    // March → EST→EDT; 2026-03-01 is still EST (UTC-5): local midnight == 05:00Z.
+    expect(startOfMonthISO(2026, 3)).toBe('2026-03-01T05:00:00.000Z');
+    // 2026-04-01 is EDT (UTC-4): local midnight == 04:00Z.
+    expect(endOfMonthISO(2026, 3)).toBe('2026-04-01T04:00:00.000Z');
+  });
+
+  it('currentYearMonth reflects the user tz', () => {
+    vi.useFakeTimers();
+    // 2026-01-01T02:00Z is still 2025-12-31 in New York (UTC-5).
+    vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+    setTzConfig({ user_timezone: 'America/New_York' });
+    expect(currentYearMonth()).toEqual({ year: 2025, month: 12 });
+    vi.useRealTimers();
   });
 });

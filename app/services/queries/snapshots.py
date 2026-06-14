@@ -593,16 +593,25 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     account_id: str | None = None,
     days: float = 30.0,
     metric: str = "percent",
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> dict:
     """Return chart data.
 
     metric=percent  → fill curves from quota_snapshots.
     metric=tokens   → daily bars from usage_period_rollup.
     metric=cost     → daily bars (value=cost_usd) from usage_period_rollup.
+
+    By default the range is the last `days`. Passing an explicit `since` (and
+    optional exclusive `until`) scopes the chart to a closed period (e.g. a
+    selected past month); an `until` also forces daily-bar granularity so a
+    full month renders as day bars rather than hourly.
     """
     import json as _json
 
-    since = datetime.now(UTC) - timedelta(days=days)
+    explicit_range = since is not None
+    if since is None:
+        since = datetime.now(UTC) - timedelta(days=days)
 
     if metric == "percent":
         # Bucket snapshots by time at the SQL layer to keep chart resolution
@@ -687,8 +696,10 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
 
         return {"series": list(series_map.values())}
 
-    # tokens or cost — hourly bars for days<=7, daily bars otherwise
-    period_type = "hour" if days <= 7 else "day"
+    # tokens or cost — hourly bars for short rolling windows, daily bars
+    # otherwise. A scoped range (explicit since/until, e.g. a whole month) always
+    # renders as daily bars.
+    period_type = "day" if (explicit_range or days > 7) else "hour"
     since_key = (
         since.strftime("%Y-%m-%dT%H") if period_type == "hour" else since.strftime("%Y-%m-%d")
     )
@@ -697,6 +708,13 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         UsagePeriodRollup.period_key >= since_key,
         UsagePeriodRollup.sidecar_id == "",
     )
+    if until is not None:
+        # period_key is exclusive-upper-bound friendly: a 'YYYY-MM-DD' key sorts
+        # before the until day's key, so "< until_key" drops the boundary day.
+        until_key = (
+            until.strftime("%Y-%m-%dT%H") if period_type == "hour" else until.strftime("%Y-%m-%d")
+        )
+        bar_stmt = bar_stmt.where(UsagePeriodRollup.period_key < until_key)
     if provider_id:
         bar_stmt = bar_stmt.where(UsagePeriodRollup.provider_id == provider_id)
     if account_id:

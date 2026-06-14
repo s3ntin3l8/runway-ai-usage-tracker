@@ -1,5 +1,7 @@
 // Cost: MTD spend + EOM projection for this provider, per-model and
-// per-sidecar splits from the cumulative month bucket.
+// per-sidecar splits from the cumulative month bucket. The EOM/burn projections
+// are forward-looking, so they only apply to the current month — a selected
+// past month falls back to that month's recorded spend.
 
 import { useMemo } from 'react';
 import type { CumulativeBucket } from '@/api/types';
@@ -8,12 +10,37 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { formatCost, formatTokens } from '@/lib/format';
+import { formatLocalDate } from '@/lib/tz';
+import type { SelectedPeriod } from './period';
 import { ProviderTrendCard } from './ProviderTrendCard';
-import { useProviderCostForecast, useProviderCumulative } from './queries';
+import {
+  useProviderCostForecast,
+  useProviderCumulative,
+  useProviderCumulativeMonth,
+} from './queries';
 
-export function CostTab({ providerId, accountId }: { providerId: string; accountId: string }) {
+export function CostTab({
+  providerId,
+  accountId,
+  period,
+}: {
+  providerId: string;
+  accountId: string;
+  period: SelectedPeriod;
+}) {
+  const range = period.isCurrentMonth ? undefined : period.range;
   const cost = useProviderCostForecast(providerId, accountId);
-  const cumulative = useProviderCumulative(providerId, accountId);
+  // `liveCumulative` is always fetched for the period-independent Lifetime tile
+  // (the month-scoped response carries no lifetime bucket).
+  const liveCumulative = useProviderCumulative(providerId, accountId);
+  const monthCumulative = useProviderCumulativeMonth(
+    providerId,
+    accountId,
+    period.key,
+    !period.isCurrentMonth,
+  );
+  const cumulative = period.isCurrentMonth ? liveCumulative : monthCumulative;
+  const monthLabel = formatLocalDate(period.range.since, { month: 'long', year: 'numeric' });
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
@@ -26,22 +53,32 @@ export function CostTab({ providerId, accountId }: { providerId: string; account
   }, [cumulative.data, providerId, accountId]);
 
   const lifetime = useMemo<CumulativeBucket | null>(() => {
-    const row = cumulative.data?.cumulative.find(
+    const row = liveCumulative.data?.cumulative.find(
       (c) => c.provider_id === providerId && c.account_id === accountId,
     );
     return row?.lifetime ?? null;
-  }, [cumulative.data, providerId, accountId]);
+  }, [liveCumulative.data, providerId, accountId]);
 
-  const stats = [
-    { label: 'Spend (MTD)', value: formatCost(cost.data?.current_month_to_date ?? null) },
-    {
-      label: 'Projected EOM',
-      value: formatCost(cost.data?.projected_eom ?? null),
-      hint: cost.data ? `${cost.data.days_remaining}d left` : undefined,
-    },
-    { label: 'Daily burn (7d)', value: formatCost(cost.data?.daily_burn_avg_7d ?? null) },
-    { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
-  ];
+  const stats = period.isCurrentMonth
+    ? [
+        { label: 'Spend (MTD)', value: formatCost(cost.data?.current_month_to_date ?? null) },
+        {
+          label: 'Projected EOM',
+          value: formatCost(cost.data?.projected_eom ?? null),
+          hint: cost.data ? `${cost.data.days_remaining}d left` : undefined,
+        },
+        { label: 'Daily burn (7d)', value: formatCost(cost.data?.daily_burn_avg_7d ?? null) },
+        { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
+      ]
+    : [
+        { label: `Spend · ${monthLabel}`, value: formatCost(monthBucket?.cost_usd ?? null) },
+        { label: 'Projected EOM', value: '—', hint: 'current month only' },
+        { label: 'Daily burn (7d)', value: '—', hint: 'current month only' },
+        { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
+      ];
+  const statsLoading = period.isCurrentMonth
+    ? cost.isPending || cumulative.isPending
+    : cumulative.isPending || liveCumulative.isPending;
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,7 +89,7 @@ export function CostTab({ providerId, accountId }: { providerId: string; account
             label={stat.label}
             value={stat.value}
             hint={stat.hint}
-            loading={cost.isPending || cumulative.isPending}
+            loading={statsLoading}
           />
         ))}
       </div>
@@ -61,20 +98,23 @@ export function CostTab({ providerId, accountId }: { providerId: string; account
         providerId={providerId}
         accountId={accountId}
         metric="cost"
-        title="Cost per day"
+        title={`Cost per day · ${monthLabel}`}
+        range={range}
       />
 
       <SplitTable
-        title="Cost by model (this month)"
+        title={`Cost by model · ${monthLabel}`}
         split={monthBucket?.by_model}
         loading={cumulative.isPending}
         nameHeader="Model"
+        monthLabel={monthLabel}
       />
       <SplitTable
-        title="Cost by sidecar (this month)"
+        title={`Cost by sidecar · ${monthLabel}`}
         split={monthBucket?.by_sidecar}
         loading={cumulative.isPending}
         nameHeader="Sidecar"
+        monthLabel={monthLabel}
       />
     </div>
   );
@@ -85,11 +125,13 @@ function SplitTable({
   split,
   loading,
   nameHeader,
+  monthLabel,
 }: {
   title: string;
   split: CumulativeBucket['by_model'] | undefined | null;
   loading: boolean;
   nameHeader: string;
+  monthLabel: string;
 }) {
   const rows = Object.entries(split ?? {}).sort(
     ([, a], [, b]) => (b.cost_usd ?? 0) - (a.cost_usd ?? 0),
@@ -105,7 +147,7 @@ function SplitTable({
         </CardContent>
       ) : rows.length === 0 ? (
         <CardContent>
-          <p className="py-4 text-center text-xs text-fg-subtle">No cost data this month.</p>
+          <p className="py-4 text-center text-xs text-fg-subtle">No cost data in {monthLabel}.</p>
         </CardContent>
       ) : (
         <Table>

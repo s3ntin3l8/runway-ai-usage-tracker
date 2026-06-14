@@ -22,6 +22,12 @@ import { DebugTab } from './DebugTab';
 import { EventsTab } from './EventsTab';
 import { ForecastTab } from './ForecastTab';
 import { OverviewTab } from './OverviewTab';
+import { PeriodSelector } from './PeriodSelector';
+import { currentMonthKey, resolvePeriod } from './period';
+import { useProviderEventRange } from './queries';
+
+// Tabs whose data is scoped by the shared month selector.
+const PERIOD_AWARE_TABS = new Set(['activity', 'events', 'cost']);
 
 export function ProviderPage() {
   const { providerId = '' } = useParams();
@@ -50,6 +56,23 @@ export function ProviderPage() {
   const accountParam = searchParams.get('account');
   const entry = entries.find((e) => e.account_id === accountParam) ?? entries[0];
   const accountId = entry?.account_id ?? accountParam ?? 'default';
+
+  // Shared month selector — `?period=YYYY-MM`, omitted when it's the current
+  // month (mirrors how `tab` omits 'overview'). resolvePeriod tolerates a bad
+  // deep-link by falling back to the current month.
+  const period = resolvePeriod(searchParams.get('period'));
+  const setPeriod = (next: string) => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next === currentMonthKey()) p.delete('period');
+        else p.set('period', next);
+        return p;
+      },
+      { replace: true },
+    );
+  };
+  const eventRange = useProviderEventRange(providerId, accountId);
 
   const name =
     providerConfigs.data?.providers.find((p) => p.provider_id === providerId)?.name ?? providerId;
@@ -80,6 +103,13 @@ export function ProviderPage() {
         leading={<ProviderGlyph providerId={providerId} name={name} className="size-9 text-sm" />}
         actions={
           <>
+            {entry && PERIOD_AWARE_TABS.has(tab) ? (
+              <PeriodSelector
+                value={period.key}
+                onChange={setPeriod}
+                earliest={eventRange.data?.earliest}
+              />
+            ) : null}
             {entries.length > 1 ? (
               <Select
                 value={accountId}
@@ -168,16 +198,21 @@ export function ProviderPage() {
               <OverviewTab entry={entry} />
             </TabsContent>
             <TabsContent value="activity">
-              <ActivityTab providerId={providerId} accountId={accountId} />
+              <ActivityTab providerId={providerId} accountId={accountId} period={period} />
             </TabsContent>
             <TabsContent value="events">
-              <EventsTab providerId={providerId} accountId={accountId} active={tab === 'events'} />
+              <EventsTab
+                providerId={providerId}
+                accountId={accountId}
+                period={period}
+                active={tab === 'events'}
+              />
             </TabsContent>
             <TabsContent value="forecast">
               <ForecastTab providerId={providerId} accountId={accountId} entry={entry} />
             </TabsContent>
             <TabsContent value="cost">
-              <CostTab providerId={providerId} accountId={accountId} />
+              <CostTab providerId={providerId} accountId={accountId} period={period} />
             </TabsContent>
             <TabsContent value="debug">
               <DebugTab

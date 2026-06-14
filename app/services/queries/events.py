@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
+from app.services.queries._shared import _parse_ts
 
 # ---------------------------------------------------------------------------
 # 7.1  query_events
@@ -92,3 +93,25 @@ def count_events(
         stmt = stmt.where(UsageEvent.kind == kind)
 
     return session.exec(stmt).one()  # type: ignore[return-value]
+
+
+def event_time_range(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+) -> tuple[datetime | None, datetime | None]:
+    """Earliest and latest event timestamps for a (provider, account) pair.
+
+    Backs the month selector's lower bound — there's no point letting the user
+    page back past the first recorded event. Returns ``(None, None)`` when the
+    pair has no events yet.
+    """
+    row = session.exec(
+        select(func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(
+            UsageEvent.provider_id == provider_id,
+            UsageEvent.account_id == account_id,
+        )
+    ).one()
+    # SQLite returns aggregate datetimes as strings; normalize to datetime.
+    return _parse_ts(row[0]), _parse_ts(row[1])
