@@ -9,13 +9,16 @@ against the Vite dev server, injecting the admin key from the environment
 
 import os
 import sys
+from typing import Literal, cast
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import ViewportSize, sync_playwright
 
 BASE = os.environ.get("RUNWAY_WEB_URL", "http://localhost:5173")
 CHROMIUM = os.path.expanduser("~/.cache/ms-playwright/chromium-1155/chrome-linux/chrome")
 
-VIEWPORTS = {
+ColorScheme = Literal["dark", "light", "no-preference", "null"]
+
+VIEWPORTS: dict[str, ViewportSize] = {
     "desktop": {"width": 1440, "height": 900},
     "tablet": {"width": 768, "height": 1024},
     "mobile": {"width": 390, "height": 844},
@@ -30,11 +33,9 @@ def main() -> None:
     os.makedirs(out_dir, exist_ok=True)
 
     with sync_playwright() as p:
-        kwargs = {}
-        if os.path.exists(CHROMIUM):
-            kwargs["executable_path"] = CHROMIUM
-        browser = p.chromium.launch(**kwargs)
-        scheme = os.environ.get("RUNWAY_COLOR_SCHEME", "dark")
+        executable_path = CHROMIUM if os.path.exists(CHROMIUM) else None
+        browser = p.chromium.launch(executable_path=executable_path)
+        scheme = cast(ColorScheme, os.environ.get("RUNWAY_COLOR_SCHEME", "dark"))
         for name, viewport in VIEWPORTS.items():
             context = browser.new_context(viewport=viewport, color_scheme=scheme)
             if admin_key:
