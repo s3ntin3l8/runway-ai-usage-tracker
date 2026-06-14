@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0](https://github.com/s3ntin3l8/runway/compare/v2.1.0...v2.2.0) (2026-06-14)
+
+
+### Features
+
+* **updates:** server-release banner + manual "check for updates" trigger ([#60](https://github.com/s3ntin3l8/runway/issues/60)) ([8596224](https://github.com/s3ntin3l8/runway/commit/8596224d10beefafb3854dfc10c330e8a5aaf6b6))
+
+
+### Bug Fixes
+
+* **e2e:** type screenshot.py so local mypy pre-commit hook passes ([#58](https://github.com/s3ntin3l8/runway/issues/58)) ([792a874](https://github.com/s3ntin3l8/runway/commit/792a8747ddc5f5dc457b0871195f38c866e9c066))
+
 ## [2.1.0](https://github.com/s3ntin3l8/runway/compare/v2.0.1...v2.1.0) (2026-06-14)
 
 
