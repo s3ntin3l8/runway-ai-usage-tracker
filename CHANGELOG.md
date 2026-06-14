@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0](https://github.com/s3ntin3l8/runway/compare/v2.0.1...v2.1.0) (2026-06-14)
+
+
+### Features
+
+* **deploy:** dev/prod data split + compose override for existing Traefik ([#53](https://github.com/s3ntin3l8/runway/issues/53)) ([1454c7c](https://github.com/s3ntin3l8/runway/commit/1454c7ccde7d6eef68801b2e2640f0de29f4671f))
+
+
+### Bug Fixes
+
+* **sidecar:** bundle certifi + resolve TLS trust store for HTTPS pushes ([#57](https://github.com/s3ntin3l8/runway/issues/57)) ([03cf962](https://github.com/s3ntin3l8/runway/commit/03cf962b550259731c9f154381fef8eecf0a0c5b))
+
 ## [2.0.1](https://github.com/s3ntin3l8/runway/compare/v2.0.0...v2.0.1) (2026-06-14)
 
 
