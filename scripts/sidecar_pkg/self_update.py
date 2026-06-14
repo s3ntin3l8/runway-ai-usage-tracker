@@ -37,8 +37,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from urllib import error, request
 
@@ -55,6 +56,46 @@ logger = logging.getLogger(__name__)
 _EDGE_RELEASE_URL = "https://api.github.com/repos/s3ntin3l8/runway/releases/tags/edge"
 _TIMEOUT_SECONDS = 60
 _LOCK_NAME = "self-update.lock"
+
+# Bounded retry for transient GitHub failures (5xx / rate-limit / timeouts). A
+# single flaky response used to abort the whole update with no second attempt
+# until the next manual push, so we soak up blips here. Other 4xx (e.g. 404 =
+# asset genuinely absent) are NOT retried — they re-raise immediately.
+_MAX_ATTEMPTS = 3  # 1 try + 2 retries
+_BACKOFF_BASE_SECONDS = 2  # 2s, 4s → worst-case ~6s added latency
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
+    """Call *fn* with bounded exponential backoff on transient network errors.
+
+    Retries on 5xx / 429 and connection/timeout errors; never on other 4xx
+    (e.g. 404 = asset genuinely absent). Re-raises the last error once attempts
+    are exhausted so the caller's existing ``except`` handling still applies.
+    """
+    last: BaseException | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            return fn()
+        except error.HTTPError as exc:
+            if exc.code not in _RETRYABLE_STATUS:
+                raise
+            last = exc
+        except (error.URLError, TimeoutError, OSError) as exc:
+            last = exc
+        if attempt < _MAX_ATTEMPTS - 1:
+            wait = _BACKOFF_BASE_SECONDS * (2**attempt)
+            logger.warning(
+                "Self-update: %s failed (%s); retry %d/%d in %ds",
+                what,
+                last,
+                attempt + 1,
+                _MAX_ATTEMPTS - 1,
+                wait,
+            )
+            time.sleep(wait)
+    assert last is not None  # loop always sets last before exhausting
+    raise last
 
 
 class SelfUpdateError(Exception):
@@ -486,7 +527,7 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             return False
 
         try:
-            release = _get_release_json(eff_channel)
+            release = _with_retries(lambda: _get_release_json(eff_channel), what="release fetch")
             latest_ver = str(release.get("tag_name", "")).lstrip("v").strip()
             asset_name = resolve_asset_name(target, eff_channel, latest_ver)
             asset_url, sha_url = find_asset_urls(release, asset_name)
@@ -501,8 +542,8 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
         try:
             archive = tmp / asset_name
             logger.info("Self-update: downloading %s", asset_name)
-            _download(asset_url, archive)
-            expected = _fetch_expected_sha(sha_url)
+            _with_retries(lambda: _download(asset_url, archive), what="asset download")
+            expected = _with_retries(lambda: _fetch_expected_sha(sha_url), what="checksum fetch")
             if not verify_sha256(archive, expected):
                 logger.error("Self-update aborted: checksum mismatch for %s", asset_name)
                 return False

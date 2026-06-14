@@ -216,6 +216,101 @@ class TestSelfUpdateGuards:
 
 
 # ---------------------------------------------------------------------------
+# _with_retries — bounded backoff on transient GitHub failures
+# ---------------------------------------------------------------------------
+
+
+def _http_error(code: int):
+    from urllib import error
+
+    return error.HTTPError("https://api.github.com/x", code, "boom", {}, None)
+
+
+class TestWithRetries:
+    def test_succeeds_first_try(self, monkeypatch):
+        slept = []
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: slept.append(s))
+        assert self_update._with_retries(lambda: "ok", what="x") == "ok"
+        assert slept == []
+
+    def test_retries_then_succeeds_on_504(self, monkeypatch):
+        slept = []
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: slept.append(s))
+        calls = {"n": 0}
+
+        def _fn():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise _http_error(504)
+            return "recovered"
+
+        assert self_update._with_retries(_fn, what="release fetch") == "recovered"
+        assert calls["n"] == 3
+        assert slept == [2, 4]  # exponential backoff: 2s, then 4s
+
+    def test_exhausts_and_reraises(self, monkeypatch):
+        slept = []
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: slept.append(s))
+        calls = {"n": 0}
+
+        def _fn():
+            calls["n"] += 1
+            raise _http_error(503)
+
+        with pytest.raises(self_update.error.HTTPError):
+            self_update._with_retries(_fn, what="x")
+        assert calls["n"] == self_update._MAX_ATTEMPTS
+        assert slept == [2, 4]  # one sleep between each of the 3 attempts but not after the last
+
+    def test_no_retry_on_404(self, monkeypatch):
+        slept = []
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: slept.append(s))
+        calls = {"n": 0}
+
+        def _fn():
+            calls["n"] += 1
+            raise _http_error(404)
+
+        with pytest.raises(self_update.error.HTTPError):
+            self_update._with_retries(_fn, what="x")
+        assert calls["n"] == 1  # genuine "asset missing" fails fast
+        assert slept == []
+
+    def test_retries_on_urlerror(self, monkeypatch):
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: None)
+        calls = {"n": 0}
+
+        def _fn():
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise self_update.error.URLError("connection reset")
+            return "ok"
+
+        assert self_update._with_retries(_fn, what="x") == "ok"
+        assert calls["n"] == 2
+
+
+class TestSelfUpdateRetryWiring:
+    def test_transient_504_on_release_fetch_exhausts_to_false(self, monkeypatch, tmp_path):
+        # Past the guards, with an update available, a persistent 504 on the
+        # release fetch should retry _MAX_ATTEMPTS times then degrade to False.
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        monkeypatch.setattr(self_update, "check_once", lambda *a, **k: "edge build abc123")
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: None)
+        calls = {"n": 0}
+
+        def _boom(*a, **k):
+            calls["n"] += 1
+            raise _http_error(504)
+
+        monkeypatch.setattr(self_update.request, "urlopen", _boom)
+        assert self_update.self_update("1.0.0+edge.aaa", "edge") is False
+        assert calls["n"] == self_update._MAX_ATTEMPTS
+
+
+# ---------------------------------------------------------------------------
 # _extract — path-traversal hardening (CodeQL py/unsafe-unpacking)
 # ---------------------------------------------------------------------------
 
