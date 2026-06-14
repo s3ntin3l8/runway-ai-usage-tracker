@@ -24,8 +24,9 @@ install: install-hooks ## Set up venv, install Python and Node dependencies
 	$(PIP) install -r requirements-dev.txt
 	npm --prefix webapp ci
 
-dev: ## Run development server (hot reload, port 8765)
+dev: ## Run development server (hot reload). Data → ./data (gitignored) unless RUNWAY_CONFIG_DIR is set.
 	$(LOAD_ENV); \
+	RUNWAY_CONFIG_DIR="$${RUNWAY_CONFIG_DIR:-$(CURDIR)/data}" \
 	$(VENV)/bin/uvicorn app.main:app --reload \
 	  --host "$${APP_HOST:-127.0.0.1}" \
 	  --port "$${APP_PORT:-8765}"
@@ -39,8 +40,9 @@ run: ## Run production server (serves the built SPA from webapp/dist at :8765)
 run-all: web ## Build the SPA, then run the production server + sidecar (no hot reload)
 	$(MAKE) -j2 run sidecar
 
-sidecar: ## Run the sidecar agent (sources .env so RUNWAY_CONFIG_DIR + INGEST_API_KEY align with the dev server)
+sidecar: ## Run the sidecar agent (config → ./data to match `make dev`; override with RUNWAY_CONFIG_DIR)
 	$(LOAD_ENV); \
+	RUNWAY_CONFIG_DIR="$${RUNWAY_CONFIG_DIR:-$(CURDIR)/data}" \
 	$(PYTHON) scripts/sidecar.py
 
 test: ## Run test suite (matches CI)

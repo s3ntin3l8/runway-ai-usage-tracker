@@ -23,6 +23,9 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # Compose override files use spec tags (!reset/!override) the generic
+        # YAML parser can't construct; `docker compose config` validates them.
+        exclude: ^docker-compose\.override.*\.ya?ml$
       - id: check-added-large-files
         args: ['--maxkb=1000']
       - id: check-json

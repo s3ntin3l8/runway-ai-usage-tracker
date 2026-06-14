@@ -122,6 +122,33 @@ Two things to know:
 - **Rate-limit bucketing.** The ingest limiter (600/min) keys on client IP. Behind a proxy that IP is Traefik's, so every sidecar collapses into one bucket unless you set `TRUSTED_PROXY_IPS` to Traefik's container IP — then Runway honors the `X-Forwarded-For` Traefik sets and buckets per real client (this also gates `X-Forwarded-User` admin auth). Harmless for a couple of sidecars; set it for a fleet. The match is exact (not CIDR), so pin Traefik to a static IP if you depend on it.
 - **Same-host shortcut.** To let a local native sidecar skip the public DNS → Traefik round-trip, add a loopback publish to the `runway` service — `ports: ["127.0.0.1:8765:8765"]` — and point that sidecar at `http://localhost:8765`. Remote sidecars keep using the public URL.
 
+## Continuous deployment & the dev/prod split
+
+If you already run Traefik (rather than the bundled stack above), attach Runway to your existing external `proxy` network with a **`docker-compose.override.yml`** — Compose auto-merges it onto the generic `docker-compose.yml`. Copy the tracked template and edit the host/resolver:
+
+```bash
+cp docker-compose.override.example.yml docker-compose.override.yml   # gitignored
+docker compose up -d                                                 # base + override
+```
+
+The override pins the **`:edge`** image, drops host port publishing, joins `proxy`, and adds your router labels (see the template for the full set).
+
+**How updates reach a running deployment.** The SPA is baked into the server image (the `Dockerfile` copies `webapp/dist/`), so **UI/server changes ship in the server image — not via the sidecar edge channel** (that channel only updates the collector binary). Two channels:
+
+- **`:edge`** — rebuilt on every push to `main`. Pull it to track your latest work: `docker compose pull runway && docker compose up -d runway` (optionally automate with watchtower).
+- **`:latest` / `:vX.Y.Z`** — published only on a Release-Please release; pin these for deliberate, change-controlled updates.
+
+Schema upgrades are forward-safe: there's no Alembic, just idempotent `create_all` + `ALTER TABLE ADD COLUMN` at startup (`app/core/db.py`), so bumping the image never breaks an existing DB. (No automatic *down*grade — pin a known-good tag to roll back.)
+
+**Dev alongside prod — separate data dirs.** `make dev` / `make dev-all` / `make sidecar` default `RUNWAY_CONFIG_DIR` to the gitignored **`./data`** (override with an explicit env value), so the dev loop never touches your real data. Keep **prod data in `~/.config/runway`** by pointing the override's volume at the home dir:
+
+```yaml
+    volumes: !override
+      - ${HOME}/.config/runway:/home/runway/.config/runway
+```
+
+Because the container's `runway` user is UID 1000, a host whose user is also UID 1000 can bind-mount `~/.config/runway` **in place — no copy, no chown**. SQLite is single-writer, so ensure only one process writes it: stop `make dev-all` (now on `./data` anyway) before `docker compose up -d`, and run your daily prod sidecar against the deployed URL (its own home config dir), reserving `make dev-all`'s bundled sidecar for the `./data` sandbox. To iterate against real data, snapshot prod into dev with `sqlite3 ~/.config/runway/runway.db ".backup ./data/runway.db"` (WAL-safe) while dev is stopped.
+
 ## Sidecar deployment
 
 ### Same host
@@ -228,4 +255,4 @@ Resolution order is per-provider override → global default → built-in 900s. 
 
 See [sidecar.md](sidecar.md) for detailed sidecar configuration and the ingest payload format.
 
-*Last updated: 2026-05-30*
+*Last updated: 2026-06-14*

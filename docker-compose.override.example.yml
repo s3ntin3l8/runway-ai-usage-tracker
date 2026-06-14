@@ -1,0 +1,55 @@
+#  ╔─────────────────────────────────────────────────────────────────────────────╗
+#  ║  🏃 Runway — docker-compose.override.yml  (TEMPLATE)                         ║
+#  ║  Attach Runway to an EXISTING Traefik on an external `proxy` network        ║
+#  ╚─────────────────────────────────────────────────────────────────────────────╝
+#
+#  Use this when you ALREADY run Traefik (so you don't want the bundled
+#  `docker-compose.traefik.yml`). Docker Compose auto-merges a file named
+#  `docker-compose.override.yml` on top of the generic `docker-compose.yml`, so:
+#
+#      cp docker-compose.override.example.yml docker-compose.override.yml
+#      # edit the host/domain/resolver below, then:
+#      docker compose up -d
+#
+#  The real `docker-compose.override.yml` is gitignored (it's host-specific).
+#  The tracked `docker-compose.yml` stays a generic blueprint — don't edit it.
+#
+#  What this override changes vs the base compose:
+#    • image      → :edge  (continuous channel: rebuilt on every push to main;
+#                   the UI/SPA is baked into the image, so this is how UI
+#                   refinements ship — pull + up -d. Pin :vX.Y.Z for stable.)
+#    • ports      → none   (Traefik reaches the container over `proxy`)
+#    • volume     → HOME   (persist prod data in ~/.config/runway, not ./data,
+#                   so `make dev-all` — which uses ./data — never collides)
+#    • network    → external `proxy`
+#    • labels     → your Traefik router (edit host + certresolver)
+#
+#  `!reset` / `!override` need Compose ≥ 2.24.
+#  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+services:
+  runway:
+    image: ghcr.io/s3ntin3l8/runway:edge          # or :latest / :vX.Y.Z for stable
+    ports: !reset []                               # drop host publish; route via Traefik
+    volumes: !override
+      - ${HOME}/.config/runway:/home/runway/.config/runway
+    networks: [proxy]
+    environment:
+      APP_PORT: "8765"                             # match the base healthcheck + label
+      CORS_ORIGINS: "https://runway.example.com"   # your public origin
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.runway.entrypoints=websecure
+      - "traefik.http.routers.runway.rule=Host(`runway.example.com`)"
+      - traefik.http.routers.runway.tls.certresolver=le   # your resolver (le / cloudflare / …)
+      - traefik.http.services.runway.loadbalancer.server.port=8765
+
+#  Required in `.env` for a non-localhost bind (server refuses to start otherwise):
+#    APP_HOST=0.0.0.0  TLS_TERMINATED=1  CORS_ORIGINS=…  DB_ENCRYPTION_KEY=…
+#  Leave RUNWAY_CONFIG_DIR UNSET so the container uses its default config dir
+#  (= the HOME bind-mount above).
+
+networks:
+  proxy:
+    external: true

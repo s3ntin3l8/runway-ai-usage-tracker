@@ -58,6 +58,8 @@ external_metrics.json
 .env.*
 !.env.example
 !.env.traefik.example
+# Host-specific compose override (auto-merged); template is docker-compose.override.example.yml
+docker-compose.override.yml
 *.key
 *.pem
 secrets/
