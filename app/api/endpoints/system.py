@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete
 from sqlmodel import Session, col, select
 
+from app import __version__
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.encryption import encryption_service
@@ -91,6 +92,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
 
     response: dict[str, Any] = {
         "project_name": settings.PROJECT_NAME,
+        "version": __version__,
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,

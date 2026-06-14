@@ -5,7 +5,8 @@
   "packages": {
     ".": {
       "extra-files": [
-        "pyproject.toml"
+        "pyproject.toml",
+        "app/__init__.py"
       ]
     }
   }
