@@ -100,6 +100,21 @@ def test_session_id_from_log():
     assert all(e.session_id == "sess1" for e in evts)
 
 
+def test_captures_cwd_branch_and_tool_names():
+    evts = parse_anthropic_events(
+        [FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    opus = next(e for e in evts if e.model_id == "opus-4.5")
+    sonnet = next(e for e in evts if e.model_id == "sonnet-4.5")
+    assert opus.cwd == "/home/user/repo"
+    assert opus.git_branch == "main"
+    assert opus.tool_names == ["Read"]  # the opus message has one tool_use block
+    # The sonnet message has no tool_use blocks → no tool names.
+    assert sonnet.tool_names is None
+
+
 def test_main_thread_event_has_no_subagent_type():
     evts = parse_anthropic_events(
         [SIDECHAIN_FIXTURE],

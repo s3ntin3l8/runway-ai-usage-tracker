@@ -78,6 +78,10 @@ def parse_chatgpt_events(
         try:
             session_id = fp.stem
             current_model = "unknown"
+            # cwd + git branch live in the first `session_meta` record and apply
+            # to every message in the file.
+            current_cwd: str | None = None
+            current_branch: str | None = None
             line_number = 0
             with open(fp, encoding="utf-8") as f:
                 for line in f:
@@ -91,6 +95,15 @@ def parse_chatgpt_events(
                         continue
 
                     rec_type = record.get("type")
+
+                    # Working dir + git branch come from the session_meta header.
+                    if rec_type == "session_meta":
+                        payload = record.get("payload", {})
+                        current_cwd = payload.get("cwd") or current_cwd
+                        git = payload.get("git") or {}
+                        if isinstance(git, dict) and git.get("branch"):
+                            current_branch = git.get("branch")
+                        continue
 
                     # Track current model from turn_context records
                     if rec_type == "turn_context":
@@ -148,6 +161,8 @@ def parse_chatgpt_events(
                             ts=ts.isoformat(),
                             model_id=_normalize_chatgpt_model(current_model),
                             session_id=session_id,
+                            cwd=current_cwd,
+                            git_branch=current_branch,
                             tokens_input=tokens_input,
                             tokens_output=tokens_output,
                             tokens_cache_read=tokens_cache_read,

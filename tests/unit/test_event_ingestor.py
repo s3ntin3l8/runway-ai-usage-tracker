@@ -70,6 +70,37 @@ def test_ingest_updates_rollups():
     assert day_row.tokens_input == 200
 
 
+def test_ingest_derives_project_and_persists_context():
+    """cwd flows through; project is the server-derived basename; tools/latency persist."""
+    s = _seeded_session()
+    EventIngestor(s).ingest(
+        [
+            _make_push(
+                cwd="/home/user/projects/runway/",
+                git_branch="main",
+                tool_names=["Read", "Bash"],
+                latency_ms=1234,
+            )
+        ],
+        sidecar_id="dev-01",
+    )
+    row = s.exec(select(UsageEvent)).first()
+    assert row.cwd == "/home/user/projects/runway/"
+    assert row.project == "runway"  # basename, trailing slash stripped
+    assert row.git_branch == "main"
+    assert row.tools_json == '["Read", "Bash"]'
+    assert row.latency_ms == 1234
+
+
+def test_ingest_without_cwd_leaves_project_null():
+    s = _seeded_session()
+    EventIngestor(s).ingest([_make_push()], sidecar_id="dev-01")
+    row = s.exec(select(UsageEvent)).first()
+    assert row.cwd is None
+    assert row.project is None
+    assert row.tools_json is None
+
+
 def test_ingest_uses_provided_cost_when_set():
     """When push.cost_usd is not None, the server uses it directly."""
     s = _seeded_session()

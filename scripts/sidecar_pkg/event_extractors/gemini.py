@@ -66,6 +66,26 @@ def _normalize_gemini_model(model_name: str) -> str:
     return model_name or "unknown"
 
 
+def _read_project_root(fp: Path) -> str | None:
+    """Recover the project's working directory for a Gemini session file.
+
+    Layout: ``~/.gemini/tmp/<project>/chats/session-*.jsonl`` — the sibling
+    ``<project>/.project_root`` file holds the full path. Falls back to the
+    ``<project>`` directory name (already the friendly basename), then None.
+    """
+    try:
+        project_dir = fp.parent.parent
+        root_file = project_dir / ".project_root"
+        if root_file.is_file():
+            text = root_file.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        name = project_dir.name
+        return name or None
+    except Exception:
+        return None
+
+
 def parse_gemini_events(
     jsonl_paths: list[Path],
     account_id: str,
@@ -82,6 +102,13 @@ def parse_gemini_events(
     for fp in jsonl_paths:
         try:
             session_id = fp.stem
+            # gemini-cli stores the project root path in a sibling `.project_root`
+            # file two levels up (…/<project>/chats/session-*.jsonl). Fall back to
+            # the project-dir name, then None.
+            session_cwd = _read_project_root(fp)
+            # The session "kind" (main/explore/plan) lives on the metadata line;
+            # treat non-main as a subagent type.
+            session_kind: str | None = None
             line_number = 0
             with open(fp, encoding="utf-8") as f:
                 for line in f:
@@ -93,6 +120,10 @@ def parse_gemini_events(
                         record = json.loads(line)
                     except Exception:
                         continue
+
+                    # The metadata line (no "type") carries the session kind.
+                    if record.get("kind"):
+                        session_kind = record.get("kind")
 
                     # Only process gemini assistant records with token data
                     if record.get("type") != "gemini":
@@ -138,6 +169,10 @@ def parse_gemini_events(
                             ts=ts.isoformat(),
                             model_id=_normalize_gemini_model(raw_model),
                             session_id=session_id,
+                            cwd=session_cwd,
+                            subagent_type=(
+                                session_kind if session_kind and session_kind != "main" else None
+                            ),
                             tokens_input=tokens_input,
                             tokens_output=tokens_output,
                             tokens_cache_read=tokens_cache_read,

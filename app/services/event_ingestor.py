@@ -7,6 +7,8 @@ the harmless IntegrityError raised when a sidecar replays a duplicate, so
 duplicates don't poison the surrounding batch.
 """
 
+import json
+import os
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
@@ -86,6 +88,12 @@ class EventIngestor:
                     kind=push.kind,
                     model_id=push.model_id,
                     session_id=push.session_id,
+                    cwd=push.cwd,
+                    # Derive the project label server-side (single source of truth)
+                    # so all providers normalise the same way regardless of sidecar.
+                    project=(os.path.basename(push.cwd.rstrip("/")) if push.cwd else None),
+                    git_branch=push.git_branch,
+                    tools_json=(json.dumps(push.tool_names) if push.tool_names else None),
                     subagent_type=push.subagent_type,
                     tokens_input=push.tokens_input,
                     tokens_output=push.tokens_output,

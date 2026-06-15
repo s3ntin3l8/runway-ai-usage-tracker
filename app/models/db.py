@@ -208,6 +208,7 @@ class UsageEvent(SQLModel, table=True):
         Index("ix_usage_events_account_ts", "provider_id", "account_id", "ts"),
         Index("ix_usage_events_account_model_ts", "provider_id", "account_id", "model_id", "ts"),
         Index("ix_usage_events_sidecar_ts", "sidecar_id", "ts"),
+        Index("ix_usage_events_project_ts", "project", "ts"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -221,6 +222,13 @@ class UsageEvent(SQLModel, table=True):
     )  # "message" | "error" | reserved: "reset", "anomaly"
     model_id: str | None = None  # normalized: opus-4.8, sonnet-4.5, gpt-5, ...
     session_id: str | None = None  # provider's conversation/session id
+    # Working-directory / project context (enrichment; sidecar-provided). cwd is
+    # the full path; project is its basename (server-derived in EventIngestor) and
+    # indexed for the Top Projects ranking + the per-session project filter.
+    cwd: str | None = None
+    project: str | None = Field(default=None, index=True)
+    git_branch: str | None = None  # vcs branch at the time of the message, if logged
+    tools_json: str | None = None  # JSON array of tool names used in the message (Anthropic)
     subagent_type: str | None = Field(
         default=None, index=True
     )  # "Explore" | "Plan" | None for main thread
