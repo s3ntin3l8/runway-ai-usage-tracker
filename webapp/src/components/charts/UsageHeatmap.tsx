@@ -23,7 +23,7 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
         formatter: (p: { value: [number, number, number, number] }) =>
           `${DAYS[p.value[1]]} ${String(p.value[0]).padStart(2, '0')}:00 — ${formatTokens(p.value[3])} tokens`,
       },
-      grid: { left: 44, right: 12, top: 12, bottom: 64 },
+      grid: { left: 44, right: 12, top: 12, bottom: 84 },
       xAxis: {
         type: 'category',
         data: Array.from({ length: 24 }, (_, h) => String(h)),
@@ -57,9 +57,9 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
         max,
         calculable: false,
         orient: 'horizontal',
-        left: 'center',
-        bottom: 2,
-        itemHeight: 120,
+        left: 8,
+        bottom: 0,
+        itemHeight: 180,
         textStyle: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily },
         // Legend maps the sqrt-scaled domain, so square the ticks back to the
         // real token count.
@@ -79,5 +79,5 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
     };
   }, [cells, t]);
 
-  return <EChart option={option} className={className ?? 'h-72'} />;
+  return <EChart option={option} className={className ?? 'h-80'} />;
 }

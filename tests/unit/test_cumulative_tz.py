@@ -54,6 +54,10 @@ def _add_event(
     tokens_cache_create: int = 5,
     tokens_reasoning: int = 3,
     cost_usd: float = 0.01,
+    cost_input: float = 0.0,
+    cost_output: float = 0.0,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
     kind: str = "message",
 ) -> None:
     session.add(
@@ -71,6 +75,10 @@ def _add_event(
             tokens_cache_create=tokens_cache_create,
             tokens_reasoning=tokens_reasoning,
             cost_usd=cost_usd,
+            cost_input=cost_input,
+            cost_output=cost_output,
+            cost_cache_read=cost_cache_read,
+            cost_cache_create=cost_cache_create,
         )
     )
     session.commit()
@@ -187,6 +195,37 @@ def test_live_groups_by_identity_model_and_sidecar():
     assert primary["by_sidecar"]["dev-02"]["tokens_input"] == 50
     # Separate identity is its own bucket.
     assert live[("anthropic", "other@example.com")]["tokens_input"] == 9
+
+
+def test_live_exposes_cost_components_per_grain():
+    """Per-component cost (input/output/cache_read/cache_create) flows through to
+    the totals and the by_model / by_sidecar grains, with cost_cache = the cache
+    pair, so the cost-breakdown views can split a row by token category."""
+    session = _session()
+    since = datetime(2026, 6, 1, 0, 0, tzinfo=UTC)
+    ts = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
+    _add_event(
+        session,
+        "1",
+        ts,
+        model_id="sonnet",
+        sidecar_id="dev-01",
+        cost_usd=0.10,
+        cost_input=0.04,
+        cost_output=0.03,
+        cost_cache_read=0.02,
+        cost_cache_create=0.01,
+    )
+
+    live = query_cumulative_live(session, since=since)
+    bucket = live[("anthropic", "user@example.com")]
+    for grain in (bucket, bucket["by_model"]["sonnet"], bucket["by_sidecar"]["dev-01"]):
+        assert abs(grain["cost_input"] - 0.04) < 1e-9
+        assert abs(grain["cost_output"] - 0.03) < 1e-9
+        assert abs(grain["cost_cache_read"] - 0.02) < 1e-9
+        assert abs(grain["cost_cache_create"] - 0.01) < 1e-9
+        # Back-compat: cost_cache stays the cache_read + cache_create pair.
+        assert abs(grain["cost_cache"] - 0.03) < 1e-9
 
 
 def test_live_excludes_error_events():

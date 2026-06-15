@@ -1,5 +1,5 @@
 import type { SessionEntry } from '@/api/types';
-import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
+import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 // Minimal session shape; spread overrides per case.
 const s = (o: Partial<SessionEntry> = {}): SessionEntry => ({ session_id: 'abc', ...o });
@@ -48,6 +48,72 @@ describe('sessionCost', () => {
 
   it('is zero when nothing is available', () => {
     expect(sessionCost(s())).toBe(0);
+  });
+
+  it('subtracts the cache cost when excludeCache is set', () => {
+    const sess = s({ cost_usd: 1.0, cost_cache_read: 0.3, cost_cache_create: 0.1 });
+    expect(sessionCost(sess, true)).toBeCloseTo(0.6);
+  });
+
+  it('falls back to summing by_model cache cost when session-level is absent', () => {
+    const sess = s({
+      cost_usd: 1.0,
+      by_model: [
+        { cost_cache_read: 0.2, cost_cache_create: 0.05 },
+        { cost_cache_read: 0.1, cost_cache_create: 0 },
+      ] as never,
+    });
+    // total 1.0 − cache (0.35) = 0.65
+    expect(sessionCost(sess, true)).toBeCloseTo(0.65);
+  });
+
+  it('clamps to zero when the cache estimate exceeds the total', () => {
+    const sess = s({ cost_usd: 0.1, cost_cache_read: 0.3, cost_cache_create: 0 });
+    expect(sessionCost(sess, true)).toBe(0);
+  });
+
+  it('returns the full total when excluding cache but no cache cost is recorded', () => {
+    // No session-level cache fields and no by_model → cache resolves to 0.
+    expect(sessionCost(s({ cost_usd: 0.8 }), true)).toBeCloseTo(0.8);
+  });
+
+  it('treats a missing cache-cost half as zero (only one side present)', () => {
+    // cost_cache_create absent.
+    expect(sessionCost(s({ cost_usd: 1.0, cost_cache_read: 0.25 }), true)).toBeCloseTo(0.75);
+    // cost_cache_read absent (the other half).
+    expect(sessionCost(s({ cost_usd: 1.0, cost_cache_create: 0.25 }), true)).toBeCloseTo(0.75);
+  });
+
+  it('excludes cache via by_model when cost_usd is absent and only some models carry cost', () => {
+    const sess = s({
+      by_model: [
+        { cost_usd: 0.6, cost_cache_read: 0.2 }, // cache_create absent
+        { tokens_total: 10 }, // no cost_usd at all → contributes 0 to the total
+      ] as never,
+    });
+    // total = 0.6 (second model has no cost_usd) − cache 0.2 = 0.4
+    expect(sessionCost(sess, true)).toBeCloseTo(0.4);
+  });
+});
+
+describe('bucketCost', () => {
+  it('returns cost_usd when not excluding cache', () => {
+    expect(bucketCost({ cost_usd: 0.5 })).toBe(0.5);
+  });
+
+  it('drops the cache portion (clamped) when excluding cache', () => {
+    expect(bucketCost({ cost_usd: 0.5, cost_cache_read: 0.2, cost_cache_create: 0.1 }, true)).toBeCloseTo(
+      0.2,
+    );
+    expect(bucketCost({ cost_usd: 0.1, cost_cache_read: 0.5 }, true)).toBe(0);
+  });
+
+  it('treats a missing total or cache half as zero', () => {
+    // No cost_usd and no cache → 0 either way.
+    expect(bucketCost({}, true)).toBe(0);
+    expect(bucketCost({})).toBe(0);
+    // Only cost_cache_create present (read absent) still subtracts cleanly.
+    expect(bucketCost({ cost_usd: 0.4, cost_cache_create: 0.1 }, true)).toBeCloseTo(0.3);
   });
 });
 

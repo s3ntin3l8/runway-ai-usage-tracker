@@ -41,6 +41,10 @@ def _add_event(
     tokens_cache_create: int = 0,
     tokens_reasoning: int = 0,
     cost_usd: float = 0.01,
+    cost_input: float = 0.0,
+    cost_output: float = 0.0,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
 ) -> None:
     ev = UsageEvent(
         provider_id="anthropic",
@@ -55,6 +59,10 @@ def _add_event(
         tokens_cache_create=tokens_cache_create,
         tokens_reasoning=tokens_reasoning,
         cost_usd=cost_usd,
+        cost_input=cost_input,
+        cost_output=cost_output,
+        cost_cache_read=cost_cache_read,
+        cost_cache_create=cost_cache_create,
         sidecar_id="local",
         kind="message",
     )
@@ -232,6 +240,70 @@ class TestByModelMultiModel:
         assert bm["sonnet"]["tokens_cache_read"] == 2_000
         assert bm["sonnet"]["tokens_cache_create"] == 300
         assert bm["sonnet"]["tokens_total"] == 1_000 + 500 + 2_000 + 300  # 3_800
+
+
+class TestCostComponents:
+    def test_cost_components_exposed_at_every_grain(self, db_session):
+        # Two events, same session, split across a model and a subagent so the
+        # session total, by_model, and subagents grains all carry components.
+        _add_event(
+            db_session,
+            event_id="cc1",
+            session_id="sc1",
+            model_id="sonnet",
+            ts=_NOW - timedelta(hours=2),
+            cost_usd=0.10,
+            cost_input=0.04,
+            cost_output=0.03,
+            cost_cache_read=0.02,
+            cost_cache_create=0.01,
+        )
+        ev = UsageEvent(
+            provider_id="anthropic",
+            account_id="acc1",
+            event_id="cc2",
+            session_id="sc1",
+            model_id="sonnet",
+            subagent_type="Explore",
+            ts=_NOW - timedelta(hours=1),
+            tokens_input=1_000,
+            tokens_output=500,
+            cost_usd=0.05,
+            cost_input=0.02,
+            cost_output=0.02,
+            cost_cache_read=0.005,
+            cost_cache_create=0.005,
+            sidecar_id="local",
+            kind="message",
+        )
+        db_session.add(ev)
+        db_session.commit()
+
+        results = _sessions(db_session)
+        assert len(results) == 1
+        row = results[0]
+
+        # Session-level totals sum both events.
+        assert abs(row["cost_input"] - 0.06) < 1e-9
+        assert abs(row["cost_output"] - 0.05) < 1e-9
+        assert abs(row["cost_cache_read"] - 0.025) < 1e-9
+        assert abs(row["cost_cache_create"] - 0.015) < 1e-9
+        # Components sum to the authoritative total.
+        component_sum = (
+            row["cost_input"]
+            + row["cost_output"]
+            + row["cost_cache_read"]
+            + row["cost_cache_create"]
+        )
+        assert abs(component_sum - row["cost_usd"]) < 1e-9
+
+        bm = {e["model_id"]: e for e in row["by_model"]}
+        assert abs(bm["sonnet"]["cost_input"] - 0.06) < 1e-9
+        assert abs(bm["sonnet"]["cost_cache_read"] - 0.025) < 1e-9
+
+        sa = {e["subagent_type"]: e for e in row["subagents"]}
+        assert abs(sa["Explore"]["cost_input"] - 0.02) < 1e-9
+        assert abs(sa["Explore"]["cost_cache_create"] - 0.005) < 1e-9
 
 
 class TestByModelNullModelId:

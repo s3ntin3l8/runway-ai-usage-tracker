@@ -94,6 +94,79 @@ describe('CostTab', () => {
     expect(screen.getByText('$7.50')).toBeInTheDocument();
   });
 
+  it('expands a model row to reveal the per-category cost breakdown', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    const row = (await screen.findByText('claude-opus')).closest('tr')!;
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(row);
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.getByText('Cache read $')).toBeInTheDocument();
+    expect(screen.getByText('Total $')).toBeInTheDocument();
+  });
+
+  it('hides cache cost cells in the expanded breakdown when "Exclude cache" is on', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
+    await userEvent.click((await screen.findByText('claude-opus')).closest('tr')!);
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.queryByText('Cache read $')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cache write $')).not.toBeInTheDocument();
+  });
+
+  it('renders a reasoning column and tolerates a sparse bucket in the expanded breakdown', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    // A model that only reports a total cost + reasoning tokens — every other
+    // token/cost field is absent, so the row and its breakdown must fall back to
+    // zeros without throwing. Reasoning > 0 also surfaces the Reasoning column.
+    vi.mocked(api.fetchCumulative).mockResolvedValue(
+      cumulativeResponse({
+        cumulative: [
+          {
+            provider_id: 'anthropic',
+            account_id: 'me@example.com',
+            '2026-06': {
+              cost_usd: 6,
+              by_model: {
+                'sparse-model': { cost_usd: 5, tokens_reasoning: 100 },
+                // A second model with no reasoning — exercises the reasoning
+                // column's zero-fallback for rows that lack the field.
+                'plain-model': { cost_usd: 1 },
+              },
+              by_sidecar: {},
+            },
+            lifetime: { cost_usd: 5 },
+          },
+        ],
+      }),
+    );
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    // Reasoning column header appears once a row carries reasoning tokens.
+    expect(await screen.findByRole('columnheader', { name: 'Reasoning' })).toBeInTheDocument();
+    const row = screen.getByText('sparse-model').closest('tr')!;
+    await userEvent.click(row);
+    // Breakdown renders with $0.00 for the unreported categories, $5.00 total.
+    expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.getByText('Cache write $')).toBeInTheDocument();
+    // $5.00 shows in both the collapsed Cost cell and the breakdown Total.
+    expect(screen.getAllByText('$5.00').length).toBeGreaterThanOrEqual(2);
+  });
+
   it('shows the empty split message with no month bucket', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());

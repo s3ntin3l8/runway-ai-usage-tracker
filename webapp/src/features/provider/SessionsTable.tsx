@@ -13,31 +13,13 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { cn } from '@/lib/cn';
 import { formatCost, formatDuration, formatTokens } from '@/lib/format';
-import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
+import { DetailSection, Stat } from './detailPrimitives';
+import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 // Base column count (chevron + session + models + duration + messages + tokens +
 // cost); the optional Sidecar column adds one when more than one host feeds the
 // fleet. Used for the detail row's colSpan.
 const BASE_COL_COUNT = 7;
-
-/** Labelled token/number chip used across the detail panel. */
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] tracking-wide text-fg-subtle uppercase">{label}</span>
-      <span className="font-mono text-xs tabular text-fg">{value}</span>
-    </div>
-  );
-}
-
-function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-[11px] font-medium text-fg-muted">{title}</span>
-      <div className="rounded-md border border-edge bg-surface-1 p-3">{children}</div>
-    </div>
-  );
-}
 
 /** Compact card for one model/agent row — a titled header plus a metric grid. */
 function MetricCard({
@@ -90,6 +72,23 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
             <Stat label="Tool calls" value={toolCalls.toLocaleString()} />
             {cachePct != null ? <Stat label="Cache" value={`${cachePct}%`} /> : null}
           </div>
+          {/* Cost per category, paired with the token grid above. Reasoning is
+              billed at the output rate, so it folds into Output (no own cell).
+              Cache costs drop out when the exclude-cache toggle is on, matching
+              the token bar and the headline Cost. */}
+          <div className="border-t border-edge pt-3">
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+              <Stat label="Input $" value={formatCost(s.cost_input ?? 0)} />
+              <Stat label="Output $" value={formatCost(s.cost_output ?? 0)} />
+              {excludeCache ? null : (
+                <>
+                  <Stat label="Cache read $" value={formatCost(s.cost_cache_read ?? 0)} />
+                  <Stat label="Cache write $" value={formatCost(s.cost_cache_create ?? 0)} />
+                </>
+              )}
+              <Stat label="Total $" value={formatCost(sessionCost(s, excludeCache))} />
+            </div>
+          </div>
         </div>
       </DetailSection>
 
@@ -100,7 +99,7 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
               <MetricCard
                 key={m.model_id}
                 title={<Badge variant="neutral">{m.model_id}</Badge>}
-                cost={m.cost_usd}
+                cost={bucketCost(m, excludeCache)}
                 metrics={[
                   { label: 'Msgs', value: (m.msgs ?? 0).toLocaleString() },
                   { label: 'Tools', value: (m.tool_calls ?? 0).toLocaleString() },
@@ -125,7 +124,7 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
               <MetricCard
                 key={a.subagent_type}
                 title={<span className="text-xs font-medium text-fg">{a.subagent_type}</span>}
-                cost={a.cost_usd}
+                cost={bucketCost(a, excludeCache)}
                 metrics={[
                   { label: 'Turns', value: (a.turns ?? 0).toLocaleString() },
                   { label: 'Tools', value: (a.tool_calls ?? 0).toLocaleString() },
@@ -195,7 +194,9 @@ function SessionRow({
         <TD className="text-right font-mono tabular">
           {formatTokens(sessionTokens(s, excludeCache))}
         </TD>
-        <TD className="text-right font-mono tabular">{formatCost(sessionCost(s))}</TD>
+        <TD className="text-right font-mono tabular">
+          {formatCost(sessionCost(s, excludeCache))}
+        </TD>
       </TR>
       {open ? (
         <TR className="hover:bg-transparent">

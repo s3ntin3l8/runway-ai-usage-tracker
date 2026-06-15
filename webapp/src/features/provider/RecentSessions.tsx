@@ -63,7 +63,7 @@ function SessionCard({
           <Stat label="Duration" value={formatDuration((s.duration_seconds ?? 0) * 1000)} />
           <Stat label="Messages" value={(s.msgs ?? 0).toLocaleString()} />
           <Stat label="Tokens" value={formatTokens(sessionTokens(s, excludeCache))} />
-          <Stat label="Cost" value={formatCost(sessionCost(s))} />
+          <Stat label="Cost" value={formatCost(sessionCost(s, excludeCache))} />
         </div>
 
         <TokenBar tokens={s} excludeCache={excludeCache} showLegend />
