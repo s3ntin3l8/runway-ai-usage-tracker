@@ -152,21 +152,6 @@ export function HistoryPage() {
           />
         </div>
 
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-[13px] font-semibold tracking-tight">Global insights</h2>
-            <ExcludeCacheToggle />
-          </div>
-          <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
-        </div>
-
-        <TopModelsCard days={days} />
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <TopProjectsCard days={days} />
-          <TopToolsCard days={days} />
-        </div>
-
         <Card>
           <CardHeader>
             <CardTitle>Quota windows</CardTitle>
@@ -236,6 +221,21 @@ export function HistoryPage() {
             </Table>
           )}
         </Card>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-[13px] font-semibold tracking-tight">Global insights</h2>
+            <ExcludeCacheToggle />
+          </div>
+          <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
+        </div>
+
+        <TopModelsCard days={days} />
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TopProjectsCard days={days} />
+          <TopToolsCard days={days} />
+        </div>
 
         {(anomalies.data?.anomalies.length ?? 0) > 0 ? (
           <Card>
