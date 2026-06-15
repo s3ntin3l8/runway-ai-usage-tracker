@@ -16,6 +16,32 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
 
+// Faithful-enough ProviderGrid stub: keeps the "Providers" heading and the
+// provider names the other tests assert on, and exposes a button that fires
+// onReorder so the saveOrder mutation can be driven deterministically (dnd-kit
+// drag simulation is unreliable in jsdom).
+vi.mock('./ProviderGrid', () => ({
+  ProviderGrid: ({
+    items,
+    providerNames,
+    onReorder,
+  }: {
+    items: { key: string; entry: { provider_id: string } }[];
+    providerNames: Map<string, string>;
+    onReorder: (keys: string[]) => void;
+  }) => (
+    <section aria-label="All providers">
+      <h2>Providers</h2>
+      {items.map((i) => (
+        <span key={i.key}>{providerNames.get(i.entry.provider_id) ?? i.entry.provider_id}</span>
+      ))}
+      <button onClick={() => onReorder([...items.map((i) => i.key)].reverse())}>
+        reorder
+      </button>
+    </section>
+  ),
+}));
+
 const card = (o: Partial<LimitCard> = {}): LimitCard => ({
   service_name: 'Claude',
   pct_used: 50,
@@ -136,11 +162,79 @@ describe('HomePage', () => {
     await waitFor(() => expect(api.forceCollect).toHaveBeenCalled());
   });
 
+  it('surfaces a toast.error when the collection fails', async () => {
+    const { toast } = await import('sonner');
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.forceCollect).mockRejectedValue(new Error('sidecar offline'));
+    renderWithProviders(<HomePage />);
+    await screen.findByText('Providers');
+
+    await userEvent.click(screen.getByRole('button', { name: /collect now/i }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Collection failed: sidecar offline'),
+    );
+  });
+
+  it('refetches the fleet when Retry is clicked in the error state', async () => {
+    vi.mocked(api.fetchFleetUsage).mockRejectedValue(new Error('boom'));
+    renderWithProviders(<HomePage />);
+    await screen.findByText(/could not load usage data/i);
+    expect(api.fetchFleetUsage).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await waitFor(() => expect(api.fetchFleetUsage).toHaveBeenCalledTimes(2));
+  });
+
   it('shows the aggregate spend strip', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderWithProviders(<HomePage />);
     expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected EOM')).toBeInTheDocument();
+  });
+});
+
+describe('HomePage layout reordering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    primeDefaults();
+  });
+
+  it('persists the new order optimistically when the grid reorders', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(
+      fleetResponse([
+        fleetEntry({ provider_id: 'claude' }),
+        fleetEntry({ provider_id: 'chatgpt' }),
+      ]),
+    );
+    vi.mocked(api.putDashboardLayout).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<HomePage />);
+    await screen.findByText('Providers');
+
+    await userEvent.click(screen.getByRole('button', { name: /reorder/i }));
+
+    // mutationFn forwards the reversed key order plus the existing card_orders.
+    await waitFor(() =>
+      expect(api.putDashboardLayout).toHaveBeenCalledWith({
+        provider_order: ['chatgpt:default', 'claude:default'],
+        card_orders: {},
+      }),
+    );
+  });
+
+  it('shows a toast.error and rolls back when saving the layout fails', async () => {
+    const { toast } = await import('sonner');
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(
+      fleetResponse([
+        fleetEntry({ provider_id: 'claude' }),
+        fleetEntry({ provider_id: 'chatgpt' }),
+      ]),
+    );
+    vi.mocked(api.putDashboardLayout).mockRejectedValue(new Error('500'));
+    renderWithProviders(<HomePage />);
+    await screen.findByText('Providers');
+
+    await userEvent.click(screen.getByRole('button', { name: /reorder/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not save the layout'));
   });
 });
 

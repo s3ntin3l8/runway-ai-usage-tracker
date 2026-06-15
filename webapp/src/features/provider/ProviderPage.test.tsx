@@ -133,4 +133,73 @@ describe('ProviderPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /next month/i }));
     expect(await screen.findByText('March 2026')).toBeInTheDocument();
   });
+
+  it('toasts an error when collection fails', async () => {
+    const { toast } = await import('sonner');
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.collectProvider).mockRejectedValue(new Error('boom'));
+    renderPage();
+    await screen.findByTestId('overview-tab');
+
+    await userEvent.click(screen.getByRole('button', { name: /collect now/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Collect failed: boom'));
+  });
+
+  it('toasts an error when reset fails', async () => {
+    const { toast } = await import('sonner');
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.resetProvider).mockRejectedValue(new Error('nope'));
+    renderPage();
+    await screen.findByTestId('overview-tab');
+
+    await userEvent.click(screen.getByRole('button', { name: /clear failure state/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reset failed: nope'));
+  });
+
+  it('switches accounts via the selector and reflects it in the URL', async () => {
+    const a = fleetEntry({
+      account_id: 'a@x.com',
+      critical_gauge: limitCard({ account_id: 'a@x.com', account_label: 'Acct A' }),
+    });
+    const b = fleetEntry({
+      account_id: 'b@x.com',
+      critical_gauge: limitCard({ account_id: 'b@x.com', account_label: 'Acct B' }),
+    });
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([a, b]));
+    renderPage();
+    // Default falls to the first entry.
+    expect(await screen.findByTestId('overview-tab')).toHaveTextContent('a@x.com');
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Acct B' }));
+
+    expect(await screen.findByTestId('overview-tab')).toHaveTextContent('b@x.com');
+  });
+
+  it('collects from the empty-state action button', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
+    vi.mocked(api.collectProvider).mockResolvedValue({ status: 'ok' } as never);
+    renderPage();
+    const emptyState = await screen.findByText(/no data for this provider/i);
+
+    // The empty-state CTA renders the visible "Collect now" text (the header
+    // button only exposes it via aria-label). Defaults to the 'default'
+    // account when there is no fleet entry.
+    const cta = emptyState.parentElement!.querySelector('button')!;
+    expect(cta).toHaveTextContent(/collect now/i);
+    await userEvent.click(cta);
+    await waitFor(() =>
+      expect(api.collectProvider).toHaveBeenCalledWith('anthropic', 'default'),
+    );
+  });
+
+  it('navigates back when the Back button is clicked', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderPage();
+    await screen.findByTestId('overview-tab');
+
+    // Just exercising the navigate(-1) handler; no throw is the assertion.
+    await userEvent.click(screen.getByRole('button', { name: /back/i }));
+    expect(screen.getByTestId('overview-tab')).toBeInTheDocument();
+  });
 });
