@@ -68,6 +68,7 @@ export function ActivityTab({
         metric="tokens"
         title={`Tokens per day · ${monthLabel}`}
         range={range}
+        excludeCache={excludeCache}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">

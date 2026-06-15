@@ -13,10 +13,14 @@ export function HistoryChart({
   data,
   metric,
   className = 'h-72',
+  excludeCache = false,
 }: {
   data: HistoryChartResponse;
   metric: Metric;
   className?: string;
+  // Drop the cache-read/cache-write portion from each token bar. Only applies to
+  // metric=tokens — the backend exposes value_cache for tokens but not cost.
+  excludeCache?: boolean;
 }) {
   const t = useChartTokens();
 
@@ -65,13 +69,18 @@ export function HistoryChart({
     const bars = data.bars ?? [];
     const labels = Array.from(new Set(bars.flatMap((b) => b.segments.map((s) => s.label))));
     const categories = bars.map((b) => b.ts);
+    const dropCache = excludeCache && metric === 'tokens';
     const series = labels.map((label, i) => ({
       name: label,
       type: 'bar' as const,
       stack: 'total',
       barMaxWidth: 18,
       itemStyle: { color: t.series[i % t.series.length], borderRadius: [0, 0, 0, 0] },
-      data: bars.map((b) => b.segments.find((s) => s.label === label)?.value ?? 0),
+      data: bars.map((b) => {
+        const seg = b.segments.find((s) => s.label === label);
+        if (!seg) return 0;
+        return dropCache ? seg.value - (seg.value_cache ?? 0) : seg.value;
+      }),
     }));
     return {
       tooltip: {
@@ -113,7 +122,7 @@ export function HistoryChart({
       },
       series,
     };
-  }, [data, metric, t]);
+  }, [data, metric, t, excludeCache]);
 
   return <EChart option={option} className={className} />;
 }

@@ -126,6 +126,7 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
         title="Tokens per day"
         defaultDays={14}
         compact
+        excludeCache={excludeCache}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">

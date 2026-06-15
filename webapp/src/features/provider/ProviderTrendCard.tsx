@@ -20,6 +20,7 @@ export function ProviderTrendCard({
   defaultDays = 30,
   compact = false,
   range,
+  excludeCache = false,
 }: {
   providerId: string;
   accountId: string;
@@ -30,6 +31,8 @@ export function ProviderTrendCard({
   // When set, the bars are scoped to this closed period and the day-range tabs
   // are hidden (the period is fixed by the shared month selector instead).
   range?: DateRange;
+  // Drop cache tokens from the bars (token metric only — see HistoryChart).
+  excludeCache?: boolean;
 }) {
   const [days, setDays] = useState(defaultDays);
   const chart = useProviderHistoryChart(providerId, accountId, days, metric, range);
@@ -59,7 +62,12 @@ export function ProviderTrendCard({
             No data in this range.
           </p>
         ) : (
-          <HistoryChart data={chart.data!} metric={metric} className={compact ? 'h-44' : 'h-72'} />
+          <HistoryChart
+            data={chart.data!}
+            metric={metric}
+            className={compact ? 'h-44' : 'h-72'}
+            excludeCache={excludeCache}
+          />
         )}
       </CardContent>
     </Card>
