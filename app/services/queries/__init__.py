@@ -27,7 +27,11 @@ from app.services.queries.history import (
     query_history_grouped,
     query_history_raw,
 )
-from app.services.queries.sessions import query_sessions
+from app.services.queries.sessions import (
+    count_sessions,
+    query_sessions,
+    query_sessions_paginated,
+)
 from app.services.queries.snapshots import (
     query_chart,
     query_snapshots,
@@ -35,6 +39,8 @@ from app.services.queries.snapshots import (
     query_windows,
 )
 from app.services.queries.top_models import query_top_models
+from app.services.queries.top_projects import query_projects, query_top_projects
+from app.services.queries.top_tools import query_top_tools
 from app.services.queries.windows import (
     query_window_aggregation,
     query_window_history,
@@ -42,6 +48,7 @@ from app.services.queries.windows import (
 
 __all__ = [
     "count_events",
+    "count_sessions",
     "event_time_range",
     "query_anomalies",
     "query_chart",
@@ -53,9 +60,13 @@ __all__ = [
     "query_history_deltas",
     "query_history_grouped",
     "query_history_raw",
+    "query_projects",
     "query_sessions",
+    "query_sessions_paginated",
     "query_snapshots",
     "query_top_models",
+    "query_top_projects",
+    "query_top_tools",
     "query_window_aggregation",
     "query_window_detail",
     "query_window_history",

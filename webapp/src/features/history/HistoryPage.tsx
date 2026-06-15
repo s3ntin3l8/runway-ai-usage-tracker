@@ -18,6 +18,8 @@ import { formatLocalDate } from '@/lib/tz';
 import { GlobalInsights } from './GlobalInsights';
 import { HistoryChart } from './HistoryChart';
 import { TopModelsCard } from './TopModelsCard';
+import { TopProjectsCard } from './TopProjectsCard';
+import { TopToolsCard } from './TopToolsCard';
 import { WindowDetailSheet } from './WindowDetailSheet';
 import {
   useGlobalStats,
@@ -159,6 +161,11 @@ export function HistoryPage() {
         </div>
 
         <TopModelsCard days={days} />
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TopProjectsCard days={days} />
+          <TopToolsCard days={days} />
+        </div>
 
         <Card>
           <CardHeader>

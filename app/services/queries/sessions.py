@@ -24,16 +24,21 @@ def query_sessions(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 20,
+    offset: int = 0,
     sort_by: str = "tokens",
+    project: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return top-N sessions by total tokens, newest first within the window.
 
     Each row includes ts_start, ts_end, duration_seconds, msgs, models[],
     by_model[], tokens_total, tokens_input, tokens_output, tokens_cache,
-    cache_hit_pct, cost_usd, sidecar_id.
+    cache_hit_pct, cost_usd, sidecar_id, project, cwd, git_branch.
 
     by_model is a list of per-model aggregates ordered by tokens_total DESC,
     covering all events with a non-NULL model_id in the session.
+
+    `project` filters to sessions whose events carry that project label.
+    `offset` pages the result (for the paginated Sessions browser).
 
     Events with NULL session_id are excluded.
     """
@@ -44,6 +49,7 @@ def query_sessions(
     # Exclusive upper bound — only emitted when an `until` is supplied so the
     # default (open-ended) window is byte-identical to the original query.
     until_clause = "AND ts < :until" if until is not None else ""
+    project_clause = "AND project = :project" if project is not None else ""
 
     # Main aggregation query
     agg_sql = text(
@@ -68,6 +74,9 @@ def query_sessions(
             SUM(cost_cache_create)                             AS cost_cache_create,
             SUM(tool_calls)                                    AS tool_calls,
             MAX(sidecar_id)                                    AS sidecar_id,
+            MAX(project)                                       AS project,
+            MAX(cwd)                                           AS cwd,
+            MAX(git_branch)                                    AS git_branch,
             GROUP_CONCAT(DISTINCT model_id)                    AS models_csv,
             SUM(CASE WHEN subagent_type IS NOT NULL THEN 1 ELSE 0 END) AS subagent_msgs
         FROM usage_events
@@ -76,9 +85,10 @@ def query_sessions(
           AND session_id IS NOT NULL
           AND ts >= :since
           {until_clause}
+          {project_clause}
         GROUP BY session_id
         ORDER BY {order_clause}
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
         """
     )
 
@@ -147,7 +157,9 @@ def query_sessions(
             "account_id": account_id,
             "since": since.isoformat(),
             **({"until": until.isoformat()} if until is not None else {}),
+            **({"project": project} if project is not None else {}),
             "limit": limit,
+            "offset": offset,
         },
     ).all()
 
@@ -256,9 +268,86 @@ def query_sessions(
                 "cost_cache_read": float(row.cost_cache_read or 0.0),
                 "cost_cache_create": float(row.cost_cache_create or 0.0),
                 "sidecar_id": row.sidecar_id,
+                "project": row.project,
+                "cwd": row.cwd,
+                "git_branch": row.git_branch,
                 "subagent_msgs": subagent_msgs,
                 "subagents": subagents,
             }
         )
 
     return results
+
+
+def count_sessions(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    project: str | None = None,
+) -> int:
+    """COUNT(DISTINCT session_id) for the same window/filters as query_sessions."""
+    if since is None:
+        since = datetime.now(UTC) - timedelta(days=7)
+    until_clause = "AND ts < :until" if until is not None else ""
+    project_clause = "AND project = :project" if project is not None else ""
+    sql = text(
+        f"""
+        SELECT COUNT(DISTINCT session_id) AS n
+        FROM usage_events
+        WHERE provider_id = :provider_id
+          AND account_id  = :account_id
+          AND session_id IS NOT NULL
+          AND ts >= :since
+          {until_clause}
+          {project_clause}
+        """
+    )
+    row = session.exec(  # type: ignore[call-overload]
+        sql,
+        params={
+            "provider_id": provider_id,
+            "account_id": account_id,
+            "since": since.isoformat(),
+            **({"until": until.isoformat()} if until is not None else {}),
+            **({"project": project} if project is not None else {}),
+        },
+    ).first()
+    return int(row.n or 0) if row else 0
+
+
+def query_sessions_paginated(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    page: int = 0,
+    page_size: int = 25,
+    sort_by: str = "recent",
+    project: str | None = None,
+) -> dict[str, Any]:
+    """One page of sessions + the total count, for the Sessions browser tab."""
+    total = count_sessions(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since,
+        until=until,
+        project=project,
+    )
+    sessions = query_sessions(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since,
+        until=until,
+        limit=page_size,
+        offset=page * page_size,
+        sort_by=sort_by,
+        project=project,
+    )
+    return {"sessions": sessions, "total": total, "limit": page_size, "offset": page * page_size}

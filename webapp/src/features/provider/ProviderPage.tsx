@@ -23,11 +23,12 @@ import { EventsTab } from './EventsTab';
 import { ForecastTab } from './ForecastTab';
 import { OverviewTab } from './OverviewTab';
 import { PeriodSelector } from './PeriodSelector';
+import { SessionsBrowser } from './SessionsBrowser';
 import { currentMonthKey, resolvePeriod } from './period';
 import { useProviderEventRange } from './queries';
 
 // Tabs whose data is scoped by the shared month selector.
-const PERIOD_AWARE_TABS = new Set(['activity', 'events', 'cost']);
+const PERIOD_AWARE_TABS = new Set(['activity', 'sessions', 'events', 'cost']);
 
 export function ProviderPage() {
   const { providerId = '' } = useParams();
@@ -189,6 +190,7 @@ export function ProviderPage() {
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
+              <TabsTrigger value="sessions">Sessions</TabsTrigger>
               <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="forecast">Forecast</TabsTrigger>
               <TabsTrigger value="cost">Cost</TabsTrigger>
@@ -199,6 +201,14 @@ export function ProviderPage() {
             </TabsContent>
             <TabsContent value="activity">
               <ActivityTab providerId={providerId} accountId={accountId} period={period} />
+            </TabsContent>
+            <TabsContent value="sessions">
+              <SessionsBrowser
+                providerId={providerId}
+                accountId={accountId}
+                period={period}
+                active={tab === 'sessions'}
+              />
             </TabsContent>
             <TabsContent value="events">
               <EventsTab

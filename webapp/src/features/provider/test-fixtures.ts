@@ -196,6 +196,15 @@ export const emptyEvents = (): EventsResponse => ({
   offset: 0,
 });
 
+export const sessionsPaginated = (count: number, total: number, offset = 0) => ({
+  sessions: Array.from({ length: count }, (_, i) =>
+    session({ session_id: `sess${offset + i}0000000`, project: 'runway' }),
+  ),
+  total,
+  limit: 25,
+  offset,
+});
+
 export const heatmapResponse = (hasActivity: boolean): HeatmapResponse => ({
   tz: 'America/New_York',
   cells: hasActivity ? [{ dow: 1, hour: 9, tokens: 1000 }] : [{ dow: 1, hour: 9, tokens: 0 }],

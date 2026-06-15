@@ -17,8 +17,8 @@ import { DetailSection, Stat } from './detailPrimitives';
 import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 // Base column count (chevron + session + models + duration + messages + tokens +
-// cost); the optional Sidecar column adds one when more than one host feeds the
-// fleet. Used for the detail row's colSpan.
+// cost); the optional Sidecar and Project columns each add one. Used for the
+// detail row's colSpan.
 const BASE_COL_COUNT = 7;
 
 /** Compact card for one model/agent row — a titled header plus a metric grid. */
@@ -145,12 +145,15 @@ function SessionRow({
   s,
   excludeCache,
   sidecarName,
+  showProject,
   colSpan,
 }: {
   s: SessionEntry;
   excludeCache: boolean;
   // Resolved sidecar label, or null to omit the column entirely (single-host).
   sidecarName: string | null;
+  // Whether to render the Project column (only when some session has a project).
+  showProject: boolean;
   colSpan: number;
 }) {
   const [open, setOpen] = useState(false);
@@ -178,6 +181,17 @@ function SessionRow({
             ))}
           </span>
         </TD>
+        {showProject ? (
+          <TD>
+            {s.project ? (
+              <Badge variant="neutral" title={s.cwd ?? undefined}>
+                {s.project}
+              </Badge>
+            ) : (
+              <span className="text-fg-subtle">—</span>
+            )}
+          </TD>
+        ) : null}
         {sidecarName !== null ? (
           <TD>
             {sidecarName ? (
@@ -220,7 +234,10 @@ export function SessionsTable({
   const sidecars = useSidecars().data?.sidecars ?? [];
   const showSidecar = sidecars.length > 1;
   const nameMap = showSidecar ? buildSidecarNameMap(sidecars) : null;
-  const colSpan = BASE_COL_COUNT + (showSidecar ? 1 : 0);
+  // Show the Project column only when at least one session is attributed (so
+  // non-logging providers / pre-backfill data don't get an empty column).
+  const showProject = sessions.some((s) => s.project);
+  const colSpan = BASE_COL_COUNT + (showSidecar ? 1 : 0) + (showProject ? 1 : 0);
   const labelFor = (s: SessionEntry): string | null =>
     nameMap ? (s.sidecar_id ? (nameMap.get(s.sidecar_id) ?? s.sidecar_id) : '') : null;
 
@@ -231,6 +248,7 @@ export function SessionsTable({
           <TH className="w-8" />
           <TH>Session</TH>
           <TH>Models</TH>
+          {showProject ? <TH>Project</TH> : null}
           {showSidecar ? <TH>Sidecar</TH> : null}
           <TH className="text-right">Duration</TH>
           <TH className="text-right">Messages</TH>
@@ -245,6 +263,7 @@ export function SessionsTable({
             s={s}
             excludeCache={excludeCache}
             sidecarName={labelFor(s)}
+            showProject={showProject}
             colSpan={colSpan}
           />
         ))}

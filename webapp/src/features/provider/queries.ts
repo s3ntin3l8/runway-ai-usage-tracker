@@ -11,7 +11,9 @@ import {
   fetchForecast,
   fetchHeatmap,
   fetchHistoryChart,
+  fetchProjects,
   fetchSessions,
+  fetchSessionsPaginated,
   fetchWindowHistory,
 } from '@/api/endpoints';
 import type { Metric } from '@/features/history/queries';
@@ -141,6 +143,58 @@ export const useProviderEventsPage = (
     enabled,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
+  });
+
+// One page of sessions for the Sessions browser tab, scoped to the selected
+// month and (optionally) one project. keepPreviousData avoids paging flicker.
+export const useSessionsPaginated = (
+  providerId: string,
+  accountId: string,
+  {
+    page,
+    pageSize,
+    since,
+    until,
+    project,
+    enabled,
+  }: {
+    page: number;
+    pageSize: number;
+    since: string;
+    until?: string;
+    project?: string | null;
+    enabled: boolean;
+  },
+) =>
+  useQuery({
+    queryKey: ['usage', 'sessions-page', providerId, accountId, since, until, project, page, pageSize],
+    queryFn: () =>
+      fetchSessionsPaginated({
+        provider_id: providerId,
+        account_id: accountId,
+        since,
+        ...(until ? { until } : {}),
+        ...(project ? { project } : {}),
+        page,
+        limit: pageSize,
+        sort_by: 'recent',
+      }),
+    enabled,
+    placeholderData: keepPreviousData,
+    refetchInterval: 120_000,
+  });
+
+// Distinct project labels for this provider in the selected window — feeds the
+// Sessions tab filter dropdown.
+export const useProjects = (providerId: string, range?: DateRange) =>
+  useQuery({
+    queryKey: ['usage', 'projects', providerId, range?.since, range?.until],
+    queryFn: () =>
+      fetchProjects({
+        provider_id: providerId,
+        ...(range ? { since: range.since, until: range.until } : {}),
+      }),
+    staleTime: 120_000,
   });
 
 export const useWindowHistory = (providerId: string, accountId: string, windowType: string) =>
