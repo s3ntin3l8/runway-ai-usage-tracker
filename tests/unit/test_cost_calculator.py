@@ -4,7 +4,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderPricing
-from app.services.cost_calculator import compute_event_cost
+from app.services.cost_calculator import compute_event_cost, compute_event_cost_breakdown
 from app.services.pricing_seed import seed_pricing_table
 
 
@@ -125,6 +125,46 @@ def test_gemini_flash_2_5_cache_read_rate_matches_official():
         tokens_reasoning=0,
     )
     assert cost == 0.03
+
+
+def test_breakdown_splits_components_and_sums_to_total():
+    """Each component is priced separately; reasoning folds into output; the
+    total equals compute_event_cost."""
+    s = _seeded_session()
+    kwargs = {
+        "provider_id": "anthropic",
+        "model_id": "sonnet",
+        "ts": datetime.now(UTC),
+        "tokens_input": 1_000_000,
+        "tokens_output": 1_000_000,
+        "tokens_cache_read": 1_000_000,
+        "tokens_cache_create": 1_000_000,
+        "tokens_reasoning": 1_000_000,
+    }
+    b = compute_event_cost_breakdown(s, **kwargs)
+    assert b.input == 3.00
+    assert b.output == 15.00 * 2  # output + reasoning, both at the output rate
+    assert b.cache_read == 0.30
+    assert b.cache_create == 3.75
+    # The cache portion the cost views subtract:
+    assert round(b.cache_read + b.cache_create, 6) == 4.05
+    assert b.total == compute_event_cost(s, **kwargs)
+
+
+def test_breakdown_zero_for_unpriced_model():
+    s = _seeded_session()
+    b = compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="<unknown>",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=1_000_000,
+    )
+    assert b == (0.0, 0.0, 0.0, 0.0)
+    assert b.total == 0.0
 
 
 def test_unknown_model_returns_zero():

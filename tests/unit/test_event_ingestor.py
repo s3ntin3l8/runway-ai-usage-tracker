@@ -99,6 +99,44 @@ def test_ingest_computes_cost_when_not_set():
     assert row.cost_usd > 0
 
 
+def test_ingest_stores_cost_components_and_rolls_them_up():
+    """The per-component cost columns are written on the event and summed into
+    the rollup, alongside the existing total."""
+    s = _seeded_session()
+    push = _make_push(
+        event_id="msg_cache",
+        tokens_cache_read=1_000_000,  # sonnet cache_read $0.30/MT
+        tokens_cache_create=1_000_000,  # sonnet cache_create $3.75/MT
+    )
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+
+    ev = s.exec(select(UsageEvent).where(UsageEvent.event_id == "msg_cache")).first()
+    assert ev.cost_cache_read == 0.30
+    assert ev.cost_cache_create == 3.75
+    assert ev.cost_input > 0 and ev.cost_output > 0
+
+    day = s.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.period_type == "day",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).first()
+    assert day.cost_cache_read == ev.cost_cache_read
+    assert day.cost_cache_create == ev.cost_cache_create
+
+
+def test_ingest_stores_components_even_with_authoritative_total():
+    """A provider-supplied cost_usd stays authoritative, but pricing-derived
+    components are still stored (best-effort) when a pricing row exists."""
+    s = _seeded_session()
+    push = _make_push(event_id="auth_1", tokens_cache_read=1_000_000, cost_usd=99.0)
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    ev = s.exec(select(UsageEvent).where(UsageEvent.event_id == "auth_1")).first()
+    assert ev.cost_usd == 99.0  # total untouched
+    assert ev.cost_cache_read == 0.30  # component still computed from pricing
+
+
 def test_ingest_then_replay_is_idempotent():
     """Replaying the exact same batch must not double-count anything.
 

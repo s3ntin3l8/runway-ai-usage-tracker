@@ -153,6 +153,8 @@ def query_window_aggregation(
             func.sum(UsageEvent.tokens_cache_create),
             func.sum(UsageEvent.tokens_reasoning),
             func.sum(UsageEvent.cost_usd),
+            func.sum(UsageEvent.cost_cache_read),
+            func.sum(UsageEvent.cost_cache_create),
         )
         .where(
             UsageEvent.provider_id == provider_id,
@@ -177,13 +179,14 @@ def query_window_aggregation(
     by_model: dict[str, dict] = {}
     by_sidecar: dict[str, dict] = {}
 
-    for mid, sid, msgs, ti, to, tcr, tcc, tr, cost in rows:
+    for mid, sid, msgs, ti, to, tcr, tcc, tr, cost, ccr, ccc in rows:
         ti = ti or 0
         to = to or 0
         tcr = tcr or 0
         tcc = tcc or 0
         tr = tr or 0
         cost = cost or 0.0
+        cost_cache = (ccr or 0.0) + (ccc or 0.0)  # cache portion of cost
         total["input"] += ti
         total["output"] += to
         total["cache_read"] += tcr
@@ -202,6 +205,7 @@ def query_window_aggregation(
                     "tokens_reasoning": 0,
                     "msgs": 0,
                     "cost_usd": 0.0,
+                    "cost_cache": 0.0,
                 },
             )
             m["tokens_input"] += ti
@@ -211,6 +215,7 @@ def query_window_aggregation(
             m["tokens_reasoning"] += tr
             m["msgs"] += msgs
             m["cost_usd"] += cost
+            m["cost_cache"] += cost_cache
         if sid:
             s = by_sidecar.setdefault(
                 sid,
@@ -222,6 +227,7 @@ def query_window_aggregation(
                     "tokens_reasoning": 0,
                     "msgs": 0,
                     "cost_usd": 0.0,
+                    "cost_cache": 0.0,
                 },
             )
             s["tokens_input"] += ti
@@ -231,6 +237,7 @@ def query_window_aggregation(
             s["tokens_reasoning"] += tr
             s["msgs"] += msgs
             s["cost_usd"] += cost
+            s["cost_cache"] += cost_cache
 
     token_usage = {
         "input": total["input"],
