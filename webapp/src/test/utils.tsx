@@ -4,6 +4,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { render, type RenderOptions } from '@testing-library/react';
+import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
 
 export function makeQueryClient(): QueryClient {
   // retry:false so rejected queries surface immediately; no caching across tests.
@@ -25,7 +26,9 @@ export function renderWithProviders(ui: ReactElement, opts: Options = {}) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
+        <ExcludeCacheProvider>
+          <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
+        </ExcludeCacheProvider>
       </QueryClientProvider>
     );
   }

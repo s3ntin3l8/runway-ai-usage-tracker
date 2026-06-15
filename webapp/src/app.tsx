@@ -6,6 +6,7 @@ import { ApiError } from '@/api/client';
 import { AppShell } from '@/components/layout/AppShell';
 import { BootGate } from '@/features/auth/BootGate';
 import { ThemeProvider } from '@/hooks/useTheme';
+import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
 import { HomePage } from '@/features/home/HomePage';
 
 const ProviderPage = lazy(() =>
@@ -39,24 +40,26 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <BootGate>
-          <BrowserRouter>
-            <Suspense fallback={null}>
-              <Routes>
-                <Route element={<AppShell />}>
-                  <Route index element={<HomePage />} />
-                  <Route path="provider/:providerId" element={<ProviderPage />} />
-                  <Route path="history" element={<HistoryPage />} />
-                  <Route path="fleet" element={<FleetPage />} />
-                  <Route path="settings/*" element={<SettingsPage />} />
-                  {import.meta.env.DEV ? <Route path="dev/kit" element={<KitPage />} /> : null}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Route>
-              </Routes>
-            </Suspense>
-          </BrowserRouter>
-        </BootGate>
-        <Toaster position="bottom-right" theme="system" />
+        <ExcludeCacheProvider>
+          <BootGate>
+            <BrowserRouter>
+              <Suspense fallback={null}>
+                <Routes>
+                  <Route element={<AppShell />}>
+                    <Route index element={<HomePage />} />
+                    <Route path="provider/:providerId" element={<ProviderPage />} />
+                    <Route path="history" element={<HistoryPage />} />
+                    <Route path="fleet" element={<FleetPage />} />
+                    <Route path="settings/*" element={<SettingsPage />} />
+                    {import.meta.env.DEV ? <Route path="dev/kit" element={<KitPage />} /> : null}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Route>
+                </Routes>
+              </Suspense>
+            </BrowserRouter>
+          </BootGate>
+          <Toaster position="bottom-right" theme="system" />
+        </ExcludeCacheProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

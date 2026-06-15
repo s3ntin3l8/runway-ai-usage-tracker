@@ -61,6 +61,26 @@ describe('SessionsTable', () => {
     expect(screen.getByText('Explore')).toBeInTheDocument();
   });
 
+  it('drops cache tokens from the Tokens column when excludeCache is set', () => {
+    const s = session({
+      session_id: 'dddddddd4444',
+      subagents: [],
+      tokens_total: 12000,
+      tokens_input: 2000,
+      tokens_output: 1000,
+      tokens_cache_read: 6000,
+      tokens_cache_create: 3000,
+    });
+    const { rerender } = renderWithProviders(<SessionsTable sessions={[s]} />);
+    // Full total: 12000 → "12K".
+    expect(screen.getByText('12K')).toBeInTheDocument();
+
+    rerender(<SessionsTable sessions={[s]} excludeCache />);
+    // 12000 − (6000 + 3000) cache = 3000 → "3K".
+    expect(screen.getByText('3K')).toBeInTheDocument();
+    expect(screen.queryByText('12K')).not.toBeInTheDocument();
+  });
+
   it('notes the absence of subagents in a main-only session', async () => {
     renderWithProviders(
       <SessionsTable sessions={[session({ session_id: 'cccccccc3333', subagents: [] })]} />,

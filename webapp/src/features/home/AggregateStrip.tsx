@@ -4,6 +4,8 @@
 import type { CostForecastResponse, CumulativeBucket, CumulativeResponse } from '@/api/types';
 import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatTokens } from '@/lib/format';
 
 interface AggregateStripProps {
@@ -12,7 +14,10 @@ interface AggregateStripProps {
   loading: boolean;
 }
 
-function monthTotals(cumulative: CumulativeResponse | undefined): {
+function monthTotals(
+  cumulative: CumulativeResponse | undefined,
+  excludeCache: boolean,
+): {
   tokens: number;
   msgs: number;
 } {
@@ -26,8 +31,7 @@ function monthTotals(cumulative: CumulativeResponse | undefined): {
     tokens +=
       (b.tokens_input ?? 0) +
       (b.tokens_output ?? 0) +
-      (b.tokens_cache_read ?? 0) +
-      (b.tokens_cache_create ?? 0) +
+      (excludeCache ? 0 : (b.tokens_cache_read ?? 0) + (b.tokens_cache_create ?? 0)) +
       (b.tokens_reasoning ?? 0);
     msgs += b.msgs ?? 0;
   }
@@ -35,7 +39,8 @@ function monthTotals(cumulative: CumulativeResponse | undefined): {
 }
 
 export function AggregateStrip({ cost, cumulative, loading }: AggregateStripProps) {
-  const { tokens, msgs } = monthTotals(cumulative);
+  const { excludeCache } = useExcludeCache();
+  const { tokens, msgs } = monthTotals(cumulative, excludeCache);
 
   const stats: { label: string; value: string; hint?: string }[] = [
     {
@@ -59,20 +64,25 @@ export function AggregateStrip({ cost, cumulative, loading }: AggregateStripProp
   ];
 
   return (
-    <section aria-label="Monthly aggregates" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {stats.map((stat) => (
-        <Card key={stat.label} className="px-4 py-3">
-          <p className="text-[11px] font-medium text-fg-subtle">{stat.label}</p>
-          {loading ? (
-            <Skeleton className="mt-1.5 h-6 w-20" />
-          ) : (
-            <div className="mt-0.5 flex items-baseline gap-2">
-              <span className="font-mono text-lg font-semibold tabular">{stat.value}</span>
-              {stat.hint ? <span className="text-[11px] text-fg-subtle">{stat.hint}</span> : null}
-            </div>
-          )}
-        </Card>
-      ))}
-    </section>
+    <div className="flex flex-col gap-3">
+      <ExcludeCacheToggle />
+      <section aria-label="Monthly aggregates" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {stats.map((stat) => (
+          <Card key={stat.label} className="px-4 py-3">
+            <p className="text-[11px] font-medium text-fg-subtle">{stat.label}</p>
+            {loading ? (
+              <Skeleton className="mt-1.5 h-6 w-20" />
+            ) : (
+              <div className="mt-0.5 flex items-baseline gap-2">
+                <span className="font-mono text-lg font-semibold tabular">{stat.value}</span>
+                {stat.hint ? (
+                  <span className="text-[11px] text-fg-subtle">{stat.hint}</span>
+                ) : null}
+              </div>
+            )}
+          </Card>
+        ))}
+      </section>
+    </div>
   );
 }

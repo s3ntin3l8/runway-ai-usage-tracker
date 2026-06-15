@@ -1,4 +1,5 @@
 import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { CostTab } from './CostTab';
 import * as api from '@/api/endpoints';
@@ -23,6 +24,8 @@ vi.mock('@/components/charts/CostDonut', () => ({
 describe('CostTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The exclude-cache pref persists to localStorage; reset it between tests.
+    localStorage.clear();
     vi.mocked(api.fetchHistoryChart).mockResolvedValue(historyChart(true));
   });
 
@@ -57,6 +60,21 @@ describe('CostTab', () => {
     expect(screen.getAllByText('Cache write').length).toBeGreaterThan(0);
     // Each split card pairs a cost donut with its table.
     expect(screen.getAllByTestId('cost-donut').length).toBe(2);
+  });
+
+  it('hides the cache columns when "Exclude cache" is toggled on', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    expect((await screen.findAllByText('Cache read')).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
+    expect(screen.queryByText('Cache read')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cache write')).not.toBeInTheDocument();
+    // Input/Output columns remain.
+    expect(screen.getAllByText('Input').length).toBeGreaterThan(0);
   });
 
   it('shows the empty split message with no month bucket', async () => {

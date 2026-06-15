@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDate } from '@/lib/tz';
 import type { SelectedPeriod } from './period';
@@ -83,6 +85,7 @@ export function CostTab({
 
   return (
     <div className="flex flex-col gap-4">
+      <ExcludeCacheToggle />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
           <StatTile
@@ -134,6 +137,7 @@ function SplitTable({
   nameHeader: string;
   monthLabel: string;
 }) {
+  const { excludeCache } = useExcludeCache();
   const rows = Object.entries(split ?? {}).sort(
     ([, a], [, b]) => (b.cost_usd ?? 0) - (a.cost_usd ?? 0),
   );
@@ -165,8 +169,12 @@ function SplitTable({
                   <TH className="text-right">Messages</TH>
                   <TH className="text-right">Input</TH>
                   <TH className="text-right">Output</TH>
-                  <TH className="text-right">Cache read</TH>
-                  <TH className="text-right">Cache write</TH>
+                  {excludeCache ? null : (
+                    <>
+                      <TH className="text-right">Cache read</TH>
+                      <TH className="text-right">Cache write</TH>
+                    </>
+                  )}
                   {hasReasoning ? <TH className="text-right">Reasoning</TH> : null}
                   <TH className="text-right">Cost</TH>
                 </TR>
@@ -182,12 +190,16 @@ function SplitTable({
                     <TD className="text-right font-mono tabular">
                       {formatTokens(b.tokens_output ?? 0)}
                     </TD>
-                    <TD className="text-right font-mono tabular">
-                      {formatTokens(b.tokens_cache_read ?? 0)}
-                    </TD>
-                    <TD className="text-right font-mono tabular">
-                      {formatTokens(b.tokens_cache_create ?? 0)}
-                    </TD>
+                    {excludeCache ? null : (
+                      <>
+                        <TD className="text-right font-mono tabular">
+                          {formatTokens(b.tokens_cache_read ?? 0)}
+                        </TD>
+                        <TD className="text-right font-mono tabular">
+                          {formatTokens(b.tokens_cache_create ?? 0)}
+                        </TD>
+                      </>
+                    )}
                     {hasReasoning ? (
                       <TD className="text-right font-mono tabular">
                         {formatTokens(b.tokens_reasoning ?? 0)}
