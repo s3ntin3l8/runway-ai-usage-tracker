@@ -94,6 +94,37 @@ describe('CostTab', () => {
     expect(screen.getByText('$7.50')).toBeInTheDocument();
   });
 
+  it('expands a model row to reveal the per-category cost breakdown', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    const row = (await screen.findByText('claude-opus')).closest('tr')!;
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(row);
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.getByText('Cache read $')).toBeInTheDocument();
+    expect(screen.getByText('Total $')).toBeInTheDocument();
+  });
+
+  it('hides cache cost cells in the expanded breakdown when "Exclude cache" is on', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
+    await userEvent.click((await screen.findByText('claude-opus')).closest('tr')!);
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.queryByText('Cache read $')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cache write $')).not.toBeInTheDocument();
+  });
+
   it('shows the empty split message with no month bucket', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());

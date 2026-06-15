@@ -92,6 +92,11 @@ export interface CumulativeModelBucket {
   tokens_reasoning?: number;
   msgs?: number;
   cost_usd?: number;
+  // Per-component cost (reasoning folds into cost_output, billed at the output rate).
+  cost_input?: number;
+  cost_output?: number;
+  cost_cache_read?: number;
+  cost_cache_create?: number;
   // Cache portion of cost_usd (cache_read + cache_create), for the exclude-cache toggle.
   cost_cache?: number;
 }
@@ -211,6 +216,10 @@ export interface SubagentSplit {
   tokens_reasoning?: number;
   tool_calls?: number;
   cost_usd?: number;
+  cost_input?: number;
+  cost_output?: number;
+  cost_cache_read?: number;
+  cost_cache_create?: number;
 }
 
 export interface SessionEntry {
@@ -233,6 +242,10 @@ export interface SessionEntry {
   subagent_msgs?: number;
   cache_pct?: number;
   cost_usd?: number;
+  cost_input?: number;
+  cost_output?: number;
+  cost_cache_read?: number;
+  cost_cache_create?: number;
   cache_hit_pct?: number;
   sidecar_id?: string | null;
   [key: string]: unknown;

@@ -30,6 +30,12 @@ def _empty_grain() -> dict[str, Any]:
         "tokens_reasoning": 0,
         "msgs": 0,
         "cost_usd": 0.0,
+        # Per-component cost (input/output/cache_read/cache_create) for the cost
+        # breakdown views; reasoning folds into cost_output (billed at output rate).
+        "cost_input": 0.0,
+        "cost_output": 0.0,
+        "cost_cache_read": 0.0,
+        "cost_cache_create": 0.0,
         # Cache portion of cost_usd (cache_read + cache_create), for exclude-cache.
         "cost_cache": 0.0,
     }
@@ -76,6 +82,8 @@ def query_cumulative_live(
         func.sum(UsageEvent.tokens_cache_create),
         func.sum(UsageEvent.tokens_reasoning),
         func.sum(UsageEvent.cost_usd),
+        func.sum(UsageEvent.cost_input),
+        func.sum(UsageEvent.cost_output),
         func.sum(UsageEvent.cost_cache_read),
         func.sum(UsageEvent.cost_cache_create),
     ).where(
@@ -96,7 +104,23 @@ def query_cumulative_live(
     )
 
     out: dict[tuple[str, str], dict[str, Any]] = {}
-    for pid, aid, mid, sid, msgs, ti, to, tcr, tcc, tr, cost, ccr, ccc in session.exec(stmt).all():
+    for (
+        pid,
+        aid,
+        mid,
+        sid,
+        msgs,
+        ti,
+        to,
+        tcr,
+        tcc,
+        tr,
+        cost,
+        ci,
+        co,
+        ccr,
+        ccc,
+    ) in session.exec(stmt).all():
         delta = {
             "tokens_input": ti or 0,
             "tokens_output": to or 0,
@@ -105,6 +129,10 @@ def query_cumulative_live(
             "tokens_reasoning": tr or 0,
             "msgs": msgs,
             "cost_usd": cost or 0.0,
+            "cost_input": ci or 0.0,
+            "cost_output": co or 0.0,
+            "cost_cache_read": ccr or 0.0,
+            "cost_cache_create": ccc or 0.0,
             "cost_cache": (ccr or 0.0) + (ccc or 0.0),
         }
         bucket = out.setdefault((pid, aid), _empty_bucket())

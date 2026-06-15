@@ -62,6 +62,10 @@ def query_sessions(
             SUM(tokens_cache_create)                           AS tokens_cache_create,
             SUM(tokens_reasoning)                              AS tokens_reasoning,
             SUM(cost_usd)                                      AS cost_usd,
+            SUM(cost_input)                                    AS cost_input,
+            SUM(cost_output)                                   AS cost_output,
+            SUM(cost_cache_read)                               AS cost_cache_read,
+            SUM(cost_cache_create)                             AS cost_cache_create,
             SUM(tool_calls)                                    AS tool_calls,
             MAX(sidecar_id)                                    AS sidecar_id,
             GROUP_CONCAT(DISTINCT model_id)                    AS models_csv,
@@ -92,7 +96,11 @@ def query_sessions(
             SUM(tokens_cache_create)                            AS tokens_cache_create,
             SUM(tokens_reasoning)                               AS tokens_reasoning,
             SUM(tool_calls)                                     AS tool_calls,
-            SUM(cost_usd)                                       AS cost_usd
+            SUM(cost_usd)                                       AS cost_usd,
+            SUM(cost_input)                                     AS cost_input,
+            SUM(cost_output)                                    AS cost_output,
+            SUM(cost_cache_read)                                AS cost_cache_read,
+            SUM(cost_cache_create)                              AS cost_cache_create
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
@@ -117,7 +125,11 @@ def query_sessions(
             SUM(tokens_cache_create)                            AS tokens_cache_create,
             SUM(tokens_reasoning)                               AS tokens_reasoning,
             SUM(tool_calls)                                     AS tool_calls,
-            SUM(cost_usd)                                       AS cost_usd
+            SUM(cost_usd)                                       AS cost_usd,
+            SUM(cost_input)                                     AS cost_input,
+            SUM(cost_output)                                    AS cost_output,
+            SUM(cost_cache_read)                                AS cost_cache_read,
+            SUM(cost_cache_create)                              AS cost_cache_create
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
@@ -182,6 +194,10 @@ def query_sessions(
                     "tokens_reasoning": int(sa.tokens_reasoning or 0),
                     "tool_calls": int(sa.tool_calls or 0),
                     "cost_usd": float(sa.cost_usd or 0.0),
+                    "cost_input": float(sa.cost_input or 0.0),
+                    "cost_output": float(sa.cost_output or 0.0),
+                    "cost_cache_read": float(sa.cost_cache_read or 0.0),
+                    "cost_cache_create": float(sa.cost_cache_create or 0.0),
                 }
                 for sa in sa_rows
             ]
@@ -208,6 +224,10 @@ def query_sessions(
                     "tokens_reasoning": int(bm.tokens_reasoning or 0),
                     "tool_calls": int(bm.tool_calls or 0),
                     "cost_usd": float(bm.cost_usd or 0.0),
+                    "cost_input": float(bm.cost_input or 0.0),
+                    "cost_output": float(bm.cost_output or 0.0),
+                    "cost_cache_read": float(bm.cost_cache_read or 0.0),
+                    "cost_cache_create": float(bm.cost_cache_create or 0.0),
                 }
                 for bm in bm_rows
             ]
@@ -231,6 +251,10 @@ def query_sessions(
                 "tool_calls": int(row.tool_calls or 0),
                 "cache_pct": cache_pct,
                 "cost_usd": float(row.cost_usd or 0.0),
+                "cost_input": float(row.cost_input or 0.0),
+                "cost_output": float(row.cost_output or 0.0),
+                "cost_cache_read": float(row.cost_cache_read or 0.0),
+                "cost_cache_create": float(row.cost_cache_create or 0.0),
                 "sidecar_id": row.sidecar_id,
                 "subagent_msgs": subagent_msgs,
                 "subagents": subagents,

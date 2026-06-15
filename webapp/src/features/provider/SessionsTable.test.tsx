@@ -84,6 +84,43 @@ describe('SessionsTable', () => {
     expect(screen.queryByText('12K')).not.toBeInTheDocument();
   });
 
+  it('shows a per-category cost line in the expanded token breakdown', async () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'eeeeeeee5555',
+            subagents: [],
+            cost_usd: 1.0,
+            cost_input: 0.4,
+            cost_output: 0.3,
+            cost_cache_read: 0.2,
+            cost_cache_create: 0.1,
+          }),
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByText('eeeeeeee').closest('tr')!);
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.getByText('Cache read $')).toBeInTheDocument();
+    expect(screen.getByText('Total $')).toBeInTheDocument();
+  });
+
+  it('hides cache cost cells in the breakdown when excludeCache is set', async () => {
+    const s = session({
+      session_id: 'ffffffff6666',
+      subagents: [],
+      cost_usd: 1.0,
+      cost_cache_read: 0.2,
+      cost_cache_create: 0.1,
+    });
+    renderWithProviders(<SessionsTable sessions={[s]} excludeCache />);
+    await userEvent.click(screen.getByText('ffffffff').closest('tr')!);
+    expect(screen.getByText('Input $')).toBeInTheDocument();
+    expect(screen.queryByText('Cache read $')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cache write $')).not.toBeInTheDocument();
+  });
+
   it('notes the absence of subagents in a main-only session', async () => {
     renderWithProviders(
       <SessionsTable sessions={[session({ session_id: 'cccccccc3333', subagents: [] })]} />,

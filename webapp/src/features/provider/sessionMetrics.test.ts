@@ -1,5 +1,5 @@
 import type { SessionEntry } from '@/api/types';
-import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
+import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 // Minimal session shape; spread overrides per case.
 const s = (o: Partial<SessionEntry> = {}): SessionEntry => ({ session_id: 'abc', ...o });
@@ -48,6 +48,41 @@ describe('sessionCost', () => {
 
   it('is zero when nothing is available', () => {
     expect(sessionCost(s())).toBe(0);
+  });
+
+  it('subtracts the cache cost when excludeCache is set', () => {
+    const sess = s({ cost_usd: 1.0, cost_cache_read: 0.3, cost_cache_create: 0.1 });
+    expect(sessionCost(sess, true)).toBeCloseTo(0.6);
+  });
+
+  it('falls back to summing by_model cache cost when session-level is absent', () => {
+    const sess = s({
+      cost_usd: 1.0,
+      by_model: [
+        { cost_cache_read: 0.2, cost_cache_create: 0.05 },
+        { cost_cache_read: 0.1, cost_cache_create: 0 },
+      ] as never,
+    });
+    // total 1.0 − cache (0.35) = 0.65
+    expect(sessionCost(sess, true)).toBeCloseTo(0.65);
+  });
+
+  it('clamps to zero when the cache estimate exceeds the total', () => {
+    const sess = s({ cost_usd: 0.1, cost_cache_read: 0.3, cost_cache_create: 0 });
+    expect(sessionCost(sess, true)).toBe(0);
+  });
+});
+
+describe('bucketCost', () => {
+  it('returns cost_usd when not excluding cache', () => {
+    expect(bucketCost({ cost_usd: 0.5 })).toBe(0.5);
+  });
+
+  it('drops the cache portion (clamped) when excluding cache', () => {
+    expect(bucketCost({ cost_usd: 0.5, cost_cache_read: 0.2, cost_cache_create: 0.1 }, true)).toBeCloseTo(
+      0.2,
+    );
+    expect(bucketCost({ cost_usd: 0.1, cost_cache_read: 0.5 }, true)).toBe(0);
   });
 });
 
