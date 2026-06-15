@@ -309,11 +309,39 @@ def _extract(archive: pathlib.Path, dest: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# An update applies + restarts in seconds; a lock older than this was orphaned
+# by a crash (or a pre-fix build that re-exec'd without releasing it — see
+# _release_lock) and is safe to reclaim.
+_LOCK_STALE_SECONDS = 900  # 15 min
+
+
+def _lock_path() -> pathlib.Path:
+    return _sidecar_dir() / _LOCK_NAME
+
+
+def _release_lock() -> None:
+    """Remove the single-flight lock file.
+
+    A successful update ends in ``os.execv`` / ``os._exit`` (see the relaunch
+    helpers), which replace the process image and so never run the
+    ``_single_flight`` context manager's ``finally``. Without an explicit
+    release here every successful update would orphan the lock and wedge all
+    future updates with "already in progress". Call this immediately before any
+    re-exec/exit.
+    """
+    try:
+        _lock_path().unlink()
+    except OSError:
+        pass
+
+
 @contextmanager
 def _single_flight() -> Iterator[bool]:
     """Yield True if we acquired the update lock, False if one is already held.
 
-    Uses ``O_CREAT|O_EXCL`` (same TOCTOU-free pattern as the CLI PID file).
+    Uses ``O_CREAT|O_EXCL`` (same TOCTOU-free pattern as the CLI PID file). A
+    lock older than ``_LOCK_STALE_SECONDS`` is treated as orphaned and reclaimed
+    so a leaked lock self-heals instead of wedging updates forever.
     """
     lock_dir = _sidecar_dir()
     try:
@@ -325,12 +353,24 @@ def _single_flight() -> Iterator[bool]:
     lock_path = lock_dir / _LOCK_NAME
     fd: int | None = None
     try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if not _lock_is_stale(lock_path):
+                logger.warning("Self-update already in progress; skipping")
+                yield False
+                return
+            logger.warning(
+                "Reclaiming stale self-update lock (older than %ds)", _LOCK_STALE_SECONDS
+            )
+            try:
+                lock_path.unlink()
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except (OSError, FileExistsError):
+                logger.warning("Self-update already in progress; skipping")
+                yield False
+                return
         yield True
-    except FileExistsError:
-        logger.warning("Self-update already in progress; skipping")
-        yield False
-        return
     finally:
         if fd is not None:
             os.close(fd)
@@ -339,6 +379,14 @@ def _single_flight() -> Iterator[bool]:
             except OSError:
                 # Lock file already gone (or not removable); nothing to clean up.
                 pass
+
+
+def _lock_is_stale(lock_path: pathlib.Path) -> bool:
+    """True when the lock file predates ``_LOCK_STALE_SECONDS`` (orphaned)."""
+    try:
+        return (time.time() - lock_path.stat().st_mtime) > _LOCK_STALE_SECONDS
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -467,15 +515,21 @@ def _apply_windows(install: pathlib.Path, staged: pathlib.Path, *, restart: bool
     logger.info("Self-update staged; helper will swap %s after exit", install)
     if restart:
         # The helper relaunches once we exit; leave the loop / process to wind down.
+        # Release the lock first — os._exit bypasses the context manager cleanup.
+        _release_lock()
         os._exit(0)
     return True
 
 
 def _relaunch_posix(target: str, install: pathlib.Path) -> None:
     """Restart into the freshly-installed binary."""
+    # Release the single-flight lock before any process replacement — os.execv /
+    # os._exit never run the _single_flight finally, so the lock would leak and
+    # wedge every future update.
     if target == "cli":
         # Supervisor-agnostic in-place re-exec; preserves argv and PID lifecycle.
         logger.info("Re-executing %s", install)
+        _release_lock()
         os.execv(str(install), [str(install), *sys.argv[1:]])
         return  # unreachable
     # Tray: never execv from inside the pystray loop — spawn detached and exit.
@@ -484,6 +538,7 @@ def _relaunch_posix(target: str, install: pathlib.Path) -> None:
     else:
         subprocess.Popen([str(install)], start_new_session=True, close_fds=True)  # noqa: S603
     logger.info("Relaunched %s; exiting old process", install)
+    _release_lock()
     os._exit(0)
 
 

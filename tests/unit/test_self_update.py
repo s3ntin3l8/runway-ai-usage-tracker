@@ -8,8 +8,10 @@ NOT unit-tested — it is verified manually per platform during release QA.
 
 import hashlib
 import io
+import os
 import sys
 import tarfile
+import time
 import zipfile
 
 import pytest
@@ -217,6 +219,40 @@ class TestSelfUpdateGuards:
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("lock held; no work")),
         )
         assert self_update.self_update("1.1.0", "stable") is False
+
+
+class TestSingleFlightLockHygiene:
+    """The lock must not leak across re-exec, and a leaked lock must self-heal."""
+
+    def test_release_lock_removes_file_and_is_idempotent(self, monkeypatch, tmp_path):
+        # A successful update re-execs via os.execv/os._exit, bypassing the
+        # context-manager finally — _release_lock is the explicit cleanup.
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
+        lock = tmp_path / self_update._LOCK_NAME
+        lock.write_text("")
+        self_update._release_lock()
+        assert not lock.exists()
+        self_update._release_lock()  # idempotent — no raise when already gone
+
+    def test_blocks_on_a_fresh_lock(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
+        lock = tmp_path / self_update._LOCK_NAME
+        lock.write_text("")  # mtime ≈ now → a live update, not stale
+        with self_update._single_flight() as acquired:
+            assert acquired is False
+        assert lock.exists()  # the other run's lock is left intact
+
+    def test_reclaims_a_stale_lock(self, monkeypatch, tmp_path):
+        # A lock orphaned by a pre-fix build (re-exec'd without releasing) is
+        # older than the threshold and must be reclaimed so updates resume.
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
+        lock = tmp_path / self_update._LOCK_NAME
+        lock.write_text("")
+        old = time.time() - (self_update._LOCK_STALE_SECONDS + 60)
+        os.utime(lock, (old, old))
+        with self_update._single_flight() as acquired:
+            assert acquired is True
+        assert not lock.exists()  # released cleanly after the block
 
 
 # ---------------------------------------------------------------------------
