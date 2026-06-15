@@ -4,7 +4,7 @@
 
 ### Download
 
-Download the latest release from the [GitHub Releases page](https://github.com/s3ntin3l8/runway/releases/latest):
+Download the latest release from the [GitHub Releases page](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/latest):
 - **macOS**: `Runway-Sidecar-macOS.zip` → unzip → drag `Runway Sidecar.app` to `/Applications`
 - **Windows**: `Runway-Sidecar-Windows.zip` → unzip → run `RunwaySidecar.exe`
 - **Linux (desktop tray)**: `Runway-Sidecar-Linux.tar.gz` → `tar -xzf …` → run `./RunwaySidecar`. Requires a tray host (AppIndicator on GNOME/Unity, GTK on KDE/Xfce) and a DBus session. For headless servers / Docker, use the CLI binary below instead.
@@ -16,13 +16,15 @@ Each release asset ships a matching `*.sha256` checksum file. Verify with `shasu
 
 Edge is the sidecar analog of the Docker `:edge` image — a rolling build published on every push to `main` that touches sidecar code. It lives in a single, always-overwritten `edge` **prerelease**, so the download URLs are stable:
 
-- **Linux (desktop tray)**: <https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-edge.tar.gz>
-- **Linux (headless CLI)**: <https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz>
+- **Linux (desktop tray)**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-edge.tar.gz>
+- **Linux (headless CLI)**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz>
+- **macOS**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-macOS-edge.zip>
+- **Windows**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Windows-edge.zip>
 
 ```bash
 # Deploy the latest edge CLI sidecar to another Linux box:
-curl -fsSL -O https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz
-curl -fsSL -O https://github.com/s3ntin3l8/runway/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
+curl -fsSL -O https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz
+curl -fsSL -O https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
 shasum -a 256 -c Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
 tar -xzf Runway-Sidecar-Linux-CLI-edge.tar.gz
 ./runway-sidecar-cli --daemon

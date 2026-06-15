@@ -28,9 +28,9 @@ from urllib import error, request
 
 logger = logging.getLogger(__name__)
 
-_LATEST_URL = "https://api.github.com/repos/s3ntin3l8/runway/releases/latest"
-_EDGE_REFS_URL = "https://api.github.com/repos/s3ntin3l8/runway/git/refs/tags/edge"
-_RELEASES_URL = "https://github.com/s3ntin3l8/runway/releases"
+_LATEST_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
+_EDGE_REFS_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
+_RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
 _CHECK_INTERVAL_SECONDS = 86400  # 24h
 _TIMEOUT_SECONDS = 10
 

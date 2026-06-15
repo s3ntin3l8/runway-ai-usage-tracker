@@ -53,7 +53,9 @@ logger = logging.getLogger(__name__)
 
 # The `edge` rolling prerelease object (carries assets[]); distinct from
 # update_check._EDGE_REFS_URL, which only returns the git ref sha.
-_EDGE_RELEASE_URL = "https://api.github.com/repos/s3ntin3l8/runway/releases/tags/edge"
+_EDGE_RELEASE_URL = (
+    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/tags/edge"
+)
 _TIMEOUT_SECONDS = 60
 _LOCK_NAME = "self-update.lock"
 
@@ -165,17 +167,22 @@ def resolve_asset_name(target: str, channel: str, version: str | None) -> str:
     """Return the GitHub release asset base name for this platform/target/channel.
 
     *version* is the latest tag (without ``v``) for the stable channel; the edge
-    channel uses a single rolling asset, so *version* is ignored there.
+    channel uses a single rolling asset per platform, so *version* is ignored
+    there.
 
-    Raises ``SelfUpdateUnsupportedError`` for combinations with no published asset
-    (edge builds are Linux-only).
+    Raises ``SelfUpdateUnsupportedError`` for combinations with no published asset.
     """
     plat = sys.platform
     if channel == "edge":
-        if plat != "linux":
-            raise SelfUpdateUnsupportedError("edge builds are Linux-only")
-        suffix = "CLI-edge" if target == "cli" else "edge"
-        return f"Runway-Sidecar-Linux-{suffix}.tar.gz"
+        # Edge publishes a rolling per-platform asset (no version in the name).
+        if plat == "darwin":
+            return "Runway-Sidecar-macOS-edge.zip"
+        if plat == "win32":
+            return "Runway-Sidecar-Windows-edge.zip"
+        if plat == "linux":
+            suffix = "CLI-edge" if target == "cli" else "edge"
+            return f"Runway-Sidecar-Linux-{suffix}.tar.gz"
+        raise SelfUpdateUnsupportedError(f"unsupported platform: {plat}")
 
     ver = (version or "").lstrip("v").strip()
     if not ver:
