@@ -184,4 +184,30 @@ describe('RecentSessions', () => {
     renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);
     expect(await screen.findByText(/no sessions yet/i)).toBeInTheDocument();
   });
+
+  it('labels the originating sidecar when more than one host feeds the fleet', async () => {
+    vi.mocked(api.fetchSessions).mockResolvedValue({
+      sessions: [session({ session_id: 'feedface0000', sidecar_id: 'laptop' })],
+    } as never);
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        { sidecar_id: 'laptop', custom_name: 'My Laptop' },
+        { sidecar_id: 'desktop', hostname: 'work-desktop' },
+      ],
+    } as never);
+    renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);
+    expect(await screen.findByText('My Laptop')).toBeInTheDocument();
+  });
+
+  it('hides the sidecar label on a single-host fleet', async () => {
+    vi.mocked(api.fetchSessions).mockResolvedValue({
+      sessions: [session({ session_id: 'feedface0000', sidecar_id: 'laptop' })],
+    } as never);
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', custom_name: 'My Laptop' }],
+    } as never);
+    renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);
+    await screen.findByText('feedface');
+    expect(screen.queryByText('My Laptop')).not.toBeInTheDocument();
+  });
 });

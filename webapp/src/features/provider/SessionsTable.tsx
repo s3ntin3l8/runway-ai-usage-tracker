@@ -10,11 +10,15 @@ import type { SessionEntry } from '@/api/types';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
+import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { cn } from '@/lib/cn';
 import { formatCost, formatDuration, formatTokens } from '@/lib/format';
 import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
-const COL_COUNT = 7;
+// Base column count (chevron + session + models + duration + messages + tokens +
+// cost); the optional Sidecar column adds one when more than one host feeds the
+// fleet. Used for the detail row's colSpan.
+const BASE_COL_COUNT = 7;
 
 /** Labelled token/number chip used across the detail panel. */
 function Stat({ label, value }: { label: string; value: string }) {
@@ -138,7 +142,18 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
   );
 }
 
-function SessionRow({ s, excludeCache }: { s: SessionEntry; excludeCache: boolean }) {
+function SessionRow({
+  s,
+  excludeCache,
+  sidecarName,
+  colSpan,
+}: {
+  s: SessionEntry;
+  excludeCache: boolean;
+  // Resolved sidecar label, or null to omit the column entirely (single-host).
+  sidecarName: string | null;
+  colSpan: number;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -164,6 +179,15 @@ function SessionRow({ s, excludeCache }: { s: SessionEntry; excludeCache: boolea
             ))}
           </span>
         </TD>
+        {sidecarName !== null ? (
+          <TD>
+            {sidecarName ? (
+              <Badge variant="neutral">{sidecarName}</Badge>
+            ) : (
+              <span className="text-fg-subtle">—</span>
+            )}
+          </TD>
+        ) : null}
         <TD className="text-right font-mono tabular">
           {s.duration_seconds != null ? formatDuration(s.duration_seconds * 1000) : '—'}
         </TD>
@@ -175,7 +199,7 @@ function SessionRow({ s, excludeCache }: { s: SessionEntry; excludeCache: boolea
       </TR>
       {open ? (
         <TR className="hover:bg-transparent">
-          <TD colSpan={COL_COUNT} className="p-0">
+          <TD colSpan={colSpan} className="p-0">
             <SessionDetail s={s} excludeCache={excludeCache} />
           </TD>
         </TR>
@@ -191,6 +215,14 @@ export function SessionsTable({
   sessions: SessionEntry[];
   excludeCache?: boolean;
 }) {
+  // Show the Sidecar column only when more than one host feeds the fleet.
+  const sidecars = useSidecars().data?.sidecars ?? [];
+  const showSidecar = sidecars.length > 1;
+  const nameMap = showSidecar ? buildSidecarNameMap(sidecars) : null;
+  const colSpan = BASE_COL_COUNT + (showSidecar ? 1 : 0);
+  const labelFor = (s: SessionEntry): string | null =>
+    nameMap ? (s.sidecar_id ? (nameMap.get(s.sidecar_id) ?? s.sidecar_id) : '') : null;
+
   return (
     <Table>
       <THead>
@@ -198,6 +230,7 @@ export function SessionsTable({
           <TH className="w-8" />
           <TH>Session</TH>
           <TH>Models</TH>
+          {showSidecar ? <TH>Sidecar</TH> : null}
           <TH className="text-right">Duration</TH>
           <TH className="text-right">Messages</TH>
           <TH className="text-right">Tokens</TH>
@@ -206,7 +239,13 @@ export function SessionsTable({
       </THead>
       <TBody>
         {sessions.map((s) => (
-          <SessionRow key={s.session_id} s={s} excludeCache={excludeCache} />
+          <SessionRow
+            key={s.session_id}
+            s={s}
+            excludeCache={excludeCache}
+            sidecarName={labelFor(s)}
+            colSpan={colSpan}
+          />
         ))}
       </TBody>
     </Table>

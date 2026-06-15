@@ -7,6 +7,7 @@ import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { formatCost, formatDuration, formatTokens, timeAgo } from '@/lib/format';
 import { useProviderRecentSessions } from './queries';
 import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
@@ -20,14 +21,30 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SessionCard({ s, excludeCache }: { s: SessionEntry; excludeCache: boolean }) {
+function SessionCard({
+  s,
+  excludeCache,
+  sidecarName,
+}: {
+  s: SessionEntry;
+  excludeCache: boolean;
+  // Resolved sidecar label, or null to hide (single-host setups).
+  sidecarName: string | null;
+}) {
   const cachePct = sessionCachePct(s);
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 pt-4">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="font-mono text-xs" title={s.session_id}>
-            {s.session_id.slice(0, 8)}
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="font-mono text-xs" title={s.session_id}>
+              {s.session_id.slice(0, 8)}
+            </span>
+            {sidecarName ? (
+              <Badge variant="outline" className="shrink-0">
+                {sidecarName}
+              </Badge>
+            ) : null}
           </span>
           <span className="text-[11px] text-fg-subtle">ended {timeAgo(s.ts_end)}</span>
         </div>
@@ -70,6 +87,13 @@ export function RecentSessions({
   const q = useProviderRecentSessions(providerId, accountId);
   const sessions = q.data?.sessions ?? [];
 
+  // Resolve sidecar labels only when more than one host feeds the fleet —
+  // otherwise the origin is unambiguous and the badge is just noise.
+  const sidecars = useSidecars().data?.sidecars ?? [];
+  const sidecarNames = sidecars.length > 1 ? buildSidecarNameMap(sidecars) : null;
+  const labelFor = (s: SessionEntry): string | null =>
+    sidecarNames && s.sidecar_id ? (sidecarNames.get(s.sidecar_id) ?? s.sidecar_id) : null;
+
   return (
     <div className="flex flex-col gap-2">
       <h2 className="text-[13px] font-semibold tracking-tight">Recent sessions</h2>
@@ -86,7 +110,12 @@ export function RecentSessions({
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           {sessions.slice(0, 3).map((s) => (
-            <SessionCard key={s.session_id} s={s} excludeCache={excludeCache} />
+            <SessionCard
+              key={s.session_id}
+              s={s}
+              excludeCache={excludeCache}
+              sidecarName={labelFor(s)}
+            />
           ))}
         </div>
       )}
