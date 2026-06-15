@@ -753,8 +753,13 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             "label": label,
             "value": value,
         }
+        # value_cache = the cache portion of `value`, so the client can subtract it
+        # under the exclude-cache toggle. Its unit follows the metric: cache *tokens*
+        # for the tokens bars, cache *cost* (USD) for the cost bars.
         if metric == "tokens":
             segment["value_cache"] = r.tokens_cache_read + r.tokens_cache_create
+        elif metric == "cost":
+            segment["value_cache"] = r.cost_cache_read + r.cost_cache_create
         bars_map[key].append(segment)
 
     bars = []

@@ -72,6 +72,10 @@ def update_rollups_for_event(session: Session, ev: UsageEvent) -> None:
                 tokens_cache_create=ev.tokens_cache_create,
                 tokens_reasoning=ev.tokens_reasoning,
                 cost_usd=ev.cost_usd,
+                cost_input=ev.cost_input,
+                cost_output=ev.cost_output,
+                cost_cache_read=ev.cost_cache_read,
+                cost_cache_create=ev.cost_cache_create,
                 last_updated=now,
             )
             stmt = stmt.on_conflict_do_update(
@@ -84,6 +88,10 @@ def update_rollups_for_event(session: Session, ev: UsageEvent) -> None:
                     "tokens_cache_create": table.c.tokens_cache_create + ev.tokens_cache_create,
                     "tokens_reasoning": table.c.tokens_reasoning + ev.tokens_reasoning,
                     "cost_usd": table.c.cost_usd + ev.cost_usd,
+                    "cost_input": table.c.cost_input + ev.cost_input,
+                    "cost_output": table.c.cost_output + ev.cost_output,
+                    "cost_cache_read": table.c.cost_cache_read + ev.cost_cache_read,
+                    "cost_cache_create": table.c.cost_cache_create + ev.cost_cache_create,
                     "last_updated": now,
                 },
             )

@@ -103,6 +103,7 @@ export const cumulativeResponse = (o: Partial<CumulativeResponse> = {}): Cumulat
             tokens_output: 400,
             msgs: 8,
             cost_usd: 10,
+            cost_cache: 4,
           },
         },
         by_sidecar: {
@@ -111,6 +112,7 @@ export const cumulativeResponse = (o: Partial<CumulativeResponse> = {}): Cumulat
             tokens_output: 500,
             msgs: 12,
             cost_usd: 12.5,
+            cost_cache: 5,
           },
         },
       },

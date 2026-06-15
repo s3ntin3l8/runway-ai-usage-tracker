@@ -16,8 +16,10 @@ vi.mock('@/api/endpoints');
 vi.mock('@/features/history/HistoryChart', () => ({
   HistoryChart: () => <div data-testid="history-chart" />,
 }));
-// CostDonut renders ECharts (no canvas in jsdom): stub to a marker.
-vi.mock('@/components/charts/CostDonut', () => ({
+// CostDonut renders ECharts (no canvas in jsdom): stub the component to a marker
+// but keep the real modelCost helper (SplitTable depends on it).
+vi.mock('@/components/charts/CostDonut', async (importActual) => ({
+  ...(await importActual<typeof import('@/components/charts/CostDonut')>()),
   CostDonut: () => <div data-testid="cost-donut" />,
 }));
 
@@ -75,6 +77,21 @@ describe('CostTab', () => {
     expect(screen.queryByText('Cache write')).not.toBeInTheDocument();
     // Input/Output columns remain.
     expect(screen.getAllByText('Input').length).toBeGreaterThan(0);
+  });
+
+  it('drops the cache portion from the Cost column when "Exclude cache" is on', async () => {
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+    );
+
+    // Full cost up front (model $10, sidecar $12.50).
+    expect(await screen.findByText('$10.00')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
+    // model 10 − cache 4 = $6.00; sidecar 12.50 − 5 = $7.50.
+    expect(await screen.findByText('$6.00')).toBeInTheDocument();
+    expect(screen.getByText('$7.50')).toBeInTheDocument();
   });
 
   it('shows the empty split message with no month bucket', async () => {

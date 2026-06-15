@@ -384,11 +384,14 @@ async def get_cumulative_usage(
                 "tokens_cache_create": 0,
                 "tokens_reasoning": 0,
                 "cost_usd": 0.0,
+                "cost_cache": 0.0,
                 "msgs": 0,
                 "by_model": {},
                 "by_sidecar": {},
             },
         )
+        # Cache portion of cost (cache_read + cache_create), for exclude-cache views.
+        cost_cache = r.cost_cache_read + r.cost_cache_create
         if r.model_id == "" and r.sidecar_id == "":
             # Top-level totals row
             bucket["tokens_input"] = r.tokens_input
@@ -397,6 +400,7 @@ async def get_cumulative_usage(
             bucket["tokens_cache_create"] = r.tokens_cache_create
             bucket["tokens_reasoning"] = r.tokens_reasoning
             bucket["cost_usd"] = r.cost_usd
+            bucket["cost_cache"] = cost_cache
             bucket["msgs"] = r.msgs
         elif r.model_id != "" and r.sidecar_id == "":
             # Per-model grain (all sidecars combined)
@@ -407,6 +411,7 @@ async def get_cumulative_usage(
                 "tokens_cache_create": r.tokens_cache_create,
                 "tokens_reasoning": r.tokens_reasoning,
                 "cost_usd": r.cost_usd,
+                "cost_cache": cost_cache,
                 "msgs": r.msgs,
             }
         elif r.model_id == "" and r.sidecar_id != "":
@@ -418,6 +423,7 @@ async def get_cumulative_usage(
                 "tokens_cache_create": r.tokens_cache_create,
                 "tokens_reasoning": r.tokens_reasoning,
                 "cost_usd": r.cost_usd,
+                "cost_cache": cost_cache,
                 "msgs": r.msgs,
             }
         # Cross-product rows (model_id != '' AND sidecar_id != '') are skipped —
@@ -436,6 +442,7 @@ async def get_cumulative_usage(
             "tokens_cache_create": 0,
             "tokens_reasoning": 0,
             "cost_usd": 0.0,
+            "cost_cache": 0.0,
             "msgs": 0,
             "by_model": {},
             "by_sidecar": {},

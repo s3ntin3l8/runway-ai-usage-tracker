@@ -116,17 +116,36 @@ describe('HistoryChart', () => {
     expect((lastOption as { series: unknown[] }).series).toHaveLength(1);
   });
 
-  it('does not subtract cache for the cost metric even when excludeCache is set', () => {
+  it('subtracts value_cache (cache cost) from cost bars when excludeCache is set', () => {
     const data: HistoryChartResponse = {
       bars: [
         {
           date: '2026-06-10',
           ts: '2026-06-10T00:00:00Z',
-          segments: [{ provider_id: 'claude', model_id: 'opus', label: 'opus', value: 3.5 }],
+          segments: [
+            { provider_id: 'claude', model_id: 'opus', label: 'opus', value: 3.5, value_cache: 2 },
+          ],
         },
       ],
     };
     render(<HistoryChart data={data} metric="cost" excludeCache />);
+    const series = (lastOption as { series: { data: number[] }[] }).series;
+    expect(series[0].data[0]).toBe(1.5);
+  });
+
+  it('keeps the full cost when excludeCache is off', () => {
+    const data: HistoryChartResponse = {
+      bars: [
+        {
+          date: '2026-06-10',
+          ts: '2026-06-10T00:00:00Z',
+          segments: [
+            { provider_id: 'claude', model_id: 'opus', label: 'opus', value: 3.5, value_cache: 2 },
+          ],
+        },
+      ],
+    };
+    render(<HistoryChart data={data} metric="cost" />);
     const series = (lastOption as { series: { data: number[] }[] }).series;
     expect(series[0].data[0]).toBe(3.5);
   });

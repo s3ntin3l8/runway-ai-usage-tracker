@@ -15,7 +15,7 @@ from sqlmodel import Session
 from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent
 from app.models.schemas import UsageEventPush
-from app.services.cost_calculator import compute_event_cost
+from app.services.cost_calculator import compute_event_cost_breakdown
 from app.services.period_rollups import update_rollups_for_event
 
 
@@ -60,22 +60,23 @@ class EventIngestor:
                         result.events_duplicate += 1
                     continue  # error events don't roll up
 
-                if push.cost_usd is not None:
-                    # Provider supplied an authoritative cost (e.g. OpenCode logs
-                    # it per message). Use it directly rather than re-computing.
-                    cost = push.cost_usd
-                else:
-                    cost = compute_event_cost(
-                        self.session,
-                        provider_id=push.provider_id,
-                        model_id=push.model_id,
-                        ts=ts,
-                        tokens_input=push.tokens_input,
-                        tokens_output=push.tokens_output,
-                        tokens_cache_read=push.tokens_cache_read,
-                        tokens_cache_create=push.tokens_cache_create,
-                        tokens_reasoning=push.tokens_reasoning,
-                    )
+                # Always derive the per-component breakdown from pricing — it
+                # feeds cost-composition views (e.g. exclude-cache).
+                breakdown = compute_event_cost_breakdown(
+                    self.session,
+                    provider_id=push.provider_id,
+                    model_id=push.model_id,
+                    ts=ts,
+                    tokens_input=push.tokens_input,
+                    tokens_output=push.tokens_output,
+                    tokens_cache_read=push.tokens_cache_read,
+                    tokens_cache_create=push.tokens_cache_create,
+                    tokens_reasoning=push.tokens_reasoning,
+                )
+                # Provider-supplied cost (e.g. OpenCode logs it per message) is
+                # authoritative for the total; otherwise use the computed sum.
+                # The components stay pricing-derived (best-effort) either way.
+                cost = push.cost_usd if push.cost_usd is not None else breakdown.total
                 ev = UsageEvent(
                     provider_id=push.provider_id,
                     account_id=push.account_id,
@@ -92,6 +93,10 @@ class EventIngestor:
                     tokens_cache_create=push.tokens_cache_create,
                     tokens_reasoning=push.tokens_reasoning,
                     cost_usd=cost,
+                    cost_input=breakdown.input,
+                    cost_output=breakdown.output,
+                    cost_cache_read=breakdown.cache_read,
+                    cost_cache_create=breakdown.cache_create,
                     stop_reason=push.stop_reason,
                     tool_calls=push.tool_calls,
                     latency_ms=push.latency_ms,

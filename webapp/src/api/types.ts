@@ -92,6 +92,8 @@ export interface CumulativeModelBucket {
   tokens_reasoning?: number;
   msgs?: number;
   cost_usd?: number;
+  // Cache portion of cost_usd (cache_read + cache_create), for the exclude-cache toggle.
+  cost_cache?: number;
 }
 
 export interface CumulativeBucket extends CumulativeModelBucket {

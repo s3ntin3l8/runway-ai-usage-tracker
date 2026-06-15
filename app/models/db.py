@@ -229,7 +229,14 @@ class UsageEvent(SQLModel, table=True):
     tokens_cache_read: int = Field(default=0)  # free reads
     tokens_cache_create: int = Field(default=0)  # Anthropic cache writes (1.25x cost)
     tokens_reasoning: int = Field(default=0)  # o1-style thinking tokens
-    cost_usd: float = Field(default=0.0)  # provider-reported or computed
+    cost_usd: float = Field(default=0.0)  # provider-reported or computed (authoritative total)
+    # USD cost components (sum ≈ cost_usd; reasoning billed at the output rate folds
+    # into cost_output). Stored so any cost-composition view (e.g. exclude-cache) needs
+    # no recompute; cost_usd stays authoritative when a provider supplies its own total.
+    cost_input: float = Field(default=0.0)
+    cost_output: float = Field(default=0.0)
+    cost_cache_read: float = Field(default=0.0)
+    cost_cache_create: float = Field(default=0.0)
     stop_reason: str | None = None  # end_turn, max_tokens, tool_use, error
     tool_calls: int = Field(default=0)  # number of tool_use blocks
     latency_ms: int | None = None  # request duration if logged
@@ -319,6 +326,11 @@ class UsagePeriodRollup(SQLModel, table=True):
     tokens_cache_create: int = Field(default=0)
     tokens_reasoning: int = Field(default=0)
     cost_usd: float = Field(default=0.0)
+    # Per-component cost sums, mirroring UsageEvent (see there).
+    cost_input: float = Field(default=0.0)
+    cost_output: float = Field(default=0.0)
+    cost_cache_read: float = Field(default=0.0)
+    cost_cache_create: float = Field(default=0.0)
     last_updated: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 

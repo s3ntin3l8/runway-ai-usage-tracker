@@ -124,6 +124,16 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("system_config", "sidecar_update_channel", "VARCHAR"),
     ("system_config", "sidecar_auto_update", "BOOLEAN"),
     ("usage_events", "subagent_type", "VARCHAR"),
+    # Per-component USD cost (groundwork for cost-composition views; backfilled
+    # from token counts × historical pricing by scripts/backfill_cache_costs.py).
+    ("usage_events", "cost_input", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_events", "cost_output", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_events", "cost_cache_read", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_events", "cost_cache_create", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_period_rollup", "cost_input", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_period_rollup", "cost_output", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_period_rollup", "cost_cache_read", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_period_rollup", "cost_cache_create", "FLOAT NOT NULL DEFAULT 0"),
     ("quota_snapshots", "variant", "TEXT NOT NULL DEFAULT ''"),
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session
     ("provider_configs", "oai_sc_cookie_encrypted", "VARCHAR"),

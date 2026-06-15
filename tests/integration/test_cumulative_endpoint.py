@@ -56,6 +56,8 @@ def _rollup(
     tokens_cache_create: int = 0,
     tokens_reasoning: int = 0,
     cost_usd: float = 0.0,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
 ) -> UsagePeriodRollup:
     """Insert and return a UsagePeriodRollup row."""
     row = UsagePeriodRollup(
@@ -72,6 +74,8 @@ def _rollup(
         tokens_cache_create=tokens_cache_create,
         tokens_reasoning=tokens_reasoning,
         cost_usd=cost_usd,
+        cost_cache_read=cost_cache_read,
+        cost_cache_create=cost_cache_create,
         last_updated=datetime.now(UTC),
     )
     session.add(row)
@@ -139,6 +143,42 @@ def test_one_period_one_grain_returns_lifetime_bucket(session):
     assert lifetime["tokens_input"] == 100
     assert lifetime["by_model"] == {}
     assert lifetime["by_sidecar"] == {}
+
+
+def test_cost_cache_exposed_on_buckets_and_splits(session):
+    """cost_cache (= cost_cache_read + cost_cache_create) is surfaced on the
+    top-level bucket and the per-model / per-sidecar splits."""
+    _rollup(
+        session,
+        period_type="lifetime",
+        period_key="all",
+        cost_usd=10.0,
+        cost_cache_read=2.0,
+        cost_cache_create=1.5,
+    )
+    _rollup(
+        session,
+        period_type="lifetime",
+        period_key="all",
+        model_id="sonnet",
+        cost_usd=6.0,
+        cost_cache_read=1.0,
+        cost_cache_create=0.5,
+    )
+    _rollup(
+        session,
+        period_type="lifetime",
+        period_key="all",
+        sidecar_id="dev-01",
+        cost_usd=10.0,
+        cost_cache_read=2.0,
+        cost_cache_create=1.5,
+    )
+
+    lifetime = _client().get("/api/v1/usage/cumulative").json()["cumulative"][0]["lifetime"]
+    assert lifetime["cost_cache"] == 3.5
+    assert lifetime["by_model"]["sonnet"]["cost_cache"] == 1.5
+    assert lifetime["by_sidecar"]["dev-01"]["cost_cache"] == 3.5
 
 
 def test_per_model_grain_lands_in_by_model(session):

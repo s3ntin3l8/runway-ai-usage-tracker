@@ -18,8 +18,8 @@ export function HistoryChart({
   data: HistoryChartResponse;
   metric: Metric;
   className?: string;
-  // Drop the cache-read/cache-write portion from each token bar. Only applies to
-  // metric=tokens — the backend exposes value_cache for tokens but not cost.
+  // Drop the cache portion from each bar via the segment's value_cache (cache
+  // tokens for metric=tokens, cache cost for metric=cost). Not applicable to percent.
   excludeCache?: boolean;
 }) {
   const t = useChartTokens();
@@ -69,7 +69,7 @@ export function HistoryChart({
     const bars = data.bars ?? [];
     const labels = Array.from(new Set(bars.flatMap((b) => b.segments.map((s) => s.label))));
     const categories = bars.map((b) => b.ts);
-    const dropCache = excludeCache && metric === 'tokens';
+    const dropCache = excludeCache && (metric === 'tokens' || metric === 'cost');
     const series = labels.map((label, i) => ({
       name: label,
       type: 'bar' as const,

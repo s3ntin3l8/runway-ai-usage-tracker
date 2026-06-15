@@ -7,19 +7,29 @@ import { formatCost } from '@/lib/format';
 import { EChart } from './EChart';
 import { baseTooltip, useChartTokens } from './theme';
 
+// Cost for one bucket, optionally dropping the cache portion. Clamped at 0 — for
+// provider-supplied totals the pricing-derived cost_cache is a best-effort estimate
+// that could (rarely) exceed cost_usd. Mirrors ModelDonut's modelTokens.
+export function modelCost(b: CumulativeModelBucket, excludeCache: boolean): number {
+  const total = b.cost_usd ?? 0;
+  return excludeCache ? Math.max(0, total - (b.cost_cache ?? 0)) : total;
+}
+
 export function CostDonut({
   data,
   className,
+  excludeCache = false,
 }: {
   data: Record<string, CumulativeModelBucket>;
   className?: string;
+  excludeCache?: boolean;
 }) {
   const t = useChartTokens();
   // Track legend deselection so the center total reflects only visible slices.
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const option = useMemo(() => {
     const slices = Object.entries(data)
-      .map(([name, b]) => ({ name, value: b.cost_usd ?? 0 }))
+      .map(([name, b]) => ({ name, value: modelCost(b, excludeCache) }))
       .filter((d) => d.value > 0)
       .sort((a, b) => b.value - a.value);
     const total = slices
@@ -61,7 +71,7 @@ export function CostDonut({
         },
       ],
     };
-  }, [data, t, selected]);
+  }, [data, t, selected, excludeCache]);
 
   return (
     <EChart

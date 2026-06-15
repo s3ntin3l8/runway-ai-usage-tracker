@@ -153,6 +153,37 @@ class TestChartSinceUntilScoping:
         assert dates == ["2026-04-05", "2026-04-20"]
 
 
+class TestCostBarsCarryCacheCost:
+    """Cost bars expose value_cache = the cache portion of cost (USD), so the
+    client can subtract it under the exclude-cache toggle."""
+
+    def test_cost_segment_value_cache_is_cache_cost(self, db_session):
+        db_session.add(
+            UsagePeriodRollup(
+                provider_id="anthropic",
+                account_id="acc1",
+                period_type="day",
+                period_key="2026-04-05",
+                model_id="",
+                sidecar_id="",
+                cost_usd=10.0,
+                cost_cache_read=2.0,
+                cost_cache_create=1.5,
+                last_updated=_NOW,
+            )
+        )
+        db_session.commit()
+        result = query_chart(
+            db_session,
+            metric="cost",
+            since=datetime(2026, 4, 1, tzinfo=UTC),
+            until=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        seg = result["bars"][0]["segments"][0]
+        assert seg["value"] == 10.0
+        assert seg["value_cache"] == 3.5  # cache_read + cache_create cost
+
+
 class TestNullsAreIgnored:
     def test_null_pct_used_does_not_become_zero_or_drop_bucket(self, db_session):
         # The WHERE pct_used IS NOT NULL filter must still be applied — a null

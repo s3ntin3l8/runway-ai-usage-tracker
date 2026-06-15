@@ -5,7 +5,7 @@
 
 import { useMemo } from 'react';
 import type { CumulativeBucket } from '@/api/types';
-import { CostDonut } from '@/components/charts/CostDonut';
+import { CostDonut, modelCost } from '@/components/charts/CostDonut';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
@@ -31,6 +31,7 @@ export function CostTab({
   accountId: string;
   period: SelectedPeriod;
 }) {
+  const { excludeCache } = useExcludeCache();
   const range = period.isCurrentMonth ? undefined : period.range;
   const cost = useProviderCostForecast(providerId, accountId);
   // `liveCumulative` is always fetched for the period-independent Lifetime tile
@@ -104,6 +105,7 @@ export function CostTab({
         metric="cost"
         title={`Cost per day · ${monthLabel}`}
         range={range}
+        excludeCache={excludeCache}
       />
 
       <SplitTable
@@ -139,7 +141,7 @@ function SplitTable({
 }) {
   const { excludeCache } = useExcludeCache();
   const rows = Object.entries(split ?? {}).sort(
-    ([, a], [, b]) => (b.cost_usd ?? 0) - (a.cost_usd ?? 0),
+    ([, a], [, b]) => modelCost(b, excludeCache) - modelCost(a, excludeCache),
   );
   // Reasoning is rarely populated — only show its column when some row has it.
   const hasReasoning = rows.some(([, b]) => (b.tokens_reasoning ?? 0) > 0);
@@ -159,7 +161,7 @@ function SplitTable({
       ) : (
         <>
           <CardContent>
-            <CostDonut data={split ?? {}} className="h-44" />
+            <CostDonut data={split ?? {}} className="h-44" excludeCache={excludeCache} />
           </CardContent>
           <div className="overflow-x-auto">
             <Table>
@@ -205,7 +207,9 @@ function SplitTable({
                         {formatTokens(b.tokens_reasoning ?? 0)}
                       </TD>
                     ) : null}
-                    <TD className="text-right font-mono tabular">{formatCost(b.cost_usd)}</TD>
+                    <TD className="text-right font-mono tabular">
+                      {formatCost(modelCost(b, excludeCache))}
+                    </TD>
                   </TR>
                 ))}
               </TBody>
