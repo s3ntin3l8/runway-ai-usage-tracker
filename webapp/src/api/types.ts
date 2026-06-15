@@ -520,3 +520,65 @@ export interface DashboardLayout {
 export interface CollectorStatus {
   [key: string]: unknown;
 }
+
+// --- Cross-provider stats (Top Models + Global Insights) -------------------
+
+export interface TopModelEntry {
+  model_id: string;
+  msgs: number;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_cache: number; // cache_read + cache_create cost, for exclude-cache
+  providers: string[];
+}
+
+export interface TopModelsResponse {
+  models: TopModelEntry[];
+  metric: string; // "tokens" | "cost"
+  generated_at: string;
+}
+
+export interface GlobalLifetimeTotals {
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  tokens_cache: number;
+  cost_usd: number;
+  cost_cache: number;
+  msgs: number;
+}
+
+export interface GlobalSessionStats {
+  count: number;
+  avg_cost: number;
+  avg_tokens: number;
+}
+
+export interface GlobalBusiestDay {
+  period_key: string; // "YYYY-MM-DD" (UTC date)
+  tokens: number;
+}
+
+export interface GlobalBusiestHour {
+  hour: number; // 0–23, local tz
+  tokens: number;
+}
+
+export interface GlobalStatsResponse {
+  lifetime: GlobalLifetimeTotals;
+  sessions: GlobalSessionStats;
+  cache_hit_ratio: number; // 0..1
+  distinct_models: number;
+  distinct_providers: number;
+  busiest_day: GlobalBusiestDay | null;
+  busiest_hour: GlobalBusiestHour | null;
+  generated_at: string;
+}

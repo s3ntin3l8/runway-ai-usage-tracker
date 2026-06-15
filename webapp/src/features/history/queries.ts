@@ -1,13 +1,31 @@
 import { useQuery } from '@tanstack/react-query';
 import {
+  fetchGlobalStats,
   fetchHistoryChart,
   fetchHistoryDeltas,
   fetchHistoryWindowDetail,
   fetchHistoryWindows,
+  fetchTopModels,
 } from '@/api/endpoints';
 import type { HistoryWindowRow } from '@/api/types';
 
 export type Metric = 'percent' | 'tokens' | 'cost';
+export type TopMetric = 'tokens' | 'cost';
+
+export const useTopModels = (metric: TopMetric, days: number, excludeCache: boolean) =>
+  useQuery({
+    queryKey: ['usage', 'top-models', metric, days, excludeCache],
+    queryFn: () =>
+      fetchTopModels({ metric, days, exclude_cache: excludeCache, limit: 12 }),
+    refetchInterval: 120_000,
+  });
+
+export const useGlobalStats = () =>
+  useQuery({
+    queryKey: ['usage', 'global-stats'],
+    queryFn: fetchGlobalStats,
+    refetchInterval: 300_000,
+  });
 
 export const useHistoryChart = (
   providerId: string | null,

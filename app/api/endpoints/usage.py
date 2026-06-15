@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -12,7 +12,13 @@ from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.utils import resolve_user_tz
 from app.models._datetime import iso_utc
-from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
+from app.models.schemas import (
+    ForecastResponse,
+    GlobalStatsResponse,
+    LimitCard,
+    LimitsResponse,
+    TopModelsResponse,
+)
 from app.services.collector_manager import manager
 from app.services.event_query import (
     query_anomalies,
@@ -29,7 +35,13 @@ from app.services.event_query import (
     query_windows,
 )
 from app.services.forecast import compute_all_forecasts
-from app.services.queries import count_events, event_time_range, query_cumulative_live
+from app.services.queries import (
+    count_events,
+    event_time_range,
+    query_cumulative_live,
+    query_global_stats,
+    query_top_models,
+)
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
@@ -629,6 +641,56 @@ async def get_history_chart(
         since=parse_iso8601_utc(since) if since else None,
         until=parse_iso8601_utc(until) if until else None,
     )
+
+
+@router.get("/top-models")
+@limiter.limit("30/minute")
+async def get_top_models(
+    request: Request,
+    metric: str = Query(default="tokens", pattern="^(tokens|cost)$"),
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    exclude_cache: bool = Query(default=False),
+    limit: int = Query(default=15, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> TopModelsResponse:
+    """Rank models by tokens or cost across ALL providers/accounts.
+
+    Range resolution mirrors `/history/chart`: an explicit `since`/`until`
+    (exclusive) pair wins; else the last `days`; else the current month on the
+    user's local calendar (the UTC-keyed rollup lags that boundary, so this
+    aggregates the event log live like the cumulative gauges do).
+    """
+    if since:
+        since_utc = parse_iso8601_utc(since)
+    elif days is not None:
+        since_utc = datetime.now(UTC) - timedelta(days=days)
+    else:
+        since_utc = _local_period_anchors(resolve_user_tz(session))["month_start_utc"]
+
+    models = query_top_models(
+        session,
+        since=since_utc,
+        until=parse_iso8601_utc(until) if until else None,
+        metric=metric,
+        exclude_cache=exclude_cache,
+        limit=limit,
+    )
+    return TopModelsResponse.model_validate(
+        {"models": models, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+    )
+
+
+@router.get("/global-stats")
+@limiter.limit("30/minute")
+async def get_global_stats(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> GlobalStatsResponse:
+    """Global cross-provider snapshot: lifetime totals, session economics,
+    cache savings, model/provider diversity, and peak day/hour."""
+    return GlobalStatsResponse(**query_global_stats(session, tz=resolve_user_tz(session)))
 
 
 @router.get("/history/window-detail")

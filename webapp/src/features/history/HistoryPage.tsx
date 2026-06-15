@@ -6,6 +6,7 @@ import type { HistoryWindowRow } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
@@ -14,9 +15,17 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
 import { formatLocalDate } from '@/lib/tz';
+import { GlobalInsights } from './GlobalInsights';
 import { HistoryChart } from './HistoryChart';
+import { TopModelsCard } from './TopModelsCard';
 import { WindowDetailSheet } from './WindowDetailSheet';
-import { useHistoryChart, useHistoryDeltas, useHistoryWindows, type Metric } from './queries';
+import {
+  useGlobalStats,
+  useHistoryChart,
+  useHistoryDeltas,
+  useHistoryWindows,
+  type Metric,
+} from './queries';
 
 const RANGES = [
   { days: 7, label: '7d' },
@@ -57,6 +66,7 @@ export function HistoryPage() {
   );
   const deltas = useHistoryDeltas(days);
   const windows = useHistoryWindows(selected?.providerId ?? null, days);
+  const globalStats = useGlobalStats();
 
   const hasChartData =
     (chart.data?.series?.some((s) => s.points.length > 0) ?? false) ||
@@ -89,7 +99,7 @@ export function HistoryPage() {
             </TabsList>
           </Tabs>
           <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)} className="ml-auto">
-            <TabsList className="border-0">
+            <TabsList className="border-0" aria-label="Chart metric">
               <TabsTrigger value="percent" className="h-9 px-2.5">
                 % used
               </TabsTrigger>
@@ -139,6 +149,16 @@ export function HistoryPage() {
             loading={anomalies.isPending}
           />
         </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-[13px] font-semibold tracking-tight">Global insights</h2>
+            <ExcludeCacheToggle />
+          </div>
+          <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
+        </div>
+
+        <TopModelsCard days={days} />
 
         <Card>
           <CardHeader>
