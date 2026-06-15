@@ -14,8 +14,19 @@ import { formatCost, formatDuration, formatTokens } from '@/lib/format';
 
 const COL_COUNT = 7;
 
-function sessionTokens(s: SessionEntry): number {
-  return s.tokens_total ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.tokens_total ?? 0), 0);
+function sessionTokens(s: SessionEntry, excludeCache = false): number {
+  const total =
+    s.tokens_total ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.tokens_total ?? 0), 0);
+  if (!excludeCache) return total;
+  // Subtract cache from whichever source fed the total so the column matches.
+  const cache =
+    s.tokens_total != null
+      ? (s.tokens_cache_read ?? 0) + (s.tokens_cache_create ?? 0)
+      : (s.by_model ?? []).reduce(
+          (sum, m) => sum + (m.tokens_cache_read ?? 0) + (m.tokens_cache_create ?? 0),
+          0,
+        );
+  return total - cache;
 }
 
 function sessionCost(s: SessionEntry): number {
@@ -136,7 +147,7 @@ function SessionDetail({ s }: { s: SessionEntry }) {
   );
 }
 
-function SessionRow({ s }: { s: SessionEntry }) {
+function SessionRow({ s, excludeCache }: { s: SessionEntry; excludeCache: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -166,7 +177,9 @@ function SessionRow({ s }: { s: SessionEntry }) {
           {s.duration_seconds != null ? formatDuration(s.duration_seconds * 1000) : '—'}
         </TD>
         <TD className="text-right font-mono tabular">{s.msgs ?? 0}</TD>
-        <TD className="text-right font-mono tabular">{formatTokens(sessionTokens(s))}</TD>
+        <TD className="text-right font-mono tabular">
+          {formatTokens(sessionTokens(s, excludeCache))}
+        </TD>
         <TD className="text-right font-mono tabular">{formatCost(sessionCost(s))}</TD>
       </TR>
       {open ? (
@@ -180,7 +193,13 @@ function SessionRow({ s }: { s: SessionEntry }) {
   );
 }
 
-export function SessionsTable({ sessions }: { sessions: SessionEntry[] }) {
+export function SessionsTable({
+  sessions,
+  excludeCache = false,
+}: {
+  sessions: SessionEntry[];
+  excludeCache?: boolean;
+}) {
   return (
     <Table>
       <THead>
@@ -196,7 +215,7 @@ export function SessionsTable({ sessions }: { sessions: SessionEntry[] }) {
       </THead>
       <TBody>
         {sessions.map((s) => (
-          <SessionRow key={s.session_id} s={s} />
+          <SessionRow key={s.session_id} s={s} excludeCache={excludeCache} />
         ))}
       </TBody>
     </Table>

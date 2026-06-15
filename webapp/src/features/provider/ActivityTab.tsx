@@ -9,6 +9,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatLocalDate, getUserTz } from '@/lib/tz';
 import type { SelectedPeriod } from './period';
 import { ProviderTrendCard } from './ProviderTrendCard';
@@ -29,6 +31,7 @@ export function ActivityTab({
   accountId: string;
   period: SelectedPeriod;
 }) {
+  const { excludeCache } = useExcludeCache();
   // Current month keeps the live (rolling) calls; a past month is scoped to its
   // closed [since, until) range so every panel reflects that month.
   const range = period.isCurrentMonth ? undefined : period.range;
@@ -58,6 +61,7 @@ export function ActivityTab({
 
   return (
     <div className="flex flex-col gap-4">
+      <ExcludeCacheToggle />
       <ProviderTrendCard
         providerId={providerId}
         accountId={accountId}
@@ -75,7 +79,7 @@ export function ActivityTab({
             {cumulative.isPending ? (
               <Skeleton className="h-56 w-full" />
             ) : monthBucket ? (
-              <TokenDonut bucket={monthBucket} />
+              <TokenDonut bucket={monthBucket} excludeCache={excludeCache} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">
                 No usage recorded in {monthLabel}.
@@ -92,7 +96,7 @@ export function ActivityTab({
             {cumulative.isPending ? (
               <Skeleton className="h-56 w-full" />
             ) : monthBucket?.by_model && Object.keys(monthBucket.by_model).length > 0 ? (
-              <ModelDonut byModel={monthBucket.by_model} />
+              <ModelDonut byModel={monthBucket.by_model} excludeCache={excludeCache} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">
                 No per-model usage in {monthLabel}.
@@ -137,7 +141,7 @@ export function ActivityTab({
             </p>
           </CardContent>
         ) : (
-          <SessionsTable sessions={sessions.data!.sessions} />
+          <SessionsTable sessions={sessions.data!.sessions} excludeCache={excludeCache} />
         )}
       </Card>
     </div>
