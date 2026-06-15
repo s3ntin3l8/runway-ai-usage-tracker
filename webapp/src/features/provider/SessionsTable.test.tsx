@@ -1,8 +1,11 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { SessionsTable } from './SessionsTable';
 import { session } from './test-fixtures';
+import * as api from '@/api/endpoints';
+
+vi.mock('@/api/endpoints');
 
 describe('SessionsTable', () => {
   it('renders a collapsed row per session', () => {
@@ -87,5 +90,54 @@ describe('SessionsTable', () => {
     );
     await userEvent.click(screen.getByText('cccccccc').closest('tr')!);
     expect(screen.getByText(/main session only/i)).toBeInTheDocument();
+  });
+});
+
+describe('SessionsTable sidecar column', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const twoHosts = () =>
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        { sidecar_id: 'laptop', custom_name: 'My Laptop' },
+        { sidecar_id: 'desktop', hostname: 'work-desktop' },
+      ],
+    } as never);
+
+  it('shows a Sidecar column with per-row labels when >1 host feeds the fleet', async () => {
+    twoHosts();
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({ session_id: 'aaaa1111', sidecar_id: 'laptop' }),
+          session({ session_id: 'bbbb2222', sidecar_id: 'desktop' }),
+        ]}
+      />,
+    );
+    expect(await screen.findByRole('columnheader', { name: 'Sidecar' })).toBeInTheDocument();
+    expect(screen.getByText('My Laptop')).toBeInTheDocument();
+    expect(screen.getByText('work-desktop')).toBeInTheDocument();
+  });
+
+  it('falls back to a dash for a session with no sidecar_id', async () => {
+    twoHosts();
+    renderWithProviders(
+      <SessionsTable sessions={[session({ session_id: 'cccc3333', sidecar_id: null })]} />,
+    );
+    await screen.findByRole('columnheader', { name: 'Sidecar' });
+    const row = screen.getByText('cccc3333').closest('tr')!;
+    expect(within(row).getByText('—')).toBeInTheDocument();
+  });
+
+  it('omits the Sidecar column on a single-host fleet', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', custom_name: 'My Laptop' }],
+    } as never);
+    renderWithProviders(
+      <SessionsTable sessions={[session({ session_id: 'aaaa1111', sidecar_id: 'laptop' })]} />,
+    );
+    await screen.findByText('aaaa1111');
+    expect(screen.queryByRole('columnheader', { name: 'Sidecar' })).not.toBeInTheDocument();
+    expect(screen.queryByText('My Laptop')).not.toBeInTheDocument();
   });
 });
