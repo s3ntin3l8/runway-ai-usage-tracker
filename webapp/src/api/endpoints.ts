@@ -14,6 +14,7 @@ import type {
   EventsResponse,
   FleetResponse,
   ForecastResponse,
+  GlobalStatsResponse,
   HeatmapResponse,
   HistoryChartResponse,
   HistoryDeltas,
@@ -25,6 +26,7 @@ import type {
   Sidecar,
   SystemSettings,
   TokenHealthEntry,
+  TopModelsResponse,
   UpdateCheckResult,
   Webhook,
   WindowDetailResponse,
@@ -64,6 +66,11 @@ export const fetchAnomalies = (params: Params = {}) =>
 
 export const fetchHistoryChart = (params: Params) =>
   api<HistoryChartResponse>(`/api/v1/usage/history/chart${qs(params)}`);
+
+export const fetchTopModels = (params: Params = {}) =>
+  api<TopModelsResponse>(`/api/v1/usage/top-models${qs(params)}`);
+
+export const fetchGlobalStats = () => api<GlobalStatsResponse>('/api/v1/usage/global-stats');
 
 export const fetchHistoryWindows = (params: Params = {}) =>
   api<{ windows: HistoryWindowRow[] }>(`/api/v1/usage/history/windows${qs(params)}`);

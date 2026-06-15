@@ -20,6 +20,7 @@ from app.services.queries.anomaly import query_anomalies
 from app.services.queries.cumulative import query_cumulative_live
 from app.services.queries.events import count_events, event_time_range, query_events
 from app.services.queries.forecast import query_cost_forecast
+from app.services.queries.global_stats import query_global_stats
 from app.services.queries.heatmap import query_heatmap
 from app.services.queries.history import (
     query_history_deltas,
@@ -33,6 +34,7 @@ from app.services.queries.snapshots import (
     query_window_detail,
     query_windows,
 )
+from app.services.queries.top_models import query_top_models
 from app.services.queries.windows import (
     query_window_aggregation,
     query_window_history,
@@ -46,12 +48,14 @@ __all__ = [
     "query_cost_forecast",
     "query_cumulative_live",
     "query_events",
+    "query_global_stats",
     "query_heatmap",
     "query_history_deltas",
     "query_history_grouped",
     "query_history_raw",
     "query_sessions",
     "query_snapshots",
+    "query_top_models",
     "query_window_aggregation",
     "query_window_detail",
     "query_window_history",

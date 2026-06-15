@@ -173,3 +173,65 @@ class ForecastResponse(BaseModel):
     # decelerating, low_resolution, near_limit
     summary: dict[str, int]
     generated_at: str  # ISO-8601 UTC
+
+
+class TopModelEntry(BaseModel):
+    """One model's totals in the cross-provider Top Models ranking."""
+
+    model_id: str
+    msgs: int
+    tokens_total: int
+    tokens_input: int
+    tokens_output: int
+    tokens_cache_read: int
+    tokens_cache_create: int
+    tokens_reasoning: int
+    cost_usd: float
+    cost_cache: float  # cache_read + cache_create cost, for exclude-cache
+    providers: list[str]  # distinct providers that contributed this model
+
+
+class TopModelsResponse(BaseModel):
+    models: list[TopModelEntry]
+    metric: str  # "tokens" | "cost" — the sort key used
+    generated_at: str  # ISO-8601 UTC
+
+
+class GlobalLifetimeTotals(BaseModel):
+    tokens_total: int
+    tokens_input: int
+    tokens_output: int
+    tokens_cache_read: int
+    tokens_cache_create: int
+    tokens_reasoning: int
+    tokens_cache: int  # cache_read + cache_create
+    cost_usd: float
+    cost_cache: float
+    msgs: int
+
+
+class GlobalSessionStats(BaseModel):
+    count: int
+    avg_cost: float
+    avg_tokens: float
+
+
+class GlobalBusiestDay(BaseModel):
+    period_key: str  # "YYYY-MM-DD" (UTC calendar date)
+    tokens: int
+
+
+class GlobalBusiestHour(BaseModel):
+    hour: int  # 0–23 in the user's local timezone
+    tokens: int
+
+
+class GlobalStatsResponse(BaseModel):
+    lifetime: GlobalLifetimeTotals
+    sessions: GlobalSessionStats
+    cache_hit_ratio: float  # cache_read / all tokens, 0..1
+    distinct_models: int
+    distinct_providers: int
+    busiest_day: GlobalBusiestDay | None
+    busiest_hour: GlobalBusiestHour | None
+    generated_at: str  # ISO-8601 UTC
