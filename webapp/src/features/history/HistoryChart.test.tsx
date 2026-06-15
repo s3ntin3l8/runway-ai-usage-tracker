@@ -68,6 +68,40 @@ describe('HistoryChart', () => {
     expect(series[0].stack).toBe('total');
   });
 
+  it('subtracts value_cache from token bars when excludeCache is set', () => {
+    const data: HistoryChartResponse = {
+      bars: [
+        {
+          date: '2026-06-10',
+          ts: '2026-06-10T00:00:00Z',
+          segments: [
+            { provider_id: 'claude', model_id: 'opus', label: 'opus', value: 100, value_cache: 30 },
+          ],
+        },
+      ],
+    };
+    render(<HistoryChart data={data} metric="tokens" excludeCache />);
+    const series = (lastOption as { series: { data: number[] }[] }).series;
+    expect(series[0].data[0]).toBe(70);
+  });
+
+  it('keeps the full token value when excludeCache is off', () => {
+    const data: HistoryChartResponse = {
+      bars: [
+        {
+          date: '2026-06-10',
+          ts: '2026-06-10T00:00:00Z',
+          segments: [
+            { provider_id: 'claude', model_id: 'opus', label: 'opus', value: 100, value_cache: 30 },
+          ],
+        },
+      ],
+    };
+    render(<HistoryChart data={data} metric="tokens" />);
+    const series = (lastOption as { series: { data: number[] }[] }).series;
+    expect(series[0].data[0]).toBe(100);
+  });
+
   it('builds bars for the cost metric (currency value formatter)', () => {
     const data: HistoryChartResponse = {
       bars: [
@@ -80,5 +114,20 @@ describe('HistoryChart', () => {
     };
     render(<HistoryChart data={data} metric="cost" />);
     expect((lastOption as { series: unknown[] }).series).toHaveLength(1);
+  });
+
+  it('does not subtract cache for the cost metric even when excludeCache is set', () => {
+    const data: HistoryChartResponse = {
+      bars: [
+        {
+          date: '2026-06-10',
+          ts: '2026-06-10T00:00:00Z',
+          segments: [{ provider_id: 'claude', model_id: 'opus', label: 'opus', value: 3.5 }],
+        },
+      ],
+    };
+    render(<HistoryChart data={data} metric="cost" excludeCache />);
+    const series = (lastOption as { series: { data: number[] }[] }).series;
+    expect(series[0].data[0]).toBe(3.5);
   });
 });
