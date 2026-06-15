@@ -155,6 +155,19 @@ class TestCheckNow:
         assert result is None
         assert checker.get_latest() is None
 
+    @pytest.mark.asyncio
+    async def test_follows_redirects(self):
+        # Regression guard: the repo was renamed, so GitHub 301-redirects the
+        # API. httpx must be told to follow, or the whole update check silently
+        # fails (every sidecar stops being flagged).
+        checker = SidecarVersionChecker()
+        client = _mock_client(payload={"tag_name": "v1.4.2"})
+        with patch(
+            "app.services.sidecar_version_checker.httpx.AsyncClient", return_value=client
+        ) as mock_cls:
+            await checker.check_now()
+        assert mock_cls.call_args.kwargs.get("follow_redirects") is True
+
 
 # ---------------------------------------------------------------------------
 # parse_channel

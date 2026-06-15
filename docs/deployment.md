@@ -172,7 +172,7 @@ python3 scripts/sidecar.py \
   --api-key <strong-shared-secret>
 ```
 
-Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/runway/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and payload format.
+Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and payload format.
 
 The sidecar only needs outbound HTTP — no inbound ports.
 

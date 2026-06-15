@@ -77,7 +77,7 @@ The core build/release workflows in `.github/workflows/` (alongside CodeQL, depe
   - **build-and-push**: Docker image to GHCR — `:edge` on every push to `main`, `:latest` + version tag on a release (via the shared `docker-publish.yml`)
 - **`release-please.yml`** — opens / merges release PRs from Conventional Commits (see *Releases* below).
 - **`sidecar-release.yml`** — manual (`workflow_dispatch`); builds the standalone sidecar with PyInstaller and attaches macOS/Windows `.zip` + Linux/Linux-CLI `.tar.gz` artifacts to a GitHub release (stable channel).
-- **`sidecar-edge.yml`** — on push to `main` touching sidecar code; rolling per-commit Linux + Linux-CLI builds stamped `<base>+edge.<sha>`, published to the always-overwritten `edge` prerelease — the sidecar analog of the Docker `:edge` tag.
+- **`sidecar-edge.yml`** — on push to `main` touching sidecar code; rolling per-commit builds for all four targets (Linux, Linux-CLI, macOS, Windows) stamped `<base>+edge.<sha>`, published to the always-overwritten `edge` prerelease — the sidecar analog of the Docker `:edge` tag. A flaky non-Linux runner doesn't block the rest (the publish job tolerates a partial set).
 
 Dependabot updates actions, pip, and npm weekly. Secrets baseline (`.secrets.baseline`) is tracked in git — required by CI.
 

@@ -56,13 +56,17 @@ class TestResolveAssetName:
         monkeypatch.setattr(sys, "platform", "linux")
         assert resolve_asset_name("cli", "edge", None) == "Runway-Sidecar-Linux-CLI-edge.tar.gz"
 
-    def test_macos_edge_unsupported(self, monkeypatch):
+    def test_macos_edge(self, monkeypatch):
+        # Edge now publishes a macOS asset (full platform parity).
         monkeypatch.setattr(sys, "platform", "darwin")
-        with pytest.raises(SelfUpdateUnsupportedError):
-            resolve_asset_name("tray", "edge", None)
+        assert resolve_asset_name("tray", "edge", None) == "Runway-Sidecar-macOS-edge.zip"
 
-    def test_windows_edge_unsupported(self, monkeypatch):
+    def test_windows_edge(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")
+        assert resolve_asset_name("tray", "edge", None) == "Runway-Sidecar-Windows-edge.zip"
+
+    def test_unknown_platform_edge_unsupported(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "freebsd")
         with pytest.raises(SelfUpdateUnsupportedError):
             resolve_asset_name("tray", "edge", None)
 

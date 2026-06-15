@@ -21,8 +21,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_GITHUB_API_URL = "https://api.github.com/repos/s3ntin3l8/runway/releases/latest"
-_GITHUB_EDGE_REFS_URL = "https://api.github.com/repos/s3ntin3l8/runway/git/refs/tags/edge"
+_GITHUB_API_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
+_GITHUB_EDGE_REFS_URL = (
+    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
+)
 _CHECK_INTERVAL_SECONDS = 24 * 60 * 60  # 24h
 _HTTP_TIMEOUT_SECONDS = 10.0
 
@@ -90,7 +92,12 @@ class SidecarVersionChecker:
         """
         headers = {"User-Agent": "Runway-Server-VersionChecker"}
         try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+            # follow_redirects: GitHub 301-redirects API calls after a repo
+            # rename. httpx does NOT follow by default — without this a rename
+            # silently breaks the whole update check (see the URL constants).
+            async with httpx.AsyncClient(
+                timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
                 resp = await client.get(self._api_url, headers=headers)
                 if resp.status_code == 200:
                     tag = str(resp.json().get("tag_name", "")).lstrip("v").strip()
@@ -99,8 +106,11 @@ class SidecarVersionChecker:
                             logger.info(f"Latest sidecar release is {tag}")
                         self._latest = tag
                 else:
-                    logger.debug(
-                        f"Sidecar version check returned HTTP {resp.status_code}; keeping cache"
+                    # WARN, not DEBUG: a persistent non-200 here means the fleet
+                    # silently stops flagging outdated sidecars.
+                    logger.warning(
+                        f"Sidecar version check returned HTTP {resp.status_code} "
+                        f"for {self._api_url}; keeping cache"
                     )
 
                 # Rolling `edge` prerelease: track the tag's commit sha so edge
@@ -113,8 +123,12 @@ class SidecarVersionChecker:
                         if sha != self._latest_edge_sha:
                             logger.info(f"Latest sidecar edge build is {sha[:12]}")
                         self._latest_edge_sha = sha
+                elif edge_resp.status_code != 404:
+                    logger.warning(
+                        f"Sidecar edge-tag check returned HTTP {edge_resp.status_code}; keeping cache"
+                    )
         except Exception as exc:
-            logger.debug(f"Sidecar version check failed: {exc}")
+            logger.warning(f"Sidecar version check failed: {exc}")
         return self._latest
 
     async def _run_loop(self) -> None:

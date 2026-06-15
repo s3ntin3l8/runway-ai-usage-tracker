@@ -1,10 +1,10 @@
 name: Sidecar Edge Build
 
 # Rolling per-commit sidecar build — the sidecar analog of the Docker :edge tag.
-# Publishes Linux binaries to a single, always-overwritten `edge` GitHub
-# *prerelease* so the download URLs stay constant. Because it is a prerelease,
-# GitHub's /releases/latest never returns it, so the stable update-notify
-# channel is untouched.
+# Publishes Linux, macOS and Windows binaries to a single, always-overwritten
+# `edge` GitHub *prerelease* so the download URLs stay constant. Because it is a
+# prerelease, GitHub's /releases/latest never returns it, so the stable
+# update-notify channel is untouched.
 on:
   push:
     branches: [main]
@@ -23,18 +23,33 @@ concurrency:
 jobs:
   build:
     strategy:
+      # Don't let a flaky macOS/Windows runner cancel the Linux legs — the
+      # publish job below tolerates a partial set.
+      fail-fast: false
       matrix:
         include:
-          - spec: sidecar_app/spec/linux.spec
-            platform: Linux
-            dist_path: dist/RunwaySidecar
-          - spec: sidecar_app/spec/linux-cli.spec
-            platform: Linux-CLI
-            dist_path: dist/runway-sidecar-cli
-    runs-on: ubuntu-latest
+          - os: ubuntu-latest
+            name: Linux
+            spec: sidecar_app/spec/linux.spec
+            artifact_path: dist/RunwaySidecar
+            archive: Runway-Sidecar-Linux-edge.tar.gz
+          - os: ubuntu-latest
+            name: Linux-CLI
+            spec: sidecar_app/spec/linux-cli.spec
+            artifact_path: dist/runway-sidecar-cli
+            archive: Runway-Sidecar-Linux-CLI-edge.tar.gz
+          - os: macos-latest
+            name: macOS
+            spec: sidecar_app/spec/macos.spec
+            artifact_path: dist/Runway Sidecar.app
+            archive: Runway-Sidecar-macOS-edge.zip
+          - os: windows-latest
+            name: Windows
+            spec: sidecar_app/spec/windows.spec
+            artifact_path: dist/RunwaySidecar.exe
+            archive: Runway-Sidecar-Windows-edge.zip
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-edge.tar.gz
     steps:
       - uses: actions/checkout@v6
 
@@ -48,7 +63,8 @@ jobs:
 
       - name: Stamp edge version
         # Mark the bundled package.json so the binary reports `<base>+edge.<sha>`.
-        # Working-copy only — never committed.
+        # Working-copy only — never committed. bash + jq ship on all GH runners.
+        shell: bash
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
           BASE=$(jq -r .version package.json)
@@ -62,22 +78,39 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller ${{ matrix.spec }}
 
-      - name: Package artifact + checksum
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r "../${{ matrix.archive }}" "Runway Sidecar.app"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "${{ matrix.artifact_path }}" -DestinationPath "${{ matrix.archive }}"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf "${{ matrix.archive }}" -C dist "$(basename '${{ matrix.artifact_path }}')"
+
+      - name: Checksum
+        # Python (already installed) keeps this identical across all three OSes;
+        # output is sha256sum-compatible (`<hex>  <name>`).
+        shell: bash
         run: |
-          tar -czf "${ARTIFACT}" -C dist "$(basename '${{ matrix.dist_path }}')"
-          sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
+          python -c "import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); print(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name)" "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: edge-${{ matrix.platform }}
+          name: edge-${{ matrix.name }}
           path: |
-            ${{ env.ARTIFACT }}
-            ${{ env.ARTIFACT }}.sha256
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
           retention-days: 1
 
   publish:
     needs: build
+    # Publish whatever built — a single failed platform leg shouldn't hold back
+    # the rest of the rolling edge channel.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
