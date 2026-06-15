@@ -94,6 +94,12 @@ class UsageEventPush(BaseModel):
     model_id: str | None = None
     session_id: str | None = None
     subagent_type: str | None = None  # "Explore" | "Plan" | None for main thread
+    # Working-directory / project context (enrichment). cwd = full path; the
+    # server derives `project` (basename) in EventIngestor. tool_names = the
+    # tool_use block names in the message (Anthropic), stored as a JSON array.
+    cwd: str | None = None
+    git_branch: str | None = None
+    tool_names: list[str] | None = None
     tokens_input: int = 0
     tokens_output: int = 0
     tokens_cache_read: int = 0

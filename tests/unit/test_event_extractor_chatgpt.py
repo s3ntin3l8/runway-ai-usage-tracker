@@ -142,6 +142,18 @@ def test_captures_token_dimensions():
     assert codex.tokens_reasoning == 200
 
 
+def test_captures_cwd_and_branch_from_session_meta():
+    """cwd + git branch come from the session_meta header and apply to all events."""
+    evts = parse_chatgpt_events(
+        [FIXTURE],
+        account_id="u@codex.test",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert len(evts) == 2
+    assert all(e.cwd == "/home/user/codex-project" for e in evts)
+    assert all(e.git_branch == "feat/widgets" for e in evts)
+
+
 def test_missing_file_returns_empty():
     """Non-existent paths are silently skipped."""
     evts = parse_chatgpt_events(

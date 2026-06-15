@@ -124,6 +124,11 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("system_config", "sidecar_update_channel", "VARCHAR"),
     ("system_config", "sidecar_auto_update", "BOOLEAN"),
     ("usage_events", "subagent_type", "VARCHAR"),
+    # Working-directory / project context + tool names (universal project linking).
+    ("usage_events", "cwd", "VARCHAR"),
+    ("usage_events", "project", "VARCHAR"),
+    ("usage_events", "git_branch", "VARCHAR"),
+    ("usage_events", "tools_json", "VARCHAR"),
     # Per-component USD cost (groundwork for cost-composition views; backfilled
     # from token counts × historical pricing by scripts/backfill_cache_costs.py).
     ("usage_events", "cost_input", "FLOAT NOT NULL DEFAULT 0"),
@@ -144,6 +149,7 @@ _DEFERRED_INDEXES: list[tuple[str, str, str]] = [
     # index_name, table, comma-separated columns
     # Note: ix_quota_snapshots_series_ts is handled by _rebuild_quota_snapshot_indexes
     # so it can be rebuilt with variant included on existing databases.
+    ("ix_usage_events_project_ts", "usage_events", "project, ts"),
 ]
 
 

@@ -118,6 +118,24 @@ def test_captures_token_dimensions():
         db_path.unlink(missing_ok=True)
 
 
+def test_captures_cwd_and_latency():
+    """cwd comes from data.path; latency_ms = time.completed − time.created (ms)."""
+    db_path, _ = _make_db()
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="user@opencode.test",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        m1 = next(e for e in evts if e.event_id == "msg_opencode_001")
+        assert m1.cwd == "/home/user/project"
+        assert m1.latency_ms == 2000  # 1746709262000 − 1746709260000
+        m2 = next(e for e in evts if e.event_id == "msg_opencode_002")
+        assert m2.latency_ms == 3500  # 1746709383500 − 1746709380000
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
 def test_nonexistent_db_returns_empty():
     """Missing DB file returns empty list without raising."""
     evts = parse_opencode_events(

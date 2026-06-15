@@ -165,3 +165,38 @@ def test_missing_file_returns_empty():
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
     assert evts == []
+
+
+def _write_gemini_session(base: Path, project: str, kind: str, project_root: str | None) -> Path:
+    """Build a ~/.gemini/tmp-style <project>/chats/session-*.jsonl layout."""
+    proj_dir = base / project
+    chats = proj_dir / "chats"
+    chats.mkdir(parents=True)
+    if project_root is not None:
+        (proj_dir / ".project_root").write_text(project_root, encoding="utf-8")
+    fp = chats / "session-1.jsonl"
+    fp.write_text(
+        f'{{"sessionId":"s1","projectHash":"h","kind":"{kind}"}}\n'
+        '{"id":"g1","timestamp":"2026-05-08T14:01:00.000Z","type":"gemini",'
+        '"tokens":{"input":100,"output":20,"cached":0,"thoughts":0},"model":"gemini-2.5-flash"}\n',
+        encoding="utf-8",
+    )
+    return fp
+
+
+def test_cwd_from_project_root_file(tmp_path):
+    """cwd is read from the sibling .project_root two levels up; main kind = no subagent."""
+    fp = _write_gemini_session(tmp_path, "myproj", "main", "/home/user/repos/myproj")
+    evts = parse_gemini_events([fp], account_id="u", since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert len(evts) == 1
+    assert evts[0].cwd == "/home/user/repos/myproj"
+    assert evts[0].subagent_type is None
+
+
+def test_cwd_falls_back_to_dir_name_and_kind_maps_to_subagent(tmp_path):
+    """Without .project_root, cwd falls back to the project dir name; non-main kind → subagent."""
+    fp = _write_gemini_session(tmp_path, "fallbackproj", "plan", None)
+    evts = parse_gemini_events([fp], account_id="u", since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert len(evts) == 1
+    assert evts[0].cwd == "fallbackproj"
+    assert evts[0].subagent_type == "plan"

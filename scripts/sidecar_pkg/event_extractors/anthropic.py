@@ -107,9 +107,12 @@ def parse_anthropic_events(
 
                     usage = msg.get("usage") or {}
                     content = msg.get("content") or []
-                    tool_calls = sum(
-                        1 for c in content if isinstance(c, dict) and c.get("type") == "tool_use"
-                    )
+                    tool_names = [
+                        c.get("name")
+                        for c in content
+                        if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name")
+                    ]
+                    tool_calls = len(tool_names)
 
                     subagent_type = e.get("attributionAgent") if e.get("isSidechain") else None
 
@@ -121,6 +124,9 @@ def parse_anthropic_events(
                             ts=ts.isoformat(),
                             model_id=_normalize_anthropic_model(msg.get("model", "")),
                             session_id=e.get("sessionId"),
+                            cwd=e.get("cwd"),
+                            git_branch=e.get("gitBranch"),
+                            tool_names=tool_names or None,
                             subagent_type=subagent_type,
                             tokens_input=int(usage.get("input_tokens", 0)),
                             tokens_output=int(usage.get("output_tokens", 0)),

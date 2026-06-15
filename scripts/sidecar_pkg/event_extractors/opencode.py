@@ -105,6 +105,22 @@ def parse_opencode_events(
         model_id = data.get("modelID") or "unknown"
         stop_reason = data.get("finish") or None
 
+        # Working directory (path.cwd, falling back to the repo root) and request
+        # latency (completed − created, both ms epoch) — OpenCode is the only
+        # provider that logs message timing.
+        path = data.get("path") or {}
+        cwd = path.get("cwd") or path.get("root")
+        time_obj = data.get("time") or {}
+        created = time_obj.get("created")
+        completed = time_obj.get("completed")
+        latency_ms = (
+            int(completed - created)
+            if isinstance(created, int | float)
+            and isinstance(completed, int | float)
+            and completed >= created
+            else None
+        )
+
         # Use the row's id (stable primary key) as event_id
         event_id = msg_id or f"opencode|{session_id or 'unknown'}|ts_{time_created_ms}"
 
@@ -124,6 +140,8 @@ def parse_opencode_events(
                 ts=ts.isoformat(),
                 model_id=model_id,
                 session_id=session_id or None,
+                cwd=cwd,
+                latency_ms=latency_ms,
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
                 tokens_cache_read=tokens_cache_read,
