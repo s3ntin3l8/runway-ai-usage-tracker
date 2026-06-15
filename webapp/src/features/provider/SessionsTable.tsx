@@ -73,7 +73,10 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
     <div className="flex flex-col gap-5 bg-surface-2/40 px-4 py-4">
       <DetailSection title="Token breakdown">
         <div className="flex flex-col gap-3">
-          <TokenBar tokens={s} excludeCache={excludeCache} showLegend />
+          {/* Bar shows proportion only — the Stat tiles below carry the labels
+              and values (with extras), so a legend here would just duplicate them.
+              Per-segment values remain on hover. */}
+          <TokenBar tokens={s} excludeCache={excludeCache} />
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
             <Stat label="Input" value={formatTokens(s.tokens_input ?? 0)} />
             <Stat label="Output" value={formatTokens(s.tokens_output ?? 0)} />
