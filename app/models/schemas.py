@@ -241,3 +241,37 @@ class GlobalStatsResponse(BaseModel):
     busiest_day: GlobalBusiestDay | None
     busiest_hour: GlobalBusiestHour | None
     generated_at: str  # ISO-8601 UTC
+
+
+class TopProjectEntry(BaseModel):
+    """One project's totals in the Top Projects ranking."""
+
+    project: str
+    msgs: int
+    sessions: int
+    tokens_total: int
+    tokens_input: int
+    tokens_output: int
+    tokens_cache_read: int
+    tokens_cache_create: int
+    tokens_reasoning: int
+    cost_usd: float
+    cost_cache: float
+    providers: list[str]  # distinct providers that touched this project
+
+
+class TopProjectsResponse(BaseModel):
+    projects: list[TopProjectEntry]
+    metric: str  # "tokens" | "cost" | "sessions"
+    generated_at: str
+
+
+class TopToolEntry(BaseModel):
+    tool: str
+    calls: int  # total invocations
+    msgs: int  # distinct messages that used it
+
+
+class TopToolsResponse(BaseModel):
+    tools: list[TopToolEntry]
+    generated_at: str

@@ -177,4 +177,21 @@ describe('SessionsTable sidecar column', () => {
     expect(screen.queryByRole('columnheader', { name: 'Sidecar' })).not.toBeInTheDocument();
     expect(screen.queryByText('My Laptop')).not.toBeInTheDocument();
   });
+
+  it('shows the Project column with a cwd-titled badge when sessions are attributed', () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[session({ session_id: 'aaaa1111', project: 'runway', cwd: '/home/u/runway' })]}
+      />,
+    );
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    expect(screen.getByText('runway')).toHaveAttribute('title', '/home/u/runway');
+  });
+
+  it('omits the Project column when no session has a project', () => {
+    renderWithProviders(
+      <SessionsTable sessions={[session({ session_id: 'aaaa1111', project: null })]} />,
+    );
+    expect(screen.queryByRole('columnheader', { name: 'Project' })).not.toBeInTheDocument();
+  });
 });

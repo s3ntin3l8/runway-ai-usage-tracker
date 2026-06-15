@@ -23,10 +23,13 @@ import type {
   LimitCard,
   ProviderConfig,
   SessionEntry,
+  SessionsPaginatedResponse,
   Sidecar,
   SystemSettings,
   TokenHealthEntry,
   TopModelsResponse,
+  TopProjectsResponse,
+  TopToolsResponse,
   UpdateCheckResult,
   Webhook,
   WindowDetailResponse,
@@ -54,6 +57,18 @@ export const fetchHeatmap = (params: Params) =>
 
 export const fetchSessions = (params: Params) =>
   api<{ sessions: SessionEntry[] }>(`/api/v1/usage/sessions${qs(params)}`);
+
+export const fetchSessionsPaginated = (params: Params) =>
+  api<SessionsPaginatedResponse>(`/api/v1/usage/sessions/paginated${qs(params)}`);
+
+export const fetchTopProjects = (params: Params = {}) =>
+  api<TopProjectsResponse>(`/api/v1/usage/top-projects${qs(params)}`);
+
+export const fetchTopTools = (params: Params = {}) =>
+  api<TopToolsResponse>(`/api/v1/usage/top-tools${qs(params)}`);
+
+export const fetchProjects = (params: Params = {}) =>
+  api<{ projects: string[] }>(`/api/v1/usage/projects${qs(params)}`);
 
 export const fetchEvents = (params: Params) =>
   api<EventsResponse>(`/api/v1/usage/events${qs(params)}`);

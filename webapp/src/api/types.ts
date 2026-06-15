@@ -248,7 +248,49 @@ export interface SessionEntry {
   cost_cache_create?: number;
   cache_hit_pct?: number;
   sidecar_id?: string | null;
+  project?: string | null;
+  cwd?: string | null;
+  git_branch?: string | null;
   [key: string]: unknown;
+}
+
+export interface SessionsPaginatedResponse {
+  sessions: SessionEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface TopProjectEntry {
+  project: string;
+  msgs: number;
+  sessions: number;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_cache: number;
+  providers: string[];
+}
+
+export interface TopProjectsResponse {
+  projects: TopProjectEntry[];
+  metric: string; // "tokens" | "cost" | "sessions"
+  generated_at: string;
+}
+
+export interface TopToolEntry {
+  tool: string;
+  calls: number;
+  msgs: number;
+}
+
+export interface TopToolsResponse {
+  tools: TopToolEntry[];
+  generated_at: string;
 }
 
 export interface UsageEvent {

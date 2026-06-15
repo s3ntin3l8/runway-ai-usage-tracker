@@ -18,6 +18,8 @@ from app.models.schemas import (
     LimitCard,
     LimitsResponse,
     TopModelsResponse,
+    TopProjectsResponse,
+    TopToolsResponse,
 )
 from app.services.collector_manager import manager
 from app.services.event_query import (
@@ -40,7 +42,11 @@ from app.services.queries import (
     event_time_range,
     query_cumulative_live,
     query_global_stats,
+    query_projects,
+    query_sessions_paginated,
     query_top_models,
+    query_top_projects,
+    query_top_tools,
 )
 
 # Window type rank for selecting the "longest" window among multiple cards.
@@ -85,6 +91,17 @@ def _month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime
     end_year, end_month = (year + 1, 1) if month == 12 else (year, month + 1)
     end_local = datetime(end_year, end_month, 1, tzinfo=tz)
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
+
+
+def _resolve_ranking_since(session: Session, since: str | None, days: float | None) -> datetime:
+    """Lower bound for the Top-* rankings: explicit `since` wins, else `days`
+    back from now, else the start of the current month on the user's calendar
+    (the UTC rollup lags that boundary, so these scan events live)."""
+    if since:
+        return parse_iso8601_utc(since)
+    if days is not None:
+        return datetime.now(UTC) - timedelta(days=days)
+    return _local_period_anchors(resolve_user_tz(session))["month_start_utc"]
 
 
 @router.get("/limits")
@@ -662,12 +679,7 @@ async def get_top_models(
     user's local calendar (the UTC-keyed rollup lags that boundary, so this
     aggregates the event log live like the cumulative gauges do).
     """
-    if since:
-        since_utc = parse_iso8601_utc(since)
-    elif days is not None:
-        since_utc = datetime.now(UTC) - timedelta(days=days)
-    else:
-        since_utc = _local_period_anchors(resolve_user_tz(session))["month_start_utc"]
+    since_utc = _resolve_ranking_since(session, since, days)
 
     models = query_top_models(
         session,
@@ -929,6 +941,108 @@ async def get_usage_sessions(
         sort_by=sort_by,
     )
     return {"sessions": sessions}
+
+
+@router.get("/sessions/paginated")
+@limiter.limit("30/minute")
+async def get_usage_sessions_paginated(
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    project: str | None = Query(default=None),
+    page: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=50),
+    sort_by: Literal["tokens", "recent"] = Query(default="recent"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """One page of sessions (default 25) plus the total count, for the Sessions
+    browser tab. Optional `project` filters to one working directory."""
+    return query_sessions_paginated(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=parse_iso8601_utc(since) if since else None,
+        until=parse_iso8601_utc(until) if until else None,
+        page=page,
+        page_size=limit,
+        sort_by=sort_by,
+        project=project,
+    )
+
+
+@router.get("/top-projects")
+@limiter.limit("30/minute")
+async def get_top_projects(
+    request: Request,
+    metric: str = Query(default="tokens", pattern="^(tokens|cost|sessions)$"),
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    exclude_cache: bool = Query(default=False),
+    provider_id: str | None = Query(default=None),
+    limit: int = Query(default=15, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> TopProjectsResponse:
+    """Rank projects by tokens, cost, or session count. Without `provider_id`
+    the ranking spans every provider (one repo's total across all tools)."""
+    projects = query_top_projects(
+        session,
+        since=_resolve_ranking_since(session, since, days),
+        until=parse_iso8601_utc(until) if until else None,
+        metric=metric,
+        exclude_cache=exclude_cache,
+        provider_id=provider_id,
+        limit=limit,
+    )
+    return TopProjectsResponse.model_validate(
+        {"projects": projects, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+    )
+
+
+@router.get("/top-tools")
+@limiter.limit("30/minute")
+async def get_top_tools(
+    request: Request,
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    provider_id: str | None = Query(default=None),
+    limit: int = Query(default=15, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> TopToolsResponse:
+    """Most-used tools by invocation count (Anthropic tool_use names today)."""
+    tools = query_top_tools(
+        session,
+        since=_resolve_ranking_since(session, since, days),
+        until=parse_iso8601_utc(until) if until else None,
+        provider_id=provider_id,
+        limit=limit,
+    )
+    return TopToolsResponse.model_validate(
+        {"tools": tools, "generated_at": iso_utc(datetime.now(UTC))}
+    )
+
+
+@router.get("/projects")
+@limiter.limit("30/minute")
+async def get_projects(
+    request: Request,
+    provider_id: str | None = Query(default=None),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Distinct project labels (for the sessions filter dropdown)."""
+    return {
+        "projects": query_projects(
+            session,
+            provider_id=provider_id,
+            since=parse_iso8601_utc(since) if since else None,
+            until=parse_iso8601_utc(until) if until else None,
+        )
+    }
 
 
 @router.post("/reset/{provider}")
