@@ -3,19 +3,13 @@
 // token volume — this answers "what did I just do?" at a glance.
 
 import type { SessionEntry } from '@/api/types';
+import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { formatCost, formatDuration, formatTokens, timeAgo } from '@/lib/format';
 import { useProviderRecentSessions } from './queries';
-
-function sessionTokens(s: SessionEntry): number {
-  return s.tokens_total ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.tokens_total ?? 0), 0);
-}
-
-function sessionCost(s: SessionEntry): number {
-  return s.cost_usd ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.cost_usd ?? 0), 0);
-}
+import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -26,7 +20,8 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SessionCard({ s }: { s: SessionEntry }) {
+function SessionCard({ s, excludeCache }: { s: SessionEntry; excludeCache: boolean }) {
+  const cachePct = sessionCachePct(s);
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 pt-4">
@@ -50,9 +45,14 @@ function SessionCard({ s }: { s: SessionEntry }) {
         <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
           <Stat label="Duration" value={formatDuration((s.duration_seconds ?? 0) * 1000)} />
           <Stat label="Messages" value={(s.msgs ?? 0).toLocaleString()} />
-          <Stat label="Tokens" value={formatTokens(sessionTokens(s))} />
+          <Stat label="Tokens" value={formatTokens(sessionTokens(s, excludeCache))} />
           <Stat label="Cost" value={formatCost(sessionCost(s))} />
         </div>
+
+        <TokenBar tokens={s} excludeCache={excludeCache} showLegend />
+        {cachePct != null ? (
+          <span className="text-[10px] text-fg-subtle">{cachePct}% cache</span>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -61,9 +61,11 @@ function SessionCard({ s }: { s: SessionEntry }) {
 export function RecentSessions({
   providerId,
   accountId,
+  excludeCache = false,
 }: {
   providerId: string;
   accountId: string;
+  excludeCache?: boolean;
 }) {
   const q = useProviderRecentSessions(providerId, accountId);
   const sessions = q.data?.sessions ?? [];
@@ -84,7 +86,7 @@ export function RecentSessions({
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           {sessions.slice(0, 3).map((s) => (
-            <SessionCard key={s.session_id} s={s} />
+            <SessionCard key={s.session_id} s={s} excludeCache={excludeCache} />
           ))}
         </div>
       )}
