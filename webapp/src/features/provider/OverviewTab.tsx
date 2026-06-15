@@ -164,7 +164,11 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
         </Card>
       </div>
 
-      <RecentSessions providerId={entry.provider_id} accountId={entry.account_id} />
+      <RecentSessions
+        providerId={entry.provider_id}
+        accountId={entry.account_id}
+        excludeCache={excludeCache}
+      />
     </div>
   );
 }

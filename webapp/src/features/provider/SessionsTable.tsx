@@ -7,31 +7,14 @@
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { SessionEntry } from '@/api/types';
+import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { cn } from '@/lib/cn';
 import { formatCost, formatDuration, formatTokens } from '@/lib/format';
+import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 const COL_COUNT = 7;
-
-function sessionTokens(s: SessionEntry, excludeCache = false): number {
-  const total =
-    s.tokens_total ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.tokens_total ?? 0), 0);
-  if (!excludeCache) return total;
-  // Subtract cache from whichever source fed the total so the column matches.
-  const cache =
-    s.tokens_total != null
-      ? (s.tokens_cache_read ?? 0) + (s.tokens_cache_create ?? 0)
-      : (s.by_model ?? []).reduce(
-          (sum, m) => sum + (m.tokens_cache_read ?? 0) + (m.tokens_cache_create ?? 0),
-          0,
-        );
-  return total - cache;
-}
-
-function sessionCost(s: SessionEntry): number {
-  return s.cost_usd ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.cost_usd ?? 0), 0);
-}
 
 /** Labelled token/number chip used across the detail panel. */
 function Stat({ label, value }: { label: string; value: string }) {
@@ -77,24 +60,32 @@ function MetricCard({
   );
 }
 
-function SessionDetail({ s }: { s: SessionEntry }) {
+function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boolean }) {
   const cacheRead = s.tokens_cache_read ?? 0;
   const cacheCreate = s.tokens_cache_create ?? 0;
   const reasoning = s.tokens_reasoning ?? 0;
   const toolCalls = s.tool_calls ?? 0;
+  const cachePct = sessionCachePct(s);
   const byModel = s.by_model ?? [];
   const subagents = s.subagents ?? [];
 
   return (
     <div className="flex flex-col gap-5 bg-surface-2/40 px-4 py-4">
       <DetailSection title="Token breakdown">
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
-          <Stat label="Input" value={formatTokens(s.tokens_input ?? 0)} />
-          <Stat label="Output" value={formatTokens(s.tokens_output ?? 0)} />
-          <Stat label="Cache read" value={formatTokens(cacheRead)} />
-          <Stat label="Cache write" value={formatTokens(cacheCreate)} />
-          {reasoning > 0 ? <Stat label="Reasoning" value={formatTokens(reasoning)} /> : null}
-          <Stat label="Tool calls" value={toolCalls.toLocaleString()} />
+        <div className="flex flex-col gap-3">
+          {/* Bar shows proportion only — the Stat tiles below carry the labels
+              and values (with extras), so a legend here would just duplicate them.
+              Per-segment values remain on hover. */}
+          <TokenBar tokens={s} excludeCache={excludeCache} />
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            <Stat label="Input" value={formatTokens(s.tokens_input ?? 0)} />
+            <Stat label="Output" value={formatTokens(s.tokens_output ?? 0)} />
+            <Stat label="Cache read" value={formatTokens(cacheRead)} />
+            <Stat label="Cache write" value={formatTokens(cacheCreate)} />
+            {reasoning > 0 ? <Stat label="Reasoning" value={formatTokens(reasoning)} /> : null}
+            <Stat label="Tool calls" value={toolCalls.toLocaleString()} />
+            {cachePct != null ? <Stat label="Cache" value={`${cachePct}%`} /> : null}
+          </div>
         </div>
       </DetailSection>
 
@@ -185,7 +176,7 @@ function SessionRow({ s, excludeCache }: { s: SessionEntry; excludeCache: boolea
       {open ? (
         <TR className="hover:bg-transparent">
           <TD colSpan={COL_COUNT} className="p-0">
-            <SessionDetail s={s} />
+            <SessionDetail s={s} excludeCache={excludeCache} />
           </TD>
         </TR>
       ) : null}
