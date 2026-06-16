@@ -21,7 +21,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guard:
+    # Edge is "rolling = tip of main". Refuse to build/publish a stale or divergent
+    # commit: re-runs execute at the original (possibly rebased-out) SHA, and a
+    # workflow_dispatch can target any ref. Either would force-move the `edge` tag to
+    # a commit that isn't main's tip and ship a misleading +edge.<sha> (issue #106).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify HEAD is the tip of origin/main
+        shell: bash
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+          echo "HEAD=$HEAD_SHA  origin/main=$MAIN_SHA"
+          if [ -z "$MAIN_SHA" ]; then
+            echo "::error::Could not resolve origin/main tip."; exit 1
+          fi
+          if [ "$HEAD_SHA" != "$MAIN_SHA" ]; then
+            echo "::error::Refusing edge build: HEAD ($HEAD_SHA) is not the tip of origin/main ($MAIN_SHA). Edge builds only the current tip of main; stale/divergent dispatches and re-runs are rejected (issue #106)."
+            exit 1
+          fi
+          echo "OK — building the current tip of main."
+
   build:
+    needs: guard
     strategy:
       # Don't let a flaky macOS/Windows runner cancel the Linux legs — the
       # publish job below tolerates a partial set.
@@ -107,10 +131,12 @@ jobs:
           retention-days: 1
 
   publish:
-    needs: build
+    needs: [guard, build]
     # Publish whatever built — a single failed platform leg shouldn't hold back
-    # the rest of the rolling edge channel.
-    if: ${{ !cancelled() }}
+    # the rest of the rolling edge channel — but a failed guard must stop the
+    # force-tag + prerelease entirely (without the explicit guard check `!cancelled()`
+    # would still run publish when build was skipped because the guard failed).
+    if: ${{ !cancelled() && needs.guard.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
