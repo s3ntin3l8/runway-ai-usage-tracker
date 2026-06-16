@@ -1,5 +1,6 @@
 """Bootstrap entry point for the Runway sidecar desktop app."""
 
+import atexit
 import json
 import logging
 import os
@@ -30,6 +31,18 @@ _FALLBACK_CONFIG: dict = {
 def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoint, splits poorly
     # 0. Enable logging to file
     setup_logging(log_level="INFO", file_enabled=True)
+
+    # 0b. Single-instance guard. Reuses the CLI daemon's battle-tested pid-file
+    # lock (O_EXCL create + stale-pid cleanup) so a login-launched copy, a manual
+    # double launch, or a tray-vs-CLI overlap can't run two collection loops on
+    # one host. DaemonRunner never touches this file, so acquiring it here is safe.
+    from sidecar_app.daemon import _sidecar  # same module instance the daemon uses
+
+    _sidecar.ensure_dirs()  # get_sidecar_dir() must exist before the O_EXCL open
+    if not _sidecar.write_pid_file():
+        logging.warning("Another Runway sidecar is already running; this instance will exit.")
+        return
+    atexit.register(_sidecar.remove_pid_file)
 
     # 1. Find config path
     config_path = get_config_path()

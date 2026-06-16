@@ -69,7 +69,14 @@ def _macos_is_installed() -> bool:
 
 
 def _macos_install() -> None:
-    """Write the LaunchAgent plist and load it via launchctl."""
+    """Write the LaunchAgent plist (registers autostart for the next login).
+
+    We deliberately do *not* ``launchctl load`` here. Install is always invoked
+    from the already-running tray app, and the plist carries ``RunAtLoad``, so
+    loading it mid-session would immediately spawn a second sidecar on top of the
+    one the user is interacting with. macOS auto-loads ``~/Library/LaunchAgents``
+    at the next GUI login, so autostart still works without the duplicate spawn.
+    """
     _MACOS_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     plist_content = _PLIST_TEMPLATE.format(
@@ -77,11 +84,6 @@ def _macos_install() -> None:
         log_dir=str(_MACOS_LOG_DIR),
     )
     _MACOS_PLIST_PATH.write_text(plist_content, encoding="utf-8")
-
-    subprocess.run(  # noqa: S603
-        ["launchctl", "load", str(_MACOS_PLIST_PATH)],  # noqa: S607
-        check=False,
-    )
 
 
 def _macos_remove() -> None:
