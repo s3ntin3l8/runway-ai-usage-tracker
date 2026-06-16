@@ -1,18 +1,20 @@
 // About: server identity, version, collector status snapshot.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { checkForUpdates, fetchSettings, fetchStatus } from '@/api/endpoints';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useInstallPrompt } from '@/hooks/useInstallPrompt';
 
 const RELEASES_URL = 'https://github.com/s3ntin3l8/runway/releases';
 
 export function AboutSection() {
   const queryClient = useQueryClient();
+  const { canInstall, promptInstall } = useInstallPrompt();
   const settings = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
   const status = useQuery({
     queryKey: ['system', 'status'],
@@ -59,6 +61,12 @@ export function AboutSection() {
               <RefreshCw className="size-3.5" aria-hidden />
               Check for updates
             </Button>
+            {canInstall ? (
+              <Button size="sm" variant="ghost" onClick={() => void promptInstall()}>
+                <Download className="size-3.5" aria-hidden />
+                Install app
+              </Button>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>

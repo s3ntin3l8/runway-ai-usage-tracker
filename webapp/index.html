@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#09090b" />
+    <meta name="theme-color" content="#0a0a0b" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20,6 +20,11 @@
       const system = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       const theme = stored === 'light' || stored === 'dark' ? stored : system;
       document.documentElement.dataset.theme = theme;
+      // Match the status-bar tint to the resolved theme before first paint
+      // (kept in sync at runtime by useTheme). Values mirror --canvas in tokens.css.
+      document
+        .querySelector('meta[name="theme-color"]')
+        ?.setAttribute('content', theme === 'light' ? '#fafafa' : '#0a0a0b');
     </script>
   </head>
   <body>

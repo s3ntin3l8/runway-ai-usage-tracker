@@ -21,14 +21,20 @@ export default defineConfig({
       // and picked up by globPatterns below.
       includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
+        id: '/',
         name: 'Runway',
         short_name: 'Runway',
         description: 'Local-first monitoring for AI provider quotas and usage.',
-        theme_color: '#09090b',
-        background_color: '#09090b',
+        lang: 'en',
+        dir: 'ltr',
+        // Dark base (#0a0a0b == --canvas dark in tokens.css).
+        theme_color: '#0a0a0b',
+        background_color: '#0a0a0b',
         display: 'standalone',
+        orientation: 'any',
         start_url: '/',
         scope: '/',
+        categories: ['productivity', 'utilities'],
         icons: [
           { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png' },
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
@@ -40,9 +46,53 @@ export default defineConfig({
             purpose: 'maskable',
           },
         ],
+        // Quick-launch the main routes from the installed-app icon.
+        shortcuts: [
+          { name: 'Dashboard', short_name: 'Dashboard', url: '/' },
+          { name: 'History', short_name: 'History', url: '/history' },
+          { name: 'Insights', short_name: 'Insights', url: '/insights' },
+          { name: 'Fleet', short_name: 'Fleet', url: '/fleet' },
+          { name: 'Settings', short_name: 'Settings', url: '/settings' },
+        ],
+        // Desktop ("wide") install-dialog previews. These mirror a subset of
+        // assets/screenshots/ (copied into public/screenshots/). We have no
+        // narrow/mobile captures, so the mobile install dialog won't show them.
+        screenshots: [
+          {
+            src: 'screenshots/dashboard.png',
+            sizes: '1440x969',
+            type: 'image/png',
+            form_factor: 'wide',
+            label: 'Dashboard',
+          },
+          {
+            src: 'screenshots/history.png',
+            sizes: '1440x900',
+            type: 'image/png',
+            form_factor: 'wide',
+            label: 'Usage history',
+          },
+          {
+            src: 'screenshots/fleet.png',
+            sizes: '1440x900',
+            type: 'image/png',
+            form_factor: 'wide',
+            label: 'Fleet management',
+          },
+          {
+            src: 'screenshots/settings.png',
+            sizes: '1440x931',
+            type: 'image/png',
+            form_factor: 'wide',
+            label: 'Settings',
+          },
+        ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Install-dialog screenshots are fetched by the browser/OS, not the app
+        // shell — keep them out of the precache.
+        globIgnores: ['**/screenshots/*'],
         // Offline SPA shell — but never let the SW answer API calls.
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
