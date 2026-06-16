@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { GlobalInsights } from './GlobalInsights';
+import { OverallChartCard } from './OverallChartCard';
 import { TopModelsCard } from './TopModelsCard';
 import { TopProjectsCard } from './TopProjectsCard';
 import { TopToolsCard } from './TopToolsCard';
@@ -46,6 +47,8 @@ export function InsightsPage() {
           <h2 className="text-[13px] font-semibold tracking-tight">Global insights</h2>
           <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
         </div>
+
+        <OverallChartCard days={days} />
 
         <TopModelsCard days={days} />
 

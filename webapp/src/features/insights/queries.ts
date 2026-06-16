@@ -1,8 +1,25 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchGlobalStats, fetchTopModels, fetchTopProjects, fetchTopTools } from '@/api/endpoints';
+import {
+  fetchGlobalStats,
+  fetchHistoryChart,
+  fetchTopModels,
+  fetchTopProjects,
+  fetchTopTools,
+} from '@/api/endpoints';
 
 export type TopMetric = 'tokens' | 'cost';
 export type ProjectMetric = 'tokens' | 'cost' | 'sessions';
+export type OverallMetric = 'tokens' | 'cost';
+
+// Cross-provider "overall" time-series: tokens/cost bars summed across every
+// provider/account, one stacked segment per provider (group=provider). Unlike
+// useHistoryChart this has no account filter and no enabled guard.
+export const useOverallChart = (days: number, metric: OverallMetric) =>
+  useQuery({
+    queryKey: ['usage', 'overall-chart', days, metric],
+    queryFn: () => fetchHistoryChart({ days, metric, group: 'provider' }),
+    refetchInterval: 120_000,
+  });
 
 export const useTopModels = (metric: TopMetric, days: number, excludeCache: boolean) =>
   useQuery({
