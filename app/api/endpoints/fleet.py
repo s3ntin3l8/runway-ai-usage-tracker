@@ -17,7 +17,7 @@ from app.core.utils import scrub_log
 from app.models.db import LatestUsage, ProviderConfig, SidecarRegistry, SystemConfig
 from app.models.schemas import IngestRequest
 from app.services import audit_log
-from app.services.account_identity import resolve_account_id
+from app.services.account_identity import normalize_sidecar_id, resolve_account_id
 from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
@@ -112,6 +112,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     except Exception as e:
         logger.error(f"Failed to parse ingest payload: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
+
+    # Normalize the originating sidecar id once, here at the chokepoint, so the
+    # registry upsert, the per-card propagation, and every ingested event all key
+    # off the same stable id. Collapses a host that flips between its FQDN and
+    # `.local`/short name (e.g. macbook.local ⇄ Macbook.in.example.de) onto one
+    # registry entry regardless of the sidecar binary version.
+    if payload.sidecar_id:
+        payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
 
     tokens_to_store = []
     local_cards = []

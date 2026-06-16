@@ -520,10 +520,17 @@ def get_pid_file_path() -> Path:
 
 
 def get_hostname() -> str:
-    """Get cached hostname or call gethostname() once."""
+    """Get the cached, normalized sidecar id (call gethostname() once).
+
+    Normalized to a stable id (lowercased first DNS label) so a host that flips
+    between its FQDN and `.local`/short name doesn't register as duplicate
+    sidecars. See scripts/sidecar_pkg/identity.py.
+    """
     global _hostname
     if _hostname is None:
-        _hostname = socket.gethostname()
+        from scripts.sidecar_pkg.identity import normalize_sidecar_id
+
+        _hostname = normalize_sidecar_id(socket.gethostname())
     return _hostname
 
 

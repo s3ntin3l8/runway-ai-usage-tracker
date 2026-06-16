@@ -13,7 +13,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import UsageEvent
+from app.models.db import SidecarRegistry, UsageEvent
 from app.services.pricing_seed import seed_pricing_table
 
 TEST_KEY = "test-ingest-key-phase3"
@@ -102,3 +102,44 @@ def test_ingest_events_inserts_rows_and_dedups(session):
 
     rows = session.exec(select(UsageEvent)).all()
     assert len(rows) == 2
+
+
+def test_ingest_normalizes_sidecar_id(session):
+    """An FQDN/`.local`-flapping host collapses onto one normalized sidecar id."""
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "Macbook.in.s3ntin3l8.de",
+        "sidecar_version": "2.3.0",
+        "metrics": [],
+        "events": [
+            {
+                "provider_id": "anthropic",
+                "account_id": "u@x",
+                "event_id": "msg_norm",
+                "ts": "2026-05-08T14:00:00+00:00",
+                "model_id": "sonnet",
+                "tokens_input": 100,
+                "tokens_output": 50,
+            },
+        ],
+    }
+
+    with (
+        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+
+        body, headers = _signed(payload)
+        r = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+
+    assert r.status_code == 200, r.text
+
+    # Both the event row and the registry entry are keyed off the normalized id.
+    ev = session.exec(select(UsageEvent).where(UsageEvent.event_id == "msg_norm")).one()
+    assert ev.sidecar_id == "macbook"
+    reg_ids = session.exec(select(SidecarRegistry.sidecar_id)).all()
+    assert reg_ids == ["macbook"]
