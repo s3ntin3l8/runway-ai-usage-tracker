@@ -6,7 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
-    "types": ["vite/client", "vitest/globals"],
+    "types": ["vite/client", "vitest/globals", "vite-plugin-pwa/client"],
 
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

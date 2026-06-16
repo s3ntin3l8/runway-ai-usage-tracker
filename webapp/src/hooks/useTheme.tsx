@@ -16,6 +16,15 @@ function systemTheme(): 'dark' | 'light' {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+// Keep the PWA / mobile status-bar tint matched to the active theme. Values
+// mirror --canvas in tokens.css (and the pre-paint default in index.html).
+function applyTheme(theme: 'dark' | 'light') {
+  document.documentElement.dataset.theme = theme;
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', theme === 'light' ? '#fafafa' : '#0a0a0b');
+}
+
 function readPref(): ThemePref {
   const stored = localStorage.getItem(STORAGE_KEY);
   return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system';
@@ -26,7 +35,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const resolved = pref === 'system' ? systemTheme() : pref;
 
   useEffect(() => {
-    document.documentElement.dataset.theme = resolved;
+    applyTheme(resolved);
   }, [resolved]);
 
   // Track OS theme changes while in "system" mode.
@@ -34,7 +43,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (pref !== 'system') return;
     const mql = window.matchMedia('(prefers-color-scheme: light)');
     const apply = () => {
-      document.documentElement.dataset.theme = systemTheme();
+      applyTheme(systemTheme());
     };
     mql.addEventListener('change', apply);
     return () => mql.removeEventListener('change', apply);

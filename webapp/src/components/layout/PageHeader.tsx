@@ -12,7 +12,9 @@ export function PageHeader({ title, description, leading, actions, className }: 
   return (
     <header
       className={cn(
-        'sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-edge bg-canvas/90 px-4 backdrop-blur-sm lg:px-8',
+        // pt-[env(safe-area-inset-top)] keeps the sticky bar's blurred background
+        // covering the notch/status-bar zone in a standalone iOS install.
+        'sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-edge bg-canvas/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-sm lg:px-8',
         className,
       )}
     >

@@ -35,6 +35,9 @@ When adding new card fields, update `LimitCard` in `app/models/schemas.py`, the 
 - `msgs`: int
 - `pct_used`: float
 
+## Branding
+One canonical mark: **`assets/logo.svg`**. Every other surface (the `webapp/public/favicon.svg` copy, PWA/home-screen icons, sidecar tray icons) is derived — run `make logo` to regenerate them all; never hand-edit a derived asset. The in-app `webapp/src/components/layout/RunwayMark.tsx` is a hand-maintained inline echo of the master (update by hand). See `docs/branding.md`.
+
 ## Data Model
 Runway is **event-sourced**. The authoritative table is `usage_events` — one row per assistant message — and everything else is a derived view. All models live in `app/models/db.py`.
 

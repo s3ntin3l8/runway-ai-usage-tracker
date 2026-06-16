@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks dev dev-all run run-all sidecar test test-cov lint format web web-dev web-test secrets secrets-baseline clean
+.PHONY: help install install-hooks dev dev-all run run-all sidecar test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -69,6 +69,11 @@ web-dev: ## Live Vite dev server on :5173 with HMR (sources .env so RUNWAY_API_U
 
 web-test: ## Run frontend unit tests (vitest)
 	npm --prefix webapp test
+
+logo: ## Regenerate every brand surface from the canonical assets/logo.svg (see docs/branding.md)
+	cp assets/logo.svg webapp/public/favicon.svg
+	npm --prefix webapp run generate-pwa-assets
+	$(PYTHON) sidecar_app/assets/generate_icons.py
 
 secrets: ## Gate: fail if any tracked file has a secret not in the baseline (matches CI)
 	git ls-files -z | xargs -0 $(VENV)/bin/detect-secrets-hook --baseline .secrets.baseline
