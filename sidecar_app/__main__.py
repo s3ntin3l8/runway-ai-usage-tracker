@@ -141,11 +141,14 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
     from sidecar_app.config import get_log_path
 
     def _settings_get_status() -> dict:
+        from scripts.sidecar_pkg.identity import normalize_sidecar_id
+
         return {
             "status": daemon.status,
             "stats": daemon.stats_summary,
             "version": __version__,
-            "sidecar_id": socket.gethostname(),
+            # Normalized to match the id reported to the server on ingest.
+            "sidecar_id": normalize_sidecar_id(socket.gethostname()),
         }
 
     def _settings_save_config(new_config: dict) -> None:

@@ -1,6 +1,8 @@
 import hashlib
 
-from app.services.account_identity import resolve_account_id
+import pytest
+
+from app.services.account_identity import normalize_sidecar_id, resolve_account_id
 
 
 class TestResolveAccountId:
@@ -164,3 +166,34 @@ class TestResolveAccountId:
             account_label="user@company.com @ MyOrg",
         )
         assert result == "user@company.com"
+
+
+class TestNormalizeSidecarId:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            # The macbook flap collapses to one stable id.
+            ("macbook.local", "macbook"),
+            ("Macbook.in.s3ntin3l8.de", "macbook"),
+            ("macbook", "macbook"),
+            ("MacBook", "macbook"),
+            # Bare lowercase short names are untouched.
+            ("mgmt", "mgmt"),
+            ("dockerhost", "dockerhost"),
+            ("dev-01", "dev-01"),
+            # A short name that later gains a domain still collapses back.
+            ("dev-01.lan", "dev-01"),
+            # Sentinels and literals pass through (lowercased).
+            ("local", "local"),
+            ("192.168.1.5", "192.168.1.5"),
+            ("", ""),
+            ("  Host.Example.COM  ", "host"),
+        ],
+    )
+    def test_normalization(self, raw, expected):
+        assert normalize_sidecar_id(raw) == expected
+
+    def test_idempotent(self):
+        for raw in ("macbook.local", "Macbook.in.s3ntin3l8.de", "dev-01", "local"):
+            once = normalize_sidecar_id(raw)
+            assert normalize_sidecar_id(once) == once
