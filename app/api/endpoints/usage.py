@@ -642,12 +642,15 @@ async def get_history_chart(
     metric: str = Query(default="percent", pattern="^(percent|tokens|cost)$"),
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
+    group: str | None = Query(default=None, pattern="^(provider)$"),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Chart data: percent → fill curves; tokens/cost → daily bars.
 
     Defaults to the last `days`; an explicit `since`/`until` (exclusive) pair
     scopes the chart to a closed period (e.g. a selected past month).
+    group="provider" collapses token/cost bars to one segment per provider —
+    the cross-provider overall view.
     """
     return query_chart(
         session,
@@ -657,6 +660,7 @@ async def get_history_chart(
         metric=metric,
         since=parse_iso8601_utc(since) if since else None,
         until=parse_iso8601_utc(until) if until else None,
+        group=group,
     )
 
 

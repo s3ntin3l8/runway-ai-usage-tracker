@@ -208,3 +208,145 @@ class TestNullsAreIgnored:
         pro = _pro_series(result)
         assert pro is not None
         assert pro["points"][0]["pct_used"] == 30.0
+
+
+def _add_rollup(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    day: str,
+    model_id: str = "",
+    tokens_input: int = 0,
+    cost_usd: float = 0.0,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
+) -> None:
+    session.add(
+        UsagePeriodRollup(
+            provider_id=provider_id,
+            account_id=account_id,
+            period_type="day",
+            period_key=day,
+            model_id=model_id,
+            sidecar_id="",
+            tokens_input=tokens_input,
+            cost_usd=cost_usd,
+            cost_cache_read=cost_cache_read,
+            cost_cache_create=cost_cache_create,
+            last_updated=_NOW,
+        )
+    )
+    session.commit()
+
+
+class TestGroupByProvider:
+    """group="provider" collapses token/cost segments to one per provider per
+    bar — summing across accounts and models — for the cross-provider view."""
+
+    _SINCE = datetime(2026, 4, 1, tzinfo=UTC)
+    _UNTIL = datetime(2026, 5, 1, tzinfo=UTC)
+
+    def test_one_segment_per_provider_summing_accounts_and_models(self, db_session):
+        # anthropic: two accounts, one with a per-model row — all must fold into
+        # a single "Anthropic" segment. openai: a separate segment.
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-05",
+            model_id="opus",
+            tokens_input=100,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-05",
+            model_id="sonnet",
+            tokens_input=30,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc2",
+            day="2026-04-05",
+            tokens_input=20,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="openai",
+            account_id="acc1",
+            day="2026-04-05",
+            tokens_input=70,
+        )
+        result = query_chart(
+            db_session,
+            metric="tokens",
+            since=self._SINCE,
+            until=self._UNTIL,
+            group="provider",
+        )
+        segs = {s["provider_id"]: s for s in result["bars"][0]["segments"]}
+        assert set(segs) == {"anthropic", "openai"}
+        assert segs["anthropic"]["value"] == 150  # 100 + 30 + 20
+        assert segs["anthropic"]["model_id"] == ""
+        assert segs["anthropic"]["label"] == "Anthropic"
+        assert segs["openai"]["value"] == 70
+
+    def test_cost_value_cache_summed_per_provider(self, db_session):
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-05",
+            cost_usd=10.0,
+            cost_cache_read=2.0,
+            cost_cache_create=1.0,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc2",
+            day="2026-04-05",
+            cost_usd=5.0,
+            cost_cache_read=0.5,
+            cost_cache_create=0.0,
+        )
+        result = query_chart(
+            db_session,
+            metric="cost",
+            since=self._SINCE,
+            until=self._UNTIL,
+            group="provider",
+        )
+        seg = result["bars"][0]["segments"][0]
+        assert seg["value"] == 15.0
+        assert seg["value_cache"] == 3.5  # 2.0 + 1.0 + 0.5
+
+    def test_no_group_keeps_per_model_segments(self, db_session):
+        # Sanity: without group, the per-account/per-model behavior is unchanged.
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-05",
+            model_id="opus",
+            tokens_input=100,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-05",
+            model_id="sonnet",
+            tokens_input=30,
+        )
+        result = query_chart(
+            db_session,
+            metric="tokens",
+            since=self._SINCE,
+            until=self._UNTIL,
+        )
+        labels = sorted(s["label"] for s in result["bars"][0]["segments"])
+        assert labels == ["Anthropic · opus", "Anthropic · sonnet"]

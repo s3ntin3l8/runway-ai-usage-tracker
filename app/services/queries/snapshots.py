@@ -5,6 +5,7 @@ See app/services/queries/__init__.py for the public surface.
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +596,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     metric: str = "percent",
     since: datetime | None = None,
     until: datetime | None = None,
+    group: str | None = None,
 ) -> dict:
     """Return chart data.
 
@@ -606,6 +608,10 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     optional exclusive `until`) scopes the chart to a closed period (e.g. a
     selected past month); an `until` also forces daily-bar granularity so a
     full month renders as day bars rather than hourly.
+
+    group="provider" collapses the token/cost segments to one per provider per
+    bar (summing across accounts and models) — the cross-provider "overall"
+    view. With no group, each bar keeps one segment per (provider, model).
     """
     import json as _json
 
@@ -721,14 +727,22 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         bar_stmt = bar_stmt.where(UsagePeriodRollup.account_id == account_id)
 
     all_bar_rows = list(session.exec(bar_stmt.order_by(UsagePeriodRollup.period_key)).all())
-    # Providers that have per-model rows for a given period — used to skip their aggregate row
-    has_per_model: set[tuple[str, str]] = {
-        (r.provider_id, r.period_key) for r in all_bar_rows if r.model_id != ""
+    # (provider, account, period) tuples that have per-model rows — used to skip
+    # their aggregate (model_id="") row so it isn't double-counted. Keyed by
+    # account too: an account's aggregate row must survive even when a *sibling*
+    # account of the same provider has per-model rows (matters cross-provider /
+    # unfiltered, where rows from multiple accounts share a bar).
+    has_per_model: set[tuple[str, str, str]] = {
+        (r.provider_id, r.account_id, r.period_key) for r in all_bar_rows if r.model_id != ""
     }
 
+    by_provider = group == "provider"
     bars_map: dict[str, list] = {}
+    # When grouping by provider, segments accumulate per (period, provider) so
+    # multiple accounts/models of one provider sum into a single bar segment.
+    provider_seg: dict[tuple[str, str], dict[str, object]] = {}
     for r in all_bar_rows:
-        if r.model_id == "" and (r.provider_id, r.period_key) in has_per_model:
+        if r.model_id == "" and (r.provider_id, r.account_id, r.period_key) in has_per_model:
             continue
 
         use_model = r.model_id
@@ -744,6 +758,32 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             + r.tokens_cache_create
             + r.tokens_reasoning
         )
+        # value_cache = the cache portion of `value`, so the client can subtract it
+        # under the exclude-cache toggle. Its unit follows the metric: cache *tokens*
+        # for the tokens bars, cache *cost* (USD) for the cost bars.
+        value_cache = (
+            r.cost_cache_read + r.cost_cache_create
+            if metric == "cost"
+            else r.tokens_cache_read + r.tokens_cache_create
+        )
+
+        if by_provider:
+            seg_key = (key, r.provider_id)
+            seg = provider_seg.get(seg_key)
+            if seg is None:
+                seg = {
+                    "provider_id": r.provider_id,
+                    "model_id": "",
+                    "label": r.provider_id.capitalize(),
+                    "value": 0.0,
+                    "value_cache": 0.0,
+                }
+                provider_seg[seg_key] = seg
+                bars_map[key].append(seg)
+            seg["value"] = cast(float, seg["value"]) + value
+            seg["value_cache"] = cast(float, seg["value_cache"]) + value_cache
+            continue
+
         label = r.provider_id.capitalize()
         if use_model:
             label += f" · {use_model}"
@@ -752,14 +792,8 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             "model_id": use_model,
             "label": label,
             "value": value,
+            "value_cache": value_cache,
         }
-        # value_cache = the cache portion of `value`, so the client can subtract it
-        # under the exclude-cache toggle. Its unit follows the metric: cache *tokens*
-        # for the tokens bars, cache *cost* (USD) for the cost bars.
-        if metric == "tokens":
-            segment["value_cache"] = r.tokens_cache_read + r.tokens_cache_create
-        elif metric == "cost":
-            segment["value_cache"] = r.cost_cache_read + r.cost_cache_create
         bars_map[key].append(segment)
 
     bars = []
