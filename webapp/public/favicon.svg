@@ -1,4 +1,12 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Runway — canonical master brand mark. Single source of truth.
+    Derived surfaces (favicon, PWA icons, in-app RunwayMark, sidecar tray)
+    must be regenerated from this file via `make logo`. See docs/branding.md.
+
+    The mark: a glowing glass capsule read as a runway, marked with a dashed
+    white centerline (the runway-line motif), on a premium dark disc.
+  -->
   <defs>
     <!-- Premium radial gradient for the base -->
     <radialGradient id="baseGrad" cx="512" cy="512" r="430" gradientUnits="userSpaceOnUse">
@@ -43,5 +51,8 @@
     <rect x="424" y="280" width="176" height="464" rx="88" fill="url(#glassGloss)" opacity="0.6"/>
     <!-- Inner bright spot -->
     <rect x="450" y="320" width="40" height="120" rx="20" fill="white" fill-opacity="0.3"/>
+    <!-- Runway centerline markings down the capsule -->
+    <line x1="512" y1="362" x2="512" y2="662" stroke="white" stroke-opacity="0.92"
+          stroke-width="24" stroke-linecap="round" stroke-dasharray="52 48"/>
   </g>
 </svg>

@@ -99,6 +99,7 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 | `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
 | `make format` | Automatically fix linting and formatting issues |
 | `make web` / `make web-dev` | Build the SPA for production (`webapp/dist`) / run the live Vite dev server on :5173 (HMR) |
+| `make logo` | Regenerate every brand surface (favicon, PWA icons, sidecar tray) from the canonical `assets/logo.svg` — see [Branding](docs/branding.md) |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make clean` | Remove virtual environments and build artifacts |
 

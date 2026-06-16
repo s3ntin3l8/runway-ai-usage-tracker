@@ -2,10 +2,54 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      // New versions take over on the next navigation (no update prompt UI).
+      registerType: 'autoUpdate',
+      // We call registerSW() ourselves from main.tsx (bundled into a hashed
+      // /assets script), so the strict CSP (script-src 'self') stays intact —
+      // never let the plugin inject an inline registration script.
+      injectRegister: null,
+      // Precached so the install + offline shell has its icons. The raster
+      // icons themselves are committed in public/ (run `make logo` to refresh)
+      // and picked up by globPatterns below.
+      includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
+      manifest: {
+        name: 'Runway',
+        short_name: 'Runway',
+        description: 'Local-first monitoring for AI provider quotas and usage.',
+        theme_color: '#09090b',
+        background_color: '#09090b',
+        display: 'standalone',
+        start_url: '/',
+        scope: '/',
+        icons: [
+          { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png' },
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: 'maskable-icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Offline SPA shell — but never let the SW answer API calls.
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+        cleanupOutdatedCaches: true,
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
