@@ -52,6 +52,52 @@ These are fail-fast checks: a misconfigured deployment dies at import time with 
 
 The `["*"]` CORS fallback only takes effect when `APP_HOST` resolves to `127.0.0.1` / `localhost`; the gate above guarantees any non-localhost bind must ship an explicit allow-list, so wildcard CORS is never exposed off-host.
 
+## 🔐 Application Authentication
+
+Runway is local-first; its secondary mode is self-hosted behind a reverse proxy. The auth model reflects that — it does **not** try to be an identity provider. Three paths gate every mutating endpoint (resolved by `app/core/security.py:resolve_auth`, shared by the `require_admin_key` dependency and the `/system/settings` probe so they can never disagree):
+
+1. **Localhost trust** — client is `127.0.0.1`/`::1` *and* the server is bound localhost-only. Zero-touch for the developer-laptop case; no key needed.
+2. **Reverse-proxy SSO** *(recommended for multi-host)* — a forward-auth proxy asserts the user via `X-Forwarded-User` / `Remote-User`, trusted **only** when the source IP is in `TRUSTED_PROXY_IPS`. The proxy owns real identity; Runway just consumes it.
+3. **Built-in admin key** — `ADMIN_API_KEY`, presented either as the `X-Admin-Key` header (API/script clients) or, in the browser, exchanged once for a session cookie (below).
+
+### Decision (issue #92): why this shape
+
+We deliberately **did not** build username/password login, a built-in OIDC client, or role-based access control. For a self-hosted tool, multi-user SSO is the reverse proxy's job — Authelia, oauth2-proxy, Traefik forward-auth, Cloudflare Access, or Tailscale all do it better and are already in most homelab stacks. Building those into Runway would add attack surface and maintenance for little gain. They remain open as scoped follow-ups (RBAC #101, OIDC #102) if concrete demand appears.
+
+### Browser session cookies (hardened admin key)
+
+The SPA no longer keeps the admin key in `localStorage` (readable by any XSS). Instead `POST /api/v1/auth/session` validates the key once and sets an **`HttpOnly`, `SameSite=Strict`** cookie (`runway_session`), marked `Secure` whenever `TLS_TERMINATED=1`. The cookie is a Fernet token carrying only an expiry — no identity, since the built-in path has a single admin.
+
+- **Signing key** (`SESSION_SECRET`): auto-generated on first use, stored encrypted-at-rest in `system_config`, kept **separate from `DB_ENCRYPTION_KEY`**. It is never derived from `ADMIN_API_KEY`.
+- **Lifetime**: `SESSION_LIFETIME_HOURS` (default 12), or `SESSION_REMEMBER_DAYS` (default 30) when "remember me" is checked.
+- **Login throttle**: `POST /auth/session` is rate-limited (10/min) — the `X-Admin-Key` header path has no such throttle.
+- **Migration**: a leftover `localStorage` key from older builds is auto-exchanged for a cookie on first load, then cleared.
+
+### Logout & revocation
+
+- `POST /api/v1/auth/logout` clears this browser's cookie.
+- `POST /api/v1/auth/revoke-all` (admin) **rotates `SESSION_SECRET`**, invalidating every session everywhere at once (issue #100) — the "sign out everywhere" in **Settings → System → Session**. Because the session key is independent of `DB_ENCRYPTION_KEY`, this does **not** re-encrypt provider secrets.
+- Rotating `DB_ENCRYPTION_KEY` is *not* required to drop sessions; use revoke-all.
+
+### Recommended multi-host pattern
+
+Put a forward-auth proxy in front and trust its identity header. Minimal shape, composed with the startup gates above:
+
+```yaml
+# Runway env
+APP_HOST=0.0.0.0
+TLS_TERMINATED=1
+DB_ENCRYPTION_KEY=<fernet-key>
+CORS_ORIGINS=https://runway.example.com
+TRUSTED_PROXY_IPS=10.0.0.2          # the proxy's source IP, NOT a CIDR you don't control
+# ADMIN_API_KEY optional — the proxy is the gate; the key is the break-glass fallback
+```
+
+- **oauth2-proxy / Authelia**: configure them to inject `X-Forwarded-User` (and optionally `X-Forwarded-Email` / `X-Forwarded-Groups`, which Runway records in the audit log). Ensure the proxy **strips client-supplied** `X-Forwarded-*` so they can't be spoofed.
+- **Cloudflare Access / Tailscale**: terminate identity at the edge / tailnet; forward the asserted user header from a fixed proxy IP listed in `TRUSTED_PROXY_IPS`.
+
+The IP allowlist is load-bearing: without it, anyone could forge `X-Forwarded-User`. Never list an IP range you don't fully control.
+
 ## 🔒 Response Headers
 
 Every response carries a defence-in-depth header set:
@@ -64,6 +110,8 @@ Every response carries a defence-in-depth header set:
 ## 📜 Audit Log
 
 Every successful admin mutation (sidecar pause/resume/delete/patch, webhook CRUD, provider-config writes, token-cache refresh/evict) is written to the `audit_log` table with actor, source IP, action, target, and a JSON payload. Read it via `GET /api/v1/system/audit-log` (admin-only) or from the **Settings → Audit Log** panel.
+
+Attribution is structured (issue #103): alongside the human-readable `actor` string, each row records `actor_type` (`localhost` / `proxy` / `session` / `api-key` / `none`) and, for the proxy path, the asserted identity plus any `X-Forwarded-Email` / `X-Forwarded-Groups` in `actor_meta_json`. Rows predating this degrade gracefully (null structured fields).
 
 Scope: this is a diagnostic trail with the same trust model as the rest of Runway — useful for "what happened when something surprising changed" — not a legal-grade tamper-evident log. The table is append-only at the application layer; rows can still be deleted by anyone with direct DB access.
 

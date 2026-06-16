@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     # not confidentiality. Localhost binds don't need it.
     TLS_TERMINATED: bool = False
 
+    # Lifetime of a browser session cookie minted by exchanging the admin
+    # key at POST /auth/session. The "remember me" path uses the longer
+    # window; the default path the shorter one. Revoking every session at
+    # once is a SESSION_SECRET rotation (POST /auth/revoke-all), independent
+    # of these expiries. See app/core/sessions.py.
+    SESSION_LIFETIME_HOURS: int = 12
+    SESSION_REMEMBER_DAYS: int = 30
+
     # OAuth credentials
     GEMINI_OAUTH_CLIENT_ID: str = ""
     GEMINI_OAUTH_CLIENT_SECRET: str = ""

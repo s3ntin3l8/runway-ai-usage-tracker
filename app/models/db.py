@@ -157,6 +157,11 @@ class SystemConfig(SQLModel, table=True):
     # Pushed via the /fleet/ingest response; a sidecar's explicit local
     # `auto_update` config overrides this. None/False = off.
     sidecar_auto_update: bool | None = None
+    # Fernet key that signs browser session cookies, generated on first use
+    # and stored encrypted-at-rest with DB_ENCRYPTION_KEY. Kept separate from
+    # DB_ENCRYPTION_KEY so rotating it ("log out everywhere") invalidates all
+    # sessions without re-encrypting provider secrets. See app/core/sessions.py.
+    session_secret_encrypted: str | None = None
 
 
 class LatestUsage(SQLModel, table=True):
@@ -435,6 +440,13 @@ class AuditLog(SQLModel, table=True):
     # "localhost", a proxy-asserted username, "api-key", or
     # "no-admin-key-configured" when ADMIN_API_KEY is unset.
     actor: str = Field(index=True)
+    # Structured attribution alongside the human-readable `actor` string.
+    # actor_type ∈ {"localhost","proxy","session","api-key","none"};
+    # actor_meta_json holds proxy-supplied extras (email, groups) when known.
+    # Nullable so existing rows (and the localhost/api-key cases) degrade
+    # gracefully. Resolved by app/core/security.py:resolve_auth.
+    actor_type: str | None = Field(default=None, index=True)
+    actor_meta_json: str | None = None
     source_ip: str | None = None
     # Domain.verb, e.g. "sidecar.pause", "sidecar.update".
     action: str = Field(index=True)

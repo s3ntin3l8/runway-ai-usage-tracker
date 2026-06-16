@@ -4,12 +4,13 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { fetchAppConfig, fetchSettings } from '@/api/endpoints';
-import { setAdminKey } from '@/api/client';
+import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
+import { clearAdminKey, getAdminKey } from '@/api/client';
 import { setTzConfig } from '@/lib/tz';
 import { RunwayMark } from '@/components/layout/RunwayMark';
 
 export function BootGate({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
   const appConfig = useQuery({
     queryKey: ['system', 'app-config'],
@@ -21,6 +22,22 @@ export function BootGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (appConfig.data) setTzConfig(appConfig.data);
   }, [appConfig.data]);
+
+  // One-time migration: trade a legacy localStorage admin key for a session
+  // cookie, then drop it from localStorage (XSS hardening). Non-blocking — if
+  // the exchange fails the key stays put and the header fallback still works.
+  useEffect(() => {
+    const legacy = getAdminKey();
+    if (!legacy) return;
+    login(legacy, true)
+      .then(() => {
+        clearAdminKey();
+        void queryClient.invalidateQueries();
+      })
+      .catch(() => {
+        /* keep the legacy key; X-Admin-Key header still authenticates */
+      });
+  }, [queryClient]);
 
   if (settings.isPending || appConfig.isPending) {
     return (
@@ -57,19 +74,23 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 function AuthScreen() {
   const queryClient = useQueryClient();
   const [key, setKey] = useState('');
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!key.trim()) return;
-    setAdminKey(key.trim());
-    const settings = await fetchSettings().catch(() => null);
-    if (settings?.is_authenticated) {
-      setError(null);
-      await queryClient.invalidateQueries();
-    } else {
-      setError('That key was not accepted.');
+    try {
+      const res = await login(key.trim(), remember);
+      if (res.is_authenticated) {
+        setError(null);
+        await queryClient.invalidateQueries();
+        return;
+      }
+    } catch {
+      // fall through to the error message below
     }
+    setError('That key was not accepted.');
   };
 
   return (
@@ -94,6 +115,15 @@ function AuthScreen() {
           className="h-10 rounded-sm border border-edge bg-surface-2 px-3 text-sm outline-none focus:border-accent"
         />
         {error ? <p className="text-xs text-critical">{error}</p> : null}
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-fg-muted">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="size-3.5 cursor-pointer accent-accent"
+          />
+          Remember me on this device
+        </label>
         <button
           type="submit"
           className="h-10 cursor-pointer rounded-sm bg-accent text-sm font-medium text-accent-fg transition-colors duration-150 hover:bg-accent-hover"

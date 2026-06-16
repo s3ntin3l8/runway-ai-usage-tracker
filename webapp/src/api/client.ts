@@ -1,9 +1,12 @@
-// Centralized fetch wrapper injecting the admin key header.
+// Centralized fetch wrapper. Auth now rides on the HttpOnly `runway_session`
+// cookie minted by /auth/session (sent via credentials:'include' below), so
+// the admin key no longer needs to live in JS-readable storage.
 //
-// The key lives in localStorage (same `runway_admin_key` slot as the v1 UI,
-// so existing logins carry over). sessionStorage wouldn't meaningfully
-// reduce XSS impact and forces re-login per tab; local-only deployments
-// don't need a key at all — the server's localhost-trust gate applies.
+// The `runway_admin_key` localStorage slot is retained read-only for one
+// transition: BootGate exchanges any leftover key (from the v1 UI / pre-cookie
+// builds) for a session cookie, then clears it. Until then the X-Admin-Key
+// header is injected as a fallback. Local-only deployments need no key at all —
+// the server's localhost-trust gate applies.
 
 const ADMIN_KEY_STORAGE = 'runway_admin_key';
 
@@ -39,7 +42,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   let resp: Response;
   try {
-    resp = await fetch(path, { ...init, headers });
+    // credentials:'include' sends the HttpOnly `runway_session` cookie minted
+    // by /auth/session — the primary auth path now that the key no longer
+    // lives in localStorage. The X-Admin-Key header above is a transitional
+    // fallback for not-yet-migrated logins and API/script clients.
+    resp = await fetch(path, { ...init, headers, credentials: 'include' });
   } catch {
     throw new ApiError(0, 'Network error — unable to reach server');
   }

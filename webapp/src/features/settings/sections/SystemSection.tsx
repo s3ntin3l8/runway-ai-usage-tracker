@@ -4,7 +4,15 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { forceCollect, postCleanup, postWake, putAppConfig } from '@/api/endpoints';
+import {
+  fetchSettings,
+  forceCollect,
+  logout,
+  postCleanup,
+  postWake,
+  putAppConfig,
+  revokeAllSessions,
+} from '@/api/endpoints';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { HelperText, Input, Label } from '@/components/ui/Input';
@@ -74,6 +82,29 @@ export function SystemSection() {
   const wake = useMutation({
     mutationFn: postWake,
     onSuccess: () => toast.success('Poller woken'),
+  });
+
+  // Drives whether the Session card renders — nothing to sign out of on an
+  // open (no admin key) or localhost-trusted instance.
+  const settings = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
+
+  // Both clear auth, so refetch settings → BootGate re-locks to the key screen.
+  const signOut = useMutation({
+    mutationFn: logout,
+    onSuccess: () => {
+      toast.success('Signed out');
+      queryClient.invalidateQueries();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const signOutEverywhere = useMutation({
+    mutationFn: revokeAllSessions,
+    onSuccess: () => {
+      toast.success('All sessions revoked');
+      queryClient.invalidateQueries();
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   if (appConfig.isPending) return <Skeleton className="h-64 max-w-2xl" />;
@@ -189,6 +220,33 @@ export function SystemSection() {
           </Button>
         </CardContent>
       </Card>
+
+      {settings.data?.admin_auth_required ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Session</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => signOut.mutate()} loading={signOut.isPending}>
+                Sign out
+              </Button>
+              <Button
+                variant="danger-ghost"
+                onClick={() => signOutEverywhere.mutate()}
+                loading={signOutEverywhere.isPending}
+              >
+                Sign out everywhere
+              </Button>
+            </div>
+            <HelperText>
+              "Sign out" clears this browser's session. "Sign out everywhere" rotates the server
+              session secret, immediately invalidating every signed-in device — use it if a session
+              cookie may be compromised.
+            </HelperText>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <CleanupDialog open={cleanupOpen} onOpenChange={setCleanupOpen} />
     </div>

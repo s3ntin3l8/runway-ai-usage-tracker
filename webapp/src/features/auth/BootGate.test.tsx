@@ -5,24 +5,30 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BootGate } from './BootGate';
-import { fetchAppConfig, fetchSettings } from '@/api/endpoints';
-import { setAdminKey } from '@/api/client';
+import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
+import { clearAdminKey, getAdminKey } from '@/api/client';
 
 vi.mock('@/api/endpoints', () => ({
   fetchSettings: vi.fn(),
   fetchAppConfig: vi.fn(),
+  login: vi.fn(),
 }));
 
 vi.mock('@/api/client', () => ({
-  setAdminKey: vi.fn(),
+  getAdminKey: vi.fn(),
+  clearAdminKey: vi.fn(),
 }));
 
 const mockSettings = vi.mocked(fetchSettings);
 const mockAppConfig = vi.mocked(fetchAppConfig);
-const mockSetAdminKey = vi.mocked(setAdminKey);
+const mockLogin = vi.mocked(login);
+const mockGetAdminKey = vi.mocked(getAdminKey);
+const mockClearAdminKey = vi.mocked(clearAdminKey);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: no legacy key, so the migration effect is a no-op.
+  mockGetAdminKey.mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -121,12 +127,10 @@ describe('BootGate', () => {
     renderGate();
 
     await screen.findByText(/requires an admin key/i);
-    const callsBefore = mockSettings.mock.calls.length;
-    // Submitting with a blank/whitespace key must short-circuit (line 64).
+    // Submitting with a blank/whitespace key must short-circuit before login().
     await user.click(screen.getByRole('button', { name: /unlock/i }));
 
-    expect(mockSetAdminKey).not.toHaveBeenCalled();
-    expect(mockSettings.mock.calls.length).toBe(callsBefore);
+    expect(mockLogin).not.toHaveBeenCalled();
     expect(screen.queryByText(/not accepted/i)).toBeNull();
   });
 
@@ -141,7 +145,9 @@ describe('BootGate', () => {
 
     await screen.findByText(/requires an admin key/i);
 
-    // After the key is set, re-fetching settings reports an authenticated session.
+    // login() sets the cookie; the post-invalidate settings refetch now reports
+    // an authenticated session.
+    mockLogin.mockResolvedValue({ is_authenticated: true });
     mockSettings.mockResolvedValue({
       admin_auth_required: true,
       is_authenticated: true,
@@ -150,14 +156,32 @@ describe('BootGate', () => {
     await user.type(screen.getByLabelText(/admin key/i), 'super-secret');
     await user.click(screen.getByRole('button', { name: /unlock/i }));
 
-    expect(mockSetAdminKey).toHaveBeenCalledWith('super-secret');
+    expect(mockLogin).toHaveBeenCalledWith('super-secret', false);
     expect(await screen.findByText('dashboard-content')).toBeTruthy();
     expect(screen.queryByText(/not accepted/i)).toBeNull();
   });
 
+  it('passes the remember-me choice to login', async () => {
+    const user = userEvent.setup();
+    mockSettings.mockResolvedValue({
+      admin_auth_required: true,
+      is_authenticated: false,
+    } as never);
+    mockAppConfig.mockResolvedValue({} as never);
+    mockLogin.mockResolvedValue({ is_authenticated: true });
+    renderGate();
+
+    await screen.findByText(/requires an admin key/i);
+    await user.type(screen.getByLabelText(/admin key/i), 'super-secret');
+    await user.click(screen.getByLabelText(/remember me/i));
+    await user.click(screen.getByRole('button', { name: /unlock/i }));
+
+    expect(mockLogin).toHaveBeenCalledWith('super-secret', true);
+  });
+
   it('shows an error when the submitted key is rejected', async () => {
     const user = userEvent.setup();
-    mockSettings.mockResolvedValueOnce({
+    mockSettings.mockResolvedValue({
       admin_auth_required: true,
       is_authenticated: false,
     } as never);
@@ -166,14 +190,42 @@ describe('BootGate', () => {
 
     await screen.findByText(/requires an admin key/i);
 
-    // The post-submit fetch rejects → null → stays locked with an error.
-    mockSettings.mockRejectedValue(new Error('401'));
+    // login() rejects on a bad key → stays locked with an error.
+    mockLogin.mockRejectedValue(new Error('403'));
 
     await user.type(screen.getByLabelText(/admin key/i), 'wrong-key');
     await user.click(screen.getByRole('button', { name: /unlock/i }));
 
-    expect(mockSetAdminKey).toHaveBeenCalledWith('wrong-key');
+    expect(mockLogin).toHaveBeenCalledWith('wrong-key', false);
     expect(await screen.findByText(/not accepted/i)).toBeTruthy();
     expect(screen.queryByText('dashboard-content')).toBeNull();
+  });
+
+  it('migrates a legacy localStorage key to a session cookie, then clears it', async () => {
+    mockGetAdminKey.mockReturnValue('legacy-key');
+    mockLogin.mockResolvedValue({ is_authenticated: true });
+    mockSettings.mockResolvedValue({
+      admin_auth_required: true,
+      is_authenticated: true,
+    } as never);
+    mockAppConfig.mockResolvedValue({} as never);
+    renderGate();
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('legacy-key', true));
+    await waitFor(() => expect(mockClearAdminKey).toHaveBeenCalled());
+  });
+
+  it('keeps the legacy key if the migration exchange fails', async () => {
+    mockGetAdminKey.mockReturnValue('legacy-key');
+    mockLogin.mockRejectedValue(new Error('network'));
+    mockSettings.mockResolvedValue({
+      admin_auth_required: true,
+      is_authenticated: true,
+    } as never);
+    mockAppConfig.mockResolvedValue({} as never);
+    renderGate();
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalled());
+    expect(mockClearAdminKey).not.toHaveBeenCalled();
   });
 });
