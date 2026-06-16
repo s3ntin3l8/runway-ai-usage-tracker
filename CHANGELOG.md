@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.2.0...v2.3.0) (2026-06-16)
+
+
+### Features
+
+* **auth:** session-cookie admin auth with rotatable revocation ([#104](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/104)) ([e8fea8a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e8fea8aed4f91e092d14fe2dda6f3547d6ea150f)), closes [#92](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/92) [#100](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/100) [#103](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/103)
+* **branding:** unify brand mark and add installable PWA ([#98](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/98)) ([c3028d5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c3028d541ddcf33fd19531db2ce3ddb5cc188a9d))
+* capture working-directory/project context in all extractors ([#82](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/82)) ([b460aff](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b460aff0c0e3c09b24cb3b5e162384abc9656bbc))
+* cost views respect the Exclude cache toggle ([#79](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/79)) ([e801f47](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e801f4748987fb71b1f07884da851c5b71b4603b)), closes [#73](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/73)
+* cross-provider Top Models chart + global insights stats ([#81](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/81)) ([14e69a5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/14e69a525e0d7fe2dc665790ecb90f0b2db7af4d))
+* **insights:** cross-provider overall tokens & cost chart ([#95](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/95)) ([c57c355](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c57c3557160424c2081e5b8de0da0f2ae4e8ad5b))
+* per-category cost breakdown + exclude-cache in session/cost views ([#80](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/80)) ([216f427](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/216f4276f198eb8558bebba272dc23c35c1a59bd))
+* **provider:** polish forecast picker, cost tab, and session detail ([#68](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/68)) ([008dfc2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/008dfc2a075a5f2e733bdcf7d7d98336c15c3a7f))
+* **provider:** selection-aware donut totals + exclude-cache toggle ([306bba7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/306bba7aabb78bd50524f8f804b68e57b9dd52ae))
+* **provider:** tab-level Month⟷Rolling time-scope toggle ([#87](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/87)) ([#97](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/97)) ([9b3f558](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9b3f558b3111c89f4355a9bb06c38bd31a4380e8))
+* surface project linking — Sessions tab, Top Projects, Top Tools ([#83](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/83)) ([b0834e2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b0834e23ddc4a5ce7a7ee666ed02504dae4fda1a))
+* **ui:** exclude-cache toggle now applies to tokens-per-day charts ([#75](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/75)) ([ebb4d96](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ebb4d962d5c3fac3c8f17733665ecdfadc24d8fc)), closes [#72](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/72)
+* **ui:** extend "Exclude cache" toggle to all usage stat pages ([#67](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/67)) ([#69](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/69)) ([63724bf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/63724bf2be2a97373638c1cabc05943e44f45ff9))
+* **ui:** show originating sidecar in session lists ([#78](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/78)) ([040a42c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/040a42c9672d3b03bf5d743c3a5351c37d57ae43)), closes [#71](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/71)
+* **ui:** show server version at bottom of desktop rail ([f095bff](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f095bff41fb0266c36d6b68aa7140acf3a8f020f))
+* **ui:** token-composition bar + cache% in session info ([#76](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/76)) ([6f3c61e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6f3c61e2d5f04198d30cea39a650fc12fa2b6e94))
+* **webapp:** promote Global Insights to its own /insights page ([#94](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/94)) ([ffe077e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ffe077e2b7c25dfe5af83ee0db2af9de53ac6f99)), closes [#85](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/85)
+
+
+### Bug Fixes
+
+* **charts:** polish activity-by-hour heatmap layout ([fa5731b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fa5731b4dd40700dbebfe6901a67b40b22a859a3))
+* move Quota windows below history-graph stats on History page ([#88](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/88)) ([88135f9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/88135f93e578de267cdbb3721a082e6c9af4da86))
+* **security:** normalize blank secrets and fail fast on bad encryption key ([#105](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/105)) ([4e36103](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4e361037c1872ab00ee1617b20fa33191dbe20f0))
+* **sidecar:** document intentional empty-except in _release_lock ([44f0848](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/44f084884d64d00129689d90ed7c49df35b1fe25))
+* **sidecar:** release self-update lock before re-exec so updates don't wedge ([#93](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/93)) ([b94672f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b94672fe6a0ac7b001b5433a4c49719df96786da))
+* **sidecar:** retry transient GitHub errors during self-update ([#61](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/61)) ([82cb9c1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/82cb9c1e4f292de7368c2c6af92dda1310ee2cbe))
+* **updates:** follow GitHub repo rename so sidecars get update notifications ([#90](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/90)) ([273a6ca](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/273a6ca3ba11cea0ad466f46202cb1802308de70))
+
 ## [2.2.0](https://github.com/s3ntin3l8/runway/compare/v2.1.0...v2.2.0) (2026-06-14)
 
 
