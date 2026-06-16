@@ -42,6 +42,9 @@ export function FleetPage() {
   const [editing, setEditing] = useState<Sidecar | null>(null);
   const [deleting, setDeleting] = useState<Sidecar | null>(null);
   const [updating, setUpdating] = useState<Sidecar | null>(null);
+  const [confirmUpdateAll, setConfirmUpdateAll] = useState(false);
+
+  const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
 
   // Force a GitHub release poll, then refresh both the sidecar badges and the
   // server-update banner (both read the same server-side cache).
@@ -59,21 +62,59 @@ export function FleetPage() {
     onError: (err) => toast.error(err.message),
   });
 
+  // Fan the per-sidecar update endpoint out over every sidecar with a pending
+  // update. allSettled so one failure doesn't abort the rest; we report the tally.
+  const updateAll = useMutation({
+    mutationFn: async () => {
+      const results = await Promise.allSettled(
+        updatable.map((s) => triggerSidecarUpdate(s.sidecar_id)),
+      );
+      const updated_count = results.filter((r) => r.status === 'fulfilled').length;
+      return { updated_count, failed_count: results.length - updated_count };
+    },
+    onSuccess: ({ updated_count, failed_count }) => {
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+      if (failed_count === 0) {
+        toast.success(`${updated_count} sidecar${updated_count === 1 ? '' : 's'} queued for update`);
+      } else {
+        toast.error(`Updated ${updated_count}, failed ${failed_count}`);
+      }
+      setConfirmUpdateAll(false);
+    },
+    onError: (err) => {
+      toast.error(err.message);
+      setConfirmUpdateAll(false);
+    },
+  });
+
   return (
     <>
       <PageHeader
         title="Fleet"
         description="Sidecar registry"
         actions={
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => check.mutate()}
-            loading={check.isPending}
-          >
-            <RefreshCw className="size-3.5" aria-hidden />
-            Check for updates
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => check.mutate()}
+              loading={check.isPending}
+            >
+              <RefreshCw className="size-3.5" aria-hidden />
+              Check for updates
+            </Button>
+            {updatable.length > 0 ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setConfirmUpdateAll(true)}
+                loading={updateAll.isPending}
+              >
+                <ArrowUpCircle className="size-3.5" aria-hidden />
+                Update all ({updatable.length})
+              </Button>
+            ) : null}
+          </div>
         }
       />
       <div className="p-4 lg:p-8">
@@ -105,6 +146,31 @@ export function FleetPage() {
       <EditSidecarDialog sidecar={editing} onClose={() => setEditing(null)} />
       <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
       <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
+      <ResponsiveDialog
+        open={confirmUpdateAll}
+        onOpenChange={(open) => {
+          if (!open) setConfirmUpdateAll(false);
+        }}
+        title="Push update to all?"
+        description={`${updatable.length} sidecar${updatable.length === 1 ? '' : 's'} with a pending update`}
+      >
+        <p className="text-sm text-fg-muted">
+          Queues the latest build for{' '}
+          {updatable.map((s) => s.custom_name || s.hostname || s.sidecar_id).join(', ')}. Each
+          downloads, verifies, and installs the update on its next check-in, then restarts itself.
+          Collection resumes automatically.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button onClick={() => setConfirmUpdateAll(false)}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => updateAll.mutate()}
+            loading={updateAll.isPending}
+          >
+            Update all
+          </Button>
+        </div>
+      </ResponsiveDialog>
     </>
   );
 }
