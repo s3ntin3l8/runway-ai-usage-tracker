@@ -49,7 +49,9 @@
 - **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider detail page
 - **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling, hourly resolution on ≤7-day windows
 - **Provider Detail Page**: A deep-linked per-provider view with Overview, Activity (token trend, composition, heatmap, sessions), Events (per-message stream), Forecast, and Cost tabs
-- **Month/Period Selector**: Browse any past month's tokens, spend, and events from the detail page — deep-linkable via `?period=YYYY-MM`, with boundaries on your local timezone
+- **Month ⟷ Rolling Scope**: A per-tab time-scope toggle — browse a calendar month (deep-linkable via `?period=YYYY-MM`, boundaries on your local timezone) or a rolling 7/14/30/90-day window (`?period=Nd`); Activity, Cost, Sessions, and Events all honor the same scope
+- **Global Insights**: A top-level `/insights` page with cross-provider lifetime totals, cache-hit ratio, busiest day/hour, and Top Models / Projects / Tools rankings
+- **Project & Tool Tracking**: Events capture working directory, project, git branch, and tool names — surfaced as a Sessions project column, sortable session columns (duration / messages / tokens / cost), and the Insights rankings
 - **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
 - **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, and activity tracking
 - **Token Health**: Settings panel shows OAuth/cookie expiry status with one-click refresh for supported providers
@@ -57,6 +59,8 @@
 - **Webhook Alerts**: Per-provider threshold alerts to Discord or Slack
 - **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
 - **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status
+- **Session Auth**: Admin login via an HttpOnly `SameSite=Strict` session cookie with "log out everywhere" revocation; scripts can still use the `X-Admin-Key` header
+- **Installable PWA**: Add Runway to your home screen — app manifest, service worker, offline state banner, and a theme-color that follows the active theme
 - **Display Settings**: Compact mode, 2-column layout, soft chrome — configurable per browser
 - **Resilient Rendering**: Individual API failures show "Error Cards" instead of breaking the dashboard
 - **Docker Ready**: Headless-first architecture for containerized environments with fail-fast multi-host startup gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`)

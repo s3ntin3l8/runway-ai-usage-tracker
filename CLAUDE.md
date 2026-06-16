@@ -43,7 +43,7 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 
 | Table | Role |
 |-------|------|
-| `usage_events` | Per-message immutable events. Deduped by `(provider_id, account_id, event_id)`. `kind="message"` for billable activity, `kind="error"` for provider failures. |
+| `usage_events` | Per-message immutable events. Deduped by `(provider_id, account_id, event_id)`. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — `cwd`, indexed `project` (basename of `cwd`, derived in `EventIngestor`; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. |
 | `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
 | `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |
@@ -59,11 +59,14 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 
 **Read paths:**
 - Quota cards: `/api/v1/usage/{limits,fleet,cumulative}`. `/usage/fleet` adds `window_aggregations.longest` — per-model + per-sidecar splits aligned to the provider's longest active window (Claude weekly, Gemini daily, etc.) computed on demand from `usage_events`.
-- History: `/api/v1/usage/history/{windows,snapshots,chart,window-detail,deltas}` and the legacy `/usage/{window-history,events,heatmap,sessions}`. Snapshot bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` covering index.
+- History: `/api/v1/usage/history/{windows,snapshots,chart,window-detail,deltas}` and the legacy `/usage/{window-history,events,events/range,heatmap,sessions,sessions/paginated}`. Snapshot bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` covering index. `history/chart` takes `group=provider` for a cross-provider stack; `sessions/paginated` adds server-side sort (`sort_by`=recent/tokens/duration/messages/cost, `sort_dir`) + `project` filter.
+- Insights / rankings: `/api/v1/usage/{top-models,top-projects,top-tools,projects,global-stats}` — cross-provider lifetime totals, session economics, cache-hit ratio, busiest day/hour, and the Top-N model/project/tool rankings that back the `/insights` page.
 - Forecasts: `/api/v1/usage/forecast` (Theil-Sen regression on `quota_snapshots`, anchor-at-now; `include_series=true` returns the drill-down points) and `/api/v1/usage/cost-forecast` (MTD + 7-day burn to EOM).
 - Diagnostics: `/api/v1/usage/anomalies` (z-score spike detection) and `/api/v1/system/debug/raw/{provider_id}`.
 
-**Mutating endpoints:** `POST /api/v1/usage/{reset/{provider},collect/{provider}}`, the `/api/v1/fleet/sidecars/{id}/{pause,resume}` controls, the `/api/v1/system/{cleanup,wake,force-collect}` maintenance triplet, and the webhook/provider-config/app-config/dashboard-layout CRUD on `/api/v1/system/` — admin writes go through `require_admin_key` and append to `audit_log`.
+**Mutating endpoints:** `POST /api/v1/usage/{reset/{provider},collect/{provider}}`, the `/api/v1/fleet/sidecars/{id}/{pause,resume,update}` controls, the `/api/v1/system/{cleanup,wake,force-collect,check-updates}` maintenance set, and the webhook/provider-config/app-config/dashboard-layout CRUD on `/api/v1/system/` — admin writes go through `require_admin_key` and append to `audit_log`.
+
+**Admin auth:** the dashboard logs in via `POST /api/v1/auth/session` (validates `ADMIN_API_KEY`, sets an HttpOnly `SameSite=Strict` session cookie, rate-limited 10/min); `POST /auth/logout` clears the cookie and `POST /auth/revoke-all` rotates `SESSION_SECRET` to invalidate every session. `SESSION_SECRET` is auto-generated, stored Fernet-encrypted in `system_config`, and is separate from `DB_ENCRYPTION_KEY`. Scripts/API clients can keep using the `X-Admin-Key` header. Blank `ADMIN_API_KEY`/`DB_ENCRYPTION_KEY` env values normalize to unset, and a malformed `DB_ENCRYPTION_KEY` fails fast at startup rather than silently running plaintext. See `docs/SECURITY.md`.
 
 **Account identity:** `app/services/account_identity.py:resolve_account_id` — email > UUID > SHA256 hash > `"default"`. Sidecar identity is the hostname; never part of unique constraints on the canonical (`provider_id`, `account_id`) pair.
 
