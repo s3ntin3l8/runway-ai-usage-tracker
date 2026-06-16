@@ -69,3 +69,22 @@ async def test_require_admin_key_standard_fail(monkeypatch):
             session_cookie=None,
         )
     assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_empty_admin_key_is_not_a_valid_credential(monkeypatch):
+    # Config normalizes a blank key to None; defend the gate anyway. An empty
+    # ADMIN_API_KEY must read as "no key configured" (open) — never let an empty
+    # X-Admin-Key header authenticate as the api-key actor.
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")  # not localhost-trusted
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "203.0.113.5"
+
+    # Must not raise, and must NOT be attributed as a valid api-key login.
+    await require_admin_key(
+        request, x_admin_key="", x_forwarded_user=None, remote_user=None, session_cookie=None
+    )
+    assert request.state.admin_actor == "no-admin-key-configured"

@@ -1,3 +1,4 @@
+import pytest
 from cryptography.fernet import Fernet
 
 from app.core.config import settings
@@ -42,10 +43,10 @@ def test_encryption_plaintext_fallback(monkeypatch):
     assert decrypted == original
 
 
-def test_encryption_invalid_key():
-    # Invalid key format should log error and disable encryption
-    service = EncryptionService(key="invalid-key")
-    assert service.is_enabled is False
-
-    original = "fallback"
-    assert service.encrypt_string(original) == original
+def test_encryption_invalid_key_fails_fast():
+    # A provided-but-malformed key must crash rather than silently downgrade to
+    # plaintext — otherwise the operator believes secrets are encrypted.
+    # (An absent key is the legitimate plaintext mode — see
+    # test_encryption_plaintext_fallback above.)
+    with pytest.raises(RuntimeError, match="not a valid Fernet key"):
+        EncryptionService(key="invalid-key")

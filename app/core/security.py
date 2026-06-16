@@ -72,7 +72,9 @@ def resolve_auth(
     Order: no-key-configured → localhost trust → reverse-proxy trust →
     session cookie → X-Admin-Key header.
     """
-    if settings.ADMIN_API_KEY is None:
+    # Falsy (None, or a blank string that slipped past config normalization)
+    # means no admin key is configured — never treat "" as a comparable key.
+    if not settings.ADMIN_API_KEY:
         return AuthResult(True, "none")
 
     client_host = request.client.host if request.client else None

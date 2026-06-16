@@ -4,7 +4,7 @@ import os
 import platform
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, computed_field
+from pydantic import Field, ValidationInfo, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,25 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
+
+    @field_validator("ADMIN_API_KEY", "DB_ENCRYPTION_KEY", "INGEST_API_KEY", mode="before")
+    @classmethod
+    def _normalize_secret(cls, v: object, info: ValidationInfo) -> object:
+        """Strip whitespace and treat a blank value as unset.
+
+        `ADMIN_API_KEY=` in a `.env` parses to `""`, not `None`. Without this,
+        `""` reads as "configured" to `is not None`/`is None` checks but as
+        "unset" to truthiness gates — and the empty admin key would even pass a
+        `compare_digest("", "")`, authenticating any caller sending an empty
+        header. Collapsing blank → `None` makes every downstream check agree.
+        `INGEST_API_KEY` keeps `""` (its "disabled" sentinel), just de-padded.
+        """
+        if not isinstance(v, str):
+            return v
+        v = v.strip()
+        if v == "" and info.field_name in ("ADMIN_API_KEY", "DB_ENCRYPTION_KEY"):
+            return None
+        return v
 
     # GitHub OAuth
     GITHUB_CLIENT_ID: str = "Iv1.b507a08c87ecfe98"
