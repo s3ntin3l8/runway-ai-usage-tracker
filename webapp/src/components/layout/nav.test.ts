@@ -1,8 +1,14 @@
 import { NAV_ITEMS } from './nav';
 
 describe('NAV_ITEMS', () => {
-  it('exposes the four primary destinations with unique targets', () => {
-    expect(NAV_ITEMS.map((i) => i.to)).toEqual(['/', '/history', '/fleet', '/settings']);
+  it('exposes the primary destinations with unique targets', () => {
+    expect(NAV_ITEMS.map((i) => i.to)).toEqual([
+      '/',
+      '/insights',
+      '/history',
+      '/fleet',
+      '/settings',
+    ]);
     const targets = new Set(NAV_ITEMS.map((i) => i.to));
     expect(targets.size).toBe(NAV_ITEMS.length);
   });

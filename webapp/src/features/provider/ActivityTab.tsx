@@ -12,7 +12,7 @@ import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatLocalDate, getUserTz } from '@/lib/tz';
-import { TopProjectsCard } from '@/features/history/TopProjectsCard';
+import { TopProjectsCard } from '@/features/insights/TopProjectsCard';
 import type { SelectedPeriod } from './period';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { SessionsTable } from './SessionsTable';

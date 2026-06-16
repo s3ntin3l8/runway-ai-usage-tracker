@@ -8,7 +8,7 @@ export function BottomNav() {
       aria-label="Primary"
       className="fixed inset-x-0 bottom-0 z-30 border-t border-edge bg-surface-1/95 backdrop-blur-sm pb-[env(safe-area-inset-bottom)] lg:hidden"
     >
-      <div className="grid h-16 grid-cols-4">
+      <div className="grid h-16 grid-cols-5">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}

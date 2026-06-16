@@ -6,7 +6,6 @@ import type { HistoryWindowRow } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
@@ -15,14 +14,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
 import { formatLocalDate } from '@/lib/tz';
-import { GlobalInsights } from './GlobalInsights';
 import { HistoryChart } from './HistoryChart';
-import { TopModelsCard } from './TopModelsCard';
-import { TopProjectsCard } from './TopProjectsCard';
-import { TopToolsCard } from './TopToolsCard';
 import { WindowDetailSheet } from './WindowDetailSheet';
 import {
-  useGlobalStats,
   useHistoryChart,
   useHistoryDeltas,
   useHistoryWindows,
@@ -68,7 +62,6 @@ export function HistoryPage() {
   );
   const deltas = useHistoryDeltas(days);
   const windows = useHistoryWindows(selected?.providerId ?? null, days);
-  const globalStats = useGlobalStats();
 
   const hasChartData =
     (chart.data?.series?.some((s) => s.points.length > 0) ?? false) ||
@@ -221,21 +214,6 @@ export function HistoryPage() {
             </Table>
           )}
         </Card>
-
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-[13px] font-semibold tracking-tight">Global insights</h2>
-            <ExcludeCacheToggle />
-          </div>
-          <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
-        </div>
-
-        <TopModelsCard days={days} />
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <TopProjectsCard days={days} />
-          <TopToolsCard days={days} />
-        </div>
 
         {(anomalies.data?.anomalies.length ?? 0) > 0 ? (
           <Card>
