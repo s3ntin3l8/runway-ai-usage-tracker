@@ -332,6 +332,8 @@ def _release_lock() -> None:
     try:
         _lock_path().unlink()
     except OSError:
+        # Already gone (or un-removable) — either way the lock is effectively
+        # released; a leftover self-heals via _LOCK_STALE_SECONDS reclaim.
         pass
 
 
