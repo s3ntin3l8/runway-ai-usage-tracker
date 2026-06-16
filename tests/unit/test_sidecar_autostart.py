@@ -60,7 +60,12 @@ class TestMacOSAutostart:
         with patch("pathlib.Path.exists", return_value=False):
             assert mod.is_login_item_installed() is False
 
-    def test_install_creates_plist_and_calls_launchctl(self) -> None:
+    def test_install_writes_plist_without_loading(self) -> None:
+        """Install writes the plist but must NOT ``launchctl load`` it.
+
+        Loading mid-session would immediately spawn a duplicate sidecar (the
+        plist has RunAtLoad); macOS auto-loads LaunchAgents at the next login.
+        """
         mod = self._get_mod()
         with (
             patch("pathlib.Path.mkdir") as mock_mkdir,
@@ -77,10 +82,8 @@ class TestMacOSAutostart:
         assert "<key>Label</key>" in written_content
         assert "<key>RunAtLoad</key>" in written_content
 
-        mock_run.assert_called_once()
-        run_cmd = mock_run.call_args[0][0]
-        assert run_cmd[0] == "launchctl"
-        assert run_cmd[1] == "load"
+        # No launchctl load — that was the source of the duplicate-instance bug.
+        mock_run.assert_not_called()
 
     def test_remove_calls_unload_and_removes_plist(self) -> None:
         mod = self._get_mod()

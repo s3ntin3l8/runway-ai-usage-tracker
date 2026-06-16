@@ -781,6 +781,35 @@ class TestSelfUpdateCLIFlag:
         assert pid_called["n"] == 0  # never reached write_pid_file
 
 
+class TestSingleInstanceLock:
+    """The pid-file lock the tray's single-instance guard relies on.
+
+    `sidecar_app/__main__.py` calls `write_pid_file()` before starting the tray;
+    a second instance (login-launched copy, manual double launch, or tray-vs-CLI)
+    must be refused while the holder is alive.
+    """
+
+    def test_second_acquire_fails_while_holder_alive(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+        try:
+            assert sidecar.write_pid_file() is True  # first instance claims it
+            # Second instance: current process is alive and holds the file → refused.
+            assert sidecar.write_pid_file() is False
+        finally:
+            sidecar.remove_pid_file()
+
+    def test_stale_pid_is_reclaimed(self, tmp_path, monkeypatch):
+        """A pid file left by a dead process must not block a new instance."""
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+        # Write a pid that is guaranteed dead (process 999999 doesn't exist here).
+        (tmp_path / "sidecar.pid").write_text("999999")
+        monkeypatch.setattr(sidecar, "_pid_is_alive", lambda pid: False)
+        try:
+            assert sidecar.write_pid_file() is True  # stale lock reclaimed
+        finally:
+            sidecar.remove_pid_file()
+
+
 class TestAutoUpdatePrecedence:
     """Local `auto_update` config overrides the server's fleet-wide flag."""
 
