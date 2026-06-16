@@ -5,7 +5,7 @@
 // the latter two rendered as compact metric cards rather than dense tables.
 
 import { useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import type { SessionEntry } from '@/api/types';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
@@ -20,6 +20,50 @@ import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessi
 // cost); the optional Sidecar and Project columns each add one. Used for the
 // detail row's colSpan.
 const BASE_COL_COUNT = 7;
+
+// The clickable column headers map to server-side `sort_by` values; `recent`
+// (default) has no header of its own, so it isn't part of this union.
+export type SessionSortKey = 'duration' | 'messages' | 'tokens' | 'cost';
+export type SortDir = 'asc' | 'desc';
+
+/** A right-aligned, clickable column header with an active asc/desc indicator. */
+function SortableTH({
+  label,
+  sortKey,
+  sort,
+  onSort,
+}: {
+  label: string;
+  sortKey: SessionSortKey;
+  sort?: { by: SessionSortKey | 'recent'; dir: SortDir };
+  onSort: (key: SessionSortKey) => void;
+}) {
+  const active = sort?.by === sortKey;
+  return (
+    <TH
+      className="text-right"
+      aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          'ml-auto flex items-center gap-1 hover:text-fg',
+          active && 'text-fg',
+        )}
+      >
+        {label}
+        {active ? (
+          sort!.dir === 'asc' ? (
+            <ArrowUp className="size-3" aria-hidden />
+          ) : (
+            <ArrowDown className="size-3" aria-hidden />
+          )
+        ) : null}
+      </button>
+    </TH>
+  );
+}
 
 /** Compact card for one model/agent row — a titled header plus a metric grid. */
 function MetricCard({
@@ -226,9 +270,16 @@ function SessionRow({
 export function SessionsTable({
   sessions,
   excludeCache = false,
+  sort,
+  onSort,
 }: {
   sessions: SessionEntry[];
   excludeCache?: boolean;
+  // Current sort state + click handler — provided only by the paginated
+  // Sessions browser. When omitted (e.g. the Activity-tab top-10), the
+  // Duration/Messages/Tokens/Cost headers render as plain, non-interactive text.
+  sort?: { by: SessionSortKey | 'recent'; dir: SortDir };
+  onSort?: (key: SessionSortKey) => void;
 }) {
   // Show the Sidecar column only when more than one host feeds the fleet.
   const sidecars = useSidecars().data?.sidecars ?? [];
@@ -250,10 +301,21 @@ export function SessionsTable({
           <TH>Models</TH>
           {showProject ? <TH>Project</TH> : null}
           {showSidecar ? <TH>Sidecar</TH> : null}
-          <TH className="text-right">Duration</TH>
-          <TH className="text-right">Messages</TH>
-          <TH className="text-right">Tokens</TH>
-          <TH className="text-right">Cost</TH>
+          {onSort ? (
+            <>
+              <SortableTH label="Duration" sortKey="duration" sort={sort} onSort={onSort} />
+              <SortableTH label="Messages" sortKey="messages" sort={sort} onSort={onSort} />
+              <SortableTH label="Tokens" sortKey="tokens" sort={sort} onSort={onSort} />
+              <SortableTH label="Cost" sortKey="cost" sort={sort} onSort={onSort} />
+            </>
+          ) : (
+            <>
+              <TH className="text-right">Duration</TH>
+              <TH className="text-right">Messages</TH>
+              <TH className="text-right">Tokens</TH>
+              <TH className="text-right">Cost</TH>
+            </>
+          )}
         </TR>
       </THead>
       <TBody>
