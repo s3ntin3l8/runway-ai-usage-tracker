@@ -9,6 +9,7 @@ import {
   heatmapResponse,
   historyChart,
   pastPeriod,
+  rollingScope,
   session,
 } from './test-fixtures';
 
@@ -37,7 +38,7 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [session()] } as never);
     renderWithProviders(
-      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     expect(await screen.findByText(/^Token composition ·/)).toBeInTheDocument();
@@ -50,7 +51,7 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
     renderWithProviders(
-      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
     expect(await screen.findByTestId('heatmap')).toBeInTheDocument();
   });
@@ -60,11 +61,11 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(false));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
     renderWithProviders(
-      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     expect(await screen.findByText(/no usage recorded in/i)).toBeInTheDocument();
-    expect(await screen.findByText(/no event activity in the last 14 days/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no event activity in/i)).toBeInTheDocument();
     expect(await screen.findByText(/no sessions recorded/i)).toBeInTheDocument();
   });
 
@@ -73,9 +74,9 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [session()] } as never);
     renderWithProviders(
-      <ActivityTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
-    expect(await screen.findByText('Top sessions (7 days)')).toBeInTheDocument();
+    expect(await screen.findByText(/^Top sessions ·/)).toBeInTheDocument();
     expect(await screen.findByText('Session')).toBeInTheDocument();
   });
 
@@ -85,7 +86,7 @@ describe('ActivityTab', () => {
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
     const period = pastPeriod('2026-01');
     renderWithProviders(
-      <ActivityTab providerId="anthropic" accountId="me@example.com" period={period} />,
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={period} />,
     );
 
     await waitFor(() =>
@@ -100,5 +101,30 @@ describe('ActivityTab', () => {
     expect(api.fetchSessions).toHaveBeenCalledWith(
       expect.objectContaining({ since: period.range.since, until: period.range.until }),
     );
+  });
+
+  it('scopes every panel to a rolling window via the range cumulative endpoint', async () => {
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
+    vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
+    const scope = rollingScope(30);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={scope} />,
+    );
+
+    // A rolling window aggregates the donuts live over [since, until) rather than
+    // reading a calendar-month bucket.
+    await waitFor(() =>
+      expect(api.fetchCumulative).toHaveBeenCalledWith(
+        expect.objectContaining({ since: scope.range.since, until: scope.range.until }),
+      ),
+    );
+    expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+      expect.objectContaining({ period_type: 'month' }),
+    );
+    expect(api.fetchHeatmap).toHaveBeenCalledWith(
+      expect.objectContaining({ since: scope.range.since, until: scope.range.until }),
+    );
+    expect((await screen.findAllByText(/Last 30 days/)).length).toBeGreaterThan(0);
   });
 });

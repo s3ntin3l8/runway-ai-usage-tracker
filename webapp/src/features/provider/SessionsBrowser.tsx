@@ -11,9 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
-import { formatLocalDate } from '@/lib/tz';
 import { SessionsTable, type SessionSortKey, type SortDir } from './SessionsTable';
-import type { SelectedPeriod } from './period';
+import type { TabScope } from './period';
 import { useProjects, useSessionsPaginated } from './queries';
 
 const PAGE_SIZE = 25;
@@ -22,12 +21,12 @@ const ALL = '__all__';
 export function SessionsBrowser({
   providerId,
   accountId,
-  period,
+  scope,
   active,
 }: {
   providerId: string;
   accountId: string;
-  period: SelectedPeriod;
+  scope: TabScope;
   active: boolean;
 }) {
   const { excludeCache } = useExcludeCache();
@@ -37,9 +36,9 @@ export function SessionsBrowser({
   // marked active until the user clicks one.
   const [sortBy, setSortBy] = useState<SessionSortKey | 'recent'>('recent');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  // Reset to the first page whenever the month, project, or sort changes — the
+  // Reset to the first page whenever the scope, project, or sort changes — the
   // old offset is meaningless against a reordered or differently-sized result.
-  useEffect(() => setPage(0), [period.key, project, sortBy, sortDir]);
+  useEffect(() => setPage(0), [scope.key, project, sortBy, sortDir]);
 
   // Toggle direction when re-clicking the active column; otherwise switch
   // column and start descending (largest-first, the common intent).
@@ -52,19 +51,19 @@ export function SessionsBrowser({
     }
   };
 
-  const projects = useProjects(providerId, period.range);
+  const projects = useProjects(providerId, scope.range);
   const q = useSessionsPaginated(providerId, accountId, {
     page,
     pageSize: PAGE_SIZE,
-    since: period.range.since,
-    until: period.range.until,
+    since: scope.range.since,
+    until: scope.range.until,
     project: project === ALL ? null : project,
     sortBy,
     sortDir,
     enabled: active,
   });
 
-  const monthLabel = formatLocalDate(period.range.since, { month: 'long', year: 'numeric' });
+  const scopeLabel = scope.label;
   const total = q.data?.total ?? 0;
   const sessions = q.data?.sessions ?? [];
   const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
@@ -75,7 +74,7 @@ export function SessionsBrowser({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Sessions · {monthLabel}</CardTitle>
+        <CardTitle>Sessions · {scopeLabel}</CardTitle>
         <div className="flex items-center gap-3">
           {projectOptions.length > 0 ? (
             <Select value={project} onValueChange={setProject}>
@@ -103,7 +102,7 @@ export function SessionsBrowser({
       ) : total === 0 ? (
         <CardContent>
           <p className="py-12 text-center text-xs text-fg-subtle">
-            No sessions in {monthLabel}
+            No sessions in {scopeLabel}
             {project === ALL ? '' : ` for ${project}`} — sessions arrive via sidecar ingest.
           </p>
         </CardContent>

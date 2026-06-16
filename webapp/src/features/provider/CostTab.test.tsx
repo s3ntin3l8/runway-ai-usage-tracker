@@ -35,7 +35,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     expect(await screen.findByText(/^Cost by model ·/)).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     expect((await screen.findAllByText('Cache read')).length).toBeGreaterThan(0);
@@ -83,7 +83,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     // Full cost up front (model $10, sidecar $12.50).
@@ -98,7 +98,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     const row = (await screen.findByText('claude-opus')).closest('tr')!;
@@ -115,7 +115,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
@@ -152,7 +152,7 @@ describe('CostTab', () => {
       }),
     );
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
     // Reasoning column header appears once a row carries reasoning tokens.
@@ -171,7 +171,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
     expect((await screen.findAllByText(/no cost data in/i)).length).toBeGreaterThan(0);
   });
@@ -180,7 +180,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" period={pastPeriod('2026-01')} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={pastPeriod('2026-01')} />,
     );
 
     // Spend tile is month-scoped; EOM/burn are not applicable.

@@ -317,12 +317,14 @@ def _pick_critical_card(cards: list[dict[str, Any]]) -> dict[str, Any]:
 
 @router.get("/cumulative")
 @limiter.limit("30/minute")
-async def get_cumulative_usage(
+async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-live/range-live/filtered bucket assembly, splits poorly
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
     period_type: str | None = None,
     period_key: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Authoritative cumulative usage rolled up across sidecars from usage_period_rollup.
@@ -344,13 +346,23 @@ async def get_cumulative_usage(
     on the wrong calendar month for users far from UTC. `current_month_key`
     points at the requested month so callers read it the same way as the
     default response.
+
+    Passing a `since` (and optional exclusive `until`) instant aggregates the
+    bucket live over that arbitrary [since, until) window — the rolling-range
+    path the provider Activity/Cost tabs use for "last N days" (issue #87).
+    `current_month_key` points at the range bucket so callers read it the same
+    way. Takes precedence over period_type/period_key.
     """
     from app.models.db import UsagePeriodRollup
 
     now = datetime.now(UTC)
-    is_default = period_type is None and period_key is None
+    is_range_live = bool(since)
+    is_default = not is_range_live and period_type is None and period_key is None
     is_month_live = (
-        period_type == "month" and bool(period_key) and bool(_MONTH_KEY_RE.match(period_key or ""))
+        not is_range_live
+        and period_type == "month"
+        and bool(period_key)
+        and bool(_MONTH_KEY_RE.match(period_key or ""))
     )
 
     stmt = select(UsagePeriodRollup)
@@ -362,9 +374,9 @@ async def get_cumulative_usage(
         stmt = stmt.where(UsagePeriodRollup.period_type == period_type)
     if period_key:
         stmt = stmt.where(UsagePeriodRollup.period_key == period_key)
-    # The tz-correct month path ignores the rollup rows in favour of a live
-    # aggregation, so don't bother fetching them.
-    rows = [] if is_month_live else session.exec(stmt).all()
+    # The live-aggregation paths (tz-correct month, arbitrary range) ignore the
+    # rollup rows in favour of an on-demand event aggregation, so skip the fetch.
+    rows = [] if (is_month_live or is_range_live) else session.exec(stmt).all()
 
     # The default (unfiltered) call powers the live "This period" / "Yearly"
     # gauges, which reset on the user's local calendar. Anchor those two
@@ -377,6 +389,20 @@ async def get_cumulative_usage(
         current_month = anchors["current_month"]
         live_month = query_cumulative_live(session, since=anchors["month_start_utc"])
         live_year = query_cumulative_live(session, since=anchors["year_start_utc"])
+    elif is_range_live:
+        # Arbitrary [since, until) window — aggregate live, surfaced under a
+        # synthetic 'range' bucket that `current_month_key` points at.
+        month_live = query_cumulative_live(
+            session,
+            since=parse_iso8601_utc(since or ""),
+            until=parse_iso8601_utc(until) if until else None,
+            provider_id=provider_id,
+            account_id=account_id,
+        )
+        current_year = "range"
+        current_month = "range"
+        live_month = {}
+        live_year = {}
     elif is_month_live:
         since_utc, until_utc = _month_bounds_utc(resolve_user_tz(session), period_key or "")
         month_live = query_cumulative_live(
@@ -489,9 +515,9 @@ async def get_cumulative_usage(
         if is_default:
             entry[year_key_out] = live_year.get((pid, aid), _empty_bucket())
             entry[month_key_out] = live_month.get((pid, aid), _empty_bucket())
-        elif is_month_live:
-            # tz-correct historical month from the live aggregation; the rollup
-            # year bucket isn't fetched on this path, so report it empty.
+        elif is_month_live or is_range_live:
+            # Live aggregation (tz-correct historical month, or an arbitrary
+            # range); the rollup year bucket isn't fetched here, so report empty.
             entry[year_key_out] = _empty_bucket()
             entry[month_key_out] = month_live.get((pid, aid), _empty_bucket())
         else:

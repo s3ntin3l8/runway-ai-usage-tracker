@@ -63,6 +63,29 @@ export const useProviderCumulativeMonth = (
     refetchInterval: 120_000,
   });
 
+// Cumulative totals aggregated live over an arbitrary [since, until) window —
+// the rolling-range counterpart to the month bucket above. The server runs
+// `query_cumulative_live` and points `current_month_key` at the range bucket,
+// so the read is identical to the month/live responses.
+export const useProviderCumulativeRange = (
+  providerId: string,
+  accountId: string,
+  range: DateRange,
+  enabled = true,
+) =>
+  useQuery({
+    queryKey: ['usage', 'cumulative', providerId, accountId, 'range', range.since, range.until],
+    queryFn: () =>
+      fetchCumulative({
+        provider_id: providerId,
+        account_id: accountId,
+        since: range.since,
+        until: range.until,
+      }),
+    enabled,
+    refetchInterval: 120_000,
+  });
+
 // Earliest/latest event timestamps — bounds the month selector's reach.
 export const useProviderEventRange = (providerId: string, accountId: string) =>
   useQuery({

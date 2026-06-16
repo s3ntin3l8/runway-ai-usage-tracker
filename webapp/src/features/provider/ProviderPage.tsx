@@ -22,9 +22,9 @@ import { DebugTab } from './DebugTab';
 import { EventsTab } from './EventsTab';
 import { ForecastTab } from './ForecastTab';
 import { OverviewTab } from './OverviewTab';
-import { PeriodSelector } from './PeriodSelector';
+import { ScopeSelector } from './ScopeSelector';
 import { SessionsBrowser } from './SessionsBrowser';
-import { currentMonthKey, resolvePeriod } from './period';
+import { currentMonthKey, resolveScope } from './period';
 import { useProviderEventRange } from './queries';
 
 // Tabs whose data is scoped by the shared month selector.
@@ -58,10 +58,11 @@ export function ProviderPage() {
   const entry = entries.find((e) => e.account_id === accountParam) ?? entries[0];
   const accountId = entry?.account_id ?? accountParam ?? 'default';
 
-  // Shared month selector — `?period=YYYY-MM`, omitted when it's the current
-  // month (mirrors how `tab` omits 'overview'). resolvePeriod tolerates a bad
-  // deep-link by falling back to the current month.
-  const period = resolvePeriod(searchParams.get('period'));
+  // Shared time-scope selector — `?period=` holds a 'YYYY-MM' month key or a
+  // 'Nd' rolling key, omitted when it's the current month (mirrors how `tab`
+  // omits 'overview'). resolveScope tolerates a bad deep-link by falling back
+  // to the current month.
+  const scope = resolveScope(searchParams.get('period'));
   const setPeriod = (next: string) => {
     setSearchParams(
       (prev) => {
@@ -105,8 +106,9 @@ export function ProviderPage() {
         actions={
           <>
             {entry && PERIOD_AWARE_TABS.has(tab) ? (
-              <PeriodSelector
-                value={period.key}
+              <ScopeSelector
+                value={scope.key}
+                mode={scope.mode}
                 onChange={setPeriod}
                 earliest={eventRange.data?.earliest}
               />
@@ -200,13 +202,13 @@ export function ProviderPage() {
               <OverviewTab entry={entry} />
             </TabsContent>
             <TabsContent value="activity">
-              <ActivityTab providerId={providerId} accountId={accountId} period={period} />
+              <ActivityTab providerId={providerId} accountId={accountId} scope={scope} />
             </TabsContent>
             <TabsContent value="sessions">
               <SessionsBrowser
                 providerId={providerId}
                 accountId={accountId}
-                period={period}
+                scope={scope}
                 active={tab === 'sessions'}
               />
             </TabsContent>
@@ -214,7 +216,7 @@ export function ProviderPage() {
               <EventsTab
                 providerId={providerId}
                 accountId={accountId}
-                period={period}
+                scope={scope}
                 active={tab === 'events'}
               />
             </TabsContent>
@@ -222,7 +224,7 @@ export function ProviderPage() {
               <ForecastTab providerId={providerId} accountId={accountId} entry={entry} />
             </TabsContent>
             <TabsContent value="cost">
-              <CostTab providerId={providerId} accountId={accountId} period={period} />
+              <CostTab providerId={providerId} accountId={accountId} scope={scope} />
             </TabsContent>
             <TabsContent value="debug">
               <DebugTab
