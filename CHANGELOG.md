@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.3.0...v2.3.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **sidecar-edge:** build only the tip of origin/main ([#106](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/106)) ([#110](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/110)) ([afbce9f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/afbce9f2371b85739407fd508829a91a020d20f1))
+* **sidecar:** prevent duplicate instance from Launch at Login ([#107](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/107)) ([#108](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/108)) ([91e958f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/91e958f87f669a023b09b0667c78372becb4e6c6))
+
 ## [2.3.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.2.0...v2.3.0) (2026-06-16)
 
 
