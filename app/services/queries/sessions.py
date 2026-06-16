@@ -15,6 +15,20 @@ from app.services.queries._shared import _parse_ts
 # 7.4  query_sessions
 # ---------------------------------------------------------------------------
 
+# Whitelist mapping `sort_by` -> the ORDER BY column/expression. Fixed strings
+# only (no interpolation of user input), so safe to splice into the SQL; the
+# endpoint further constrains the accepted values via a Literal. `msgs`,
+# `tokens_total`, `cost_usd`, and `ts_end` are SELECT aliases below; duration is
+# not a stored column (it's derived in Python), so it sorts on the equivalent
+# julianday expression, which is monotonic with the rendered duration.
+_SORT_COLUMNS = {
+    "recent": "ts_end",
+    "tokens": "tokens_total",
+    "duration": "(julianday(MAX(ts)) - julianday(MIN(ts)))",
+    "messages": "msgs",
+    "cost": "cost_usd",
+}
+
 
 def query_sessions(
     session: Session,
@@ -26,6 +40,7 @@ def query_sessions(
     limit: int = 20,
     offset: int = 0,
     sort_by: str = "tokens",
+    sort_dir: str = "desc",
     project: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return top-N sessions by total tokens, newest first within the window.
@@ -45,7 +60,11 @@ def query_sessions(
     if since is None:
         since = datetime.now(UTC) - timedelta(days=7)
 
-    order_clause = "ts_end DESC" if sort_by == "recent" else "tokens_total DESC"
+    # Whitelisted column + validated direction, with a stable tiebreaker so
+    # paging stays deterministic when the sort key ties.
+    col = _SORT_COLUMNS.get(sort_by, "tokens_total")
+    direction = "ASC" if sort_dir == "asc" else "DESC"
+    order_clause = f"{col} {direction}, ts_end DESC, session_id"
     # Exclusive upper bound — only emitted when an `until` is supplied so the
     # default (open-ended) window is byte-identical to the original query.
     until_clause = "AND ts < :until" if until is not None else ""
@@ -328,6 +347,7 @@ def query_sessions_paginated(
     page: int = 0,
     page_size: int = 25,
     sort_by: str = "recent",
+    sort_dir: str = "desc",
     project: str | None = None,
 ) -> dict[str, Any]:
     """One page of sessions + the total count, for the Sessions browser tab."""
@@ -348,6 +368,7 @@ def query_sessions_paginated(
         limit=page_size,
         offset=page * page_size,
         sort_by=sort_by,
+        sort_dir=sort_dir,
         project=project,
     )
     return {"sessions": sessions, "total": total, "limit": page_size, "offset": page * page_size}

@@ -156,6 +156,8 @@ export const useSessionsPaginated = (
     since,
     until,
     project,
+    sortBy = 'recent',
+    sortDir = 'desc',
     enabled,
   }: {
     page: number;
@@ -163,11 +165,25 @@ export const useSessionsPaginated = (
     since: string;
     until?: string;
     project?: string | null;
+    sortBy?: string;
+    sortDir?: string;
     enabled: boolean;
   },
 ) =>
   useQuery({
-    queryKey: ['usage', 'sessions-page', providerId, accountId, since, until, project, page, pageSize],
+    queryKey: [
+      'usage',
+      'sessions-page',
+      providerId,
+      accountId,
+      since,
+      until,
+      project,
+      sortBy,
+      sortDir,
+      page,
+      pageSize,
+    ],
     queryFn: () =>
       fetchSessionsPaginated({
         provider_id: providerId,
@@ -177,7 +193,8 @@ export const useSessionsPaginated = (
         ...(project ? { project } : {}),
         page,
         limit: pageSize,
-        sort_by: 'recent',
+        sort_by: sortBy,
+        sort_dir: sortDir,
       }),
     enabled,
     placeholderData: keepPreviousData,

@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { formatLocalDate } from '@/lib/tz';
-import { SessionsTable } from './SessionsTable';
+import { SessionsTable, type SessionSortKey, type SortDir } from './SessionsTable';
 import type { SelectedPeriod } from './period';
 import { useProjects, useSessionsPaginated } from './queries';
 
@@ -33,9 +33,24 @@ export function SessionsBrowser({
   const { excludeCache } = useExcludeCache();
   const [page, setPage] = useState(0);
   const [project, setProject] = useState<string>(ALL);
-  // Reset to the first page whenever the month or project filter changes — the
-  // old offset is meaningless against a different total.
-  useEffect(() => setPage(0), [period.key, project]);
+  // Default sort mirrors the server default ('recent' desc) — no header is
+  // marked active until the user clicks one.
+  const [sortBy, setSortBy] = useState<SessionSortKey | 'recent'>('recent');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Reset to the first page whenever the month, project, or sort changes — the
+  // old offset is meaningless against a reordered or differently-sized result.
+  useEffect(() => setPage(0), [period.key, project, sortBy, sortDir]);
+
+  // Toggle direction when re-clicking the active column; otherwise switch
+  // column and start descending (largest-first, the common intent).
+  const handleSort = (key: SessionSortKey) => {
+    if (key === sortBy) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortBy(key);
+      setSortDir('desc');
+    }
+  };
 
   const projects = useProjects(providerId, period.range);
   const q = useSessionsPaginated(providerId, accountId, {
@@ -44,6 +59,8 @@ export function SessionsBrowser({
     since: period.range.since,
     until: period.range.until,
     project: project === ALL ? null : project,
+    sortBy,
+    sortDir,
     enabled: active,
   });
 
@@ -92,7 +109,12 @@ export function SessionsBrowser({
         </CardContent>
       ) : (
         <>
-          <SessionsTable sessions={sessions} excludeCache={excludeCache} />
+          <SessionsTable
+            sessions={sessions}
+            excludeCache={excludeCache}
+            sort={{ by: sortBy, dir: sortDir }}
+            onSort={handleSort}
+          />
           <div className="flex items-center justify-between gap-2 border-t border-edge px-4 py-3">
             <span className="text-[11px] text-fg-subtle tabular">
               Showing {start}–{end} of {total}

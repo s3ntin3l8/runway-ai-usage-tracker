@@ -949,7 +949,7 @@ async def get_usage_sessions(
 
 @router.get("/sessions/paginated")
 @limiter.limit("30/minute")
-async def get_usage_sessions_paginated(
+async def get_usage_sessions_paginated(  # noqa: PLR0913 — known-debt: query filters + sort; collapse into a Pydantic params model in a follow-up
     request: Request,
     provider_id: str = Query(...),
     account_id: str = Query(...),
@@ -958,11 +958,14 @@ async def get_usage_sessions_paginated(
     project: str | None = Query(default=None),
     page: int = Query(default=0, ge=0),
     limit: int = Query(default=25, ge=1, le=50),
-    sort_by: Literal["tokens", "recent"] = Query(default="recent"),
+    sort_by: Literal["recent", "tokens", "duration", "messages", "cost"] = Query(default="recent"),
+    sort_dir: Literal["asc", "desc"] = Query(default="desc"),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """One page of sessions (default 25) plus the total count, for the Sessions
-    browser tab. Optional `project` filters to one working directory."""
+    browser tab. Optional `project` filters to one working directory. Sorting is
+    server-side over the full result set; `sort_by` picks the column (duration /
+    messages / tokens / cost / recent) and `sort_dir` the direction."""
     return query_sessions_paginated(
         session,
         provider_id=provider_id,
@@ -972,6 +975,7 @@ async def get_usage_sessions_paginated(
         page=page,
         page_size=limit,
         sort_by=sort_by,
+        sort_dir=sort_dir,
         project=project,
     )
 

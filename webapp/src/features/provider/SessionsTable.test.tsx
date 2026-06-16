@@ -195,3 +195,44 @@ describe('SessionsTable sidecar column', () => {
     expect(screen.queryByRole('columnheader', { name: 'Project' })).not.toBeInTheDocument();
   });
 });
+
+describe('SessionsTable sortable headers', () => {
+  it('renders plain, non-interactive headers when no onSort is provided', () => {
+    renderWithProviders(<SessionsTable sessions={[session({ session_id: 'aaaa1111' })]} />);
+    const header = screen.getByRole('columnheader', { name: 'Tokens' });
+    expect(within(header).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('renders header buttons and fires onSort with the clicked column key', async () => {
+    const onSort = vi.fn();
+    renderWithProviders(
+      <SessionsTable
+        sessions={[session({ session_id: 'aaaa1111' })]}
+        sort={{ by: 'recent', dir: 'desc' }}
+        onSort={onSort}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Tokens/ }));
+    expect(onSort).toHaveBeenCalledWith('tokens');
+    await userEvent.click(screen.getByRole('button', { name: /Cost/ }));
+    expect(onSort).toHaveBeenCalledWith('cost');
+  });
+
+  it('marks the active column with an aria-sort matching the direction', () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[session({ session_id: 'aaaa1111' })]}
+        sort={{ by: 'duration', dir: 'asc' }}
+        onSort={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('columnheader', { name: /Duration/ })).toHaveAttribute(
+      'aria-sort',
+      'ascending',
+    );
+    expect(screen.getByRole('columnheader', { name: /Tokens/ })).toHaveAttribute(
+      'aria-sort',
+      'none',
+    );
+  });
+});
