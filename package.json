@@ -1,7 +1,7 @@
 {
   "name": "runway",
   "type": "module",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Local-first monitoring for AI provider quotas",
   "private": true,
   "scripts": {
