@@ -88,7 +88,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
-        "admin_auth_required": settings.ADMIN_API_KEY is not None,
+        "admin_auth_required": bool(settings.ADMIN_API_KEY),
         "auth_methods": auth_methods,
         "user_context": user_context,
         "is_authenticated": is_authenticated,

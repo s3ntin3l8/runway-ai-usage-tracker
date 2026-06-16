@@ -35,9 +35,16 @@ class EncryptionService:
                 self._fernet = Fernet(self._key.encode())
                 logger.info("Encryption service initialized with provided key.")
             except Exception as e:
+                # A provided-but-invalid key must NOT silently fall back to
+                # plaintext — the operator believes secrets are encrypted.
+                # Fail fast at startup instead of writing tokens in the clear.
                 logger.error(
                     f"Failed to initialize Fernet encryption: {e}. Check DB_ENCRYPTION_KEY format."
                 )
+                raise RuntimeError(
+                    "DB_ENCRYPTION_KEY is set but is not a valid Fernet key "
+                    "(32 url-safe base64-encoded bytes). Refusing to start in plaintext mode."
+                ) from e
         else:
             logger.warning("No DB_ENCRYPTION_KEY found. Database will store data in PLAINTEXT.")
 
