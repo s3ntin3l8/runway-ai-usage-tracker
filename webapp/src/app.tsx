@@ -12,6 +12,9 @@ import { HomePage } from '@/features/home/HomePage';
 const ProviderPage = lazy(() =>
   import('@/features/provider/ProviderPage').then((m) => ({ default: m.ProviderPage })),
 );
+const InsightsPage = lazy(() =>
+  import('@/features/insights/InsightsPage').then((m) => ({ default: m.InsightsPage })),
+);
 const HistoryPage = lazy(() =>
   import('@/features/history/HistoryPage').then((m) => ({ default: m.HistoryPage })),
 );
@@ -48,6 +51,7 @@ export function App() {
                   <Route element={<AppShell />}>
                     <Route index element={<HomePage />} />
                     <Route path="provider/:providerId" element={<ProviderPage />} />
+                    <Route path="insights" element={<InsightsPage />} />
                     <Route path="history" element={<HistoryPage />} />
                     <Route path="fleet" element={<FleetPage />} />
                     <Route path="settings/*" element={<SettingsPage />} />

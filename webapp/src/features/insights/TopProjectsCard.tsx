@@ -1,5 +1,5 @@
 // Top Projects card: ranks working directories by tokens, cost, or session
-// count. Reused in two places — globally on History (no providerId, spans every
+// count. Reused in two places — globally on Insights (no providerId, spans every
 // provider) and per-provider on the Activity tab. Shares the exclude-cache pref.
 
 import { useState } from 'react';

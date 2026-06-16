@@ -1,5 +1,5 @@
 // Top Models card: cross-provider model ranking with a tokens/cost toggle.
-// Shares the History page's day-range and the global exclude-cache preference.
+// Shares the Insights page's day-range and the global exclude-cache preference.
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';

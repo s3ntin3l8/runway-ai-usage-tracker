@@ -155,8 +155,7 @@ describe('HistoryPage', () => {
   it('switches the metric to tokens', async () => {
     renderWithProviders(<HistoryPage />);
     await screen.findByTestId('echart');
-    // Scope to the chart's metric toggle — the Top Models card has its own
-    // "Tokens" tab, so an unscoped query would be ambiguous.
+    // Scope to the chart's metric toggle by its aria-label to stay robust.
     const metricTabs = screen.getByRole('tablist', { name: 'Chart metric' });
     await userEvent.click(within(metricTabs).getByRole('tab', { name: 'Tokens' }));
     expect(api.fetchHistoryChart).toHaveBeenCalledWith(
