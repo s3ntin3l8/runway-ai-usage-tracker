@@ -212,6 +212,8 @@ The relevant env vars apply to both runtimes:
 | `TLS_TERMINATED` | ✅ when `APP_HOST != 127.0.0.1` | Operator assertion that an upstream proxy terminates TLS |
 | `CORS_ORIGINS` | ✅ when `APP_HOST != 127.0.0.1` | Comma-separated origin allow-list |
 | `ADMIN_API_KEY` | optional | Protects dashboard + admin endpoints from non-localhost callers |
+| `SESSION_LIFETIME_HOURS` | optional (default `12`) | Admin session-cookie lifetime for a normal login |
+| `SESSION_REMEMBER_DAYS` | optional (default `30`) | Session lifetime when the login uses "remember me" |
 
 For local single-host development the only mandatory variable is `INGEST_API_KEY` (default `sidecar-default-secret` ships in `.env.example`). For any multi-host or Docker deployment the three security gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`) become hard requirements; the server fails fast on startup otherwise.
 

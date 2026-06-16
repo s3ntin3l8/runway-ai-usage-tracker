@@ -20,6 +20,8 @@ per-sidecar splits are derived on demand from `usage_events` by the
 | **mixed** | Provides both quota and enrichment data in one response |
 | **enrichment** | Provides token breakdown, session counts, model usage details |
 
+Enrichment events also carry **project context** — the working directory (`cwd`), `git_branch`, and the tool names invoked in the message (`tool_names`). The server derives `project` (the basename of `cwd`) in `EventIngestor` and indexes it, which is what powers the Sessions project column and the Top Projects / Top Tools rankings.
+
 ## Per-Collector Strategy Mapping
 
 The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.
