@@ -49,8 +49,16 @@ def record(
     """Append one audit row in its own savepoint so a logging failure
     can't poison the outer transaction.
     """
+    # Structured attribution comes from the AuthResult stashed by
+    # require_admin_key (issue #103); fall back to the legacy actor string
+    # for callers that never passed through the gate.
+    auth = getattr(request.state, "auth", None)
+    actor_type = getattr(auth, "actor_type", None)
+    actor_meta = getattr(auth, "actor_meta", None)
     row = AuditLog(
         actor=resolve_actor(request),
+        actor_type=actor_type,
+        actor_meta_json=(json.dumps(actor_meta, separators=(",", ":")) if actor_meta else None),
         source_ip=resolve_source_ip(request),
         action=action,
         target_id=target_id,

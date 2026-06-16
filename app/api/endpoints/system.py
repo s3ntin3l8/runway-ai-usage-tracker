@@ -1,5 +1,4 @@
 import asyncio
-import hmac
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -16,7 +15,7 @@ from app.core.config import settings
 from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
-from app.core.security import require_admin_key
+from app.core.security import SESSION_COOKIE, require_admin_key, resolve_auth
 from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
@@ -57,40 +56,24 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     response itself never includes secrets and redacts the
     `ingest_api_key_is_default` flag from anonymous callers.
     """
-    # Admin key bypass for local development matches core/security.py
-    # Only trust if client IS localhost AND server is also only listening on localhost
-    is_local_trust = bool(
-        request.client
-        and request.client.host in ("127.0.0.1", "::1")
-        and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
+    # Share the one auth resolver with require_admin_key so the probe can
+    # never report a different verdict than the gate enforces. A valid
+    # session cookie, localhost trust, trusted-proxy SSO, or the admin-key
+    # header all count.
+    auth = resolve_auth(
+        request,
+        x_admin_key=request.headers.get("X-Admin-Key"),
+        x_forwarded_user=request.headers.get("X-Forwarded-User"),
+        remote_user=request.headers.get("Remote-User"),
+        session_cookie=request.cookies.get(SESSION_COOKIE),
     )
-
-    # Reverse-proxy SSO only counts as authenticated when the request
-    # originates from a trusted proxy IP — otherwise X-Forwarded-User /
-    # Remote-User can be forged by any client.
-    x_forwarded_user = request.headers.get("X-Forwarded-User")
-    remote_user = request.headers.get("Remote-User")
-    proxy_header_user = x_forwarded_user or remote_user
-    trusted_proxy_ips = settings.trusted_proxy_ips
-    from_trusted_proxy = bool(
-        trusted_proxy_ips and request.client and request.client.host in trusted_proxy_ips
-    )
-    user_context = proxy_header_user if (proxy_header_user and from_trusted_proxy) else None
+    is_authenticated = auth.authenticated
+    # Only the proxy path carries a user identity to surface to the UI.
+    user_context = auth.actor_id if auth.actor_type == "proxy" else None
 
     auth_methods = []
     if settings.ADMIN_API_KEY:
         auth_methods.append("admin_key")
-
-    x_admin_key = request.headers.get("X-Admin-Key")
-    is_valid_admin_key = bool(
-        settings.ADMIN_API_KEY
-        and x_admin_key is not None
-        and hmac.compare_digest(x_admin_key, settings.ADMIN_API_KEY)
-    )
-
-    is_authenticated = bool(
-        user_context or is_local_trust or is_valid_admin_key or not settings.ADMIN_API_KEY
-    )
 
     # The shared version checker caches the repo's latest release tag, which —
     # since release-please tags the whole repo — is also the latest server

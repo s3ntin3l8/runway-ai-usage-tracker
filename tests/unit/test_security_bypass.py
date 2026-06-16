@@ -19,7 +19,9 @@ async def test_require_admin_key_local_trust():
     request.client.host = "127.0.0.1"
 
     # Should not raise exception
-    await require_admin_key(request, x_admin_key=None, x_forwarded_user=None, remote_user=None)
+    await require_admin_key(
+        request, x_admin_key=None, x_forwarded_user=None, remote_user=None, session_cookie=None
+    )
 
 
 @pytest.mark.asyncio
@@ -31,8 +33,20 @@ async def test_require_admin_key_proxy_trust():
     request.client.host = "192.168.1.1"
 
     # Should not raise exception if proxy header is present
-    await require_admin_key(request, x_admin_key=None, x_forwarded_user="user123", remote_user=None)
-    await require_admin_key(request, x_admin_key=None, x_forwarded_user=None, remote_user="user123")
+    await require_admin_key(
+        request,
+        x_admin_key=None,
+        x_forwarded_user="user123",
+        remote_user=None,
+        session_cookie=None,
+    )
+    await require_admin_key(
+        request,
+        x_admin_key=None,
+        x_forwarded_user=None,
+        remote_user="user123",
+        session_cookie=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -48,6 +62,10 @@ async def test_require_admin_key_standard_fail(monkeypatch):
     # Should raise 403
     with pytest.raises(HTTPException) as excinfo:
         await require_admin_key(
-            request, x_admin_key="wrong-key", x_forwarded_user=None, remote_user=None
+            request,
+            x_admin_key="wrong-key",
+            x_forwarded_user=None,
+            remote_user=None,
+            session_cookie=None,
         )
     assert excinfo.value.status_code == 403
