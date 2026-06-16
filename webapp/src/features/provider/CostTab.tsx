@@ -15,39 +15,44 @@ import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { cn } from '@/lib/cn';
 import { formatCost, formatTokens } from '@/lib/format';
-import { formatLocalDate } from '@/lib/tz';
 import { DetailSection, Stat } from './detailPrimitives';
-import type { SelectedPeriod } from './period';
+import type { TabScope } from './period';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import {
   useProviderCostForecast,
   useProviderCumulative,
   useProviderCumulativeMonth,
+  useProviderCumulativeRange,
 } from './queries';
 
 export function CostTab({
   providerId,
   accountId,
-  period,
+  scope,
 }: {
   providerId: string;
   accountId: string;
-  period: SelectedPeriod;
+  scope: TabScope;
 }) {
   const { excludeCache } = useExcludeCache();
-  const range = period.isCurrentMonth ? undefined : period.range;
+  const range = scope.range;
+  // EOM / daily-burn projections are forward-looking, so they only apply to the
+  // live calendar month — a past month or a rolling window shows recorded spend.
+  const isLiveMonth = scope.mode === 'month' && scope.isCurrentMonth;
+  const isRolling = scope.mode === 'rolling';
   const cost = useProviderCostForecast(providerId, accountId);
-  // `liveCumulative` is always fetched for the period-independent Lifetime tile
-  // (the month-scoped response carries no lifetime bucket).
+  // `liveCumulative` is always fetched for the scope-independent Lifetime tile
+  // (the month/range-scoped responses carry no lifetime bucket).
   const liveCumulative = useProviderCumulative(providerId, accountId);
   const monthCumulative = useProviderCumulativeMonth(
     providerId,
     accountId,
-    period.key,
-    !period.isCurrentMonth,
+    scope.key,
+    scope.mode === 'month' && !scope.isCurrentMonth,
   );
-  const cumulative = period.isCurrentMonth ? liveCumulative : monthCumulative;
-  const monthLabel = formatLocalDate(period.range.since, { month: 'long', year: 'numeric' });
+  const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRolling);
+  const cumulative = isRolling ? rangeCumulative : isLiveMonth ? liveCumulative : monthCumulative;
+  const scopeLabel = scope.label;
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
@@ -66,7 +71,7 @@ export function CostTab({
     return row?.lifetime ?? null;
   }, [liveCumulative.data, providerId, accountId]);
 
-  const stats = period.isCurrentMonth
+  const stats = isLiveMonth
     ? [
         { label: 'Spend (MTD)', value: formatCost(cost.data?.current_month_to_date ?? null) },
         {
@@ -78,12 +83,12 @@ export function CostTab({
         { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
       ]
     : [
-        { label: `Spend · ${monthLabel}`, value: formatCost(monthBucket?.cost_usd ?? null) },
+        { label: `Spend · ${scopeLabel}`, value: formatCost(monthBucket?.cost_usd ?? null) },
         { label: 'Projected EOM', value: '—', hint: 'current month only' },
         { label: 'Daily burn (7d)', value: '—', hint: 'current month only' },
         { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
       ];
-  const statsLoading = period.isCurrentMonth
+  const statsLoading = isLiveMonth
     ? cost.isPending || cumulative.isPending
     : cumulative.isPending || liveCumulative.isPending;
 
@@ -106,24 +111,24 @@ export function CostTab({
         providerId={providerId}
         accountId={accountId}
         metric="cost"
-        title={`Cost per day · ${monthLabel}`}
+        title={`Cost per day · ${scopeLabel}`}
         range={range}
         excludeCache={excludeCache}
       />
 
       <SplitTable
-        title={`Cost by model · ${monthLabel}`}
+        title={`Cost by model · ${scopeLabel}`}
         split={monthBucket?.by_model}
         loading={cumulative.isPending}
         nameHeader="Model"
-        monthLabel={monthLabel}
+        scopeLabel={scopeLabel}
       />
       <SplitTable
-        title={`Cost by sidecar · ${monthLabel}`}
+        title={`Cost by sidecar · ${scopeLabel}`}
         split={monthBucket?.by_sidecar}
         loading={cumulative.isPending}
         nameHeader="Sidecar"
-        monthLabel={monthLabel}
+        scopeLabel={scopeLabel}
       />
     </div>
   );
@@ -134,13 +139,13 @@ function SplitTable({
   split,
   loading,
   nameHeader,
-  monthLabel,
+  scopeLabel,
 }: {
   title: string;
   split: CumulativeBucket['by_model'] | undefined | null;
   loading: boolean;
   nameHeader: string;
-  monthLabel: string;
+  scopeLabel: string;
 }) {
   const { excludeCache } = useExcludeCache();
   const rows = Object.entries(split ?? {}).sort(
@@ -162,7 +167,7 @@ function SplitTable({
         </CardContent>
       ) : rows.length === 0 ? (
         <CardContent>
-          <p className="py-4 text-center text-xs text-fg-subtle">No cost data in {monthLabel}.</p>
+          <p className="py-4 text-center text-xs text-fg-subtle">No cost data in {scopeLabel}.</p>
         </CardContent>
       ) : (
         <>

@@ -23,7 +23,7 @@ describe('SessionsBrowser', () => {
       <SessionsBrowser
         providerId="anthropic"
         accountId="me@example.com"
-        period={currentPeriod()}
+        scope={currentPeriod()}
         active={false}
       />,
     );
@@ -33,7 +33,7 @@ describe('SessionsBrowser', () => {
   it('shows the empty state when no sessions this month', async () => {
     vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(0, 0));
     renderWithProviders(
-      <SessionsBrowser providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     expect(await screen.findByText(/no sessions in/i)).toBeInTheDocument();
   });
@@ -41,7 +41,7 @@ describe('SessionsBrowser', () => {
   it('renders a page of sessions with the range counter', async () => {
     vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
     renderWithProviders(
-      <SessionsBrowser providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     expect(await screen.findByText(/^Sessions ·/)).toBeInTheDocument();
     expect(await screen.findByText(/showing 1–25 of 60/i)).toBeInTheDocument();
@@ -50,7 +50,7 @@ describe('SessionsBrowser', () => {
   it('pages forward', async () => {
     vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
     renderWithProviders(
-      <SessionsBrowser providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     const next = await screen.findByRole('button', { name: /next page/i });
     expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled();
@@ -63,7 +63,7 @@ describe('SessionsBrowser', () => {
   it('filters by project', async () => {
     vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
     renderWithProviders(
-      <SessionsBrowser providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     await screen.findByText(/^Sessions ·/);
     // The filter renders once the projects query resolves.
@@ -82,7 +82,7 @@ describe('SessionsBrowser', () => {
       <SessionsBrowser
         providerId="anthropic"
         accountId="me@example.com"
-        period={pastPeriod('2026-01')}
+        scope={pastPeriod('2026-01')}
         active
       />,
     );

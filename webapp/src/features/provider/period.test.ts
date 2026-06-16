@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setTzConfig } from '@/lib/tz';
 import {
   currentMonthKey,
+  isRollingKey,
   monthKey,
   monthKeyOfISO,
   resolvePeriod,
+  resolveScope,
   shiftMonthKey,
 } from './period';
 
@@ -50,6 +52,47 @@ describe('resolvePeriod', () => {
   it('falls back to the current month for a malformed key', () => {
     expect(resolvePeriod('garbage').key).toBe('2026-06');
     expect(resolvePeriod('2026-13').key).toBe('2026-06');
+  });
+});
+
+describe('resolveScope', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-14T12:00:00Z'));
+    setTzConfig({ user_timezone: 'UTC', env_timezone: null });
+  });
+
+  it('resolves a month key to a month-mode scope with a long label', () => {
+    const s = resolveScope('2026-03');
+    expect(s.mode).toBe('month');
+    expect(s.key).toBe('2026-03');
+    expect(s.label).toBe('March 2026');
+    expect(s.isCurrentMonth).toBe(false);
+    expect(s.range.since).toBe('2026-03-01T00:00:00.000Z');
+  });
+
+  it('defaults to the current month for omitted / malformed input', () => {
+    expect(resolveScope(null).key).toBe('2026-06');
+    expect(resolveScope(null).isCurrentMonth).toBe(true);
+    expect(resolveScope('garbage').key).toBe('2026-06');
+  });
+
+  it('resolves a rolling key to a [now − N days, now) window', () => {
+    const s = resolveScope('30d');
+    expect(s.mode).toBe('rolling');
+    expect(s.key).toBe('30d');
+    expect(s.label).toBe('Last 30 days');
+    expect(s.days).toBe(30);
+    expect(s.isCurrentMonth).toBe(false);
+    expect(s.range.until).toBe('2026-06-14T12:00:00.000Z');
+    expect(s.range.since).toBe('2026-05-15T12:00:00.000Z');
+  });
+
+  it('treats an unsupported rolling window as a month fallback', () => {
+    // 45d isn't an offered window → not a valid rolling key → current month.
+    expect(isRollingKey('45d')).toBe(false);
+    expect(resolveScope('45d').mode).toBe('month');
+    expect(isRollingKey('30d')).toBe(true);
   });
 });
 

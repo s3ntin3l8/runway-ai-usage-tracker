@@ -1,5 +1,5 @@
 // Shared test fixtures for provider-feature tests.
-import { resolvePeriod, type SelectedPeriod } from './period';
+import { resolveScope, rollingKey, type TabScope } from './period';
 import type {
   AnomaliesResponse,
   CostForecastResponse,
@@ -15,10 +15,12 @@ import type {
   SessionEntry,
 } from '@/api/types';
 
-// The current-month selection (default the tabs receive). Pass a 'YYYY-MM' key
-// for a past month to exercise the scoped-range code paths.
-export const currentPeriod = (): SelectedPeriod => resolvePeriod(null);
-export const pastPeriod = (key = '2026-01'): SelectedPeriod => resolvePeriod(key);
+// The current-month scope (default the tabs receive). Pass a 'YYYY-MM' key for
+// a past month, or use `rollingScope` for a rolling window, to exercise the
+// scoped-range code paths.
+export const currentPeriod = (): TabScope => resolveScope(null);
+export const pastPeriod = (key = '2026-01'): TabScope => resolveScope(key);
+export const rollingScope = (days = 30): TabScope => resolveScope(rollingKey(days));
 
 export const limitCard = (o: Partial<LimitCard> = {}): LimitCard => ({
   service_name: 'Claude',

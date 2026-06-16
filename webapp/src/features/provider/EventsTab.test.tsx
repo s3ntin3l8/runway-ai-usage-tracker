@@ -15,7 +15,7 @@ describe('EventsTab', () => {
       <EventsTab
         providerId="anthropic"
         accountId="me@example.com"
-        period={currentPeriod()}
+        scope={currentPeriod()}
         active={false}
       />,
     );
@@ -25,7 +25,7 @@ describe('EventsTab', () => {
   it('shows the empty state when no events this month', async () => {
     vi.mocked(api.fetchEvents).mockResolvedValue(emptyEvents());
     renderWithProviders(
-      <EventsTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     expect(await screen.findByText(/no events in/i)).toBeInTheDocument();
   });
@@ -33,7 +33,7 @@ describe('EventsTab', () => {
   it('renders a page of events and the range counter', async () => {
     vi.mocked(api.fetchEvents).mockResolvedValue(eventsResponse(25, 60));
     renderWithProviders(
-      <EventsTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     expect(await screen.findByText(/^Events ·/)).toBeInTheDocument();
     expect(await screen.findByText(/showing 1–25 of 60/i)).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe('EventsTab', () => {
   it('pages forward and back', async () => {
     vi.mocked(api.fetchEvents).mockResolvedValue(eventsResponse(25, 60));
     renderWithProviders(
-      <EventsTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     const next = await screen.findByRole('button', { name: /next page/i });
     expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled();
@@ -59,7 +59,7 @@ describe('EventsTab', () => {
     vi.mocked(api.fetchEvents).mockResolvedValue(emptyEvents());
     const period = pastPeriod('2026-01');
     renderWithProviders(
-      <EventsTab providerId="anthropic" accountId="me@example.com" period={period} active />,
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={period} active />,
     );
     await waitFor(() =>
       expect(api.fetchEvents).toHaveBeenCalledWith(
@@ -76,7 +76,7 @@ describe('EventsTab', () => {
       offset: 0,
     });
     renderWithProviders(
-      <EventsTab providerId="anthropic" accountId="me@example.com" period={currentPeriod()} active />,
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     expect(await screen.findByText('error')).toBeInTheDocument();
   });

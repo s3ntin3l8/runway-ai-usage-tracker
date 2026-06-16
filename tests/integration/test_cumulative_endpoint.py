@@ -374,6 +374,52 @@ def test_month_live_respects_user_local_boundary(session):
     assert may["cumulative"][0]["month_2026-05"]["tokens_input"] == 11
 
 
+def test_range_live_aggregates_window_from_events(session):
+    """?since=&until= takes the live range path: the bucket is aggregated from
+    usage_events over [since, until), surfaced under current_month_key, and the
+    UTC rollup is ignored (the rolling-range path the Activity/Cost tabs use)."""
+    # A stale rollup row that must never bleed into the range aggregation.
+    _rollup(session, period_type="month", period_key="2026-04", msgs=999, tokens_input=999_999)
+    # Events on both sides of the window boundary.
+    _event(
+        session, "in1", datetime(2026, 4, 10, 12, 0, tzinfo=UTC), model_id="opus", tokens_input=100
+    )
+    _event(
+        session, "in2", datetime(2026, 4, 20, 12, 0, tzinfo=UTC), model_id="opus", tokens_input=50
+    )
+    _event(session, "before", datetime(2026, 4, 1, 12, 0, tzinfo=UTC), tokens_input=7)
+    _event(session, "after", datetime(2026, 4, 30, 12, 0, tzinfo=UTC), tokens_input=9)
+
+    resp = _client().get(
+        "/api/v1/usage/cumulative"
+        "?provider_id=anthropic&account_id=u@x.com"
+        "&since=2026-04-05T00:00:00Z&until=2026-04-25T00:00:00Z"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    bucket = body["cumulative"][0][body["current_month_key"]]
+    # Only in1 + in2 fall inside [since, until); the rollup's 999_999 is ignored.
+    assert bucket["tokens_input"] == 150
+    assert bucket["msgs"] == 2
+    assert bucket["by_model"]["opus"]["tokens_input"] == 150
+
+
+def test_range_live_takes_precedence_over_period_params(session):
+    """`since` wins over period_type/period_key so the range path is unambiguous."""
+    _event(session, "e1", datetime(2026, 4, 10, 12, 0, tzinfo=UTC), tokens_input=42)
+
+    resp = _client().get(
+        "/api/v1/usage/cumulative"
+        "?period_type=month&period_key=2026-04"
+        "&since=2026-04-01T00:00:00Z&until=2026-05-01T00:00:00Z"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Range path emits the synthetic 'range' bucket key, not the month key.
+    assert body["current_month_key"] == "month_range"
+    assert body["cumulative"][0]["month_range"]["tokens_input"] == 42
+
+
 def test_query_param_filters_provider_id(session):
     """?provider_id=anthropic → only anthropic entries returned."""
     _rollup(session, provider_id="anthropic", account_id="a@x.com", msgs=10, tokens_input=100)
