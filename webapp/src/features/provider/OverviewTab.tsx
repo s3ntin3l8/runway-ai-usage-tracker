@@ -10,10 +10,12 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { ModelDonut } from '@/components/charts/ModelDonut';
+import { TokenBar } from '@/components/charts/TokenBar';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
-import { formatPct } from '@/lib/format';
-import { findForecast } from '@/lib/quota';
+import { formatNumber, formatPct, formatTokens } from '@/lib/format';
+import { cardKind, findForecast, windowLabel } from '@/lib/quota';
+import { CostOutlookCard } from './CostOutlookCard';
 import { ProviderAlerts } from './ProviderAlerts';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderTrendCard } from './ProviderTrendCard';
@@ -30,6 +32,8 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
   const forecast = useProviderForecast(entry.provider_id, entry.account_id);
   const cumulative = useProviderCumulative(entry.provider_id, entry.account_id);
   const cards = [entry.critical_gauge, ...entry.secondary_limits];
+  const kind = cardKind(entry.critical_gauge);
+  const critical = entry.critical_gauge;
 
   // Trajectory for the window we treat as critical (fall back to the first).
   const criticalForecast = useMemo(() => {
@@ -65,45 +69,88 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
       <ProviderKpis entry={entry} excludeCache={excludeCache} />
       <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {kind === 'quota' && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Quota windows</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              {cards.map((card, i) => (
+                <QuotaWindowRow
+                  key={`${card.service_name}-${card.window_type}-${i}`}
+                  card={card}
+                  siblings={cards}
+                  forecast={findForecast(card, forecast.data?.forecasts ?? [])}
+                />
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="flex flex-col">
+            <CardHeader>
+              <CardTitle>Current window</CardTitle>
+              {criticalForecast ? (
+                <span className="text-[11px] text-fg-subtle">
+                  projected {formatPct(criticalForecast.projected_pct)} at reset
+                </span>
+              ) : null}
+            </CardHeader>
+            <CardContent className="min-h-[11rem] flex-1">
+              {forecast.isPending ? (
+                <Skeleton className="h-full min-h-[11rem] w-full" />
+              ) : criticalForecast ? (
+                <TrajectoryChart forecast={criticalForecast} className="h-full min-h-[11rem] w-full" />
+              ) : (
+                <div className="flex h-full min-h-[11rem] items-center justify-center">
+                  <p className="text-center text-xs text-fg-subtle">No trajectory yet.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {kind === 'tokens' && (
         <Card>
           <CardHeader>
-            <CardTitle>Quota windows</CardTitle>
+            <CardTitle>Token usage</CardTitle>
+            <span className="text-[11px] text-fg-subtle">
+              {windowLabel(critical) ?? 'all time'}
+            </span>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            {cards.map((card, i) => (
-              <QuotaWindowRow
-                key={`${card.service_name}-${card.window_type}-${i}`}
-                card={card}
-                siblings={cards}
-                forecast={findForecast(card, forecast.data?.forecasts ?? [])}
-              />
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="flex flex-col">
-          <CardHeader>
-            <CardTitle>Current window</CardTitle>
-            {criticalForecast ? (
-              <span className="text-[11px] text-fg-subtle">
-                projected {formatPct(criticalForecast.projected_pct)} at reset
+          <CardContent>
+            <div className="flex items-baseline gap-3">
+              <span className="font-mono text-2xl font-semibold tabular">
+                {formatTokens(critical.token_usage?.total ?? critical.used_value ?? null)}
               </span>
+              <span className="text-xs text-fg-subtle">tokens</span>
+            </div>
+            <TokenBar
+              tokens={{
+                tokens_input: critical.token_usage?.input,
+                tokens_output: critical.token_usage?.output,
+                tokens_cache_read: critical.token_usage?.cache_read,
+                tokens_reasoning: critical.token_usage?.reasoning,
+              }}
+              showLegend
+              className="mt-3"
+            />
+            {critical.msgs != null ? (
+              <p className="mt-2 text-[11px] text-fg-subtle">
+                {formatNumber(critical.msgs)} messages
+              </p>
             ) : null}
-          </CardHeader>
-          <CardContent className="min-h-[11rem] flex-1">
-            {forecast.isPending ? (
-              <Skeleton className="h-full min-h-[11rem] w-full" />
-            ) : criticalForecast ? (
-              <TrajectoryChart forecast={criticalForecast} className="h-full min-h-[11rem] w-full" />
-            ) : (
-              <div className="flex h-full min-h-[11rem] items-center justify-center">
-                <p className="text-center text-xs text-fg-subtle">No trajectory yet.</p>
-              </div>
-            )}
           </CardContent>
         </Card>
-      </div>
+      )}
+
+      {kind === 'spend' && (
+        <CostOutlookCard
+          providerId={entry.provider_id}
+          accountId={entry.account_id}
+        />
+      )}
 
       <ProviderTrendCard
         providerId={entry.provider_id}

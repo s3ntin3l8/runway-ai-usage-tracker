@@ -1,23 +1,26 @@
 // Forecast: Theil-Sen trajectory per quota window + recent closed windows.
+// For token-only providers the trajectory section is replaced by a token-burn
+// trend; for spend providers it is replaced by the cost-outlook card.
 
 import { useMemo, useState } from 'react';
 import type { FleetEntry, ForecastEntry } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Gauge } from '@/components/ui/Gauge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatPct, formatTokens, timeUntil } from '@/lib/format';
-import { statusForPct } from '@/lib/quota';
+import { cardKind } from '@/lib/quota';
 import { formatLocalDate, formatLocalDateTime } from '@/lib/tz';
 import {
   useProviderAnomalies,
-  useProviderCostForecast,
   useProviderForecast,
   useWindowHistory,
 } from './queries';
+import { CostOutlookCard } from './CostOutlookCard';
+import { ProviderTrendCard } from './ProviderTrendCard';
 
 const STATUS_VARIANT: Record<string, 'critical' | 'warning' | 'ok' | 'neutral'> = {
   exhausted: 'critical',
@@ -58,6 +61,10 @@ export function ForecastTab({
   accountId: string;
   entry: FleetEntry;
 }) {
+  const kind = cardKind(entry.critical_gauge);
+  const { excludeCache } = useExcludeCache();
+
+  // Quota forecast — empty for token/spend providers (is_unlimited or pay-as-you-go).
   const forecast = useProviderForecast(providerId, accountId);
   const forecasts = useMemo(
     () => forecast.data?.forecasts ?? [],
@@ -68,7 +75,6 @@ export function ForecastTab({
     forecasts.find((f) => forecastKey(f) === selectedKey) ?? forecasts[0] ?? null;
 
   const anomalies = useProviderAnomalies(providerId, accountId);
-  const cost = useProviderCostForecast(providerId, accountId);
   const spikes = anomalies.data?.anomalies ?? [];
 
   const windowType = entry.critical_gauge.window_type ?? 'unknown';
@@ -85,6 +91,84 @@ export function ForecastTab({
     });
   }, [history.data]);
 
+  // Usage anomalies card — identical content regardless of kind.
+  const anomaliesCard = (
+    <Card>
+      <CardHeader>
+        <CardTitle>Usage anomalies</CardTitle>
+        {anomalies.data ? (
+          <span className="text-[11px] text-fg-subtle">
+            today vs {anomalies.data.lookback_days}d mean
+          </span>
+        ) : null}
+      </CardHeader>
+      {anomalies.isPending ? (
+        <CardContent>
+          <Skeleton className="h-20 w-full" />
+        </CardContent>
+      ) : spikes.length === 0 ? (
+        <CardContent>
+          <p className="py-6 text-center text-xs text-fg-subtle">
+            No usage anomalies detected.
+          </p>
+        </CardContent>
+      ) : (
+        <Table>
+          <THead>
+            <TR>
+              <TH>Model</TH>
+              <TH className="text-right">Today</TH>
+              <TH className="text-right">Mean</TH>
+              <TH className="text-right">z-score</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {spikes.map((a, i) => (
+              <TR key={`${a.model_id}-${i}`}>
+                <TD className="text-xs">{a.model_id}</TD>
+                <TD className="text-right font-mono tabular">{formatTokens(a.today_tokens)}</TD>
+                <TD className="text-right font-mono tabular">
+                  {formatTokens(a.historical_mean_tokens)}
+                </TD>
+                <TD className="text-right font-mono tabular text-warning">
+                  {a.z_score_tokens.toFixed(1)}σ
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      )}
+    </Card>
+  );
+
+  // --- Token providers: token-burn trend + anomalies ---
+  if (kind === 'tokens') {
+    return (
+      <div className="flex flex-col gap-4">
+        <ProviderTrendCard
+          providerId={providerId}
+          accountId={accountId}
+          metric="tokens"
+          title="Token burn"
+          defaultDays={30}
+          excludeCache={excludeCache}
+        />
+        {anomaliesCard}
+      </div>
+    );
+  }
+
+  // --- Spend providers: cost outlook + anomalies ---
+  if (kind === 'spend') {
+    return (
+      <div className="flex flex-col gap-4">
+        <CostOutlookCard providerId={providerId} accountId={accountId} />
+        {anomaliesCard}
+      </div>
+    );
+  }
+
+  // --- Quota providers: full trajectory + cost outlook + anomalies + past windows ---
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -152,102 +236,8 @@ export function ForecastTab({
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Cost outlook</CardTitle>
-            {cost.data ? (
-              <span className="text-[11px] text-fg-subtle">{cost.data.days_remaining}d left</span>
-            ) : null}
-          </CardHeader>
-          <CardContent>
-            {cost.isPending ? (
-              <Skeleton className="h-20 w-full" />
-            ) : cost.data ? (
-              <>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[13px] text-fg-muted">
-                    <strong className="font-mono tabular text-fg">
-                      {formatCost(cost.data.current_month_to_date)}
-                    </strong>{' '}
-                    spent
-                  </span>
-                  <span className="text-[13px] text-fg-muted">
-                    →{' '}
-                    <strong className="font-mono tabular text-fg">
-                      {formatCost(cost.data.projected_eom)}
-                    </strong>{' '}
-                    projected
-                  </span>
-                </div>
-                <Gauge
-                  pct={
-                    cost.data.projected_eom > 0
-                      ? (cost.data.current_month_to_date / cost.data.projected_eom) * 100
-                      : 0
-                  }
-                  status={statusForPct(
-                    cost.data.projected_eom > 0
-                      ? (cost.data.current_month_to_date / cost.data.projected_eom) * 100
-                      : 0,
-                  )}
-                  className="mt-2"
-                />
-                <p className="mt-2 text-[11px] text-fg-subtle">
-                  {formatCost(cost.data.daily_burn_avg_7d)}/day average over the last 7 days.
-                </p>
-              </>
-            ) : (
-              <p className="py-6 text-center text-xs text-fg-subtle">No cost data yet.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Usage anomalies</CardTitle>
-            {anomalies.data ? (
-              <span className="text-[11px] text-fg-subtle">
-                today vs {anomalies.data.lookback_days}d mean
-              </span>
-            ) : null}
-          </CardHeader>
-          {anomalies.isPending ? (
-            <CardContent>
-              <Skeleton className="h-20 w-full" />
-            </CardContent>
-          ) : spikes.length === 0 ? (
-            <CardContent>
-              <p className="py-6 text-center text-xs text-fg-subtle">
-                No usage anomalies detected.
-              </p>
-            </CardContent>
-          ) : (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Model</TH>
-                  <TH className="text-right">Today</TH>
-                  <TH className="text-right">Mean</TH>
-                  <TH className="text-right">z-score</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {spikes.map((a, i) => (
-                  <TR key={`${a.model_id}-${i}`}>
-                    <TD className="text-xs">{a.model_id}</TD>
-                    <TD className="text-right font-mono tabular">{formatTokens(a.today_tokens)}</TD>
-                    <TD className="text-right font-mono tabular">
-                      {formatTokens(a.historical_mean_tokens)}
-                    </TD>
-                    <TD className="text-right font-mono tabular text-warning">
-                      {a.z_score_tokens.toFixed(1)}σ
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </Card>
+        <CostOutlookCard providerId={providerId} accountId={accountId} />
+        {anomaliesCard}
       </div>
 
       <Card>
