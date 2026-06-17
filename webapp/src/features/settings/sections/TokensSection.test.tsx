@@ -8,6 +8,13 @@ import * as api from '@/api/endpoints';
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// Render in table mode (md+ breakpoint) so existing row-based assertions hold.
+// Card-layout behaviour is a separate visual concern tested at the CSS/snapshot level.
+vi.mock('@/hooks/useMediaQuery', () => ({
+  useMediaQuery: () => true,
+  useIsDesktop: () => false,
+}));
+
 const token = (o: Partial<TokenHealthEntry> = {}): TokenHealthEntry => ({
   provider: 'claude',
   account_id: 'acc-1',
