@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchSettings } from '@/api/endpoints';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
-import { Tooltip, TooltipProvider } from '@/components/ui/Tooltip';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { NAV_ITEMS } from './nav';
 import { RunwayMark } from './RunwayMark';
 
@@ -47,13 +47,11 @@ export function Sidebar() {
         <div className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-fg-subtle">
           <span>v{version}</span>
           {updateAvailable ? (
-            <TooltipProvider>
-              <Tooltip content={`Runway v${data!.latest_version} is available`}>
+                <Tooltip content={`Runway v${data!.latest_version} is available`}>
                 <a href={RELEASES_URL} target="_blank" rel="noreferrer">
                   <Badge variant="warning">update</Badge>
                 </a>
               </Tooltip>
-            </TooltipProvider>
           ) : null}
         </div>
       ) : null}
