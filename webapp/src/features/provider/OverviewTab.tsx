@@ -56,12 +56,18 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
   // Live split of the longest active quota window. Prefer the per-sidecar split
   // when more than one machine feeds this provider; otherwise fall back to the
   // per-model split so single-host setups still get a useful breakdown.
+  // For token/spend providers there is no active quota window, so window_aggregations
+  // is empty — fall back to the cumulative month bucket's by_model instead.
   const agg = entry.window_aggregations?.longest;
   const bySidecar = agg?.by_sidecar ?? {};
   const sourceIsSidecar = Object.keys(bySidecar).length > 1;
-  const sourceSplit = sourceIsSidecar ? bySidecar : (agg?.by_model ?? {});
-  const sourceTitle = sourceIsSidecar ? 'Active window by source' : 'Active window by model';
-  const hasSourceSplit = Object.values(sourceSplit).length > 0;
+  const windowSplit = sourceIsSidecar ? bySidecar : (agg?.by_model ?? {});
+  const useWindowSplit = kind === 'quota';
+  const sourceSplit = useWindowSplit ? windowSplit : (monthBucket?.by_model ?? {});
+  const sourceTitle = useWindowSplit
+    ? (sourceIsSidecar ? 'Active window by source' : 'Active window by model')
+    : 'Tokens by model (month)';
+  const hasSourceSplit = Object.keys(sourceSplit).length > 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -181,16 +187,18 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
         <Card>
           <CardHeader>
             <CardTitle>{sourceTitle}</CardTitle>
-            {agg ? (
+            {useWindowSplit && agg ? (
               <span className="text-[11px] text-fg-subtle">{agg.window_type} window</span>
             ) : null}
           </CardHeader>
           <CardContent>
-            {hasSourceSplit ? (
+            {!useWindowSplit && cumulative.isPending ? (
+              <Skeleton className="h-44 w-full" />
+            ) : hasSourceSplit ? (
               <ModelDonut byModel={sourceSplit} className="h-44" excludeCache={excludeCache} />
             ) : (
               <p className="py-12 text-center text-xs text-fg-subtle">
-                No activity in the current window.
+                {useWindowSplit ? 'No activity in the current window.' : 'No usage this month.'}
               </p>
             )}
           </CardContent>
