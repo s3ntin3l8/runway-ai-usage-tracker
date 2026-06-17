@@ -66,6 +66,35 @@ describe('ProviderGrid', () => {
     );
     expect(screen.getByText('mystery')).toBeInTheDocument();
   });
+
+  it('shows account_label when the card has one', () => {
+    const items = buildRiskItems(
+      [entry({ account_id: 'user@example.com', critical_gauge: card({ account_label: 'Work' }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByText('Work')).toBeInTheDocument();
+  });
+
+  it('falls back to account_id when no account_label but id is non-default', () => {
+    const items = buildRiskItems(
+      [entry({ account_id: 'alice@example.com', critical_gauge: card({ account_label: null }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByText('alice@example.com')).toBeInTheDocument();
+  });
+
+  it('does not show an account identity for a single default account', () => {
+    // account_id='default' with no label → no secondary text cluttering the card.
+    const items = buildRiskItems(
+      [entry({ account_id: 'default', critical_gauge: card({ account_label: null }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    // 'default' should not appear as visible text in the card.
+    expect(screen.queryByText('default')).not.toBeInTheDocument();
+  });
 });
 
 describe('AtRiskRail', () => {
