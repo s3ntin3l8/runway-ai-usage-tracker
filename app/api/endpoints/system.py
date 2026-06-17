@@ -351,9 +351,13 @@ async def get_raw_provider_data(
         async with httpx.AsyncClient(
             event_hooks={"response": [intercept_response]}, timeout=30.0
         ) as client:
-            # Run the primary strategy for the first matching collector
-            # (In debug mode we usually just care about the strategy logic)
-            await target_collectors[0].collect(client)
+            # Run the primary strategy for the first matching collector.
+            # Reset the collector's in-memory cache first so the debug endpoint
+            # always fires live HTTP calls rather than returning a cache hit.
+            collector = target_collectors[0]
+            if hasattr(collector, "reset"):
+                await collector.reset()
+            await collector.collect(client)
 
         return {"provider_id": provider_id, "responses": raw_responses, "timestamp": time.time()}
     except HTTPException:

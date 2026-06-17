@@ -350,6 +350,15 @@ class GitHubCollector(BaseCollector):
 
         return cards
 
+    # Human-readable labels for known quota keys.  Keys not listed here fall
+    # back to key.replace("_", " ").title() so new GitHub fields surface automatically.
+    _QUOTA_DISPLAY_NAMES: dict[str, str] = {
+        "completions": "Completions",
+        "chat": "Chat",
+        "included_credits": "Included Credits",
+        "premium_interactions": "Premium Interactions",
+    }
+
     def _parse_limited_quotas(
         self, data: dict[str, Any], detail_context: str
     ) -> list[dict[str, Any]]:
@@ -365,57 +374,55 @@ class GitHubCollector(BaseCollector):
             except (ValueError, TypeError) as e:
                 logger.debug(f"Could not parse GitHub reset date '{reset_date}': {e}")
 
-        for key in ["completions", "chat"]:
-            if key in quotas:
-                val = quotas[key]
-                monthly_val = monthly.get(key, 100)
-                used_val = monthly_val - val if isinstance(monthly_val, int) else 0
-                pct_used = (
-                    (used_val / monthly_val * 100)
-                    if isinstance(monthly_val, int | float) and monthly_val > 0
-                    else 0
-                )
-                pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
-                # Suppress identity suffix if the current label is already a custom one
-            # and contains the identity info (e.g. email) or is a preferred name.
-            # This prevents the annoying "Personal · email@addr.com" clutter.
-            identity_suffix = ""
-            if self._identity:
-                if (
-                    not self.account_label
-                    or self.account_label.lower() == "default"
-                    or self.account_label == self._identity
-                ):
-                    identity_suffix = f" · {self._identity}"
-                results.append(
-                    {
-                        "service_name": "Copilot",
-                        "variant": key.title(),
-                        "icon": "🐙",
-                        "remaining": f"{val:,}",
-                        "unit": (
-                            f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"
-                        ),
-                        "reset": reset_at.isoformat() if reset_at else None,
-                        "health": HealthCalculator.from_remaining(val, monthly_val)
-                        if isinstance(monthly_val, int | float)
-                        else "warning",
-                        "pace": pace,
-                        "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
-                        "used_value": float(used_val),
-                        "limit_value": float(monthly_val)
-                        if isinstance(monthly_val, int | float)
-                        else 100.0,
-                        "is_unlimited": False,
-                        "tier": "free",
-                        "unit_type": "requests",
-                        "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": self.DATA_SOURCE_API,
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
-                        "usage_url": "https://github.com/settings/copilot/features",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    }
-                )
+        # Suppress identity suffix if label already carries the identity info.
+        identity_suffix = ""
+        if self._identity:
+            if (
+                not self.account_label
+                or self.account_label.lower() == "default"
+                or self.account_label == self._identity
+            ):
+                identity_suffix = f" · {self._identity}"
+
+        for key, val in quotas.items():
+            if not isinstance(val, int | float):
+                continue
+            display = self._QUOTA_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
+            monthly_val = monthly.get(key, 100)
+            used_val = monthly_val - val if isinstance(monthly_val, int) else 0
+            pct_used = (
+                (used_val / monthly_val * 100)
+                if isinstance(monthly_val, int | float) and monthly_val > 0
+                else 0
+            )
+            pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
+            results.append(
+                {
+                    "service_name": "Copilot",
+                    "variant": display,
+                    "icon": "🐙",
+                    "remaining": f"{val:,}",
+                    "unit": (f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"),
+                    "reset": reset_at.isoformat() if reset_at else None,
+                    "health": HealthCalculator.from_remaining(val, monthly_val)
+                    if isinstance(monthly_val, int | float)
+                    else "warning",
+                    "pace": pace,
+                    "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
+                    "used_value": float(used_val),
+                    "limit_value": float(monthly_val)
+                    if isinstance(monthly_val, int | float)
+                    else 100.0,
+                    "is_unlimited": False,
+                    "tier": "free",
+                    "unit_type": "requests",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": self.DATA_SOURCE_API,
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "usage_url": "https://github.com/settings/copilot/features",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
         return results
 
     def _parse_quota_snapshots(self, snapshots: list[dict], plan: str) -> list[dict[str, Any]]:
@@ -423,8 +430,9 @@ class GitHubCollector(BaseCollector):
         results = []
         metric_map = {
             "premium_interactions": "Premium Interactions",
-            "chat": "Chat Usage",
+            "chat": "Chat",
             "completions": "Autocomplete",
+            "included_credits": "Included Credits",
         }
         tier_map = {"individual": "pro", "business": "team", "enterprise": "enterprise"}
         tier_name = tier_map.get(plan.lower(), plan.lower()) if plan else None
