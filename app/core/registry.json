@@ -146,9 +146,10 @@
           "format": "json",
           "mapping": {
             "access_token": "oauth_token",
+            "refresh_token": "refresh_token",
+            "id_token": "id_token",
             "client_id": "client_id",
             "clientId": "client_id",
-            "email": "account_id",
             "account_label": "account_label"
           }
         }

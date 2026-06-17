@@ -244,6 +244,12 @@ __REGISTRY__: dict[str, Any] = {
                     "format": "json",
                     "mapping": {
                         "access_token": "oauth_token",
+                        "refresh_token": "refresh_token",
+                        # The Google account email lives inside the id_token JWT,
+                        # not as a top-level field. Ship it so the server can
+                        # derive the canonical (email) account_id instead of
+                        # falling back to "default".
+                        "id_token": "id_token",
                         "client_id": "client_id",
                         "clientId": "client_id",
                     },
