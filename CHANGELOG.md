@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.3.1...v2.4.0) (2026-06-17)
+
+
+### Features
+
+* **fleet:** add Update all button and rail update badge ([#115](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/115)) ([97466ef](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/97466efce3f4861a431a7ed9898551677fa932f4))
+
+
+### Bug Fixes
+
+* **gemini:** ship id_token from sidecar so quota resolves the email account ([#116](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/116)) ([834dbe2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/834dbe255bd7511dc918c6253cb5908ea183d153))
+* **github:** handle renamed Copilot quota keys and fix debug cache bypass ([#117](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/117)) ([549d395](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/549d3953fd872db643834da4e304c37de31cc331))
+* **opencode:** always emit pct_used and unblock debug capture for sidecar-cookie providers ([#118](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/118)) ([9f7b72f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9f7b72f01b841d1ee00ce453e664203fd5ab4c4a))
+* **sidecar:** normalize sidecar hostname to a stable id + merge duplicates ([#113](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/113)) ([d597de5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d597de535f2c72f321b94387e0fa51434776d172))
+
 ## [2.3.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.3.0...v2.3.1) (2026-06-16)
 
 
