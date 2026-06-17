@@ -4,7 +4,7 @@
 // switch.
 
 import { useMemo } from 'react';
-import type { CumulativeBucket, FleetEntry, ForecastEntry, LimitCard } from '@/api/types';
+import type { CumulativeBucket, FleetEntry } from '@/api/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
@@ -13,6 +13,7 @@ import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
 import { formatPct } from '@/lib/format';
+import { findForecast } from '@/lib/quota';
 import { ProviderAlerts } from './ProviderAlerts';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderTrendCard } from './ProviderTrendCard';
@@ -20,21 +21,6 @@ import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
 import { useProviderCumulative, useProviderForecast } from './queries';
 
-// Match a quota card to its forecast: prefer an exact window/variant/model match,
-// fall back to the window_type alone (so secondary limits and per-model variants
-// each resolve to the right entry).
-function findForecast(card: LimitCard, forecasts: ForecastEntry[]): ForecastEntry | null {
-  return (
-    forecasts.find(
-      (f) =>
-        f.window_type === card.window_type &&
-        (f.variant ?? null) === (card.variant ?? null) &&
-        (f.model_id ?? null) === (card.model_id ?? null),
-    ) ??
-    forecasts.find((f) => f.window_type === card.window_type) ??
-    null
-  );
-}
 
 export function OverviewTab({ entry }: { entry: FleetEntry }) {
   // Cache read/create is ~95% of tokens and skews the headline stats; let the

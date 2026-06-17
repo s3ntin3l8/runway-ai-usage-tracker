@@ -43,8 +43,11 @@ export function AtRiskRail({ items, providerNames }: AtRiskRailProps) {
 
 function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Map<string, string> }) {
   const navigate = useNavigate();
-  const { entry, status, forecast } = item;
-  const gauge = entry.critical_gauge;
+  const { entry, forecast } = item;
+  // Use the lead window — the window with the worst combined gauge+forecast
+  // severity — so the %, label, gauge colour, and countdown all describe the
+  // same window as the "runs out" badge.
+  const { card: gauge, status } = item.lead;
   const name = providerNames.get(entry.provider_id) ?? entry.provider_id;
   const fLabel = forecastLabel(forecast);
 

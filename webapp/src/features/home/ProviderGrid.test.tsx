@@ -73,6 +73,8 @@ describe('AtRiskRail', () => {
     provider_id: 'claude',
     account_id: 'default',
     status: 'risk',
+    // window_type must match the card so findForecast can associate them.
+    window_type: 'weekly',
     now_pct: 80,
     projected_pct: 110,
     slope: 0.01,

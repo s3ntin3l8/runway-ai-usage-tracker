@@ -5,17 +5,18 @@
 // already hot (pct thresholds / error card) OR its forecast projects
 // exhaustion before the window resets.
 
-import type { FleetEntry, ForecastEntry, ForecastStatus } from '@/api/types';
-import { cardPct, cardStatus, type QuotaStatus } from '@/lib/quota';
+import type { FleetEntry, ForecastEntry, ForecastStatus, LimitCard } from '@/api/types';
+import { cardPct, cardStatus, findForecast, type QuotaStatus } from '@/lib/quota';
 
 export type RiskLevel = 'critical' | 'warning' | 'ok';
 
 export interface RiskItem {
   key: string; // `${provider_id}:${account_id}`
   entry: FleetEntry;
-  status: QuotaStatus; // gauge status (drives colors)
+  status: QuotaStatus; // gauge status of critical_gauge (drives grid colors)
   level: RiskLevel; // combined gauge+forecast severity (drives rail placement)
-  forecast: ForecastEntry | null; // worst matching forecast, if any
+  forecast: ForecastEntry | null; // forecast for the lead window
+  lead: { card: LimitCard; status: QuotaStatus }; // window to feature on the rail card
   score: number; // sort key within a level (higher = more urgent)
 }
 
@@ -28,41 +29,73 @@ const FORECAST_SEVERITY: Partial<Record<ForecastStatus, RiskLevel>> = {
 
 const LEVEL_RANK: Record<RiskLevel, number> = { critical: 2, warning: 1, ok: 0 };
 
-function worstForecast(entry: FleetEntry, forecasts: ForecastEntry[]): ForecastEntry | null {
-  const candidates = forecasts.filter(
-    (f) =>
-      f.provider_id === entry.provider_id &&
-      f.account_id === entry.account_id &&
-      FORECAST_SEVERITY[f.status] !== undefined,
+// Compute the per-account forecasts keyed on (provider_id, account_id) so we
+// can look them up without rescanning the full list per-card.
+function accountForecasts(
+  entry: FleetEntry,
+  forecasts: ForecastEntry[],
+): ForecastEntry[] {
+  return forecasts.filter(
+    (f) => f.provider_id === entry.provider_id && f.account_id === entry.account_id,
   );
-  if (candidates.length === 0) return null;
-  return candidates.reduce((worst, f) => {
-    const rank = LEVEL_RANK[FORECAST_SEVERITY[f.status] ?? 'ok'];
-    const worstRank = LEVEL_RANK[FORECAST_SEVERITY[worst.status] ?? 'ok'];
-    if (rank !== worstRank) return rank > worstRank ? f : worst;
-    return (f.projected_pct ?? 0) > (worst.projected_pct ?? 0) ? f : worst;
-  });
+}
+
+// Combined severity for a single window card + its matched forecast.
+function windowLevel(card: LimitCard, forecast: ForecastEntry | null): RiskLevel {
+  const gs = cardStatus(card);
+  let level: RiskLevel = 'ok';
+  if (gs === 'critical') level = 'critical';
+  else if (gs === 'warning') level = 'warning';
+  const forecastLevel = forecast ? (FORECAST_SEVERITY[forecast.status] ?? 'ok') : 'ok';
+  if (LEVEL_RANK[forecastLevel] > LEVEL_RANK[level]) level = forecastLevel;
+  return level;
 }
 
 export function buildRiskItems(fleet: FleetEntry[], forecasts: ForecastEntry[]): RiskItem[] {
   return fleet.map((entry) => {
-    const status = cardStatus(entry.critical_gauge);
-    const forecast = worstForecast(entry, forecasts);
+    const acctForecasts = accountForecasts(entry, forecasts);
+    const allCards = [entry.critical_gauge, ...entry.secondary_limits];
 
-    let level: RiskLevel = 'ok';
-    if (status === 'critical') level = 'critical';
-    else if (status === 'warning') level = 'warning';
-    const forecastLevel = forecast ? (FORECAST_SEVERITY[forecast.status] ?? 'ok') : 'ok';
-    if (LEVEL_RANK[forecastLevel] > LEVEL_RANK[level]) level = forecastLevel;
+    // Score each window by its combined (gauge + forecast) severity so the
+    // rail card shows the window that is actually at risk, not just the window
+    // with the highest current %.
+    let leadCard = entry.critical_gauge;
+    let leadForecast = findForecast(entry.critical_gauge, acctForecasts);
+    let leadLevel = windowLevel(leadCard, leadForecast);
+    let leadScore = Math.max(cardPct(leadCard) ?? 0, leadForecast?.projected_pct ?? 0);
+
+    for (const card of allCards.slice(1)) {
+      const fc = findForecast(card, acctForecasts);
+      const lvl = windowLevel(card, fc);
+      const sc = Math.max(cardPct(card) ?? 0, fc?.projected_pct ?? 0);
+      if (
+        LEVEL_RANK[lvl] > LEVEL_RANK[leadLevel] ||
+        (LEVEL_RANK[lvl] === LEVEL_RANK[leadLevel] && sc > leadScore)
+      ) {
+        leadCard = card;
+        leadForecast = fc;
+        leadLevel = lvl;
+        leadScore = sc;
+      }
+    }
+
+    // Entry-level level/score: max across all windows (same result as before
+    // because we just picked the window with the maximum combined severity).
+    const level = leadLevel;
+
+    // status stays tied to critical_gauge so the ProviderGrid chip colours
+    // (which read item.status) remain a current-state "most exhausted" view.
+    const status = cardStatus(entry.critical_gauge);
 
     const pct = cardPct(entry.critical_gauge) ?? 0;
-    const projected = forecast?.projected_pct ?? 0;
+    const projected = leadForecast?.projected_pct ?? 0;
     return {
       key: `${entry.provider_id}:${entry.account_id}`,
       entry,
       status,
       level,
-      forecast,
+      forecast: leadForecast,
+      lead: { card: leadCard, status: cardStatus(leadCard) },
       score: LEVEL_RANK[level] * 1000 + Math.max(pct, projected),
     };
   });
