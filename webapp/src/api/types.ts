@@ -543,6 +543,10 @@ export interface TokenHealthEntry {
   expires_at?: string | null;
   ttl_remaining_seconds?: number;
   can_refresh?: boolean;
+  /** True when this credential is expired+unrefreshable but another healthy
+   * credential exists for the same provider — not blocking collection, should
+   * not raise a hard dashboard alert. */
+  redundant?: boolean;
 }
 
 export interface AuditEntry {

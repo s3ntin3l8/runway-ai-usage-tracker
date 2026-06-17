@@ -15,7 +15,7 @@ interface BannersProps {
 
 export function Banners({ tokens, anomalies }: BannersProps) {
   const unhealthy = (tokens ?? []).filter(
-    (t) => t.status === 'expired' || t.status === 'expiring',
+    (t) => (t.status === 'expired' || t.status === 'expiring') && !t.redundant,
   );
   const spikes = anomalies ?? [];
 

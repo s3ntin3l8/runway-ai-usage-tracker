@@ -70,4 +70,55 @@ describe('TokensSection', () => {
     await userEvent.click(await screen.findByRole('button', { name: /remove from cache/i }));
     expect(api.deleteTokenHealth).toHaveBeenCalledWith('claude', 'acc-1');
   });
+
+  it('renders a TTL label when ttl_remaining_seconds is present', async () => {
+    // 2700 s = 45m — should appear as "TTL: 45m"
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [token({ ttl_remaining_seconds: 2700 })],
+    });
+    renderWithProviders(<TokensSection />);
+    expect(await screen.findByText(/TTL: 45m/)).toBeInTheDocument();
+  });
+
+  it('omits the TTL label when ttl_remaining_seconds is 0', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [token({ ttl_remaining_seconds: 0 })],
+    });
+    renderWithProviders(<TokensSection />);
+    await screen.findByText('valid'); // wait for render
+    expect(screen.queryByText(/TTL:/)).not.toBeInTheDocument();
+  });
+
+  it('shows a "redundant" badge and dims the row for redundant tokens', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [token({ status: 'expired', redundant: true, can_refresh: false })],
+    });
+    renderWithProviders(<TokensSection />);
+    expect(await screen.findByText('redundant')).toBeInTheDocument();
+    expect(screen.getByText('expired')).toBeInTheDocument();
+  });
+
+  it('does not show the "redundant" badge for non-redundant tokens', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [token({ status: 'expired', redundant: false, can_refresh: false })],
+    });
+    renderWithProviders(<TokensSection />);
+    // Wait for the status badge to render.
+    expect(await screen.findByText('expired')).toBeInTheDocument();
+    expect(screen.queryByText('redundant')).not.toBeInTheDocument();
+  });
+
+  it('renders sidecar source name but hides generic "config" source', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [
+        token({ source_name: 'my-laptop' }),
+        token({ source_name: 'config', account_id: 'acc-2' }),
+      ],
+    });
+    renderWithProviders(<TokensSection />);
+    // Wait for rows to render (multiple 'valid' badges expected).
+    expect(await screen.findAllByText('valid')).toHaveLength(2);
+    expect(screen.getByText(/via my-laptop/)).toBeInTheDocument();
+    expect(screen.queryByText(/via config/)).not.toBeInTheDocument();
+  });
 });

@@ -91,13 +91,20 @@ function nextPollLabel(iso: string | null | undefined): string {
   return until === 'now' ? 'now' : `in ${until}`;
 }
 
+// Generic account_id values used by UI-configured or local-file credentials.
+// These will never equal a user's real account_id, so we always include them
+// when the provider matches — they are this provider's credentials too.
+const GENERIC_ACCOUNT_IDS = new Set(['config', 'config-cookie', 'local-file']);
+
 // "Token health": OAuth / API-key expiry for this account. Admin-gated — the
 // query is retry:false and may 403 on a locked-down remote, in which case we
 // render nothing rather than an error.
 function TokenHealthPane({ providerId, accountId }: { providerId: string; accountId: string }) {
   const health = useTokenHealth();
   const entries = (health.data?.tokens ?? []).filter(
-    (t) => t.provider === providerId && t.account_id === accountId,
+    (t) =>
+      t.provider === providerId &&
+      (t.account_id === accountId || GENERIC_ACCOUNT_IDS.has(t.account_id)),
   );
 
   if (health.isError || entries.length === 0) return null;

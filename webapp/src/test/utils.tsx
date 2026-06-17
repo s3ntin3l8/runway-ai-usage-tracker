@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router';
 import { render, type RenderOptions } from '@testing-library/react';
 import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
 import { InstallProvider } from '@/hooks/useInstallPrompt';
+import { TooltipProvider } from '@/components/ui/Tooltip';
 
 export function makeQueryClient(): QueryClient {
   // retry:false so rejected queries surface immediately; no caching across tests.
@@ -27,11 +28,13 @@ export function renderWithProviders(ui: ReactElement, opts: Options = {}) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={client}>
-        <InstallProvider>
-          <ExcludeCacheProvider>
-            <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
-          </ExcludeCacheProvider>
-        </InstallProvider>
+        <TooltipProvider>
+          <InstallProvider>
+            <ExcludeCacheProvider>
+              <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
+            </ExcludeCacheProvider>
+          </InstallProvider>
+        </TooltipProvider>
       </QueryClientProvider>
     );
   }
