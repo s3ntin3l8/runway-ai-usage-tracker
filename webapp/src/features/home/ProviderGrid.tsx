@@ -85,6 +85,11 @@ function SortableProviderCard({
   const name = providerNames.get(entry.provider_id) ?? entry.provider_id;
   const secondaries = entry.secondary_limits.slice(0, 3);
   const overflow = entry.secondary_limits.length - secondaries.length;
+  // Show an account identity when there's a meaningful label or a non-default
+  // account_id, so users with multiple accounts can tell cards apart at a glance.
+  const accountLabel =
+    gauge.account_label ??
+    (entry.account_id && entry.account_id !== 'default' ? entry.account_id : null);
 
   return (
     <Card
@@ -94,7 +99,11 @@ function SortableProviderCard({
       {...listeners}
       role="button"
       tabIndex={0}
-      aria-label={`${name}, ${formatPct(cardPct(gauge))} used`}
+      aria-label={
+        accountLabel
+          ? `${name} (${accountLabel}), ${formatPct(cardPct(gauge))} used`
+          : `${name}, ${formatPct(cardPct(gauge))} used`
+      }
       onClick={() => {
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
       }}
@@ -108,7 +117,12 @@ function SortableProviderCard({
     >
       <div className="flex items-center gap-2.5">
         <ProviderGlyph providerId={entry.provider_id} name={name} className="size-6 text-[10px]" />
-        <p className="min-w-0 flex-1 truncate text-[13px] font-medium">{name}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-medium">{name}</p>
+          {accountLabel ? (
+            <p className="truncate text-[11px] text-fg-subtle">{accountLabel}</p>
+          ) : null}
+        </div>
         {gauge.tier ? <Badge variant="outline">{gauge.tier}</Badge> : null}
         <StatusDot status={status} pulse={status === 'critical'} />
       </div>
