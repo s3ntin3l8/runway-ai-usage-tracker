@@ -14,6 +14,42 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 import sidecar
 
+_REPO_ROOT = Path(__file__).parent.parent.parent
+
+
+def _gemini_file_mapping(rules: list) -> dict:
+    """The json-file rule mapping from a provider's detection rules."""
+    for rule in rules:
+        if rule.get("type") == "file" and rule.get("format") == "json":
+            return rule.get("mapping", {})
+    return {}
+
+
+class TestGeminiCredentialMapping:
+    """Regression: the Gemini account email lives inside the OAuth id_token JWT.
+
+    If the sidecar credential mapping omits id_token, the server can't derive the
+    email and resolves account_id="default" — which split the dashboard into two
+    Gemini cards (one quota-only "default", one stale email-keyed). Both the baked
+    sidecar registry and the canonical registry.json must ship the id_token.
+    """
+
+    def test_baked_sidecar_registry_ships_id_token(self):
+        gemini = sidecar.__REGISTRY__["providers"]["gemini"]
+        mapping = _gemini_file_mapping(gemini["rules"])
+        assert mapping.get("id_token") == "id_token"
+        assert mapping.get("refresh_token") == "refresh_token"
+
+    def test_canonical_registry_ships_id_token(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        gemini = registry["providers"]["gemini"]
+        mapping = _gemini_file_mapping(gemini["rules"])
+        assert mapping.get("id_token") == "id_token"
+        assert mapping.get("refresh_token") == "refresh_token"
+        # The email is not a top-level field in oauth_creds.json — it must come
+        # from the id_token, never a phantom "email" -> account_id mapping.
+        assert "email" not in mapping
+
 
 class TestQueueRotate:
     """C3: queue_rotate must not crash when called with no arguments."""
