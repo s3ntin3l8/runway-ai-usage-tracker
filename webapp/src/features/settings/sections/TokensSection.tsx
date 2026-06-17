@@ -6,6 +6,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { ArrowDown, ArrowUp, KeyRound, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteTokenHealth, postTokenRefresh } from '@/api/endpoints';
@@ -91,6 +92,44 @@ function SortableTH({
       </button>
     </TH>
   );
+}
+
+// ─── Shared actions hook ─────────────────────────────────────────────────────
+// Factored out so TokenRow (table) and TokenCard (mobile) don't duplicate
+// mutations, derived labels, or display logic.
+
+function useTokenActions(token: TokenHealthEntry) {
+  const queryClient = useQueryClient();
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ['system', 'token-health'] });
+
+  const refresh = useMutation({
+    mutationFn: () => postTokenRefresh(token.provider, token.account_id),
+    onSuccess: () => {
+      toast.success('Token refreshed');
+      invalidate();
+    },
+    onError: (err) => toast.error(`Refresh failed: ${err.message}`),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => deleteTokenHealth(token.provider, token.account_id),
+    onSuccess: () => {
+      toast.success('Token removed from cache');
+      invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const ttlLabel =
+    token.ttl_remaining_seconds && token.ttl_remaining_seconds > 0
+      ? `TTL: ${formatDuration(token.ttl_remaining_seconds * 1000)}`
+      : null;
+  const sourceName =
+    token.source_name && token.source_name !== 'config' ? token.source_name : null;
+  const typesLabel = (token.token_types ?? []).join(', ') || '—';
+
+  return { refresh, remove, ttlLabel, sourceName, typesLabel };
 }
 
 // ─── Main section ────────────────────────────────────────────────────────────
@@ -212,6 +251,10 @@ function FilteredTable({
   statuses: string[];
   origins: string[];
 }) {
+  // Swap to a card list below the md breakpoint so the 6-column table doesn't
+  // overflow horizontally on phones. Conditional rendering (not CSS-only)
+  // ensures only one view is in the DOM at a time.
+  const isMd = useMediaQuery('(min-width: 768px)');
   // Filter then sort — both are derived from the full tokens array via useMemo.
   const visible = useMemo(() => {
     const filtered = tokens.filter((t) => {
@@ -321,10 +364,10 @@ function FilteredTable({
         )}
       </div>
 
-      {/* Table */}
+      {/* Results: card list on phones (<md), full table on tablet/desktop (md+) */}
       {visible.length === 0 ? (
         <p className="text-[13px] text-fg-subtle">No credentials match the current filters.</p>
-      ) : (
+      ) : isMd ? (
         <Table>
           <THead>
             <TR>
@@ -342,6 +385,12 @@ function FilteredTable({
             ))}
           </TBody>
         </Table>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {visible.map((t, i) => (
+            <TokenCard key={`${t.provider}-${t.account_id}-${i}`} token={t} />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -350,39 +399,7 @@ function FilteredTable({
 // ─── TokenRow ────────────────────────────────────────────────────────────────
 
 function TokenRow({ token }: { token: TokenHealthEntry }) {
-  const queryClient = useQueryClient();
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ['system', 'token-health'] });
-
-  const refresh = useMutation({
-    mutationFn: () => postTokenRefresh(token.provider, token.account_id),
-    onSuccess: () => {
-      toast.success('Token refreshed');
-      invalidate();
-    },
-    onError: (err) => toast.error(`Refresh failed: ${err.message}`),
-  });
-
-  const remove = useMutation({
-    mutationFn: () => deleteTokenHealth(token.provider, token.account_id),
-    onSuccess: () => {
-      toast.success('Token removed from cache');
-      invalidate();
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  // TTL label: how long until the next poll/refresh, shown when > 0.
-  const ttlLabel =
-    token.ttl_remaining_seconds && token.ttl_remaining_seconds > 0
-      ? `TTL: ${formatDuration(token.ttl_remaining_seconds * 1000)}`
-      : null;
-
-  // Source badge: omit for server-local config, surface sidecar names.
-  const sourceName =
-    token.source_name && token.source_name !== 'config' ? token.source_name : null;
-
-  const typesLabel = (token.token_types ?? []).join(', ') || '—';
+  const { refresh, remove, ttlLabel, sourceName, typesLabel } = useTokenActions(token);
 
   return (
     <TR className={token.redundant ? 'opacity-60' : undefined}>
@@ -468,5 +485,96 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
         </div>
       </TD>
     </TR>
+  );
+}
+
+// ─── TokenCard ───────────────────────────────────────────────────────────────
+// Mobile-only stacked card (<md breakpoint). Same data + actions as TokenRow,
+// displayed vertically for narrow screens.
+
+function TokenCard({ token }: { token: TokenHealthEntry }) {
+  const { refresh, remove, ttlLabel, sourceName, typesLabel } = useTokenActions(token);
+
+  // Build a compact expiry / TTL summary line.
+  const expiryLine = [
+    ttlLabel,
+    token.expires_at
+      ? `expires ${formatLocalDateTime(token.expires_at, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div
+      className={cn(
+        'rounded-md border border-edge bg-surface-2 p-3',
+        token.redundant && 'opacity-60',
+      )}
+    >
+      {/* Top row: provider + status badges (left), action buttons (right) */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[13px] font-medium">{token.provider}</span>
+          {token.redundant ? (
+            <Badge
+              variant="neutral"
+              title="Expired but another healthy credential exists — not blocking collection"
+            >
+              redundant
+            </Badge>
+          ) : null}
+          <Badge variant={STATUS_VARIANT[token.status] ?? 'neutral'}>{token.status}</Badge>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {token.can_refresh ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Refresh token"
+              title="Refresh token"
+              onClick={() => refresh.mutate()}
+              loading={refresh.isPending}
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
+          ) : null}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Remove from cache"
+            title="Remove from cache"
+            onClick={() => remove.mutate()}
+            loading={remove.isPending}
+            className="text-critical hover:bg-critical-muted"
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Identifier */}
+      <p className="mt-1 text-[13px] text-fg-subtle">
+        {token.account_label || token.account_id}
+      </p>
+
+      {/* Credential types · origin */}
+      <p className="mt-0.5 text-xs text-fg-subtle">
+        {typesLabel}
+        {sourceName ? (
+          <>
+            {' · '}
+            <Badge variant="neutral" title="Credential originates from this sidecar">
+              {sourceName}
+            </Badge>
+          </>
+        ) : null}
+      </p>
+
+      {/* Expiry + TTL */}
+      {expiryLine ? (
+        <p className="mt-0.5 text-xs text-fg-subtle">{expiryLine}</p>
+      ) : null}
+    </div>
   );
 }

@@ -52,6 +52,11 @@ export function AboutSection() {
                 <Badge variant="warning">v{s.latest_version} available</Badge>
               </a>
             ) : null}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {/* Action buttons on their own row so they never crowd the title line */}
+          <div className="mb-4 flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="ghost"
@@ -68,8 +73,6 @@ export function AboutSection() {
               </Button>
             ) : null}
           </div>
-        </CardHeader>
-        <CardContent>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[13px] sm:grid-cols-3">
             <InfoItem label="Host" value={`${s?.app_host ?? '—'}:${s?.app_port ?? ''}`} />
             <InfoItem label="Encryption" value={s?.encryption_enabled ? 'enabled' : 'off'} />

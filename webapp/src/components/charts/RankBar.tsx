@@ -50,7 +50,12 @@ export function RankBar({
         data: sorted.map((r) => r.label),
         ...baseAxisStyle(t),
         splitLine: { show: false },
-        axisLabel: { color: t.fgMuted, fontSize: 11, fontFamily: t.monoFamily },
+        axisLabel: {
+          color: t.fgMuted,
+          fontSize: 11,
+          fontFamily: t.monoFamily,
+          formatter: (v: string) => (v.length > 10 ? v.slice(0, 10) + '…' : v),
+        },
       },
       series: [
         {

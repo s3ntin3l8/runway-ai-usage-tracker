@@ -1,8 +1,9 @@
 // Settings shell: desktop = two-pane (section nav + content), mobile =
 // iOS-style list → subpage. Sections are nested routes for deep links.
 
-import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router';
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router';
 import {
+  ArrowLeft,
   ChevronRight,
   FileClock,
   Info,
@@ -13,6 +14,7 @@ import {
   Webhook as WebhookIcon,
   type LucideIcon,
 } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
@@ -87,11 +89,33 @@ const SECTIONS: Section[] = [
 export function SettingsPage() {
   const isDesktop = useIsDesktop();
   const location = useLocation();
+  const navigate = useNavigate();
   const atIndex = /\/settings\/?$/.test(location.pathname);
+
+  // On mobile subpages: show the section label as the title and a back button.
+  const activeSection = !atIndex
+    ? SECTIONS.find((s) => location.pathname.endsWith(`/${s.slug}`))
+    : undefined;
+  const showBack = !isDesktop && !atIndex;
 
   return (
     <>
-      <PageHeader title="Settings" />
+      <PageHeader
+        title={showBack && activeSection ? activeSection.label : 'Settings'}
+        leading={
+          showBack ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => navigate('/settings')}
+              className="-ml-1"
+              aria-label="Back to Settings"
+            >
+              <ArrowLeft className="size-4" aria-hidden />
+            </Button>
+          ) : undefined
+        }
+      />
       <div className="lg:flex">
         {/* Section nav: persistent pane on desktop; index list on mobile */}
         {(isDesktop || atIndex) && (
