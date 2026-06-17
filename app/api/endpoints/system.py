@@ -29,6 +29,7 @@ from app.models.db import (
 from app.models.schemas import LimitCard
 from app.services import audit_log
 from app.services.collector_manager import manager
+from app.services.credential_provider import CredentialProvider
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import token_cache
 from app.services.token_health import token_health_service
@@ -348,18 +349,35 @@ async def get_raw_provider_data(
                 status_code=404, detail=f"No collector found for provider: {provider_id}"
             )
 
+        collector = target_collectors[0]
+        is_configured = await collector.is_configured()
+
+        # Probe credential sources independently of the collector so the debug
+        # response reports WHICH source (DB config, env var, local file) provided
+        # the token — or why none did.
+        creds = CredentialProvider.get_credentials(provider_id)
+        credential_debug: dict[str, Any] = {
+            "token_found": bool(creds.get("api_key")),
+            "token_source": creds.sources.get("api_key"),  # "config" | "server" | None
+        }
+
         async with httpx.AsyncClient(
             event_hooks={"response": [intercept_response]}, timeout=30.0
         ) as client:
             # Run the primary strategy for the first matching collector.
             # Reset the collector's in-memory cache first so the debug endpoint
             # always fires live HTTP calls rather than returning a cache hit.
-            collector = target_collectors[0]
             if hasattr(collector, "reset"):
                 await collector.reset()
             await collector.collect(client)
 
-        return {"provider_id": provider_id, "responses": raw_responses, "timestamp": time.time()}
+        return {
+            "provider_id": provider_id,
+            "is_configured": is_configured,
+            "credentials": credential_debug,
+            "responses": raw_responses,
+            "timestamp": time.time(),
+        }
     except HTTPException:
         # Deliberate status (e.g. 404 no collector) — propagate as-is rather
         # than masking it behind a generic 500.
