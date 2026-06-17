@@ -11,7 +11,9 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { useTokenHealth } from '@/features/home/queries';
+import { formatDuration } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 
 const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
@@ -87,8 +89,24 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
     onError: (err) => toast.error(err.message),
   });
 
+  // TTL label: how long until the next poll/refresh, shown when > 0.
+  const ttlLabel =
+    token.ttl_remaining_seconds && token.ttl_remaining_seconds > 0
+      ? `TTL: ${formatDuration(token.ttl_remaining_seconds * 1000)}`
+      : null;
+
+  // Source label: omit for server-local config, surface sidecar names.
+  const sourceLabel =
+    token.source_name && token.source_name !== 'config' ? `via ${token.source_name}` : null;
+
+  const typesLabel = (token.token_types ?? []).join(', ') || '—';
+
   return (
-    <Card className="flex items-center gap-3 px-4 py-3">
+    <Card
+      className={
+        'flex items-center gap-3 px-4 py-3' + (token.redundant ? ' opacity-60' : '')
+      }
+    >
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-medium">
           {token.provider}
@@ -97,8 +115,11 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
           </span>
         </p>
         <p className="truncate text-[11px] text-fg-subtle">
-          {(token.token_types ?? []).join(', ') || '—'}
-          {token.source_name && token.source_name !== 'config' ? ` · via ${token.source_name}` : ''}
+          <Tooltip content={`Credential types: ${typesLabel}`}>
+            <span className="cursor-default">{typesLabel}</span>
+          </Tooltip>
+          {sourceLabel ? ` · ${sourceLabel}` : ''}
+          {ttlLabel ? ` · ${ttlLabel}` : ''}
           {token.expires_at
             ? ` · expires ${formatLocalDateTime(token.expires_at, {
                 month: 'short',
@@ -109,7 +130,14 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
             : ''}
         </p>
       </div>
-      <Badge variant={STATUS_VARIANT[token.status] ?? 'neutral'}>{token.status}</Badge>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {token.redundant ? (
+          <Badge variant="neutral" title="Expired but another healthy credential exists — not blocking collection">
+            redundant
+          </Badge>
+        ) : null}
+        <Badge variant={STATUS_VARIANT[token.status] ?? 'neutral'}>{token.status}</Badge>
+      </div>
       {token.can_refresh ? (
         <Button
           size="icon-sm"

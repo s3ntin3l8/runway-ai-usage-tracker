@@ -272,6 +272,24 @@ describe('HomePage banners', () => {
     expect(banner).not.toBeInTheDocument();
   });
 
+  it('does not raise a banner for an expired but redundant credential', async () => {
+    // redundant=true means another healthy cred exists — no hard alarm should fire.
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [
+        {
+          provider: 'Claude',
+          account_id: 'sidecar-123',
+          status: 'expired',
+          redundant: true,
+        } as never,
+      ],
+    });
+    renderWithProviders(<HomePage />);
+    // Give the query a tick to settle; no credential banner should appear.
+    await screen.findByText(/providers/i);
+    expect(screen.queryByText(/credential for/i)).not.toBeInTheDocument();
+  });
+
   it('renders an anomaly banner when spikes are present', async () => {
     vi.mocked(api.fetchAnomalies).mockResolvedValue({
       as_of: new Date().toISOString(),

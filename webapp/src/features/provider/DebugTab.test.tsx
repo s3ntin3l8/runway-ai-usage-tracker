@@ -70,6 +70,39 @@ describe('DebugTab', () => {
     expect(screen.queryByText('Token health')).not.toBeInTheDocument();
   });
 
+  it('shows token health for UI-configured (config account_id) credentials', async () => {
+    // Providers configured via the Settings UI use account_id='config', which
+    // doesn't match the usage card's real account_id. They should still appear
+    // in the Debug tab's Token health pane.
+    const configToken: TokenHealthEntry = {
+      provider: 'anthropic',
+      account_id: 'config',
+      status: 'valid',
+      token_types: ['api_key'],
+      source: 'config',
+      source_name: 'config',
+      can_refresh: false,
+    };
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [configToken] });
+    renderTab();
+    expect(await screen.findByText('Token health')).toBeInTheDocument();
+    expect(screen.getByText('api_key')).toBeInTheDocument();
+  });
+
+  it('shows token health for local-file credentials (local-file account_id)', async () => {
+    const localToken: TokenHealthEntry = {
+      provider: 'anthropic',
+      account_id: 'local-file',
+      status: 'valid',
+      token_types: ['session_key'],
+      can_refresh: false,
+    };
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [localToken] });
+    renderTab();
+    expect(await screen.findByText('Token health')).toBeInTheDocument();
+    expect(screen.getByText('session_key')).toBeInTheDocument();
+  });
+
   it('shows the capture prompt and does not auto-fetch', () => {
     renderTab();
     expect(screen.getByText(/capture raw collector output/i)).toBeInTheDocument();
