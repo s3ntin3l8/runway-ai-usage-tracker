@@ -7,7 +7,7 @@
 // independent daily quotas at the same percentage and reset time got
 // lumped into a fake "SHARED" pool.
 
-import type { LimitCard } from '@/api/types';
+import type { ForecastEntry, LimitCard } from '@/api/types';
 
 export function sameQuota(a: LimitCard, b: LimitCard): boolean {
   return a.quota_pool_id != null && a.quota_pool_id === b.quota_pool_id;
@@ -104,6 +104,24 @@ export function modelLabel(modelId: string): string {
 // session both render "Claude" otherwise). When a window is model-scoped
 // (e.g. Claude's Sonnet-specific weekly alongside the generic weekly) the
 // base would still collapse to "Weekly" for both, so append the model.
+// Match a quota card to its forecast entry from a flat forecasts array.
+// Prefer an exact (window_type, variant, model_id) match; fall back to
+// window_type alone. Returns null when no matching forecast exists.
+// This is the canonical resolver used by the home rail and the provider
+// detail panel — both must resolve forecasts the same way.
+export function findForecast(card: LimitCard, forecasts: ForecastEntry[]): ForecastEntry | null {
+  return (
+    forecasts.find(
+      (f) =>
+        f.window_type === card.window_type &&
+        (f.variant ?? null) === (card.variant ?? null) &&
+        (f.model_id ?? null) === (card.model_id ?? null),
+    ) ??
+    forecasts.find((f) => f.window_type === card.window_type) ??
+    null
+  );
+}
+
 export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
   const name = card.service_name || card.model_id || '';
   const duplicated = siblings.filter((s) => (s.service_name || s.model_id) === name).length > 1;
