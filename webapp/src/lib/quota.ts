@@ -82,6 +82,24 @@ export function cardStatus(card: LimitCard): QuotaStatus {
   return statusForPct(cardPct(card));
 }
 
+// --- Card kind classification -------------------------------------------
+
+export type CardKind = 'quota' | 'tokens' | 'spend';
+
+// Classify a card by what its hero metric should be:
+//   quota  — a percentage (limit_value present, or pct_used derivable)
+//   tokens — an absolute token count (is_unlimited, or token unit, no derivable %)
+//   spend  — a currency amount (currency-typed, no fixed limit)
+// Falls back to 'quota' so unclassifiable cards degrade to the existing '—' gauge.
+export function cardKind(card: LimitCard): CardKind {
+  if (cardPct(card) != null) return 'quota';
+  const ut = card.unit_type;
+  if (ut === 'currency' || ut === 'credits' || card.currency) return 'spend';
+  if (card.is_unlimited || ut === 'token' || ut === 'tokens' || card.token_usage)
+    return 'tokens';
+  return 'quota';
+}
+
 // "weekly" → "Weekly", "session" → "Session"; null for unknown windows.
 export function windowLabel(card: LimitCard): string | null {
   const w = card.window_type;

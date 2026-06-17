@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LimitCard } from '@/api/types';
 import {
+  cardKind,
   cardPct,
   cardStatus,
   chipLabel,
@@ -118,5 +119,35 @@ describe('modelLabel', () => {
     expect(modelLabel('sonnet')).toBe('Sonnet');
     expect(modelLabel('gemini-flash')).toBe('Gemini Flash');
     expect(modelLabel('claude_opus')).toBe('Claude Opus');
+  });
+});
+
+describe('cardKind', () => {
+  it('quota when pct is derivable from pct_used', () => {
+    expect(cardKind(card({ pct_used: 60 }))).toBe('quota');
+  });
+  it('quota when pct is derivable from used/limit pair', () => {
+    expect(cardKind(card({ used_value: 50, limit_value: 100 }))).toBe('quota');
+  });
+  it('quota for OpenCode Go (currency + pct_used — the percentage wins)', () => {
+    // Go plan: dollar spend against a dollar cap, pct_used present.
+    expect(cardKind(card({ pct_used: 30, unit_type: 'currency', currency: 'USD' }))).toBe('quota');
+  });
+  it('tokens for unlimited / token-unit cards', () => {
+    expect(cardKind(card({ is_unlimited: true, unit_type: 'token' }))).toBe('tokens');
+    expect(cardKind(card({ is_unlimited: true, token_usage: { total: 12_000_000 } }))).toBe(
+      'tokens',
+    );
+  });
+  it('spend for currency-typed no-limit cards', () => {
+    // OpenRouter / Kimi API: unit_type currency, no limit_value.
+    expect(cardKind(card({ unit_type: 'currency', used_value: 42.18 }))).toBe('spend');
+    expect(cardKind(card({ unit_type: 'credits', used_value: 42.18 }))).toBe('spend');
+    // OpenCode API: has currency field but no pct_used / limit_value.
+    expect(cardKind(card({ currency: 'USD', used_value: 8.34 }))).toBe('spend');
+  });
+  it('falls back to quota for unclassifiable cards', () => {
+    expect(cardKind(card({}))).toBe('quota');
+    expect(cardKind(card({ unit_type: 'generic' }))).toBe('quota');
   });
 });
