@@ -62,6 +62,46 @@ async def test_gemini_api_success():
     assert result[0]["model_id"] == "flash"
 
 
+@pytest.mark.asyncio
+async def test_gemini_api_retries_once_on_401():
+    """A 401 (stale token) triggers one forced refresh + retry, not a failed collect."""
+    collector = GeminiCollector()
+
+    tier_401 = MagicMock()
+    tier_401.status_code = 401
+    tier_401.headers = {}
+
+    tier_ok = MagicMock()
+    tier_ok.status_code = 200
+    tier_ok.headers = {}
+    tier_ok.json.return_value = {
+        "currentTier": {"id": "standard-tier"},
+        "cloudaicompanionProject": "proj",
+    }
+
+    quota_ok = MagicMock()
+    quota_ok.status_code = 200
+    quota_ok.headers = {}
+    quota_ok.json.return_value = {
+        "buckets": [{"modelId": "gemini-2.5-flash", "remainingFraction": 0.8}]
+    }
+
+    # First token is the stale one; the forced refresh returns a fresh one.
+    get_token = AsyncMock(side_effect=["stale", "fresh"])
+    http = AsyncMock(side_effect=[tier_401, tier_ok, quota_ok])
+
+    with patch.object(collector, "_get_valid_token", get_token):
+        with patch("app.services.collectors.gemini_api.http_request_with_retry", http):
+            result = await collector._collect_via_api(AsyncMock(spec=httpx.AsyncClient))
+
+    assert len(result) == 1
+    assert result[0]["model_id"] == "flash"
+    # Forced refresh happened (force_refresh=True on the second call).
+    assert get_token.await_args_list[-1].kwargs.get("force_refresh") is True
+    # loadCodeAssist (401 → retry) + retrieveUserQuota = 3 HTTP calls.
+    assert http.await_count == 3
+
+
 class TestGeminiEnrichment:
     """Tests for Gemini reset_at-aware enrichment."""
 

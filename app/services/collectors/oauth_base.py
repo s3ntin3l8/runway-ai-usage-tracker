@@ -146,7 +146,10 @@ class OAuthBaseCollector(BaseCollector):
                 if access:
                     # Update cache so token health stays current after refresh
                     await self._store_sidecar_token(
-                        self.provider_name, access, new_creds.get("refresh_token")
+                        self.provider_name,
+                        access,
+                        new_creds.get("refresh_token"),
+                        new_creds.get("expiry_date"),
                     )
                 self._clear_refresh_429_backoff()
                 return access
@@ -159,12 +162,20 @@ class OAuthBaseCollector(BaseCollector):
             return None
 
     async def _store_sidecar_token(
-        self, provider: str, access_token: str, refresh_token: str | None = None
+        self,
+        provider: str,
+        access_token: str,
+        refresh_token: str | None = None,
+        expiry_date: str | int | None = None,
     ):
         """Update sidecar token cache with newly refreshed tokens."""
         data = {"oauth_token": access_token}
         if refresh_token:
             data["refresh_token"] = refresh_token
+        # Carry the new access-token expiry so the cache freshness guard knows this
+        # refreshed token outranks a staler sidecar push (opaque tokens have no exp).
+        if expiry_date is not None:
+            data["expiry_date"] = str(expiry_date)
 
         await token_cache.store(provider, data, account_id=self.account_id)
 

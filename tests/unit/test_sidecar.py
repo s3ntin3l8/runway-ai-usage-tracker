@@ -39,6 +39,9 @@ class TestGeminiCredentialMapping:
         mapping = _gemini_file_mapping(gemini["rules"])
         assert mapping.get("id_token") == "id_token"
         assert mapping.get("refresh_token") == "refresh_token"
+        # expiry_date is the freshness signal that stops a stale local token from
+        # clobbering a server-refreshed one (opaque ya29.* tokens carry no exp).
+        assert mapping.get("expiry_date") == "expiry_date"
 
     def test_canonical_registry_ships_id_token(self):
         registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
@@ -46,6 +49,7 @@ class TestGeminiCredentialMapping:
         mapping = _gemini_file_mapping(gemini["rules"])
         assert mapping.get("id_token") == "id_token"
         assert mapping.get("refresh_token") == "refresh_token"
+        assert mapping.get("expiry_date") == "expiry_date"
         # The email is not a top-level field in oauth_creds.json — it must come
         # from the id_token, never a phantom "email" -> account_id mapping.
         assert "email" not in mapping

@@ -44,6 +44,41 @@ class GeminiApiMixin:
             return "ultra"
         return model_name
 
+    async def _post_with_401_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        json_body: dict[str, Any],
+        state: dict[str, Any],
+    ) -> httpx.Response:
+        """POST with the bearer token in *state*; on a 401, force-refresh once and retry.
+
+        *state* carries the current token and a one-shot ``refreshed`` flag shared
+        across the calls in a single collect, so the refresh happens at most once.
+        """
+        resp = await http_request_with_retry(
+            client,
+            "POST",
+            url,
+            json=json_body,
+            headers={"Authorization": f"Bearer {state['token']}"},
+            timeout=10,
+        )
+        if resp.status_code == 401 and not state["refreshed"]:
+            state["refreshed"] = True
+            fresh = await self._get_valid_token(client, force_refresh=True)
+            if fresh and fresh != state["token"]:
+                state["token"] = fresh
+                resp = await http_request_with_retry(
+                    client,
+                    "POST",
+                    url,
+                    json=json_body,
+                    headers={"Authorization": f"Bearer {state['token']}"},
+                    timeout=10,
+                )
+        return resp
+
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
         now = datetime.now(UTC)
@@ -63,17 +98,17 @@ class GeminiApiMixin:
         if not token:
             return []
 
-        try:
-            headers = {"Authorization": f"Bearer {token}"}
+        # On a 401 (a stale token slipped past the cache freshness guard — e.g. a
+        # sidecar re-pushed an expired local token) force one refresh and retry.
+        state = {"token": token, "refreshed": False}
 
+        try:
             # 1. Load Code Assist - get project and tier info
-            tier_resp = await http_request_with_retry(
+            tier_resp = await self._post_with_401_retry(
                 client,
-                "POST",
                 "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-                json={"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
-                headers=headers,
-                timeout=10,
+                {"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
+                state,
             )
 
             if tier_resp.status_code == 429:
@@ -105,13 +140,11 @@ class GeminiApiMixin:
             tier = tier_mapping.get(tier_id_raw, tier_id_raw if tier_id_raw != "unknown" else None)
 
             # 2. Retrieve Quota
-            quota_resp = await http_request_with_retry(
+            quota_resp = await self._post_with_401_retry(
                 client,
-                "POST",
                 "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
-                json={"project": project_id},
-                headers=headers,
-                timeout=10,
+                {"project": project_id},
+                state,
             )
 
             if quota_resp.status_code == 429:

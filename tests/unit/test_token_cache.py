@@ -174,3 +174,58 @@ async def test_purge_keeps_opaque_token(cache):
 
     assert removed == 0
     assert await cache.get("openai", "cfg") is not None
+
+
+@pytest.mark.asyncio
+async def test_staler_push_does_not_clobber_fresher(cache):
+    """A staler sidecar push must not downgrade a server-refreshed token.
+
+    Gemini access tokens are opaque, so freshness rides on `expiry_date` (ms).
+    """
+    now_ms = int(time.time() * 1000)
+    # Server-refreshed token: valid for another hour.
+    await cache.store(
+        "gemini",
+        {"oauth_token": "fresh", "refresh_token": "rt", "expiry_date": str(now_ms + 3_600_000)},
+        account_id="user@example.com",
+    )
+    # Sidecar re-pushes its stale local token (expired an hour ago).
+    await cache.store(
+        "gemini",
+        {"oauth_token": "stale", "expiry_date": str(now_ms - 3_600_000)},
+        account_id="user@example.com",
+        source="sidecar-mgmt",
+    )
+
+    tokens = await cache.get("gemini", "user@example.com")
+    assert tokens["oauth_token"] == "fresh"  # fresher token preserved
+    assert tokens["refresh_token"] == "rt"  # not lost on the rejected overwrite
+
+
+@pytest.mark.asyncio
+async def test_fresher_push_replaces_staler(cache):
+    """A genuinely fresher push (later expiry) still wins."""
+    now_ms = int(time.time() * 1000)
+    await cache.store(
+        "gemini",
+        {"oauth_token": "old", "expiry_date": str(now_ms + 60_000)},
+        account_id="user@example.com",
+    )
+    await cache.store(
+        "gemini",
+        {"oauth_token": "new", "expiry_date": str(now_ms + 3_600_000)},
+        account_id="user@example.com",
+    )
+
+    tokens = await cache.get("gemini", "user@example.com")
+    assert tokens["oauth_token"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_opaque_tokens_always_overwrite(cache):
+    """Without a comparable expiry on both sides, the latest write wins (unchanged)."""
+    await cache.store("openai", {"api_key": "k1"}, account_id="cfg")  # pragma: allowlist secret
+    await cache.store("openai", {"api_key": "k2"}, account_id="cfg")  # pragma: allowlist secret
+
+    tokens = await cache.get("openai", "cfg")
+    assert tokens["api_key"] == "k2"  # pragma: allowlist secret

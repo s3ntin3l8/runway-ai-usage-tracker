@@ -1,5 +1,6 @@
 """Unit tests for app/services/token_refresher.py"""
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -112,6 +113,20 @@ class TestRefreshOAuthTokenAnthropic:
         assert result["oauth_token"] == "brand_new_token"
         # Original token keys still present
         assert result["refresh_token"] == "rt"
+
+    async def test_captures_expiry_date_from_expires_in(self):
+        # The new access token's expiry must be recorded (ms epoch) so the cache
+        # freshness guard can tell a refreshed token from a staler sidecar push.
+        body = {"access_token": "tok", "expires_in": 3600}
+        resp = _make_mock_response(200, body)
+        ctx = _make_async_client(resp)
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            result = await refresh_oauth_token("anthropic", {"refresh_token": "rt"})
+
+        assert "expiry_date" in result
+        # ~1h in the future, expressed in ms.
+        assert int(result["expiry_date"]) > int(time.time() * 1000) + 3_500_000
 
 
 class TestRefreshOAuthTokenGemini:

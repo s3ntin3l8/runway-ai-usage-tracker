@@ -148,6 +148,7 @@
             "access_token": "oauth_token",
             "refresh_token": "refresh_token",
             "id_token": "id_token",
+            "expiry_date": "expiry_date",
             "client_id": "client_id",
             "clientId": "client_id",
             "account_label": "account_label"
