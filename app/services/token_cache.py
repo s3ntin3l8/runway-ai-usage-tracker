@@ -119,7 +119,16 @@ class TokenCache:
                 )
                 return account_id
 
-            metadata = {"account_label": account_label, "source": source}
+            # Preserve prior identity metadata when an incoming store omits it — a
+            # server-side refresh that doesn't carry `source` must not erase the
+            # sidecar origin recorded by a previous push. A truthy incoming value
+            # still wins (fresher push from another sidecar, a `source="config"`
+            # store, etc.).
+            prev_meta = existing[1] if existing is not None else {}
+            metadata = {
+                "account_label": account_label or prev_meta.get("account_label"),
+                "source": source or prev_meta.get("source"),
+            }
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
             logger.info(

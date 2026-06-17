@@ -229,3 +229,55 @@ async def test_opaque_tokens_always_overwrite(cache):
 
     tokens = await cache.get("openai", "cfg")
     assert tokens["api_key"] == "k2"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_sourceless_overwrite_preserves_sidecar_origin(cache):
+    """A server-side refresh that omits `source` must not erase the sidecar origin.
+
+    Many server-side callers (oauth_base, token_auto_refresher, collector_manager)
+    store refreshed tokens without passing `source`, which previously clobbered the
+    sidecar badge in Token Health. The fix: fall back to the prior metadata value.
+    """
+    # Sidecar pushes a token and establishes origin.
+    await cache.store(
+        "claude",
+        {"access_token": "tok-v1"},
+        account_id="user@example.com",
+        source="my-laptop",
+    )
+
+    # Server-side refresh overwrites the token but carries no `source`.
+    await cache.store(
+        "claude",
+        {"access_token": "tok-v2"},
+        account_id="user@example.com",
+        source=None,  # simulates oauth_base / token_auto_refresher callers
+    )
+
+    stats = await cache.get_all_stats()
+    assert stats["claude"]["user@example.com"]["source"] == "my-laptop"
+
+
+@pytest.mark.asyncio
+async def test_truthy_source_still_overrides_prior_origin(cache):
+    """A store that explicitly carries a `source` must override the previous origin.
+
+    Ensures the fall-back only applies when the incoming `source` is falsy —
+    a fresher sidecar push or a `source="config"` store should still win.
+    """
+    await cache.store(
+        "claude",
+        {"access_token": "tok-v1"},
+        account_id="user@example.com",
+        source="sidecar-a",
+    )
+    await cache.store(
+        "claude",
+        {"access_token": "tok-v2"},
+        account_id="user@example.com",
+        source="config",
+    )
+
+    stats = await cache.get_all_stats()
+    assert stats["claude"]["user@example.com"]["source"] == "config"
