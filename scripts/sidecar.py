@@ -250,6 +250,10 @@ __REGISTRY__: dict[str, Any] = {
                         # derive the canonical (email) account_id instead of
                         # falling back to "default".
                         "id_token": "id_token",
+                        # Access-token expiry (ms epoch). Opaque ya29.* tokens carry
+                        # no JWT exp, so this is the freshness signal that stops a
+                        # stale local token from clobbering a server-refreshed one.
+                        "expiry_date": "expiry_date",
                         "client_id": "client_id",
                         "clientId": "client_id",
                     },

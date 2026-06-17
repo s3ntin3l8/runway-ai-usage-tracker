@@ -83,12 +83,23 @@ class IdentityExtractor:
 
     @classmethod
     def exp_from_tokens(cls, tokens: dict[str, str]) -> float | None:
-        """Find the JWT `exp` on the first token field that carries one.
+        """When does this credential expire (seconds since epoch), or None.
 
-        Single source of truth for "when does this credential expire" across the
-        token cache, auto-refresher, and Token Health. Opaque fields (no exp) are
-        skipped; returns None when no field carries a parseable exp.
+        Single source of truth for expiry across the token cache, auto-refresher,
+        and Token Health. Prefers an explicit `expiry_date` (ms epoch, as written
+        by gemini-cli / Google `oauth_creds.json`) because it tracks the *access*
+        token — opaque Google `ya29.*` access tokens are not JWTs, so no `exp`
+        claim exists, and a Gemini refresh returns no fresh `id_token`, leaving its
+        JWT `exp` permanently stale. Falls back to a JWT `exp` on the first token
+        field that carries one. Returns None when nothing parseable is present.
         """
+        expiry_ms = tokens.get("expiry_date")
+        if expiry_ms is not None:
+            try:
+                return float(expiry_ms) / 1000.0
+            except (TypeError, ValueError):
+                pass
+
         for key in cls._EXP_TOKEN_KEYS:
             tok = tokens.get(key)
             if not tok:

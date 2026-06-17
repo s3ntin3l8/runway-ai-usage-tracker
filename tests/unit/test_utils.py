@@ -133,6 +133,19 @@ class TestIdentityExtractorExpFromTokens:
         tokens = {"oauth_token": "", "access_token": _make_jwt({"exp": 50.0})}
         assert IdentityExtractor.exp_from_tokens(tokens) == 50.0
 
+    def test_prefers_expiry_date_ms_over_jwt_exp(self):
+        # expiry_date (ms epoch) tracks the access token and outranks a stale
+        # id_token exp — Gemini's opaque access token has no JWT exp of its own.
+        tokens = {
+            "id_token": _make_jwt({"exp": 100.0}),  # seconds
+            "expiry_date": "500000",  # ms → 500.0 s
+        }
+        assert IdentityExtractor.exp_from_tokens(tokens) == 500.0
+
+    def test_falls_back_to_jwt_exp_when_expiry_date_unparseable(self):
+        tokens = {"id_token": _make_jwt({"exp": 100.0}), "expiry_date": "not-a-number"}
+        assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
+
 
 # ─── PaceCalculator ───────────────────────────────────────────────────────────
 

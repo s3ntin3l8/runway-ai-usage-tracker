@@ -98,6 +98,27 @@ class TokenCache:
             if provider not in self._cache:
                 self._cache[provider] = {}
 
+            existing = self._cache[provider].get(account_id)
+            if existing is not None and self._is_staler(tokens, existing[0]):
+                # A staler credential must not downgrade a fresher cached one — a
+                # sidecar re-pushing its local (expired) access token would
+                # otherwise clobber the server-refreshed token every cycle. Keep
+                # the fresher tokens, but absorb a rotated refresh_token and fill
+                # in identity metadata, and bump last-seen so it stays TTL-alive.
+                kept_tokens, kept_meta, _ = existing
+                if tokens.get("refresh_token"):
+                    kept_tokens["refresh_token"] = tokens["refresh_token"]
+                if account_label and not kept_meta.get("account_label"):
+                    kept_meta["account_label"] = account_label
+                if source:
+                    kept_meta["source"] = source
+                self._cache[provider][account_id] = (kept_tokens, kept_meta, time.time())
+                logger.info(
+                    "Kept fresher cached token for provider %s (ignored staler push)",
+                    scrub_log(provider),
+                )
+                return account_id
+
             metadata = {"account_label": account_label, "source": source}
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
@@ -107,6 +128,20 @@ class TokenCache:
                 scrub_log(provider),
             )
             return account_id
+
+    @staticmethod
+    def _is_staler(incoming: dict[str, str], existing: dict[str, str]) -> bool:
+        """True when *incoming* expires strictly before *existing*.
+
+        Only meaningful when BOTH carry a comparable expiry (`exp_from_tokens` —
+        JWT `exp` or `expiry_date`). Opaque credentials (api keys, cookies) yield
+        None on either side, so this returns False and the normal overwrite wins.
+        """
+        inc_exp = IdentityExtractor.exp_from_tokens(incoming)
+        exist_exp = IdentityExtractor.exp_from_tokens(existing)
+        if inc_exp is None or exist_exp is None:
+            return False
+        return inc_exp < exist_exp
 
     async def update_account_metadata(
         self, provider: str, account_id: str, name: str | None = None

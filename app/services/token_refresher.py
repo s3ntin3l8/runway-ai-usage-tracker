@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 
 import httpx
 
@@ -101,6 +102,15 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     # entry's status. Keeping the old one would leave the row stuck as expired.
     if "id_token" in data:
         updated["id_token"] = data["id_token"]
+    # Record the new access-token expiry (ms epoch, gemini-cli/Google format).
+    # Opaque access tokens carry no JWT `exp`, so without this the refreshed entry
+    # would report a stale expiry and a staler sidecar push could clobber it.
+    expires_in = data.get("expires_in")
+    if expires_in is not None:
+        try:
+            updated["expiry_date"] = str(int(time.time() * 1000) + int(float(expires_in) * 1000))
+        except (TypeError, ValueError):
+            pass
 
     logger.info(f"Refreshed OAuth token for provider={scrub_log(provider)}")
     return updated

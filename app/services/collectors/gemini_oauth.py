@@ -66,6 +66,8 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                     token_data["refresh_token"] = creds["refresh_token"]
                 if id_token:
                     token_data["id_token"] = id_token
+                if creds.get("expiry_date") is not None:
+                    token_data["expiry_date"] = str(creds["expiry_date"])
 
                 await token_cache.store(
                     "gemini",
@@ -183,7 +185,10 @@ class GeminiOAuthMixin(OAuthBaseCollector):
 
                 # Update sidecar cache
                 await self._store_sidecar_token(
-                    "gemini", new_data["access_token"], creds.get("refresh_token")
+                    "gemini",
+                    new_data["access_token"],
+                    creds.get("refresh_token"),
+                    creds.get("expiry_date"),
                 )
 
                 return creds
