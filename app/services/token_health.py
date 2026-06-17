@@ -12,7 +12,7 @@ from sqlmodel import select as sqlselect
 from app.core.config import settings
 from app.core.db import engine
 from app.core.utils import IdentityExtractor, scrub_log
-from app.models.db import ProviderConfig
+from app.models.db import ProviderConfig, SidecarRegistry
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,14 @@ class TokenHealthService:
         result = []
         seen_token_values = set()
 
+        sidecar_names = {}
+        try:
+            with Session(engine) as _s:
+                for sc in _s.exec(sqlselect(SidecarRegistry)).all():
+                    sidecar_names[sc.sidecar_id] = sc.custom_name or sc.hostname or sc.sidecar_id
+        except Exception as e:
+            logger.warning(f"Could not load sidecar names for token health: {e}")
+
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
                 tokens = await token_cache.get(provider, acc_id) or {}
@@ -76,12 +84,16 @@ class TokenHealthService:
                 is_opaque = (exp is None) and (len(tokens) > 0)
                 can_refresh = "refresh_token" in tokens
 
+                source_val = info.get("source")
+                source_name = sidecar_names.get(source_val, source_val) if source_val else None
+
                 result.append(
                     {
                         "provider": provider,
                         "account_id": acc_id,
                         "account_label": label,
-                        "source": info.get("source"),
+                        "source": source_val,
+                        "source_name": source_name,
                         "token_types": list(tokens.keys()),
                         "status": _classify_status(
                             exp, is_opaque=is_opaque, can_refresh=can_refresh
@@ -122,6 +134,7 @@ class TokenHealthService:
                             "account_id": "config",
                             "account_label": label,
                             "source": "config",
+                            "source_name": "config",
                             "token_types": ["api_key"],
                             "status": "valid",  # Static keys are assumed ready
                             "expires_at": None,
@@ -145,6 +158,7 @@ class TokenHealthService:
                             "account_id": "config-cookie",
                             "account_label": label,
                             "source": "config",
+                            "source_name": "config",
                             "token_types": ["session_cookie"],
                             "status": "valid",
                             "expires_at": None,
@@ -188,6 +202,7 @@ class TokenHealthService:
                                 "account_id": "local-file",
                                 "account_label": label,
                                 "source": "config",
+                                "source_name": "config",
                                 "token_types": ["oauth_token"],
                                 "status": "valid",
                                 "expires_at": None,

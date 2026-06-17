@@ -537,6 +537,7 @@ export interface TokenHealthEntry {
   account_id: string;
   account_label?: string | null;
   source?: string | null;
+  source_name?: string | null;
   token_types?: string[];
   status: TokenHealthStatus;
   expires_at?: string | null;

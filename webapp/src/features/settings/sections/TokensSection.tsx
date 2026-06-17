@@ -97,7 +97,8 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
           </span>
         </p>
         <p className="truncate text-[11px] text-fg-subtle">
-          {(token.token_types ?? []).join(', ') || token.source || '—'}
+          {(token.token_types ?? []).join(', ') || '—'}
+          {token.source_name && token.source_name !== 'config' ? ` · via ${token.source_name}` : ''}
           {token.expires_at
             ? ` · expires ${formatLocalDateTime(token.expires_at, {
                 month: 'short',
