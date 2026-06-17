@@ -425,8 +425,19 @@ class GitHubCollector(BaseCollector):
             )
         return results
 
-    def _parse_quota_snapshots(self, snapshots: list[dict], plan: str) -> list[dict[str, Any]]:
-        """Parse quota_snapshots structure."""
+    def _parse_quota_snapshots(
+        self, snapshots: list[dict] | dict, plan: str
+    ) -> list[dict[str, Any]]:
+        """Parse quota_snapshots structure.
+
+        GitHub changed this field from a list of dicts (each with a "metric" key)
+        to a dict keyed by metric name.  Normalise to a list before processing so
+        both shapes work.
+        """
+        # Normalise new dict format: {"chat": {...}, "completions": {...}}
+        if isinstance(snapshots, dict):
+            snapshots = [{"metric": k, **v} for k, v in snapshots.items()]
+
         results = []
         metric_map = {
             "premium_interactions": "Premium Interactions",
@@ -438,12 +449,16 @@ class GitHubCollector(BaseCollector):
         tier_name = tier_map.get(plan.lower(), plan.lower()) if plan else None
 
         for snap in snapshots:
+            # Skip metrics not available on this plan (has_quota absent → assume present)
+            if not snap.get("has_quota", True):
+                continue
+
             metric_raw = snap.get("metric", "unknown")
             metric = metric_map.get(metric_raw, metric_raw.replace("_", " ").title())
             rem = snap.get("remaining")
             ent = snap.get("entitlement")
 
-            if rem is not None and ent is not None:
+            if rem is not None and ent is not None and ent > 0:
                 used_val = ent - rem
                 pct_used = (used_val / ent * 100) if ent > 0 else 0
                 pace = PaceCalculator.estimate_longevity(pct_used, None)
@@ -461,7 +476,7 @@ class GitHubCollector(BaseCollector):
                         "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
                         "used_value": float(used_val),
                         "limit_value": float(ent),
-                        "is_unlimited": False,
+                        "is_unlimited": snap.get("unlimited", False),
                         "tier": tier_name,
                         "unit_type": "requests",
                         "reset_at": None,
