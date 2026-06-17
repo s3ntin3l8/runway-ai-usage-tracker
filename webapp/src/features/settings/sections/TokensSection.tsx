@@ -95,9 +95,9 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
       ? `TTL: ${formatDuration(token.ttl_remaining_seconds * 1000)}`
       : null;
 
-  // Source label: omit for server-local config, surface sidecar names.
-  const sourceLabel =
-    token.source_name && token.source_name !== 'config' ? `via ${token.source_name}` : null;
+  // Source badge: omit for server-local config, surface sidecar names.
+  const sourceName =
+    token.source_name && token.source_name !== 'config' ? token.source_name : null;
 
   const typesLabel = (token.token_types ?? []).join(', ') || '—';
 
@@ -118,7 +118,6 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
           <Tooltip content={`Credential types: ${typesLabel}`}>
             <span className="cursor-default">{typesLabel}</span>
           </Tooltip>
-          {sourceLabel ? ` · ${sourceLabel}` : ''}
           {ttlLabel ? ` · ${ttlLabel}` : ''}
           {token.expires_at
             ? ` · expires ${formatLocalDateTime(token.expires_at, {
@@ -131,6 +130,11 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {sourceName ? (
+          <Badge variant="neutral" title="Credential originates from this sidecar">
+            {sourceName}
+          </Badge>
+        ) : null}
         {token.redundant ? (
           <Badge variant="neutral" title="Expired but another healthy credential exists — not blocking collection">
             redundant

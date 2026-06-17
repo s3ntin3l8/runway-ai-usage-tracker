@@ -118,7 +118,7 @@ describe('TokensSection', () => {
     renderWithProviders(<TokensSection />);
     // Wait for rows to render (multiple 'valid' badges expected).
     expect(await screen.findAllByText('valid')).toHaveLength(2);
-    expect(screen.getByText(/via my-laptop/)).toBeInTheDocument();
-    expect(screen.queryByText(/via config/)).not.toBeInTheDocument();
+    expect(screen.getByText('my-laptop')).toBeInTheDocument();
+    expect(screen.queryByText('config')).not.toBeInTheDocument();
   });
 });
