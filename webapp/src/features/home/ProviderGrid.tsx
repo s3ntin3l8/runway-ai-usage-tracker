@@ -21,14 +21,16 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router';
+import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { StatusDot } from '@/components/ui/StatusDot';
-import { formatPct, timeAgo } from '@/lib/format';
-import { cardPct, cardStatus, chipLabel, windowLabel } from '@/lib/quota';
+import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
+import { cardKind, cardPct, cardStatus, chipLabel, windowLabel } from '@/lib/quota';
+import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
 
@@ -91,6 +93,24 @@ function SortableProviderCard({
     gauge.account_label ??
     (entry.account_id && entry.account_id !== 'default' ? entry.account_id : null);
 
+  // Classify the card so each kind renders a fitting hero metric.
+  const kind = cardKind(gauge);
+
+  // Spend cards have no derivable percentage so cardStatus returns 'unknown'.
+  // Prefer 'ok' when we have real data so the StatusDot isn't always grey.
+  const displayStatus: QuotaStatus =
+    kind === 'spend' && status === 'unknown' && (gauge.used_value != null || gauge.health === 'good')
+      ? 'ok'
+      : status;
+
+  // Hero label for the aria-label — meaningful per kind.
+  const heroLabel =
+    kind === 'quota'
+      ? `${formatPct(cardPct(gauge))} used`
+      : kind === 'tokens'
+        ? `${formatTokens(gauge.token_usage?.total ?? gauge.used_value ?? null)} tokens used`
+        : `${gauge.used_value != null ? formatCurrency(gauge.used_value, gauge.currency) : (gauge.remaining ?? '—')} ${gauge.unit ?? ''}`.trimEnd();
+
   return (
     <Card
       ref={setNodeRef}
@@ -100,9 +120,7 @@ function SortableProviderCard({
       role="button"
       tabIndex={0}
       aria-label={
-        accountLabel
-          ? `${name} (${accountLabel}), ${formatPct(cardPct(gauge))} used`
-          : `${name}, ${formatPct(cardPct(gauge))} used`
+        accountLabel ? `${name} (${accountLabel}), ${heroLabel}` : `${name}, ${heroLabel}`
       }
       onClick={() => {
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
@@ -124,18 +142,62 @@ function SortableProviderCard({
           ) : null}
         </div>
         {gauge.tier ? <Badge variant="outline">{gauge.tier}</Badge> : null}
-        <StatusDot status={status} pulse={status === 'critical'} />
+        <StatusDot status={displayStatus} pulse={displayStatus === 'critical'} />
       </div>
-      <div className="mt-3 flex items-baseline justify-between gap-2">
-        <span className="font-mono text-lg font-semibold tabular">
-          {formatPct(cardPct(gauge))}
-        </span>
-        <span className="truncate text-[11px] text-fg-subtle">
-          {gauge.service_name}
-          {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ''}
-        </span>
-      </div>
-      <Gauge pct={cardPct(gauge)} status={status} className="mt-1.5" />
+
+      {/* Hero block — swapped per card kind */}
+      {kind === 'quota' && (
+        <>
+          <div className="mt-3 flex items-baseline justify-between gap-2">
+            <span className="font-mono text-lg font-semibold tabular">
+              {formatPct(cardPct(gauge))}
+            </span>
+            <span className="truncate text-[11px] text-fg-subtle">
+              {gauge.service_name}
+              {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ''}
+            </span>
+          </div>
+          <Gauge pct={cardPct(gauge)} status={displayStatus} className="mt-1.5" />
+        </>
+      )}
+
+      {kind === 'tokens' && (
+        <>
+          <div className="mt-3 flex items-baseline justify-between gap-2">
+            <span className="font-mono text-lg font-semibold tabular">
+              {formatTokens(gauge.token_usage?.total ?? gauge.used_value ?? null)}
+            </span>
+            <span className="truncate text-[11px] text-fg-subtle">
+              tokens
+              {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ' · ∞'}
+            </span>
+          </div>
+          {/* Token composition bar: remap unprefixed token_usage keys → prefixed TokenSliceKey */}
+          <TokenBar
+            tokens={{
+              tokens_input: gauge.token_usage?.input,
+              tokens_output: gauge.token_usage?.output,
+              tokens_cache_read: gauge.token_usage?.cache_read,
+              tokens_reasoning: gauge.token_usage?.reasoning,
+            }}
+            className="mt-1.5"
+          />
+        </>
+      )}
+
+      {kind === 'spend' && (
+        <div className="mt-3 flex items-baseline justify-between gap-2">
+          <span className="font-mono text-lg font-semibold tabular">
+            {gauge.used_value != null
+              ? formatCurrency(gauge.used_value, gauge.currency)
+              : (gauge.remaining ?? '—')}
+          </span>
+          <span className="truncate text-[11px] text-fg-subtle">
+            {gauge.unit || (windowLabel(gauge) ?? gauge.service_name)}
+          </span>
+        </div>
+      )}
+
       {secondaries.length > 0 ? (
         <div className="mt-2.5 flex flex-wrap gap-1">
           {secondaries.map((card, i) => (
@@ -148,7 +210,13 @@ function SortableProviderCard({
         </div>
       ) : null}
       <div className="mt-2.5 flex items-center justify-between text-[11px] text-fg-subtle">
-        <Countdown until={gauge.reset_at} className="text-[11px]" />
+        {kind === 'quota' ? (
+          <Countdown until={gauge.reset_at} className="text-[11px]" />
+        ) : gauge.msgs != null ? (
+          <span>{formatNumber(gauge.msgs)} msgs</span>
+        ) : (
+          <span />
+        )}
         <span>{timeAgo(gauge.updated_at)}</span>
       </div>
     </Card>
