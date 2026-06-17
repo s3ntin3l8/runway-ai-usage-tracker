@@ -4,9 +4,10 @@ import type { ProviderConfig } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { ProvidersSection } from './ProvidersSection';
 import * as api from '@/api/endpoints';
+import { toast } from 'sonner';
 
 vi.mock('@/api/endpoints');
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 const provider = (o: Partial<ProviderConfig> = {}): ProviderConfig => ({
   provider_id: 'claude',
@@ -22,6 +23,23 @@ const provider = (o: Partial<ProviderConfig> = {}): ProviderConfig => ({
   collection_strategies: [{ id: 'api', enabled: true }],
   ...o,
 });
+
+const githubProvider = (o: Partial<ProviderConfig> = {}): ProviderConfig =>
+  provider({
+    provider_id: 'github',
+    name: 'GitHub',
+    api_key_label: 'Personal access token', // pragma: allowlist secret
+    ...o,
+  });
+
+async function openGitHubDialog() {
+  vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+    providers: [githubProvider()],
+  });
+  renderWithProviders(<ProvidersSection />);
+  await userEvent.click(await screen.findByText('GitHub'));
+  return screen.findByRole('dialog');
+}
 
 describe('ProvidersSection', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -101,5 +119,152 @@ describe('ProvidersSection', () => {
     const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
     expect(body).not.toHaveProperty('api_key');
     expect(body).not.toHaveProperty('session_cookie');
+  });
+});
+
+describe('GitHubLoginSection', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('shows Connect button when not authenticated', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({ authenticated: false });
+    const dialog = await openGitHubDialog();
+    expect(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows account name and Disconnect when authenticated', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({
+      authenticated: true,
+      account: 'octocat',
+      email: 'octocat@github.com',
+    });
+    const dialog = await openGitHubDialog();
+    expect(await within(dialog).findByText('@octocat')).toBeInTheDocument();
+    expect(within(dialog).getByText('octocat@github.com')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+  });
+
+  it('shows account without email when email is absent', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({
+      authenticated: true,
+      account: 'octocat',
+    });
+    const dialog = await openGitHubDialog();
+    expect(await within(dialog).findByText('@octocat')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/@.*\.com/)).toBeNull();
+  });
+
+  it('starts device flow and shows pending UI with user code', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({ authenticated: false });
+    vi.mocked(api.initGitHubOAuth).mockResolvedValue({
+      device_code: 'dev-abc',
+      user_code: 'ABCD-1234',
+      verification_uri: 'https://github.com/login/device',
+      expires_in: 900,
+      interval: 5,
+    });
+    vi.mocked(api.pollGitHubOAuth).mockReturnValue(new Promise(() => {}));
+
+    const dialog = await openGitHubDialog();
+    await userEvent.click(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    );
+
+    expect(await within(dialog).findByText('ABCD-1234')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  it('returns to idle when Cancel is clicked during pending flow', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({ authenticated: false });
+    vi.mocked(api.initGitHubOAuth).mockResolvedValue({
+      device_code: 'dev-abc',
+      user_code: 'ABCD-1234',
+      verification_uri: 'https://github.com/login/device',
+      expires_in: 900,
+      interval: 5,
+    });
+    vi.mocked(api.pollGitHubOAuth).mockReturnValue(new Promise(() => {}));
+
+    const dialog = await openGitHubDialog();
+    await userEvent.click(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    );
+    await within(dialog).findByText('ABCD-1234');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+    expect(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows error state when initGitHubOAuth fails', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({ authenticated: false });
+    vi.mocked(api.initGitHubOAuth).mockRejectedValue(new Error('Network error'));
+
+    const dialog = await openGitHubDialog();
+    await userEvent.click(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    );
+
+    expect(await within(dialog).findByText('Network error')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+
+  it('resets to idle from error state on Try again click', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({ authenticated: false });
+    vi.mocked(api.initGitHubOAuth).mockRejectedValue(new Error('Network error'));
+
+    const dialog = await openGitHubDialog();
+    await userEvent.click(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    );
+    await within(dialog).findByText('Network error');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /try again/i }));
+
+    expect(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('calls logoutGitHub and shows toast on Disconnect', async () => {
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({
+      authenticated: true,
+      account: 'octocat',
+    });
+    vi.mocked(api.logoutGitHub).mockResolvedValue({});
+
+    const dialog = await openGitHubDialog();
+    await userEvent.click(await within(dialog).findByRole('button', { name: /disconnect/i }));
+
+    expect(api.logoutGitHub).toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith('GitHub disconnected');
+  });
+
+  it('transitions to idle after successful poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(api.getGitHubOAuthStatus).mockResolvedValue({ authenticated: false });
+    vi.mocked(api.initGitHubOAuth).mockResolvedValue({
+      device_code: 'dev-abc',
+      user_code: 'ABCD-1234',
+      verification_uri: 'https://github.com/login/device',
+      expires_in: 900,
+      interval: 5,
+    });
+    vi.mocked(api.pollGitHubOAuth).mockResolvedValue({ status: 'success' });
+
+    const dialog = await openGitHubDialog();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(
+      await within(dialog).findByRole('button', { name: /connect via github oauth/i }),
+    );
+
+    await within(dialog).findByText('ABCD-1234');
+    await vi.runAllTimersAsync();
+
+    expect(toast.success).toHaveBeenCalledWith('GitHub connected');
+    vi.useRealTimers();
   });
 });
