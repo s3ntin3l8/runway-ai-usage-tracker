@@ -199,6 +199,72 @@ def test_empty_db_returns_empty_fleet(session: Session):
     assert "generated_at" in body
 
 
+def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
+    """A passive provider (events, no LatestUsage card) gets a synthetic fleet entry
+    whose critical_gauge is populated with lifetime token_usage, used_value, and msgs.
+
+    This covers the "opencode-free shows 0" regression: before the fix the synthetic
+    shell had token_usage=null/used_value=null/msgs=null, causing the dashboard token
+    card to display '0' despite real usage in the event log.
+    """
+    now = datetime.now(UTC)
+    # Seed two events — different sidecars / models, same passive provider
+    _seed_event(
+        session,
+        "ev1",
+        now,
+        provider_id="opencode-free",
+        account_id="user@example.com",
+        sidecar_id="laptop",
+        tokens_input=1_000,
+        tokens_output=200,
+        tokens_cache_read=5_000,
+        tokens_cache_create=0,
+        tokens_reasoning=100,
+        cost_usd=0.05,
+    )
+    _seed_event(
+        session,
+        "ev2",
+        now,
+        provider_id="opencode-free",
+        account_id="user@example.com",
+        sidecar_id="desktop",
+        tokens_input=500,
+        tokens_output=80,
+        tokens_cache_read=1_000,
+        tokens_cache_create=0,
+        tokens_reasoning=20,
+        cost_usd=0.01,
+    )
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+
+    entries = resp.json()["fleet"]
+    entry = next(e for e in entries if e["provider_id"] == "opencode-free")
+
+    cg = entry["critical_gauge"]
+    assert cg["is_unlimited"] is True
+    assert cg["window_type"] == "lifetime"
+
+    # token_usage must be present and summed across both events
+    tu = cg["token_usage"]
+    assert tu is not None
+    assert tu["input"] == 1_500  # 1000 + 500
+    assert tu["output"] == 280  # 200 + 80
+    assert tu["reasoning"] == 120  # 100 + 20
+    assert tu["cache_read"] == 6_000  # 5000 + 1000
+    # total = input + output + reasoning (cache excluded, matches Go card convention)
+    assert tu["total"] == 1_500 + 280 + 120
+
+    # used_value must mirror total
+    assert cg["used_value"] == tu["total"]
+
+    # msgs must reflect the event count
+    assert cg["msgs"] == 2
+
+
 # ---------------------------------------------------------------------------
 # Phase 15.2 — window_aggregations field
 # ---------------------------------------------------------------------------

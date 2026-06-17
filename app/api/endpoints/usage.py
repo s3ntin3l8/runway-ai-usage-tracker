@@ -191,7 +191,7 @@ async def fetch_fleet_view(
             continue  # orphan from pre-fix sidecar; real-identity card covers it
         if (pid, aid) in groups:
             continue
-        synthetic = {
+        synthetic: dict[str, Any] = {
             "provider_id": pid,
             "account_id": aid,
             "service_name": pid.replace("-", " ").title(),
@@ -204,6 +204,29 @@ async def fetch_fleet_view(
             "input_source": "sidecar",
             "account_label": aid,
         }
+        # Back-fill lifetime token totals so the dashboard token card shows real
+        # usage instead of "0". We query from the Unix epoch so we get every
+        # ingested event for this passive provider. The provider_id/account_id
+        # filters keep the scan small (only this provider's rows).
+        _epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        _life = query_cumulative_live(session, since=_epoch, provider_id=pid, account_id=aid).get(
+            (pid, aid)
+        )
+        if _life:
+            _ti = _life["tokens_input"]
+            _to = _life["tokens_output"]
+            _tr = _life["tokens_reasoning"]
+            _tcr = _life["tokens_cache_read"]
+            # total = input + output + reasoning; cache excluded (matches Go card convention)
+            synthetic["token_usage"] = {
+                "input": _ti,
+                "output": _to,
+                "reasoning": _tr,
+                "cache_read": _tcr,
+                "total": _ti + _to + _tr,
+            }
+            synthetic["used_value"] = _ti + _to + _tr
+            synthetic["msgs"] = _life["msgs"]
         groups[(pid, aid)] = [synthetic]
 
     now = datetime.now(UTC)
