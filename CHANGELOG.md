@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.4.0...v2.5.0) (2026-06-17)
+
+
+### Features
+
+* **dashboard:** show account identity on provider cards ([ee570d4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ee570d487ccaadf5be85cb8aa81facc709d102a8))
+* **dashboard:** show account identity on provider cards for multi-account users ([#127](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/127)) ([11cff2f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/11cff2f565c558a55e7625935b090a3d08ed4d09))
+* **settings:** restore GitHub device flow login to provider settings UI ([#120](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/120)) ([0a3b7aa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0a3b7aa2b85333f68986a34572520f7c34b4ac87))
+* **token-health:** sortable/filterable table + fix source-clobber cache bug ([#135](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/135)) ([5c02533](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5c02533d7e15de20fc96ee8f885e1133b6d5a8a0))
+* **token-health:** surface redundant flag, TTL, and generic account tokens ([40315fc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/40315fcae3a5f011e492b98d4f13ccef99b48584))
+* **token-health:** surface redundant flag, TTL, and generic account tokens ([#125](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/125) [#126](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/126) [#128](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/128)) ([68b73d3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/68b73d3d7e7686ed2869a8f5b66e9f91aedb79e5))
+* **token-health:** surface sidecar name in token cache UI ([#123](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/123)) ([4d8645b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4d8645bc26eceae5f12f662579b5f22f23c2d8e2))
+* **tokens:** show sidecar originator as a badge ([#134](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/134)) ([8720e60](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8720e6053d02f087ba5e04ce97dc108a21cd31eb))
+
+
+### Bug Fixes
+
+* **app:** mount TooltipProvider at root to fix blank /settings/tokens ([#133](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/133)) ([725539b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/725539bf8387fd9f5f02f1dde3ed0aa50ac6e0e4))
+* **debug:** add credential diagnostics to raw provider debug endpoint ([#119](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/119)) ([c103e3f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c103e3f470ff917453c16acd87b87bf7030820b7))
+* **github:** handle new dict-shaped quota_snapshots API response ([#129](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/129)) ([94a5e9c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/94a5e9ca06bc4314cc2a78708a8ed1085bc6a9bc))
+* **home:** at-risk rail now features the window that is actually at risk ([#132](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/132)) ([cda76b6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cda76b6cfd0842a14183c2724658dc547c040b88))
+* **tokens:** keep the freshest token in cache; stop stale sidecar pushes clobbering refreshes ([#124](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/124)) ([2e731ea](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2e731ea2dcd3f8cbb6a5a86607cb294fe8f04bd3))
+
 ## [2.4.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.3.1...v2.4.0) (2026-06-17)
 
 
