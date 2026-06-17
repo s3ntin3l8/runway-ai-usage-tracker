@@ -8,6 +8,7 @@ import { BootGate } from '@/features/auth/BootGate';
 import { ThemeProvider } from '@/hooks/useTheme';
 import { InstallProvider } from '@/hooks/useInstallPrompt';
 import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
+import { TooltipProvider } from '@/components/ui/Tooltip';
 import { HomePage } from '@/features/home/HomePage';
 
 const ProviderPage = lazy(() =>
@@ -47,22 +48,24 @@ export function App() {
         <InstallProvider>
           <ExcludeCacheProvider>
             <BootGate>
-              <BrowserRouter>
-                <Suspense fallback={null}>
-                  <Routes>
-                    <Route element={<AppShell />}>
-                      <Route index element={<HomePage />} />
-                      <Route path="provider/:providerId" element={<ProviderPage />} />
-                      <Route path="insights" element={<InsightsPage />} />
-                      <Route path="history" element={<HistoryPage />} />
-                      <Route path="fleet" element={<FleetPage />} />
-                      <Route path="settings/*" element={<SettingsPage />} />
-                      {import.meta.env.DEV ? <Route path="dev/kit" element={<KitPage />} /> : null}
-                      <Route path="*" element={<Navigate to="/" replace />} />
-                    </Route>
-                  </Routes>
-                </Suspense>
-              </BrowserRouter>
+              <TooltipProvider>
+                <BrowserRouter>
+                  <Suspense fallback={null}>
+                    <Routes>
+                      <Route element={<AppShell />}>
+                        <Route index element={<HomePage />} />
+                        <Route path="provider/:providerId" element={<ProviderPage />} />
+                        <Route path="insights" element={<InsightsPage />} />
+                        <Route path="history" element={<HistoryPage />} />
+                        <Route path="fleet" element={<FleetPage />} />
+                        <Route path="settings/*" element={<SettingsPage />} />
+                        {import.meta.env.DEV ? <Route path="dev/kit" element={<KitPage />} /> : null}
+                        <Route path="*" element={<Navigate to="/" replace />} />
+                      </Route>
+                    </Routes>
+                  </Suspense>
+                </BrowserRouter>
+              </TooltipProvider>
             </BootGate>
             <Toaster position="bottom-right" theme="system" />
           </ExcludeCacheProvider>
