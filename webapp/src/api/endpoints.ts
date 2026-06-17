@@ -283,16 +283,25 @@ export const testWebhook = (id: number) =>
 
 // --- GitHub OAuth ------------------------------------------------------------
 
-export const initGitHubOAuth = () => api<Record<string, unknown>>('/api/v1/auth/github/init');
+export const initGitHubOAuth = () =>
+  api<{
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    expires_in: number;
+    interval: number;
+  }>('/api/v1/auth/github/init');
 
 export const pollGitHubOAuth = (deviceCode: string) =>
-  api<Record<string, unknown>>('/api/v1/auth/github/poll', {
+  api<{ status: string; interval?: number }>('/api/v1/auth/github/poll', {
     method: 'POST',
     body: JSON.stringify({ device_code: deviceCode }),
   });
 
 export const getGitHubOAuthStatus = () =>
-  api<{ authenticated: boolean }>('/api/v1/auth/github/status');
+  api<{ authenticated: boolean; account?: string; name?: string; email?: string }>(
+    '/api/v1/auth/github/status',
+  );
 
 export const logoutGitHub = () =>
   api<Record<string, unknown>>('/api/v1/auth/github/logout', { method: 'POST' });
