@@ -657,6 +657,7 @@ class OpenCodeCollector(BaseCollector):
                     "detail": f"${used:.2f} used ({pct:.1f}%) · Web API{identity_suffix}",
                     "used_value": used,
                     "limit_value": limit,
+                    "pct_used": pct,
                     "is_unlimited": False,
                     "unit_type": "currency",
                     "currency": "USD",

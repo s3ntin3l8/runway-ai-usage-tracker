@@ -28,10 +28,12 @@ export function DebugTab({
   active: boolean;
 }) {
   const g = entry.critical_gauge;
-  // Raw capture replays a server-side api/web collector. Locally-collected
-  // providers (e.g. antigravity: sidecar LSP probe / local quota file) have no
+  // Raw capture replays a server-side api/web collector. Providers with
+  // data_source='local' (e.g. antigravity: log scraping / LSP probe) have no
   // server collector, so capture would 404 — don't offer it.
-  const captureSupported = !(g.data_source === 'local' || g.input_source === 'sidecar');
+  // input_source='sidecar' only means credentials came from a remote agent;
+  // the server still makes the HTTP calls, so capture is supported.
+  const captureSupported = g.data_source !== 'local';
 
   return (
     <div className="flex flex-col gap-4">
@@ -169,7 +171,7 @@ function RawCapturePane({
       <EmptyState
         icon={Bug}
         title="Raw capture unavailable"
-        description={`${providerId} is collected locally by the sidecar (LSP probe / local quota file), so there's no server-side HTTP exchange to capture. The sidecar is the source of truth — see Authoritative source above.`}
+        description={`${providerId} is collected directly on the host (local log scraping / LSP probe / quota file) — there is no server-side HTTP exchange to capture.`}
       />
     );
   }
