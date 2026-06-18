@@ -464,7 +464,7 @@ class GitHubCollector(BaseCollector):
         metric_map = {
             "premium_interactions": "Premium Interactions",
             "chat": "Chat",
-            "completions": "Autocomplete",
+            "completions": "Completions",
             "included_credits": "Included Credits",
         }
         tier_map = {"individual": "pro", "business": "team", "enterprise": "enterprise"}
