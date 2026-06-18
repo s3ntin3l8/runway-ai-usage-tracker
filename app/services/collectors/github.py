@@ -44,7 +44,7 @@ from app.core.utils import (
     error_card,
     http_request_with_retry,
 )
-from app.services.collectors.base import BaseCollector
+from app.services.collectors.base import BaseCollector, normalize_account_id
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
@@ -192,6 +192,7 @@ class GitHubCollector(BaseCollector):
             if not identity and self.account_label and "@" in self.account_label:
                 identity = self.account_label
 
+            login: str | None = None
             if not identity:
                 try:
                     # Use clean headers for standard endpoints (avoid futuristic Copilot API version)
@@ -210,6 +211,9 @@ class GitHubCollector(BaseCollector):
                     )
                     if user_std_resp.status_code == 200:
                         std_data = user_std_resp.json()
+                        # Capture login — always present regardless of token scopes;
+                        # used as stable account_id fallback when no email is found.
+                        login = std_data.get("login") or None
                         # Try email from main profile
                         identity = std_data.get("email")
 
@@ -277,15 +281,24 @@ class GitHubCollector(BaseCollector):
                 if not self.account_label or self.account_label.lower() == "default":
                     self.account_label = identity
 
-                if self.account_id:
-                    # Update metadata in cache so it can be used for label fallbacks.
-                    # Note: We only push to cache if we don't have a specific override already
-                    # active, to prevent "real" names from clobbering preferred ones in the cache.
-                    asyncio.create_task(
-                        token_cache.update_account_metadata(
-                            "github", self.account_id, name=self.account_label
-                        )
+            # Stable account_id: email when discoverable (identity contains "@"), else the
+            # GitHub login (always available regardless of token scopes).  The default
+            # collector starts with account_id=None so cards land under "default"; pin it
+            # to the authenticated user so the card carries a durable identity.
+            if not self.account_id or self.account_id == "default":
+                stable = identity if (identity and "@" in identity) else login
+                if stable:
+                    self.account_id = normalize_account_id(stable)
+
+            if self.account_id:
+                # Update metadata in cache so it can be used for label fallbacks.
+                # Note: We only push to cache if we don't have a specific override already
+                # active, to prevent "real" names from clobbering preferred ones in the cache.
+                asyncio.create_task(
+                    token_cache.update_account_metadata(
+                        "github", self.account_id, name=self.account_label
                     )
+                )
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
             logger.info(
                 "GitHub collector: API calls complete — user_resp=%s token_resp=%s cards=%d",
