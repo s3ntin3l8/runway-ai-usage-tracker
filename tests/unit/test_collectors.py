@@ -1550,11 +1550,11 @@ class TestGitHubCollector:
 
     @pytest.mark.asyncio
     async def test_account_id_resolved_to_login_when_no_email(self, mock_http_client):
-        """account_id is set to the GitHub login when no email scope is available.
+        """account_id and label are set to the GitHub login even when a display name exists.
 
         Simulates the device-flow case: token has no email scope, /user profile has
-        no email, /user/emails returns nothing, git config returns nothing — so the
-        login ('s3ntin3l8') becomes the stable account_id via normalize_account_id.
+        no email (private) and /user/emails returns 403 / empty. The login wins over
+        the display name so both account_id and account_label are stable and consistent.
         """
         collector = GitHubCollector()
 
@@ -1575,7 +1575,8 @@ class TestGitHubCollector:
                 "quota_reset_date_utc": "2026-07-01T00:00:00.000Z",
             },
         )
-        std_user = _resp(200, {"login": "s3ntin3l8", "email": None, "name": None})
+        # Realistic response: name present but email private — login must win over name.
+        std_user = _resp(200, {"login": "s3ntin3l8", "email": None, "name": "Björn Hansen"})
         emails_list = _resp(200, [])
 
         # Simulate git config returning no email (non-zero exit)
@@ -1596,6 +1597,7 @@ class TestGitHubCollector:
         ):
             await collector._strategy_api(mock_http_client)
 
+        # login beats display name — both id and label use the login
         assert collector.account_id == "s3ntin3l8"
         assert collector.account_label == "s3ntin3l8"
 

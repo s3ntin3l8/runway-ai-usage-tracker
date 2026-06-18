@@ -249,9 +249,11 @@ class GitHubCollector(BaseCollector):
                             except Exception as e:
                                 logger.debug(f"Failed to fetch git config user.email: {e}")
 
-                        # Final fallback to name or login if NO email found anywhere
+                        # Final fallback if NO email found anywhere: prefer the stable
+                        # login over the display name so the card identity matches
+                        # account_id and stays consistent across token re-auths.
                         if not identity:
-                            identity = std_data.get("name") or std_data.get("login")
+                            identity = std_data.get("login") or std_data.get("name")
                 except Exception as e:
                     logger.debug(f"GitHub /user identity fetch failed: {e}")
 
