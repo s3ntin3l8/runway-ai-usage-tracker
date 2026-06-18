@@ -298,7 +298,18 @@ async def get_raw_provider_data(
     Useful for troubleshooting provider API changes.
     Admin-gated: returns live upstream URLs/bodies (auth headers masked).
     """
-    raw_responses = []
+    raw_requests: list[dict[str, Any]] = []
+    raw_responses: list[dict[str, Any]] = []
+    collect_errors: list[dict[str, Any]] = []
+
+    async def intercept_request(request: httpx.Request) -> None:
+        raw_requests.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "timestamp": time.time(),
+            }
+        )
 
     async def intercept_response(response: httpx.Response) -> None:
         await response.aread()
@@ -361,21 +372,33 @@ async def get_raw_provider_data(
             "token_source": creds.sources.get("api_key"),  # "config" | "server" | None
         }
 
+        cards_returned = 0
         async with httpx.AsyncClient(
-            event_hooks={"response": [intercept_response]}, timeout=30.0
+            event_hooks={
+                "request": [intercept_request],
+                "response": [intercept_response],
+            },
+            timeout=30.0,
         ) as client:
             # Run the primary strategy for the first matching collector.
             # Reset the collector's in-memory cache first so the debug endpoint
             # always fires live HTTP calls rather than returning a cache hit.
             if hasattr(collector, "reset"):
                 await collector.reset()
-            await collector.collect(client)
+            try:
+                result = await collector.collect(client)
+                cards_returned = len(result) if result else 0
+            except Exception as exc:
+                collect_errors.append({"type": type(exc).__name__, "message": str(exc)})
 
         return {
             "provider_id": provider_id,
             "is_configured": is_configured,
             "credentials": credential_debug,
+            "requests": raw_requests,
             "responses": raw_responses,
+            "errors": collect_errors,
+            "cards_returned": cards_returned,
             "timestamp": time.time(),
         }
     except HTTPException:

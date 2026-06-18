@@ -98,12 +98,18 @@ class GitHubCollector(BaseCollector):
         """Fetch GitHub Copilot quota with caching."""
         token = await self._get_token()
         if not token:
+            logger.warning(
+                "GitHub collector: no token resolved for account_id=%r — skipping collection",
+                self.account_id or "default",
+            )
             return []
 
         # Check cache
         now = datetime.now(UTC)
         if self._cached_results is not None and self._last_fetch:
-            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
+            age = (now - self._last_fetch).total_seconds()
+            if age < self._cache_ttl:
+                logger.debug("GitHub collector: returning cached results (age=%.0fs)", age)
                 return self._cached_results
 
         try:
@@ -281,16 +287,32 @@ class GitHubCollector(BaseCollector):
                         )
                     )
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
+            logger.info(
+                "GitHub collector: API calls complete — user_resp=%s token_resp=%s cards=%d",
+                user_resp.status_code,
+                token_resp.status_code if token_resp else "skipped",
+                len(cards),
+            )
             # Cache results (including empty/error cards) to avoid hammering API
             self._cached_results = cards
             self._last_fetch = now
             return cards
         except Exception as e:
-            logger.debug(f"GitHub Copilot API strategy failed: {e}")
-            self._cached_results = []
+            logger.warning(
+                "GitHub Copilot API strategy failed: %s — %s",
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
+            err = error_card(
+                "GitHub Copilot",
+                "🐙",
+                f"{type(e).__name__}: {str(e)[:60]}",
+                error_type="api_error",
+            )
+            self._cached_results = [err]
             self._last_fetch = now
-
-        return []
+            return [err]
 
     async def reset(self):
         """Reset internal collector state and cache."""
