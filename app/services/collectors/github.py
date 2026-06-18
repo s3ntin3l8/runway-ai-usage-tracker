@@ -368,7 +368,8 @@ class GitHubCollector(BaseCollector):
             # Process snapshots
             snapshots = user_data.get("quota_snapshots", [])
             plan = user_data.get("copilot_plan", "Individual")
-            cards.extend(self._parse_quota_snapshots(snapshots, plan))
+            reset_date_utc = user_data.get("quota_reset_date_utc")
+            cards.extend(self._parse_quota_snapshots(snapshots, plan, reset_date_utc))
 
         return cards
 
@@ -448,7 +449,7 @@ class GitHubCollector(BaseCollector):
         return results
 
     def _parse_quota_snapshots(
-        self, snapshots: list[dict] | dict, plan: str
+        self, snapshots: list[dict] | dict, plan: str, reset_date_utc: str | None = None
     ) -> list[dict[str, Any]]:
         """Parse quota_snapshots structure.
 
@@ -460,11 +461,20 @@ class GitHubCollector(BaseCollector):
         if isinstance(snapshots, dict):
             snapshots = [{"metric": k, **v} for k, v in snapshots.items()]
 
+        reset_at = None
+        if reset_date_utc:
+            try:
+                reset_at = parse_iso8601_utc(reset_date_utc)
+            except (ValueError, TypeError) as e:
+                logger.debug(
+                    "Could not parse GitHub quota_reset_date_utc %r: %s", reset_date_utc, e
+                )
+
         results = []
         metric_map = {
             "premium_interactions": "Premium Interactions",
             "chat": "Chat",
-            "completions": "Autocomplete",
+            "completions": "Completions",
             "included_credits": "Included Credits",
         }
         tier_map = {"individual": "pro", "business": "team", "enterprise": "enterprise"}
@@ -483,16 +493,16 @@ class GitHubCollector(BaseCollector):
             if rem is not None and ent is not None and ent > 0:
                 used_val = ent - rem
                 pct_used = (used_val / ent * 100) if ent > 0 else 0
-                pace = PaceCalculator.estimate_longevity(pct_used, None)
+                pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
                 results.append(
                     {
                         "service_name": "Copilot",
                         "variant": metric,
-                        "window_type": "rolling",
+                        "window_type": "monthly",
                         "icon": "🐙",
                         "remaining": f"{rem:,}",
                         "unit": f"/ {ent:,}",
-                        "reset": "Rolling",
+                        "reset": reset_at.isoformat() if reset_at else None,
                         "health": HealthCalculator.from_remaining(rem, ent),
                         "pace": pace,
                         "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
@@ -501,7 +511,7 @@ class GitHubCollector(BaseCollector):
                         "is_unlimited": snap.get("unlimited", False),
                         "tier": tier_name,
                         "unit_type": "requests",
-                        "reset_at": None,
+                        "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": self.DATA_SOURCE_API,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "usage_url": "https://github.com/settings/copilot/features",
