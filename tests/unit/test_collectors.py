@@ -1548,6 +1548,102 @@ class TestGitHubCollector:
         assert token is None
         mock_get_token.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_account_id_resolved_to_login_when_no_email(self, mock_http_client):
+        """account_id is set to the GitHub login when no email scope is available.
+
+        Simulates the device-flow case: token has no email scope, /user profile has
+        no email, /user/emails returns nothing, git config returns nothing — so the
+        login ('s3ntin3l8') becomes the stable account_id via normalize_account_id.
+        """
+        collector = GitHubCollector()
+
+        def _resp(status: int, data) -> MagicMock:
+            r = MagicMock(spec=httpx.Response)
+            r.status_code = status
+            r.json.return_value = data
+            r.headers = {}
+            return r
+
+        copilot_user = _resp(
+            200,
+            {
+                "quota_snapshots": [
+                    {"metric": "chat", "used": 15, "included": 200, "quota_reset_at": 0}
+                ],
+                "copilot_plan": "Individual",
+                "quota_reset_date_utc": "2026-07-01T00:00:00.000Z",
+            },
+        )
+        std_user = _resp(200, {"login": "s3ntin3l8", "email": None, "name": None})
+        emails_list = _resp(200, [])
+
+        # Simulate git config returning no email (non-zero exit)
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with (
+            patch.object(
+                collector, "_get_token", new_callable=AsyncMock, return_value="ghp_testtoken"
+            ),
+            patch(
+                "app.services.collectors.github.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[copilot_user, std_user, emails_list],
+            ),
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc),
+        ):
+            await collector._strategy_api(mock_http_client)
+
+        assert collector.account_id == "s3ntin3l8"
+        assert collector.account_label == "s3ntin3l8"
+
+    @pytest.mark.asyncio
+    async def test_account_id_resolved_to_email_when_available(self, mock_http_client):
+        """account_id is set to the GitHub email when the token exposes it.
+
+        If a scoped token exposes an email address, it takes precedence over the
+        login — matching the house convention used by other providers.
+        """
+        collector = GitHubCollector()
+
+        def _resp(status: int, data) -> MagicMock:
+            r = MagicMock(spec=httpx.Response)
+            r.status_code = status
+            r.json.return_value = data
+            r.headers = {}
+            return r
+
+        copilot_user = _resp(
+            200,
+            {
+                "quota_snapshots": [
+                    {"metric": "chat", "used": 15, "included": 200, "quota_reset_at": 0}
+                ],
+                "copilot_plan": "Individual",
+                "quota_reset_date_utc": "2026-07-01T00:00:00.000Z",
+            },
+        )
+        std_user = _resp(
+            200, {"login": "s3ntin3l8", "email": "bjoern@example.com", "name": "Björn Hansen"}
+        )
+
+        with (
+            patch.object(
+                collector, "_get_token", new_callable=AsyncMock, return_value="ghp_testtoken"
+            ),
+            patch(
+                "app.services.collectors.github.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[copilot_user, std_user],
+            ),
+        ):
+            await collector._strategy_api(mock_http_client)
+
+        assert collector.account_id == "bjoern@example.com"
+        assert collector.account_label == "bjoern@example.com"
+
 
 class TestChatGPTCollector:
     """Test suite for ChatGPT collector."""
