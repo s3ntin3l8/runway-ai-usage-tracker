@@ -24,3 +24,11 @@ export function sidecarDisplayName(s: Sidecar): string {
 export function buildSidecarNameMap(sidecars: Sidecar[]): Map<string, string> {
   return new Map(sidecars.map((s) => [s.sidecar_id, sidecarDisplayName(s)]));
 }
+
+// Count of sidecars that have an update available. Reuses the shared
+// ['fleet','sidecars'] query so the Sidebar/BottomNav badge is a cache hit,
+// not an extra request. Returns 0 when the query is pending or errored.
+export function useFleetUpdateCount(): number {
+  const { data } = useSidecars();
+  return (data?.sidecars ?? []).filter((s) => s.update_available).length;
+}
