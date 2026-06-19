@@ -188,8 +188,14 @@ class AntigravityApiMixin:
 
                 for bucket in group.get("buckets", []):
                     bucket_id = bucket.get("bucketId", "")
-                    win = bucket.get("window", "unknown")  # "weekly" or "5h"
-                    display_name = bucket.get("displayName", win.title())
+                    win_raw = bucket.get(
+                        "window", "unknown"
+                    )  # provider raw value: "weekly" or "5h"
+                    # Map to canonical WindowType.  agy's "5h" is a rolling five-hour
+                    # window — same semantics as Anthropic's SESSION window.  Any other
+                    # unknown value falls through to base.py coercion → "unknown".
+                    win = "session" if win_raw == "5h" else win_raw
+                    display_name = bucket.get("displayName", win_raw.title())
                     rem_frac = bucket.get("remainingFraction", 1.0)
                     description = bucket.get("description", "")
 
@@ -207,7 +213,8 @@ class AntigravityApiMixin:
                     health = HealthCalculator.from_percentage(pct_used)
                     pace = PaceCalculator.estimate_longevity(pct_used, reset_dt)
 
-                    # Stable pool_id so weekly and 5h cards don't merge in accumulator.
+                    # Stable pool_id per (pool, canonical-window) so the two window
+                    # cards never merge in the accumulator.
                     pool_id = f"antigravity:{pool_family}:{win}"
 
                     results.append(
@@ -223,7 +230,12 @@ class AntigravityApiMixin:
                             "used_value": pct_used,
                             "limit_value": 100.0,
                             "pct_used": pct_used,
-                            "model_id": pool_family,
+                            # Aggregate card: pool identity goes in variant so the
+                            # accumulator window-guard (fires only when model_id != "")
+                            # is skipped, letting weekly + session coexist in latest_usage.
+                            # See accumulator.py:226-236 for the aggregate-card convention.
+                            "model_id": "",
+                            "variant": pool_family,
                             "unit_type": "percent",
                             "window_type": win,
                             "data_source": self.DATA_SOURCE_API,

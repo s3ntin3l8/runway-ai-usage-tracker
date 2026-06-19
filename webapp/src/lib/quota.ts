@@ -152,5 +152,9 @@ export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
   ) {
     base = `${base} · ${modelLabel(card.model_id)}`;
   }
-  return card.variant ? `${base} ${card.variant}` : base;
+  if (!card.variant) return base;
+  // Capitalize the first letter so pool variants like "gemini"/"frontier" render
+  // as "Gemini"/"Frontier" rather than bare lowercase.
+  const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
+  return `${base} ${variantLabel}`;
 }

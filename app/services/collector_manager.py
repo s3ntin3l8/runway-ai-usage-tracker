@@ -91,12 +91,13 @@ class CollectorManager:
             # We use a nested map to handle multi-account overrides correctly.
             db_configs: dict[str, dict[str, Any]] = {}
             global_poll_interval: int | None = None
+            durable_identities: dict[str, str] = {}
             try:
-                from sqlmodel import Session
+                from sqlmodel import Session, col
                 from sqlmodel import select as sqlselect
 
                 from app.core.db import engine
-                from app.models.db import ProviderConfig, SystemConfig
+                from app.models.db import LatestUsage, ProviderConfig, SystemConfig
 
                 with Session(engine) as _s:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
@@ -111,6 +112,20 @@ class CollectorManager:
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
                         global_poll_interval = sys_cfg.default_poll_interval_seconds
+
+                    # Build a provider_id → most-recent non-default account_id map from
+                    # LatestUsage.  This seeds the account_id for default collectors whose
+                    # OAuth token may be stale at startup — the once-resolved email persists
+                    # across restarts without any special write-back to provider_configs.
+                    durable_identities: dict[str, str] = {}
+                    for pid, aid in _s.exec(
+                        sqlselect(LatestUsage.provider_id, LatestUsage.account_id)
+                        .where(LatestUsage.account_id != "default")
+                        .where(col(LatestUsage.account_id).is_not(None))
+                        .order_by(col(LatestUsage.updated_at).desc())
+                    ).all():
+                        durable_identities.setdefault(pid, aid)
+
             except Exception as e:
                 logger.debug(f"Could not load provider configs from DB: {e}")
 
@@ -131,9 +146,13 @@ class CollectorManager:
                 )
                 key = f"{p_id}:default"
                 db_label = db_cfg.account_label if db_cfg else None
+                # Seed account_id from the most-recent non-default LatestUsage identity
+                # so a once-resolved email (e.g. Antigravity's Google OAuth) survives
+                # server restarts and stale tokens without re-querying userinfo.
+                durable_aid = durable_identities.get(p_id)
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
-                    collector_instance = cls(account_label=db_label)
+                    collector_instance = cls(account_id=durable_aid, account_label=db_label)
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)
@@ -149,6 +168,10 @@ class CollectorManager:
                     # Propagate updated account_label from ProviderConfig
                     if sc.collector.account_label != db_label:
                         sc.collector.account_label = db_label
+                    # Propagate durable account_id to a running collector that
+                    # still has None / "default" (e.g. first run after token resolved)
+                    if durable_aid and not sc.collector.account_id:
+                        sc.collector.account_id = durable_aid
                     # Propagate updated strategy config
                     new_strategies = db_cfg.strategies if db_cfg else None
                     if sc.collector._user_strategies != new_strategies:

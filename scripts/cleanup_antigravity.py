@@ -16,6 +16,12 @@ Two collection eras produced data under different account_ids:
                    need to be retagged.
 
 This script:
+  Phase 0 (--wipe-gauge) — delete ALL antigravity latest_usage rows so that
+            orphaned rows from an earlier upsert-key shape (e.g. model_id=
+            "gemini"/"frontier" before the aggregate-card migration) cannot
+            accumulate alongside the new 4-card shape. latest_usage is a
+            derived live-gauge table; the server repopulates it on next poll.
+            Run this phase after deploying the antigravity_api.py key change.
   Phase A — discover the canonical email from old LSP-era latest_usage cards,
             then delete those cards and their quota_snapshots.
   Phase B — retag "default" rows in latest_usage, quota_snapshots, and
@@ -29,6 +35,13 @@ B still knows the target identity.
 
 Run with the server STOPPED (SQLite is single-writer) and APP_HOST=127.0.0.1:
 
+  # Gauge wipe only (after deploying the aggregate-card key change):
+  RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \\
+      python scripts/cleanup_antigravity.py --dry-run --wipe-gauge
+  RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \\
+      python scripts/cleanup_antigravity.py --apply --wipe-gauge
+
+  # Full account-split migration (original purpose):
   RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \\
       python scripts/cleanup_antigravity.py --dry-run
   # eyeball the counts, then:
@@ -57,6 +70,26 @@ from app.core.db import engine  # noqa: E402
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent  # noqa: E402
 
 _PROVIDER = "antigravity"
+
+
+def phase_0_wipe_gauge(session: Session, dry_run: bool) -> int:
+    """Delete ALL antigravity latest_usage rows (Phase 0 — gauge wipe).
+
+    Needed after a upsert-key change (e.g. model_id/variant reshape) to prevent
+    orphaned rows from the old key shape accumulating alongside the new ones.
+    latest_usage is a derived live-gauge table; the server re-populates it on the
+    next collect poll — no event/rollup data is lost.
+    """
+    rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == _PROVIDER)).all()
+    verb = "Would delete" if dry_run else "Deleting"
+    print(
+        f"Phase 0 — {verb} {len(rows)} latest_usage row(s) for provider {_PROVIDER!r}.",
+        flush=True,
+    )
+    if not dry_run and rows:
+        session.exec(delete(LatestUsage).where(LatestUsage.provider_id == _PROVIDER))
+        session.commit()
+    return len(rows)
 
 
 def _discover_canonical_email(session: Session) -> str | None:
@@ -154,14 +187,37 @@ def main() -> int:
         action="store_true",
         help="Skip Phase C (event recost + rollup/window rebuild).",
     )
+    p.add_argument(
+        "--wipe-gauge",
+        action="store_true",
+        help=(
+            "Phase 0: delete ALL antigravity latest_usage rows before running "
+            "the remaining phases. Required after a upsert-key change (e.g. the "
+            "model_id→variant aggregate-card migration) to prevent orphan rows. "
+            "Can be combined with --dry-run to preview only Phase 0, or used "
+            "standalone with --apply to perform only the gauge wipe."
+        ),
+    )
     args = p.parse_args()
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
 
     with Session(engine) as session:
+        n_wiped = 0
+        if args.wipe_gauge:
+            n_wiped = phase_0_wipe_gauge(session, dry_run)
+
         # Discover or accept the canonical email.
         email = args.email or _discover_canonical_email(session)
         if not email:
+            if args.wipe_gauge:
+                # Gauge wipe succeeded; no account-split work to do — that's fine.
+                print(
+                    f"\n{prefix}Summary for '{_PROVIDER}':",
+                    flush=True,
+                )
+                print(f"  Phase 0 (gauge wipe): {n_wiped} latest_usage row(s) deleted.")
+                return 0
             print(
                 "No old email-keyed cards found and --email not provided.\n"
                 "If this is a fresh install with only 'default' data, "
@@ -192,6 +248,8 @@ def main() -> int:
             print(f"{prefix}Phase C-windows: {n_win:,} window(s) rebuilt.", flush=True)
 
     print(f"\n{prefix}Summary for '{_PROVIDER}' → {email}:")
+    if args.wipe_gauge:
+        print(f"  Phase 0 (gauge wipe): {n_wiped} latest_usage row(s) deleted.")
     print(f"  Old email-keyed cards deleted    : {n_cards}")
     print(f"  Old email-keyed snapshots deleted: {n_snaps}")
     for table, n in retag_counts.items():
