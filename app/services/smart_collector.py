@@ -192,6 +192,10 @@ class SmartCollector:
         """
         # Fast path 1: Skip if not configured (no lock needed)
         if not await self.collector.is_configured():
+            # Debug-level: every unconfigured provider hits this each cycle, so it
+            # must not spam — but without it a token-lookup miss makes the provider
+            # vanish with zero cards and no trace (the antigravity hash-key bug).
+            logger.debug(f"{self.collector_name}: not configured, skipping collection")
             return []
 
         # Fast path 2: Return cached data if fresh (no lock needed for read-only check)

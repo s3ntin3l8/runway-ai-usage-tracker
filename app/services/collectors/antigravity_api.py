@@ -139,7 +139,25 @@ class AntigravityApiMixin:
                 ]
             if lca_resp.status_code != 200:
                 logger.warning("Antigravity loadCodeAssist returned %d", lca_resp.status_code)
-                return []
+                if lca_resp.status_code in (401, 403):
+                    # agy owns refresh; Runway can't roll the token (no client_id).
+                    # Surface a clear call to action instead of silently hiding.
+                    return [
+                        error_card(
+                            "Antigravity",
+                            "🛸",
+                            "Token expired — run `agy` to refresh",
+                            error_type="auth_failed",
+                        )
+                    ]
+                return [
+                    error_card(
+                        "Antigravity",
+                        "🛸",
+                        f"API error ({lca_resp.status_code})",
+                        error_type="api_error",
+                    )
+                ]
 
             lca_data = lca_resp.json()
             project_id = lca_data.get("cloudaicompanionProject", "")
@@ -169,7 +187,23 @@ class AntigravityApiMixin:
                 logger.warning(
                     "Antigravity retrieveUserQuotaSummary returned %d", qs_resp.status_code
                 )
-                return []
+                if qs_resp.status_code in (401, 403):
+                    return [
+                        error_card(
+                            "Antigravity",
+                            "🛸",
+                            "Token expired — run `agy` to refresh",
+                            error_type="auth_failed",
+                        )
+                    ]
+                return [
+                    error_card(
+                        "Antigravity",
+                        "🛸",
+                        f"API error ({qs_resp.status_code})",
+                        error_type="api_error",
+                    )
+                ]
 
             self._last_429_backoff_until = None
             qs_data = qs_resp.json()
