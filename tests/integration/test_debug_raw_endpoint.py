@@ -1,7 +1,7 @@
 """Integration tests for /api/v1/system/debug/raw/{provider_id}.
 
-Sidecar-only providers (e.g. antigravity) have no server-side collector, so a
-raw capture must return an honest 404 — not a 500 that masks the real cause.
+Providers not registered in the CollectorManager return an honest 404 — not a
+500 that masks the real cause.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def client_fixture(session):
 
 
 def test_debug_raw_unknown_provider_returns_404(client):
-    # antigravity is sidecar-only — no server collector is registered for it.
-    r = client.get("/api/v1/system/debug/raw/antigravity")
+    # A completely unknown provider has no server collector — expect 404.
+    r = client.get("/api/v1/system/debug/raw/nonexistent_provider_xyz")
     assert r.status_code == 404
-    assert "antigravity" in r.json()["detail"]
+    assert "nonexistent_provider_xyz" in r.json()["detail"]

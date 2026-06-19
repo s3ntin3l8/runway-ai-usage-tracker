@@ -1,102 +1,108 @@
 # Antigravity Collector
 
-**File:** `scripts/sidecar.py` (functions `_ag_*` and `collect_antigravity_lsp`)
+Runway collects Antigravity CLI quota gauges server-side via Google's Cloud Code Assist API, and
+extracts per-message token/cost events sidecar-side from the local conversation SQLite databases.
 
-Sidecar-only quota collector for the Antigravity IDE. The server has no antigravity collector — all detection happens on the host where the IDE runs and is shipped via `/fleet/ingest`.
+## Architecture
 
-## Overview
+| Component | Where it runs | What it does |
+|---|---|---|
+| `AntigravityCollector` (server) | `app/services/collectors/antigravity.py` | Fetches 4 quota gauge cards from the Cloud Code Assist API |
+| Event extractor (sidecar) | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Parses `gen_metadata` protobuf blobs from conversation DBs |
+| OAuth mixin (server) | `app/services/collectors/antigravity_oauth.py` | Reads / caches the agy OAuth token |
+| Sidecar credential rule | `scripts/sidecar.py` `__REGISTRY__["antigravity"]` | Ships the OAuth token to the server in multi-host topology |
 
-- **Collection Strategy**: local LSP probe (primary), local JSON file (fallback) — both run inside the sidecar
-- **Cards**: 1-3 cards per model/credit type
-- **Authentication**: auto-discovered from the running IDE (CSRF token from process args)
+## Quota Collection
 
-## Setup Methods Quick Overview
+**Source:** `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
 
-The sidecar obtains quota information using two strategies, in order:
+**Two-step recipe:**
+1. `POST .../v1internal:loadCodeAssist` with `{"metadata": {"ideType": "ANTIGRAVITY"}}` → get `cloudaicompanionProject` id
+2. `POST .../v1internal:retrieveUserQuotaSummary` with `{"project": "<id>"}` → quota summary
 
-1.  **LSP Probing (Primary)**:
-    *   Locates the active Antigravity Language Server process, extracts its CSRF tokens and listening ports, and POSTs to `/exa.language_server_pb.LanguageServerService/GetUserStatus`.
-    *   Requires the Antigravity IDE to be running on the same host as the sidecar.
+**Required header:** `User-Agent: antigravity/cli/1.0.9 linux/amd64` (Google gates this endpoint on the agy UA; omitting it returns 403).
 
-2.  **Local JSON Quota File (Fallback)**:
-    *   Reads `quota.json` written by the IDE under the platform data dir.
-    *   Used only when the LSP probe finds no process.
+**Output:** 4 cards — 2 quota pools × 2 windows:
 
-## Data Source
+| Pool | Windows | `window_type` |
+|---|---|---|
+| Gemini Models (Flash, Pro) | Weekly, 5-hour | `weekly`, `5h` |
+| Claude and GPT models | Weekly, 5-hour | `weekly`, `5h` |
 
-### Tier 1: local (LSP Probing)
-**Mechanism:** The sidecar detects running Antigravity processes, identifies their LSP ports and CSRF tokens, and directly queries user status.
-**Auth:** Uses internal tokens scraped from the running process command line.
-**Behavior:** Preferred data source when the IDE is active.
+Each card carries `pct_used = round((1 − remainingFraction) × 100, 4)`, `reset_at` from `resetTime`, and `quota_pool_id = "antigravity:<pool_family>:<window>"`.
 
-### Tier 2: local (JSON Quota File)
-**Location:** Platform-specific `quota.json` file.
-**Behavior:** Fallback when no active IDE process is detected.
-
-## Output Format
-
-```python
-# LSP source
-{
-    "service_name": "claude-sonnet-4-5",           # model label — no "AG: " prefix
-    "icon": "🛸",
-    "remaining": "75.5%",
-    "unit": "capacity",
-    "reset": "in 2h 15m",                          # computed from resetTime
-    "reset_at": "2026-04-15T12:00:00+00:00",       # ISO 8601 from quotaInfo.resetTime
-    "health": "good",
-    "pace": "Continuous",
-    "detail": "Pro | user@example.com [LSP]",
-    "data_source": "local",
-    "provider_id": "antigravity",
-    "account_id": "user@example.com",              # email used as account_id
-    "account_label": "user@example.com",
-    "model_id": "claude-sonnet-4-5-20251001",
-    "used_value": 24.5,
-    "limit_value": 100.0,
-    "unit_type": "percent",
-    "window_type": "session"
-}
+**Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token`
+```json
+{"auth_method": "consumer", "token": {"access_token": "…", "refresh_token": "…", "expiry": "ISO8601"}}
 ```
+agy refreshes this file on each CLI invocation. Runway reads it fresh on every poll; it cannot refresh the token independently (no `client_id` in the file). In multi-host topology the sidecar ships the token via the credential registry rule.
 
-## Configuration
+## Per-Message Token Events (Sidecar)
 
-No configuration required. The sidecar auto-discovers everything from the running IDE.
+**Source:** `~/.gemini/antigravity-cli/conversations/<uuid>.db`, table `gen_metadata`
+
+Each row is one assistant turn holding a protobuf blob. Confirmed field mapping:
+
+| Proto path | Meaning |
+|---|---|
+| `root.1.4.2` | `tokens_input` (per-turn prompt tokens) |
+| `root.1.4.3` | `tokens_output` (per-turn completion tokens) |
+| `root.1.4.1` | `tokens_cache_read` |
+| `root.1.4.5` | Cumulative total — **not used** (monotonic) |
+| `root.1.19` | Raw model id string (`gemini-pro-default`, `gemini-3-flash-a`, …) |
+| `root.1.20` | Repeated KV metadata (`used_claude`, `used_claude_conservative`) |
+| `root.1.21` | Display name (`Gemini 3.1 Pro (High)`) |
+
+Workspace path (→ `cwd`) comes from `trajectory_metadata_blob` table, field 7, as a `file://` URI.
+
+**Model normalization** (`_normalize_ag_model`):
+
+| Condition | `model_id` |
+|---|---|
+| `used_claude_conservative=true` | `claude-opus` |
+| `used_claude=true` | `claude-sonnet` |
+| raw contains `flash` + `lite`, 3.x display | `flash-lite-3` |
+| raw contains `flash`, 3.x display | `flash-3` |
+| raw contains `pro`, 3.x display | `pro-3` |
+
+**Since-watermark:** DBs are filtered by file mtime `> since`. No per-row timestamp; DB mtime is used as approximate event timestamp (spread by `row_idx × 1ms` for stable ordering). Server deduplicates by `event_id = "<conversation_id>|gen_<idx>"`.
+
+## Pricing
+
+Antigravity events use `provider_id="antigravity"` pricing rows (independent of the `gemini`/`anthropic` rows). Seeded in `app/services/pricing_seed.py`:
+
+| `model_id` | Rate basis |
+|---|---|
+| `pro-3`, `flash-3`, `flash-lite-3` | Standard Gemini tier (mirrors gemini 3.x rows) |
+| `claude-opus` | Official Claude Opus 4.x API pricing |
+| `claude-sonnet` | Official Claude Sonnet 4.x API pricing |
+| GPT-OSS 120B (`unknown`) | Unpriced — cost defaults to $0 |
+
+## Setup
+
+No configuration needed when running the sidecar on the same host as `agy`. The sidecar discovers `~/.gemini/antigravity-cli/antigravity-oauth-token` automatically. Run `agy` at least once to create the token file; agy keeps it refreshed on each invocation.
+
+For multi-host (server + remote sidecar), the sidecar ships the OAuth token to the server via the credential registry rule; the server reads it from the token cache.
 
 ## Troubleshooting
 
-### No Antigravity cards in dashboard
-**Cause:** LSP process not found/probed, or local file not found, or sidecar can't reach the server.
-**Fix:**
-1.  Ensure the Antigravity IDE is running and actively being used.
-2.  Verify the LSP process is running (check system process monitor).
-3.  Check sidecar logs for `[antigravity] LSP returned N card(s)`.
-4.  Check server logs for `Stored N local cards into LatestUsage from <sidecar-id>` — if missing, the cards were dropped at ingest (verify HMAC/auth is configured).
-5.  If still no LSP, check the local quota file (fallback):
-    -   **Linux:** `ls ~/.local/share/antigravity/state/quota.json`
-    -   **macOS:** `ls ~/Library/Application\ Support/antigravity/state/quota.json`
-    -   **Windows:** Path not confirmed — LSP probing is the primary method on Windows
+### No quota cards
+- Verify `~/.gemini/antigravity-cli/antigravity-oauth-token` exists and is recent (run `agy` once).
+- Check server logs: `[antigravity] collect_via_api failed` with status or error detail.
+- The token expires; agy refreshes it on its next run. If Runway polls before agy runs again it returns an Error Card — it will self-heal on the next successful poll.
 
-### LSP connection failed / Timeout
-**Cause:** Firewall, incorrect port, or LSP not listening on expected port.
-**Fix:**
-1.  Check firewall settings allowing local connections to Antigravity IDE.
-2.  Restart Antigravity IDE.
-
-### Shows 0% for all models (from local file)
-**Cause:** Quota file has zero values.
-**Fix:** Use models in IDE to generate usage data.
+### No token events / zero cost
+- Events only appear after `agy` conversations: check `~/.gemini/antigravity-cli/conversations/` for `*.db` files.
+- Cost is $0 for `unknown`/GPT-OSS model ids — this is expected.
 
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `scripts/sidecar.py` | Sidecar collector (LSP probe + file fallback) |
-| `app/api/endpoints/fleet.py` | Server ingest endpoint |
-| `app/services/accumulator.py` | Card → `LatestUsage` upsert |
-
-## References
-
-- **Antigravity IDE:** https://antigravity.ai
-
-> **Note:** File updated when user checks quota in IDE or at IDE startup.
+|---|---|
+| `app/services/collectors/antigravity.py` | Server collector entry point |
+| `app/services/collectors/antigravity_api.py` | `retrieveUserQuotaSummary` API mixin |
+| `app/services/collectors/antigravity_oauth.py` | OAuth token read/cache mixin |
+| `app/core/config.py` | `ANTIGRAVITY_OAUTH_PATH` setting |
+| `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
+| `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
+| `app/services/pricing_seed.py` | Antigravity pricing rows |

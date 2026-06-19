@@ -381,14 +381,18 @@ __REGISTRY__: dict[str, Any] = {
             "icon": "\ud83d\udef8",
             "rules": [
                 {
-                    "type": "file_json_data",
+                    # Ship the OAuth token so multi-host servers can call the
+                    # Code Assist cloud API without accessing the local file.
+                    "type": "file",
                     "paths": [
-                        "{{DATA_DIR:antigravity}}/state/quota.json",
-                        # Linux: ~/.local/share/antigravity/state/quota.json
-                        # macOS: ~/Library/Application Support/antigravity/state/quota.json
-                        # Windows: path unconfirmed — LSP probing is primary on Windows
+                        "~/.gemini/antigravity-cli/antigravity-oauth-token",
                     ],
-                }
+                    "format": "json",
+                    "mapping": {
+                        "token.access_token": "oauth_token",
+                        "token.refresh_token": "refresh_token",
+                    },
+                },
             ],
         },
         "ollama": {
@@ -1506,6 +1510,29 @@ def _gemini_account_email() -> str:
         return "default"
 
 
+def _ag_account_email() -> str:
+    """Read email from the agy OAuth token file; returns 'default' if unavailable.
+
+    The agy token file does not carry an id_token or email claim directly, so
+    we return 'default' and let the server derive a stable account_id from the
+    hashed access_token.  If the user's email is known from a previous
+    collection cycle (stored in _ACCOUNT_IDENTITIES), that is preferred.
+    """
+    cached = _ACCOUNT_IDENTITIES.get("antigravity")
+    if cached:
+        return cached
+    return "default"
+
+
+def _discover_antigravity_db_paths() -> list[Path]:
+    """Return all conversation SQLite DBs under the agy CLI conversations dir."""
+    base = os.path.expanduser("~/.gemini/antigravity-cli/conversations")
+    bp = Path(base)
+    if not bp.is_dir():
+        return []
+    return list(bp.glob("*.db"))
+
+
 def _codex_account_email() -> str:
     """Read email from ~/.codex/auth.json id_token; returns 'default' if unavailable."""
     candidate_paths = [
@@ -1605,14 +1632,6 @@ class GenericCollector:
         name = config.get("name", provider_id)
         icon = config.get("icon", "❓")
         rules = config.get("rules", [])
-
-        # Priority LSP probe for antigravity — runs before file-fallback rules
-        if provider_id == "antigravity":
-            lsp_cards = collect_antigravity_lsp(icon)
-            if lsp_cards:
-                logging.info(f"  [antigravity] LSP returned {len(lsp_cards)} card(s)")
-                return lsp_cards  # skip file rules to avoid duplicates
-            logging.info("  [antigravity] LSP probe found nothing, falling back to file")
 
         for rule in rules:
             rule_type = rule.get("type")
@@ -1790,61 +1809,6 @@ class GenericCollector:
                         except Exception as e:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
 
-            elif rule_type == "file_json_data":
-                for path_str in rule.get("paths", []):
-                    path = resolve_path(path_str)
-                    if path.exists():
-                        try:
-                            with open(path) as f:
-                                data = json.load(f)
-                            for m_name, usage in data.get("models", {}).items():
-                                rem = usage.get("remaining_percent", 0.0)
-                                reset_ts = usage.get("resets_at")
-                                reset_at = (
-                                    datetime.datetime.fromtimestamp(reset_ts, tz=datetime.UTC)
-                                    if reset_ts is not None
-                                    else None
-                                )
-                                w_type = _infer_antigravity_window_type(reset_at)
-                                reset_iso = reset_at.isoformat() if reset_at else None
-                                # Pool_id scopes cards to their quota family so
-                                # Gemini and frontier models cluster separately.
-                                family = _ag_pool_family(m_name, m_name)
-                                pool_id = (
-                                    f"antigravity:{family}:{w_type}:{reset_iso}"
-                                    if reset_iso
-                                    else None
-                                )
-                                results.append(
-                                    {
-                                        "service_name": m_name,
-                                        "icon": icon,
-                                        "remaining": f"{rem:.1f}%",
-                                        "unit": "remaining",
-                                        "reset": human_delta(reset_at),
-                                        "health": "good" if rem > 30 else "warning",
-                                        "pace": "Stable",
-                                        "detail": f"{m_name} [Sidecar]",
-                                        "data_source": "local",
-                                        "provider_id": "antigravity",
-                                        "account_label": None,
-                                        "model_id": m_name,
-                                        "used_value": round(100.0 - rem, 4),
-                                        "limit_value": 100.0,
-                                        "unit_type": "percent",
-                                        "window_type": w_type,
-                                        "reset_at": reset_iso,
-                                        "quota_pool_id": pool_id,
-                                        "metadata": {
-                                            "name": m_name,
-                                            "remaining_percent": rem,
-                                            "resets_at": reset_ts,
-                                        },
-                                    }
-                                )
-                        except Exception:
-                            logging.debug("SQLite credential/event rule failed", exc_info=True)
-
             # 8. Specialized: Claude Statusline
             elif rule_type == "file_json_statusline":
                 for path_str in rule.get("paths", []):
@@ -1957,331 +1921,6 @@ class GenericCollector:
         return results
 
 
-# --- Antigravity LSP Probing ---
-
-
-def _ag_detect_process_windows() -> dict[int, list[str]]:
-    """Find Antigravity/Windsurf language server PID + CSRF tokens on Windows.
-
-    Uses PowerShell instead of wmic because wmic /format:csv produces UTF-16LE
-    output that Python misreads through subprocess text=True on most locales.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-Command",
-                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-                + "Get-WmiObject Win32_Process | "
-                + "Where-Object {$_.CommandLine -like '*language_server*'} | "
-                + 'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=15,
-        )
-        procs: dict[int, list[str]] = {}
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line or "|" not in line or "language_server" not in line.lower():
-                continue
-            pid_str, _, cmdline = line.partition("|")
-            try:
-                pid = int(pid_str.strip())
-            except ValueError:
-                continue
-            tokens = []
-            for pattern in [
-                r"--csrf_token\s+([a-f0-9-]+)",
-                r"--extension_server_csrf_token\s+([a-f0-9-]+)",
-            ]:
-                m = re.search(pattern, cmdline)
-                if m:
-                    tokens.append(m.group(1))
-            if tokens:
-                procs[pid] = tokens
-        return procs
-    except Exception:
-        return {}
-
-
-def _ag_detect_process_unix() -> dict[int, list[str]]:
-    """Find Antigravity/Windsurf language server PID + CSRF tokens on macOS/Linux."""
-    try:
-        result = subprocess.run(
-            ["ps", "-ax", "-o", "pid,command"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        procs: dict[int, list[str]] = {}
-        for line in result.stdout.splitlines():
-            if "language_server" not in line:
-                continue
-            pid_match = re.search(r"^\s*(\d+)", line)
-            if not pid_match:
-                continue
-            pid = int(pid_match.group(1))
-            tokens = []
-            for pattern in [
-                r"--csrf_token\s+([a-f0-9-]+)",
-                r"--extension_server_csrf_token\s+([a-f0-9-]+)",
-            ]:
-                m = re.search(pattern, line)
-                if m:
-                    tokens.append(m.group(1))
-            if tokens:
-                procs[pid] = tokens
-        return procs
-    except Exception:
-        return {}
-
-
-def _ag_find_ports_windows(pid: int) -> list[int]:
-    """Find listening TCP ports for PID on Windows via PowerShell Get-NetTCPConnection."""
-    try:
-        result = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-Command",
-                f"Get-NetTCPConnection -State Listen -OwningProcess {pid} "
-                "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        ports = []
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if line.isdigit():
-                ports.append(int(line))
-        return sorted(set(ports))
-    except Exception:
-        return []
-
-
-def _ag_find_ports_unix(pid: int) -> list[int]:
-    """Find listening TCP ports for PID on macOS/Linux via lsof.
-
-    `-a` is critical: lsof joins selection flags with OR by default, so
-    without it the output includes every TCP listening socket on the
-    machine (e.g. the Runway server itself) — the LSP probe would then
-    POST to those ports and the server logs would fill with 404s for
-    /exa.language_server_pb.LanguageServerService/GetUserStatus.
-    """
-    try:
-        result = subprocess.run(
-            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        ports = []
-        for line in result.stdout.splitlines():
-            m = re.search(r":(\d+)\s+\(LISTEN\)", line)
-            if m:
-                ports.append(int(m.group(1)))
-        return sorted(set(ports))
-    except Exception:
-        return []
-
-
-def _ag_probe_lsp(port: int, csrf: str, icon: str) -> list[dict[str, Any]]:
-    """HTTP probe one port/token combo and return metric cards."""
-    url = f"http://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
-    body = json.dumps(
-        {"metadata": {"ideName": "antigravity", "extensionName": "antigravity"}}
-    ).encode()
-    req = request.Request(url, data=body, method="POST")
-    req.add_header("X-Codeium-Csrf-Token", csrf)
-    req.add_header("Connect-Protocol-Version", "1")
-    req.add_header("Content-Type", "application/json")
-    try:
-        with request.urlopen(req, timeout=1) as resp:
-            data = json.loads(resp.read())
-        return _ag_parse_lsp_response(data, icon)
-    except Exception:
-        return []
-
-
-def _infer_antigravity_window_type(
-    reset_dt: datetime.datetime | None,
-) -> str:
-    """Return the canonical window_type for an Antigravity quota card.
-
-    Antigravity has two underlying quota states — a rolling 5-hour session and
-    a 7-day cooldown that engages after the session is exhausted — but they
-    share the same physical pool. Classifying them differently splits the
-    quota_snapshots time series at the session→cooldown transition, breaking
-    history continuity on the dashboard. Always return "weekly" so a single
-    series persists across both phases; the actual cooldown delta is still
-    carried by `reset_at`, which is what the UI labels off of.
-    """
-    del reset_dt
-    return "weekly"
-
-
-def _ag_pool_family(label: str, model_id: str | None) -> str:
-    """Classify an Antigravity model into its shared-quota family.
-
-    Antigravity has two distinct physical quota pools that reset independently:
-    one for Gemini models and one for frontier models (Claude + GPT-OSS).
-    Using a family-scoped pool_id ensures each pool gets its own dashboard card
-    rather than merging both into one when their reset_at happens to coincide.
-    """
-    text = f"{label} {model_id or ''}".lower()
-    if "gemini" in text:
-        return "gemini"
-    return "frontier"
-
-
-def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, Any]]:
-    """Parse LSP GetUserStatus response into metric cards."""
-    results = []
-    user_status = data.get("userStatus", {})
-    email = user_status.get("email", "")
-    plan_info = user_status.get("planStatus", {}).get("planInfo", {})
-    plan = plan_info.get("planName", "Standard")
-
-    for cfg in user_status.get("cascadeModelConfigData", {}).get("clientModelConfigs", []):
-        quota = cfg.get("quotaInfo", {})
-        rem_frac = quota.get("remainingFraction")
-        # resetTime can be either a Unix timestamp (int/float) or an ISO 8601
-        # string like "2026-05-09T13:03:17Z" — the LSP has returned both.
-        reset_ts = quota.get("resetTime")
-        reset_dt = None
-        if reset_ts is not None:
-            try:
-                reset_dt = datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
-            except (TypeError, ValueError):
-                try:
-                    reset_dt = datetime.datetime.fromisoformat(str(reset_ts).replace("Z", "+00:00"))
-                except (TypeError, ValueError):
-                    reset_dt = None
-        if rem_frac is None:
-            # Antigravity drops remainingFraction once a model is exhausted; the
-            # only remaining signal is a future resetTime. Treat that as 100%
-            # used until reset — matches what Antigravity's own UI shows. Skip
-            # if there isn't even a forward-looking reset, since that's
-            # genuinely uninformative.
-            if reset_dt is None or reset_dt <= datetime.datetime.now(tz=datetime.UTC):
-                continue
-            rem_pct = 0.0
-        else:
-            rem_pct = float(rem_frac) * 100
-        label = cfg.get("label", "Model")
-        # Antigravity's LSP returns modelOrAlias either as a string
-        # (e.g. "MODEL_PLACEHOLDER_M36", "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
-        # "claude-sonnet-4-5-20251001") or as a dict {"model": "<id>"}. Internal
-        # ids follow the convention `MODEL_*` (ALL_CAPS); real model ids are
-        # lowercase-with-dashes. Fall back to the human-readable label
-        # (e.g. "Gemini 3.1 Pro (Low)") when the candidate is an internal id.
-        raw_model = cfg.get("modelOrAlias", label)
-        candidate = (
-            raw_model.get("model") or raw_model.get("name") or raw_model.get("alias")
-            if isinstance(raw_model, dict)
-            else raw_model
-        )
-        if not candidate or str(candidate).startswith("MODEL_"):
-            candidate = None
-        model_id = candidate or label
-        reset_at = reset_dt.isoformat() if reset_dt else None
-        w_type = _infer_antigravity_window_type(reset_dt)
-        # Pool_id scopes cards to their physical quota family (gemini vs frontier)
-        # so they cluster correctly even when both pools share the same reset_at.
-        family = _ag_pool_family(label, model_id)
-        pool_id = f"antigravity:{family}:{w_type}:{reset_at}" if reset_at else None
-        results.append(
-            {
-                "service_name": label,
-                "icon": icon,
-                "remaining": f"{rem_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_dt),
-                "pace": "Continuous",
-                "health": "critical" if rem_pct < 10 else "warning" if rem_pct < 30 else "good",
-                "detail": f"{plan} | {email} [LSP]",
-                "data_source": "local",
-                "input_source": "sidecar",
-                "provider_id": "antigravity",
-                "account_id": email or "default",
-                "account_label": email or None,
-                "model_id": model_id,
-                "used_value": round(100.0 - rem_pct, 4),
-                "limit_value": 100.0,
-                "pct_used": round(100.0 - rem_pct, 4),
-                "unit_type": "percent",
-                "window_type": w_type,
-                "reset_at": reset_at,
-                "quota_pool_id": pool_id,
-            }
-        )
-
-    name_map = {"GOOGLE_ONE_AI": "Google AI Credits", "ANTHROPIC_CREDIT": "Anthropic Credits"}
-    for cred in user_status.get("userTier", {}).get("availableCredits", []):
-        c_type = cred.get("creditType", "AI Credits")
-        amount = str(cred.get("creditAmount", "0"))
-        display = name_map.get(c_type, c_type.replace("_", " ").title())
-        try:
-            n = int(amount)
-            health = "critical" if n <= 10 else "warning" if n <= 100 else "good"
-        except ValueError:
-            health = "warning"
-        results.append(
-            {
-                "service_name": display,
-                "icon": "💰",
-                "remaining": amount,
-                "unit": "credits",
-                "reset": "Prepaid",
-                "pace": "N/A",
-                "health": health,
-                "detail": f"{display} | {email} [LSP]",
-                "data_source": "local",
-                "input_source": "sidecar",
-                "provider_id": "antigravity",
-                "account_id": email or "default",
-                "account_label": email or None,
-                "model_id": None,
-                "used_value": None,
-                "limit_value": None,
-                "unit_type": "credits",
-                "window_type": "session",
-                "reset_at": None,
-            }
-        )
-    return results
-
-
-def collect_antigravity_lsp(icon: str) -> list[dict[str, Any]]:
-    """Probe local Antigravity/Windsurf language server. Returns cards or []."""
-    is_win = platform.system() == "Windows"
-    procs = _ag_detect_process_windows() if is_win else _ag_detect_process_unix()
-    if not procs:
-        logging.debug("  [antigravity] no language server process found")
-        return []
-
-    logging.info(f"  [antigravity] found {len(procs)} language server process(es), probing...")
-    seen: set[str] = set()
-    results = []
-
-    for pid, tokens in procs.items():
-        ports = _ag_find_ports_windows(pid) if is_win else _ag_find_ports_unix(pid)
-        logging.debug(f"  [antigravity] pid={pid} ports={ports}")
-        for port in ports:
-            for csrf in tokens:
-                for card in _ag_probe_lsp(port, csrf, icon):
-                    key = f"{card['service_name']}_{card['remaining']}"
-                    if key not in seen:
-                        results.append(card)
-                        seen.add(key)
-    return results
-
-
 # --- Main Loop ---
 
 
@@ -2371,6 +2010,7 @@ def run_collection(
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+        from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
         from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
         from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
         from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
@@ -2505,6 +2145,27 @@ def run_collection(
                             all_events.extend(e.model_dump(mode="json") for e in evts)
                 except Exception as e:
                     logging.warning(f"  [opencode] event extraction error: {e}")
+
+            # --- Antigravity event extraction ---
+            if provider_id == "antigravity" and _events_enabled and _watermark is not None:
+                try:
+                    account_id = _ag_account_email() or "default"
+                    db_paths = _discover_antigravity_db_paths()
+                    if db_paths:
+                        since = _watermark.last_pushed("antigravity", account_id) or (
+                            datetime.datetime.now(datetime.UTC)
+                            - datetime.timedelta(days=bootstrap_days)
+                        )
+                        evts = parse_antigravity_events(
+                            db_paths, account_id=account_id, since=since
+                        )
+                        if evts:
+                            logging.info(
+                                f"  [antigravity] {len(evts)} new event(s) since {since.isoformat()}"
+                            )
+                            all_events.extend(e.model_dump(mode="json") for e in evts)
+                except Exception as e:
+                    logging.warning(f"  [antigravity] event extraction error: {e}")
 
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")

@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.services.collectors.anthropic import AnthropicCollector
+from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
@@ -46,6 +47,7 @@ class CollectorManager:
         # Registry of available collector classes and their default settings
         self.collector_registry = {
             "anthropic": (AnthropicCollector, "Claude (Anthropic)", 900),
+            "antigravity": (AntigravityCollector, "Antigravity", 900),
             "gemini": (GeminiCollector, "Gemini", 900),
             "github": (GitHubCollector, "GitHub Copilot", 900),
             "chatgpt": (ChatGPTCollector, "ChatGPT", 900),

@@ -160,6 +160,12 @@ class Settings(BaseSettings):
     ANTHROPIC_OAUTH_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("claude"), "oauth_creds.json")
     )
+    # agy hardcodes ~/.gemini/antigravity-cli/antigravity-oauth-token (not XDG-compliant).
+    ANTIGRAVITY_OAUTH_PATH: str = Field(
+        default_factory=lambda: os.path.join(
+            os.path.expanduser("~"), ".gemini", "antigravity-cli", "antigravity-oauth-token"
+        )
+    )
     GITHUB_OAUTH_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "github_oauth.json")
     )

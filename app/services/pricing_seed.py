@@ -282,6 +282,61 @@ PRICING_SEED: list[dict] = [
         "notes": "Gemini 3.1 Flash-Lite",
     },
     # OpenCode (cost is on each event already; pricing rows here are fallback only)
+    # ── Antigravity ──────────────────────────────────────────────────────────────
+    # Gemini models (standard tier — mirrors existing gemini pro-3.1-preview /
+    # flash-3-preview / flash-lite-3.1 values).  Priority-tier is not modeled.
+    {
+        "provider_id": "antigravity",
+        "model_id": "pro-3",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 12.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 3.x Pro (standard tier)",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "flash-3",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.50,
+        "output_per_mtok": 3.00,
+        "cache_read_per_mtok": 0.05,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 3.x Flash (standard tier)",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "flash-lite-3",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.25,
+        "output_per_mtok": 1.50,
+        "cache_read_per_mtok": 0.025,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 3.x Flash-Lite (standard tier)",
+    },
+    # Claude models routed through Antigravity (official Claude API pricing).
+    {
+        "provider_id": "antigravity",
+        "model_id": "claude-opus",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 5.00,
+        "output_per_mtok": 25.00,
+        "cache_read_per_mtok": 0.50,
+        "cache_create_per_mtok": 6.25,
+        "notes": "Antigravity Claude Opus 4.x",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "claude-sonnet",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 3.00,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.30,
+        "cache_create_per_mtok": 3.75,
+        "notes": "Antigravity Claude Sonnet 4.x",
+    },
+    # GPT-OSS 120B: no row — cost defaults to 0.
 ]
 
 
