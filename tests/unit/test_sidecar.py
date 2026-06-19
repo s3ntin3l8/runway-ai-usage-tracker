@@ -55,6 +55,63 @@ class TestGeminiCredentialMapping:
         assert "email" not in mapping
 
 
+class TestAntigravityTokenStamp:
+    """The agy token file carries no email, so the token card must be stamped with
+    the resolved account identity (else the server hashes the refresh_token into a
+    cache key that won't match the email-seeded collector → blank quota)."""
+
+    @staticmethod
+    def _ag_config(tok_path: Path) -> dict:
+        return {
+            "name": "Antigravity",
+            "icon": "🛸",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [str(tok_path)],
+                    "format": "json",
+                    "mapping": {
+                        "token.access_token": "oauth_token",
+                        "token.refresh_token": "refresh_token",
+                    },
+                }
+            ],
+        }
+
+    @staticmethod
+    def _write_token_file(tmp_path: Path) -> Path:
+        tok = tmp_path / "antigravity-oauth-token"
+        tok.write_text(
+            json.dumps(
+                {
+                    "auth_method": "consumer",
+                    "token": {"access_token": "ya29.x", "refresh_token": "1//r"},
+                }
+            )
+        )
+        return tok
+
+    def test_token_card_stamped_with_resolved_email(self, tmp_path):
+        tok = self._write_token_file(tmp_path)
+        config = self._ag_config(tok)
+        with patch.dict(
+            sidecar._ACCOUNT_IDENTITIES, {"antigravity": "user@example.com"}, clear=True
+        ):
+            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert len(token_cards) == 1
+        assert token_cards[0]["account_id"] == "user@example.com"
+
+    def test_token_card_defaults_when_email_unknown(self, tmp_path):
+        tok = self._write_token_file(tmp_path)
+        config = self._ag_config(tok)
+        with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert len(token_cards) == 1
+        assert token_cards[0]["account_id"] == "default"
+
+
 class TestQueueRotate:
     """C3: queue_rotate must not crash when called with no arguments."""
 

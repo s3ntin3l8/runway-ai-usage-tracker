@@ -38,6 +38,14 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             cache_data = await token_cache.get_with_metadata(
                 "antigravity", account_id=self.account_id
             )
+            if not cache_data:
+                # Identity-mismatch fallback: the agy token file carries no id_token,
+                # so the sidecar-pushed token is cached under a refresh-token-derived
+                # hash — NOT the email that seeds self.account_id from LatestUsage, and
+                # antigravity has no "default" cache entry to catch the miss. Fall back
+                # to the newest cached entry (single Google account → it is the right
+                # token). Keep self.account_id as the email; do not adopt the hash.
+                cache_data = await token_cache.get_with_metadata("antigravity", account_id=None)
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"

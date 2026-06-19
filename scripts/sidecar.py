@@ -1879,6 +1879,16 @@ class GenericCollector:
                         except Exception:
                             logging.debug("Statusline file rule failed", exc_info=True)
 
+        # Stamp the antigravity token with the resolved account identity. The agy
+        # token file carries no id_token/email, so without this the server hashes
+        # the refresh_token into a cache key that won't match the email-seeded
+        # collector identity (durable seeding from LatestUsage) — leaving quota
+        # blank. _ag_account_email() returns the email once the server has
+        # propagated it (else "default", caught by the server's "default" cache
+        # fallback). Mirrors how gemini/opencode/codex key their cards on the email.
+        if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
+            tokens["account_id"] = _ag_account_email()
+
         # If tokens were extracted, add a hidden token card
         if tokens:
             logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
