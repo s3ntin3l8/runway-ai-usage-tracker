@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.6.0...v2.6.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* add "expiry_date" to the allowed key tuple in fleet.py (one line). ([3196945](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/319694558ec2cfab12281a6d07bc41431063790e))
+* **antigravity:** resolve token identity mismatch that blanked quota ([#152](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/152)) ([f9b33af](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f9b33af76ac6c0e7cc176e88b4aa4b1bcc985963))
+* **token-cache:** restore cookie lookup for durable-identity collectors + pass expiry_date through ingest ([3196945](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/319694558ec2cfab12281a6d07bc41431063790e))
+
 ## [2.6.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.5.0...v2.6.0) (2026-06-19)
 
 
