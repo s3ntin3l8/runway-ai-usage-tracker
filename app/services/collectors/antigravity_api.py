@@ -116,6 +116,18 @@ class AntigravityApiMixin:
                 self.account_label = email
                 self._account_label_cache = email  # type: ignore[attr-defined]
 
+        # When account_id is already a resolved email (durable seeding) but no
+        # label was carried — the agy token has no id_token and the sidecar push
+        # stamps only account_id — mirror the email into the label so the
+        # dashboard shows the account instead of "Default" (base.py tag fallback).
+        if (
+            self.account_id
+            and "@" in self.account_id
+            and (not self.account_label or self.account_label == "Default")
+        ):
+            self.account_label = self.account_id
+            self._account_label_cache = self.account_id  # type: ignore[attr-defined]
+
         state = {"token": token, "refreshed": False}
 
         try:

@@ -78,6 +78,27 @@ class TestAntigravityErrorCards:
         assert result[0].get("error_type") == "auth_failed"
 
     @pytest.mark.asyncio
+    async def test_email_account_id_populates_label(self, mock_http_client):
+        """account_id=email with no label → label mirrors the email (not 'Default')."""
+        collector = AntigravityCollector(account_id="user@example.com")
+        assert collector.account_label in (None, "Default")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "proj-1"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {"groups": []}
+
+        with (
+            patch.object(collector, "_get_valid_token", new_callable=AsyncMock, return_value="tok"),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            await collector._collect_via_api(mock_http_client)
+
+        assert collector.account_label == "user@example.com"
+
+    @pytest.mark.asyncio
     async def test_loadcodeassist_500_returns_api_error_card(self, mock_http_client):
         """A non-auth non-200 surfaces a generic api_error card, not []."""
         collector = AntigravityCollector(account_id="user@example.com")
