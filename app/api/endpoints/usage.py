@@ -290,25 +290,33 @@ async def fetch_fleet_view(
 
 
 def _longest_window_card(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Pick the default-variant card with the highest-ranking window that has reset_at.
+    """Pick the best window-anchor card from the provider's quota cards.
 
-    Prefers a model-agnostic card (model_id empty / "default") so the window's
-    boundary is shared across all models. Falls back to model-specific cards
-    when no aggregate card is emitted — this is the Gemini case, where each
-    model has its own daily quota and no overall card exists. The picked card
-    only supplies the (window_type, reset_at) anchor; query_window_aggregation
-    still groups events by model_id, so the response carries a real by_model
-    map regardless of which card was chosen.
+    Prefers a model-agnostic (aggregate) card so the window boundary is shared
+    across all models. Falls back to model-specific cards when no aggregate card
+    is emitted — e.g. Gemini, where each model has its own daily quota.
+
+    Candidate filter: default-variant cards are always eligible; aggregate cards
+    (model_id empty / "default") are eligible regardless of variant, so providers
+    like Antigravity that carry pool identity in variant (e.g. variant="gemini")
+    are not accidentally excluded.
+
+    The picked card only supplies the (window_type, reset_at) anchor;
+    query_window_aggregation still groups events by model_id, so the response
+    carries a real by_model map regardless of which card was chosen.
     """
-    candidates = [
-        c for c in cards if c.get("variant", "default") == "default" and c.get("reset_at")
-    ]
-    if not candidates:
-        return None
 
     def _is_aggregate(c: dict[str, Any]) -> bool:
         mid = (c.get("model_id") or "").lower()
         return not mid or mid == "default"
+
+    candidates = [
+        c
+        for c in cards
+        if (c.get("variant", "default") == "default" or _is_aggregate(c)) and c.get("reset_at")
+    ]
+    if not candidates:
+        return None
 
     pool = [c for c in candidates if _is_aggregate(c)] or candidates
     return max(

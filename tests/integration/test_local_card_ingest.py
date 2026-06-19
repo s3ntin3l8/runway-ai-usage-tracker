@@ -47,7 +47,11 @@ def _ingest(client: TestClient, payload: dict) -> dict:
 
 
 def test_sidecar_pushed_card_lands_in_latest_usage(session):
-    """A LimitCard pushed via /fleet/ingest metrics[] should appear in LatestUsage."""
+    """A LimitCard pushed via /fleet/ingest metrics[] should appear in LatestUsage.
+
+    Uses data_source="lsp" — the one sidecar-quota exception.  Non-LSP percent
+    cards are rejected by the guard; see test_sidecar_quota_guard_rejects_non_lsp.
+    """
     payload = {
         "provider": "anthropic-sidecar",
         "sidecar_id": "test-host-01",
@@ -71,7 +75,7 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
                 "limit_value": 100.0,
                 "pct_used": 20.0,
                 "unit_type": "percent",
-                "data_source": "web",
+                "data_source": "lsp",
             }
         ],
         "events": [],
@@ -127,7 +131,7 @@ def test_sidecar_pushed_card_merges_on_second_push(session):
         "limit_value": 100.0,
         "pct_used": 40.0,
         "unit_type": "percent",
-        "data_source": "web",
+        "data_source": "lsp",
     }
     updated_card = {**base_card, "used_value": 55.0, "pct_used": 55.0, "detail": "Updated push"}
 
@@ -306,7 +310,7 @@ def test_ingest_prunes_ghost_model_rows_with_past_reset_at(session):
             "health": "good",
             "pace": "Continuous",
             "detail": "Pro | alice [LSP]",
-            "data_source": "local",
+            "data_source": "lsp",
             "input_source": "sidecar",
             "used_value": 40.0,
             "limit_value": 100.0,
@@ -388,7 +392,7 @@ def test_ingest_does_not_prune_other_provider_rows(session):
             "health": "good",
             "pace": "Continuous",
             "detail": "Pro | alice [LSP]",
-            "data_source": "local",
+            "data_source": "lsp",
             "input_source": "sidecar",
             "used_value": 40.0,
             "limit_value": 100.0,
@@ -486,4 +490,79 @@ def test_passive_provider_added_to_poll_providers(session):
 
     assert "antigravity" in resp["poll_providers"], (
         f"Passive provider missing from cadence: {resp['poll_providers']}"
+    )
+
+
+def test_sidecar_quota_guard_rejects_non_lsp(session):
+    """Sidecar-pushed quota cards (unit_type=percent / pct_used set) must be
+    dropped unless data_source is 'lsp'.  Enforces the architecture rule:
+    API is authoritative for quota; sidecar enrichment emits only token/cost.
+    """
+    # Non-LSP percent card — should be DROPPED
+    rejected_card = {
+        "provider_id": "antigravity",
+        "account_id": "alice@example.com",
+        "service_name": "Gemini Requests – Weekly",
+        "window_type": "weekly",
+        "variant": "gemini",
+        "model_id": "",
+        "icon": "🛸",
+        "remaining": "60.0%",
+        "unit": "used",
+        "health": "good",
+        "used_value": 40.0,
+        "limit_value": 100.0,
+        "pct_used": 40.0,
+        "unit_type": "percent",
+        "data_source": "local",  # NOT "lsp" → should be dropped
+    }
+    # LSP percent card — should be ALLOWED
+    allowed_lsp_card = {**rejected_card, "data_source": "lsp", "variant": "frontier"}
+    # Token/cost enrichment card (no pct_used, generic unit_type) — should be ALLOWED
+    allowed_enrichment_card = {
+        "provider_id": "antigravity",
+        "account_id": "alice@example.com",
+        "service_name": "Antigravity usage",
+        "window_type": "session",
+        "variant": "default",
+        "model_id": "claude-sonnet-4-5",
+        "icon": "🛸",
+        "remaining": "42 tokens",
+        "unit": "tokens",
+        "health": "good",
+        "unit_type": "generic",  # NOT "percent", pct_used absent → allowed
+        "data_source": "local",
+    }
+
+    payload = {
+        "provider": "antigravity-sidecar",
+        "sidecar_id": "guard-test-host",
+        "metrics": [rejected_card, allowed_lsp_card, allowed_enrichment_card],
+        "events": [],
+    }
+
+    with (
+        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+        resp = _ingest(client, payload)
+
+    # 2 out of 3 cards pass (lsp quota + enrichment); the non-lsp percent card is dropped
+    assert resp["metrics_stored"] == 2, (
+        f"Expected 2 stored (lsp + enrichment), got {resp['metrics_stored']}"
+    )
+
+    rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == "antigravity")).all()
+    variants = {r.variant for r in rows}
+    # "frontier" (lsp-allowed) and "default" (enrichment) should be present
+    assert "frontier" in variants, "LSP quota card should have been stored"
+    assert "default" in variants, "Enrichment card should have been stored"
+    # The non-lsp "gemini" weekly card must have been dropped
+    model_ids_and_variants = {(r.model_id, r.variant) for r in rows}
+    assert ("", "gemini") not in model_ids_and_variants, (
+        "Non-LSP quota card (gemini) must be rejected by the guard"
     )

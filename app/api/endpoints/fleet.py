@@ -166,6 +166,24 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         if payload.sidecar_id and not card.sidecar_id:
             card.sidecar_id = payload.sidecar_id
 
+        # Enforce sidecar-enrichment-only rule: quota (percent / pct_used) cards
+        # must come from server-side API collectors, not sidecars.  The LSP
+        # data_source is the one explicit exception (it legitimately emits
+        # percentage-quota from local tooling state).
+        is_sidecar_quota = (card.unit_type == "percent" or card.pct_used is not None) and (
+            card.data_source or "local"
+        ) != "lsp"
+        if is_sidecar_quota:
+            logger.warning(
+                "Ingest: dropping sidecar quota card for %r "
+                "(provider=%s, data_source=%s) — sidecar enrichment must not "
+                "emit quota; use the server-side API collector.",
+                card.service_name or "unknown",
+                card.provider_id or payload.provider or "unknown",
+                card.data_source or "local",
+            )
+            continue
+
         # Keep actual data cards
         local_cards.append(card)
 

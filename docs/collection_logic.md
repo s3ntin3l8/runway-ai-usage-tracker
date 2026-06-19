@@ -40,7 +40,8 @@ The "Runs in" column shows where the strategy executes. The server-side collecto
 | Gemini | local (session logs) | enrichment | sidecar |
 | **OpenCode** | web | quota | server |
 | OpenCode | local (SQLite DB) | enrichment | sidecar |
-| **Antigravity** | local (LSP / quota.json) | quota | sidecar (no server-side collector) |
+| **Antigravity** | api (Code Assist cloud) | quota | server |
+| Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
 
 ## Collection Pipeline
 

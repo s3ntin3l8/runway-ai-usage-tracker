@@ -140,7 +140,7 @@ python3 scripts/sidecar.py --daemon
 - **Offline Queue:** Caches metrics locally when server unreachable
 - **Retry Logic:** Exponential backoff for failed pushes
 - **PID File:** Prevents multiple daemon instances
-- **13 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2 (Antigravity is sidecar-only — see [collector doc](collectors/antigravity.md))
+- **13 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2, Antigravity (quota via server-side API collector; sidecar ships the OAuth token and token/cost enrichment only)
 - **Event Batching:** Per-message events (Claude, Codex, Gemini, OpenCode) shipped in 1000-event batches
 - **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account)
 - **HMAC-SHA256 Signing:** Secure payload verification
@@ -284,7 +284,7 @@ launchctl start com.runway.sidecar
 | **MiniMax** | API key | `MINIMAX_API_KEY` |
 | **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |
 | **Kimi K2** | API key | `KIMI_K2_API_KEY` |
-| **Antigravity** | LSP probe / JSON file (sidecar-only) | LSP process (running IDE) or `~/.local/share/antigravity/state/quota.json` |
+| **Antigravity** | OAuth token (server-side API collector) | sidecar scrapes `~/.gemini/antigravity-cli/antigravity-oauth-token` and ships it to the server; server queries the Code Assist cloud API for quota. Sidecar emits only token/cost enrichment (never quota). |
 
 ## Deployment Modes
 
