@@ -28,9 +28,9 @@ export function DebugTab({
   active: boolean;
 }) {
   const g = entry.critical_gauge;
-  // Raw capture replays a server-side api/web collector. Providers with
-  // data_source='local' (e.g. antigravity: log scraping / LSP probe) have no
-  // server collector, so capture would 404 — don't offer it.
+  // Raw capture replays a server-side api/web collector. Providers whose
+  // critical gauge has data_source='local' are sidecar-only (enrichment-only
+  // providers like OpenCode events) and have no server collector.
   // input_source='sidecar' only means credentials came from a remote agent;
   // the server still makes the HTTP calls, so capture is supported.
   const captureSupported = g.data_source !== 'local';
@@ -178,7 +178,7 @@ function RawCapturePane({
       <EmptyState
         icon={Bug}
         title="Raw capture unavailable"
-        description={`${providerId} is collected directly on the host (local log scraping / LSP probe / quota file) — there is no server-side HTTP exchange to capture.`}
+        description={`${providerId} is enrichment-only (sidecar-side event extraction) — there is no server-side HTTP exchange to capture.`}
       />
     );
   }
