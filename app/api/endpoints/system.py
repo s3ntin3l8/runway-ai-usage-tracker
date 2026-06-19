@@ -367,9 +367,16 @@ async def get_raw_provider_data(
         # response reports WHICH source (DB config, env var, local file) provided
         # the token — or why none did.
         creds = CredentialProvider.get_credentials(provider_id)
+        # Determine the primary credential key stored by CredentialProvider (if any).
+        # OAuth providers (e.g. antigravity) keep their token in the in-memory cache
+        # populated by sidecar push — CredentialProvider returns empty for them, so
+        # fall back to is_configured as the authoritative "token available" signal.
+        _cred_key = next((k for k, v in creds.items() if v), None)
         credential_debug: dict[str, Any] = {
-            "token_found": bool(creds.get("api_key")),
-            "token_source": creds.sources.get("api_key"),  # "config" | "server" | None
+            "token_found": bool(_cred_key) or is_configured,
+            "token_source": (
+                creds.sources.get(_cred_key) if _cred_key else ("cache" if is_configured else None)
+            ),
         }
 
         cards_returned = 0

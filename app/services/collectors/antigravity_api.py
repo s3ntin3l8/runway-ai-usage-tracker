@@ -61,6 +61,26 @@ class AntigravityApiMixin:
                 )
         return resp
 
+    async def _resolve_account_email(self, client: httpx.AsyncClient, token: str) -> str | None:
+        """Resolve the Google account email via the userinfo endpoint.
+
+        Called once per collector-instance lifetime when account identity is
+        unknown. The agy token file carries no id_token or email claim, so we
+        ask Google directly. Result is cached on the instance — no repeated
+        calls within the same server run.
+        """
+        try:
+            resp = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("email")
+        except Exception:
+            logger.debug("Could not resolve Antigravity account email from userinfo", exc_info=True)
+        return None
+
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Antigravity quota from the Code Assist cloud API.
 
@@ -83,6 +103,18 @@ class AntigravityApiMixin:
         token = await self._get_valid_token(client)
         if not token:
             return []
+
+        # Resolve the Google account email once per instance lifetime. The agy
+        # token file has no id_token, so we ask the userinfo endpoint. Once
+        # known, _tag_results picks it up as account_id/account_label, and
+        # _get_active_identities propagates it to the sidecar via the ingest
+        # response so future sidecar events land under the same account_id.
+        if not self.account_id or self.account_id.lower() in ("default", ""):
+            email = await self._resolve_account_email(client, token)
+            if email:
+                self.account_id = email
+                self.account_label = email
+                self._account_label_cache = email  # type: ignore[attr-defined]
 
         state = {"token": token, "refreshed": False}
 
