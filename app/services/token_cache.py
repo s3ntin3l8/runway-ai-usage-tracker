@@ -206,6 +206,14 @@ class TokenCache:
 
             if account_id:
                 if account_id not in provider_accounts:
+                    # Config credentials are always stored under "default".  When a
+                    # collector runs under a resolved identity (e.g. an email address
+                    # seeded by durable_identities) but its cookie was stored under
+                    # "default", the explicit-key lookup misses — fall back to
+                    # "default" so the collector still finds its tokens.
+                    if "default" in provider_accounts:
+                        tokens, _, _ = provider_accounts["default"]
+                        return tokens
                     return None
                 tokens, _, _ = provider_accounts[account_id]
                 return tokens
@@ -229,6 +237,11 @@ class TokenCache:
 
             if account_id:
                 if account_id not in provider_accounts:
+                    # Same "default" fallback as get() — config creds live under
+                    # "default" regardless of the collector's resolved identity.
+                    if "default" in provider_accounts:
+                        tokens, metadata, _ = provider_accounts["default"]
+                        return tokens, metadata
                     return None
                 tokens, metadata, _ = provider_accounts[account_id]
                 return tokens, metadata

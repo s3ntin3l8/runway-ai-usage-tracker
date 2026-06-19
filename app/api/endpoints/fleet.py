@@ -150,7 +150,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                             "account_id",
                             "account_label",
                         ) and (
-                            key in ("oauth_token", "refresh_token", "api_key", "id_token")
+                            key
+                            in (
+                                "oauth_token",
+                                "refresh_token",
+                                "api_key",
+                                "id_token",
+                                "expiry_date",
+                            )
                             or key.startswith("cookie_")
                         ):
                             provider_tokens[key] = val
