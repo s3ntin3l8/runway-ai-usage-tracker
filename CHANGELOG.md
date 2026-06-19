@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.5.0...v2.6.0) (2026-06-19)
+
+
+### Features
+
+* **antigravity:** cloud API quota collector + sidecar event extractor ([#146](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/146)) ([0565080](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/05650809cc68966a91fc56f23f640a12152ec4ce))
+* **antigravity:** resolve email via userinfo + cleanup stale LSP-era data ([#148](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/148)) ([dda572e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dda572e4b57ca2b6261ef9a8e35278a5511b63d0))
+* **dashboard:** polymorphic card hero for token-tracking and pay-by-use providers ([#138](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/138)) ([a9dd18c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a9dd18cbfe90d0d2881e2f7c999dd5c064ed4787))
+* **detail:** polymorphic Overview/Forecast/KPIs for token & spend providers ([#140](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/140)) ([e0244dd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e0244ddd07cd672bcc0b7dce9a95834e5c62e0fe))
+* **fleet:** add sidecar-update badge to the nav rail ([#147](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/147)) ([7de2b9a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7de2b9a9951196fd77c8c405878501bff7a13cc0))
+* **github:** resolve stable account_id from login/email instead of "default" ([#144](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/144)) ([baf49fa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/baf49fa9dd42cdb0fd7f6777f607d4fedd559a0b))
+
+
+### Bug Fixes
+
+* **antigravity:** collapse 11 quota cards into 4 stable pool windows ([c39d68d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c39d68da1926b7ca8d8a0ff1db39b6c0a57e7325))
+* **antigravity:** collapse 11 quota cards into 4 stable pool windows ([c68d0fa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c68d0faad84b41b6ee61dba78964f57b0129fac1))
+* **config:** move inline .env.example comments to own lines (Docker Compose token poisoning) ([#143](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/143)) ([ed58e4c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ed58e4c43e0d9eb627c34fca0f659cfff2a628de))
+* **debug:** update stale DebugTab comment and message for antigravity ([12398ab](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/12398ab1f4346400c71e4e2301a608a8fc02096e))
+* **fleet:** populate synthetic token-card totals from usage_events ([#139](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/139)) ([709c6b5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/709c6b5d7081b4dc5ae5a2cde572a78c35436a9b))
+* **github:** prefer login over display name as identity/label when no email ([#145](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/145)) ([d061182](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d0611828c1e9a1942e4bc69538a978ed15870ac9))
+* **github:** surface swallowed collector errors and improve debug endpoint ([#142](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/142)) ([69ccd38](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/69ccd38b5228a544ae541f7ef836760e3c2ff73a))
+* **mobile:** settings back-nav, token-health cards, about buttons, insights label truncation ([9a26e22](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9a26e222122ad0ce4fb693d9dd85ef2230c29847))
+* **mobile:** settings back-nav, token-health cards, about buttons, insights labels ([a574726](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a574726f9d5d02b0089a56142bdf0b2786735c29))
+* **overview:** show month by-model donut for token/spend providers ([#141](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/141)) ([83a580e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/83a580edff92b49a1e06205d9fe1ff5dff5978cb))
+
 ## [2.5.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.4.0...v2.5.0) (2026-06-17)
 
 
