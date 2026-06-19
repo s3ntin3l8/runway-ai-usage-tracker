@@ -1,8 +1,11 @@
 import { NavLink } from 'react-router';
 import { cn } from '@/lib/cn';
+import { useFleetUpdateCount } from '@/features/fleet/queries';
 import { NAV_ITEMS } from './nav';
 
 export function BottomNav() {
+  // Reuses the shared ['fleet','sidecars'] cache — no extra request.
+  const fleetUpdates = useFleetUpdateCount();
   return (
     <nav
       aria-label="Primary"
@@ -21,7 +24,18 @@ export function BottomNav() {
               )
             }
           >
-            <item.icon className="size-5" aria-hidden />
+            <span className="relative">
+              <item.icon className="size-5" aria-hidden />
+              {item.to === '/fleet' && fleetUpdates > 0 ? (
+                <>
+                  <span
+                    className="absolute -right-1.5 -top-1 size-2 rounded-full bg-warning ring-2 ring-surface-1"
+                    aria-hidden
+                  />
+                  <span className="sr-only">{fleetUpdates} sidecar updates available</span>
+                </>
+              ) : null}
+            </span>
             {item.label}
           </NavLink>
         ))}

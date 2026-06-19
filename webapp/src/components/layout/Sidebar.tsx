@@ -4,6 +4,7 @@ import { fetchSettings } from '@/api/endpoints';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { useFleetUpdateCount } from '@/features/fleet/queries';
 import { NAV_ITEMS } from './nav';
 import { RunwayMark } from './RunwayMark';
 
@@ -17,6 +18,8 @@ export function Sidebar() {
   const { data } = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
   const version = data?.version;
   const updateAvailable = data?.update_available && data?.latest_version;
+  // Reuses the shared ['fleet','sidecars'] cache — no extra request.
+  const fleetUpdates = useFleetUpdateCount();
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-edge bg-surface-1 lg:flex">
       <div className="flex h-14 items-center gap-2.5 px-4">
@@ -40,6 +43,16 @@ export function Sidebar() {
           >
             <item.icon className="size-4 shrink-0" aria-hidden />
             {item.label}
+            {item.to === '/fleet' && fleetUpdates > 0 ? (
+              <Badge
+                variant="warning"
+                className="ml-auto"
+                title={`${fleetUpdates} sidecar update${fleetUpdates === 1 ? '' : 's'} available`}
+                aria-label={`${fleetUpdates} sidecar update${fleetUpdates === 1 ? '' : 's'} available`}
+              >
+                {fleetUpdates}
+              </Badge>
+            ) : null}
           </NavLink>
         ))}
       </nav>
