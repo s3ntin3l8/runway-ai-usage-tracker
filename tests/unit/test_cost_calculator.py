@@ -320,3 +320,103 @@ def test_gemini_versioned_id_still_matches_exactly():
         tokens_reasoning=0,
     )
     assert cost > 0.0
+
+
+# ── Antigravity cost resolution ───────────────────────────────────────────────
+
+
+def test_antigravity_pro3_cost():
+    """1M input + 1M output on pro-3 = $2.00 + $12.00 = $14.00."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="pro-3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 14.00
+
+
+def test_antigravity_claude_opus_cost():
+    """1M input + 1M output on claude-opus = $5.00 + $25.00 = $30.00.
+
+    This id does NOT version-strip (no trailing -<digits>), so the lookup must
+    find the explicit antigravity/claude-opus row rather than falling back to
+    the anthropic 'opus' family row.
+    """
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="claude-opus",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 30.00
+
+
+def test_antigravity_claude_sonnet_cost():
+    """1M input + 1M output on claude-sonnet = $3.00 + $15.00 = $18.00."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="claude-sonnet",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 18.00
+
+
+def test_antigravity_unknown_model_costs_zero():
+    """GPT-OSS and any other unpriced antigravity model_id must cost 0."""
+    s = _seeded_session()
+    for model_id in ("unknown", "gpt-oss"):
+        cost = compute_event_cost(
+            s,
+            provider_id="antigravity",
+            model_id=model_id,
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=0,
+            tokens_cache_create=0,
+            tokens_reasoning=0,
+        )
+        assert cost == 0.0, f"expected 0 for model_id={model_id!r}, got {cost}"
+
+
+def test_antigravity_scoped_separately_from_gemini():
+    """antigravity/pro-3 must NOT match the gemini/pro-3.x rows.
+
+    Pricing lookups are scoped by provider_id; the rates happen to match today
+    but they are independent entries.
+    """
+    s = _seeded_session()
+    # pro-3.1-preview is the closest gemini row; verify antigravity uses its own row.
+    cost_ag = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="pro-3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    # Would be 0 if the lookup accidentally crossed into gemini's namespace.
+    assert cost_ag == 2.00

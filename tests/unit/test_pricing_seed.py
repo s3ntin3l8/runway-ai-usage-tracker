@@ -143,3 +143,103 @@ def test_seed_gemini_3_1_pro_preview_rates_match_official():
     assert pro.output_per_mtok == 12.00
     assert pro.cache_read_per_mtok == 0.20
     assert pro.cache_create_per_mtok == 0.0
+
+
+# ── Antigravity pricing rows ──────────────────────────────────────────────────
+
+
+def test_seed_antigravity_pro3_rates():
+    """Antigravity Gemini 3.x Pro mirrors the standard-tier gemini pro-3.1-preview rate."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "pro-3",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 2.00
+    assert row.output_per_mtok == 12.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_flash3_rates():
+    """Antigravity Gemini 3.x Flash mirrors the standard-tier gemini flash-3-preview rate."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-3",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.50
+    assert row.output_per_mtok == 3.00
+    assert row.cache_read_per_mtok == 0.05
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_flash_lite3_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-lite-3",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.25
+    assert row.output_per_mtok == 1.50
+    assert row.cache_read_per_mtok == 0.025
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_claude_opus_rates():
+    """Antigravity Claude Opus uses official Claude Opus 4.x pricing."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "claude-opus",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 5.00
+    assert row.output_per_mtok == 25.00
+    assert row.cache_read_per_mtok == 0.50
+    assert row.cache_create_per_mtok == 6.25
+
+
+def test_seed_antigravity_claude_sonnet_rates():
+    """Antigravity Claude Sonnet uses official Claude Sonnet 4.x pricing."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "claude-sonnet",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 3.00
+    assert row.output_per_mtok == 15.00
+    assert row.cache_read_per_mtok == 0.30
+    assert row.cache_create_per_mtok == 3.75
+
+
+def test_seed_antigravity_no_gpt_oss_row():
+    """GPT-OSS 120B is intentionally unpriced — no row means cost defaults to 0."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "gpt-oss",
+        )
+    ).first()
+    assert row is None

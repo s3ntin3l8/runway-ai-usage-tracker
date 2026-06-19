@@ -16,10 +16,10 @@ def manager():
 class TestCollectorManagerInitialization:
     def test_init_registry_count(self, manager):
         """Test that default registry contains expected providers."""
-        # 12 providers (antigravity moved to sidecar-only)
-        assert len(manager.collector_registry) == 12
+        # 13 providers (antigravity now has a server-side API collector)
+        assert len(manager.collector_registry) == 13
         assert "anthropic" in manager.collector_registry
-        assert "antigravity" not in manager.collector_registry  # sidecar-only
+        assert "antigravity" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
 
     @pytest.mark.asyncio
