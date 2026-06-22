@@ -28,7 +28,7 @@ jobs:
     # a commit that isn't main's tip and ship a misleading +edge.<sha> (issue #106).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Verify HEAD is the tip of origin/main
         shell: bash
         run: |
@@ -75,7 +75,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -141,7 +141,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download build artifacts
         uses: actions/download-artifact@v8

@@ -59,7 +59,7 @@ jobs:
     env:
       ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-${{ needs.release-please.outputs.tag_name }}.${{ matrix.ext }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
