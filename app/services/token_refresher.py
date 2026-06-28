@@ -110,7 +110,7 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
         try:
             updated["expiry_date"] = str(int(time.time() * 1000) + int(float(expires_in) * 1000))
         except (TypeError, ValueError):
-            pass
+            pass  # non-numeric expires_in — leave expiry_date unchanged
 
     logger.info(f"Refreshed OAuth token for provider={scrub_log(provider)}")
     return updated

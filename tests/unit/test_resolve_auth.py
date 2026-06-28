@@ -6,7 +6,6 @@ from fastapi import Request
 
 import app.core.security as security
 from app.core.config import settings
-from app.core.security import resolve_auth
 
 
 def _req(host: str = "1.2.3.4", headers: dict[str, str] | None = None) -> Request:
@@ -25,7 +24,7 @@ def _resolve(req: Request, **kw):
         "session_cookie": None,
     }
     base.update(kw)
-    return resolve_auth(req, **base)
+    return security.resolve_auth(req, **base)
 
 
 def test_no_admin_key_is_open(monkeypatch):

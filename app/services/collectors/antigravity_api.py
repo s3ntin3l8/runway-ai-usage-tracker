@@ -253,7 +253,7 @@ class AntigravityApiMixin:
                             reset_dt = parse_iso8601_utc(reset_ts)
                             reset_at = reset_dt.isoformat()
                         except (ValueError, TypeError):
-                            pass
+                            pass  # malformed resetTime — leave reset_at/reset_dt unset
 
                     pct_used = round((1.0 - float(rem_frac)) * 100, 4)
                     health = HealthCalculator.from_percentage(pct_used)
