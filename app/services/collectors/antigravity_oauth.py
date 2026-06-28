@@ -73,7 +73,7 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
                     expiry_ms = int(expiry_dt.timestamp() * 1000)
                     token_store["expiry_date"] = str(expiry_ms)
                 except (ValueError, TypeError):
-                    pass
+                    pass  # malformed expiry — skip storing expiry_date
 
             await token_cache.store(
                 "antigravity",

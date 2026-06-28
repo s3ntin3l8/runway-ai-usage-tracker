@@ -174,7 +174,7 @@ def _read_cwd_from_db(conn: sqlite3.Connection) -> str | None:
         if uri:
             return uri
     except Exception:
-        pass
+        pass  # malformed protobuf record — treat workspace root as unknown
     return None
 
 

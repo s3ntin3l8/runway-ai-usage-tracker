@@ -507,7 +507,8 @@ class GitHubCollector(BaseCollector):
 
             if rem is not None and ent is not None and ent > 0:
                 used_val = ent - rem
-                pct_used = (used_val / ent * 100) if ent > 0 else 0
+                # ent > 0 is guaranteed by the guard above — no zero-division guard needed.
+                pct_used = used_val / ent * 100
                 pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
                 results.append(
                     {

@@ -69,7 +69,10 @@ class CredentialProvider:
                     results["api_key"] = _cfg.api_key
                     sources["api_key"] = "config"
         except Exception:
-            logger.debug("Failed to load API key from DB for %s", provider_id, exc_info=True)
+            # Strip CR/LF from the user-influenced provider_id before logging to
+            # prevent log-forging via injected newlines (CodeQL py/log-injection).
+            safe_provider_id = provider_id.replace("\r", "").replace("\n", "")
+            logger.debug("Failed to load API key from DB for %s", safe_provider_id, exc_info=True)
 
         provider_config = registry.get_provider(provider_id)
         rules = provider_config.get("rules", [])

@@ -233,7 +233,7 @@ def main() -> int:
 
         if args.skip_recost:
             print("Phase C — skipped (--skip-recost).", flush=True)
-            n_updated = n_unchanged = n_ev = n_win = 0
+            n_updated = n_unchanged = 0
         else:
             print(f"{prefix}Phase C — re-costing events for '{_PROVIDER}'…", flush=True)
             n_updated, n_unchanged, n_zeroed = phase_b_recost(session, [_PROVIDER], None, dry_run)
