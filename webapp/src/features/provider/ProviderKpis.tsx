@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import type { CumulativeBucket, CumulativeModelBucket, FleetEntry } from '@/api/types';
 import { StatTile } from '@/components/ui/StatTile';
 import { formatCost, formatNumber, formatPct, formatTokens } from '@/lib/format';
-import { cardKind, cardPct, cardStatus, windowLabel } from '@/lib/quota';
+import { cardKind, cardPct, cardStatus, findForecast, windowLabel } from '@/lib/quota';
 import { useProviderCostForecast, useProviderCumulative, useProviderForecast } from './queries';
 
 function sumTokens(b: CumulativeModelBucket | null | undefined, excludeCache = false): number {
@@ -51,11 +51,14 @@ export function ProviderKpis({
     return row?.lifetime ?? null;
   }, [cumulative.data, providerId, accountId]);
 
-  // Forecast entry for the gauge we treat as critical (fall back to the first).
+  // Forecast entry for the gauge we treat as critical. Match the full card
+  // identity via findForecast (window_type + variant + model_id), not
+  // window_type alone — multi-pool providers (e.g. Antigravity gemini/frontier)
+  // would otherwise resolve to the empty pool's insufficient-data forecast.
   const criticalForecast = useMemo(() => {
     const fs = forecast.data?.forecasts ?? [];
-    return fs.find((f) => f.window_type === critical.window_type) ?? fs[0] ?? null;
-  }, [forecast.data, critical.window_type]);
+    return findForecast(critical, fs);
+  }, [forecast.data, critical]);
 
   const monthTokens = sumTokens(monthBucket, excludeCache);
   // Cache-hit is inherently a cache metric — always computed against the full

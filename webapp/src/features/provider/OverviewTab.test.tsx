@@ -62,6 +62,38 @@ describe('OverviewTab', () => {
     expect(await screen.findAllByTestId('trajectory')).not.toHaveLength(0);
   });
 
+  it('selects the critical gauge variant when pools share a window_type', async () => {
+    // Antigravity shape: two pools (gemini/frontier) share window_type 'weekly'.
+    // The empty frontier pool sorts first; a window_type-only match would pick
+    // it (insufficient_data, no projection). findForecast must match the gauge's
+    // own variant and surface the data-rich gemini forecast.
+    vi.mocked(api.fetchForecast).mockResolvedValue(
+      forecastResponse([
+        forecastEntry({
+          window_type: 'weekly',
+          variant: 'frontier',
+          status: 'insufficient_data',
+          projected_pct: null,
+        }),
+        forecastEntry({
+          window_type: 'weekly',
+          variant: 'gemini',
+          status: 'risk',
+          projected_pct: 88,
+        }),
+      ]),
+    );
+    const entry = fleetEntry({
+      critical_gauge: limitCard({ window_type: 'weekly', variant: 'gemini', pct_used: 49 }),
+    });
+    renderWithProviders(<OverviewTab entry={entry} />);
+    // "Current window" header (OverviewTab) resolves the gemini forecast…
+    expect(await screen.findByText(/projected 88% at reset/i)).toBeInTheDocument();
+    // …and so does the "Projected at reset" KPI tile (ProviderKpis), which uses
+    // the same selection logic and would otherwise show '—' for the empty pool.
+    expect(await screen.findByText('88%')).toBeInTheDocument();
+  });
+
   it('renders the token-mix donut when there is month usage', async () => {
     renderWithProviders(<OverviewTab entry={fleetEntry()} />);
     expect(await screen.findByText('Token mix (month)')).toBeInTheDocument();

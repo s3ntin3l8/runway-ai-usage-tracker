@@ -12,7 +12,7 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatPct, formatTokens, timeUntil } from '@/lib/format';
-import { cardKind } from '@/lib/quota';
+import { cardKind, findForecast } from '@/lib/quota';
 import { formatLocalDate, formatLocalDateTime } from '@/lib/tz';
 import {
   useProviderAnomalies,
@@ -71,8 +71,15 @@ export function ForecastTab({
     [forecast.data],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Default to the critical gauge's own forecast rather than forecasts[0]:
+  // multi-pool providers (e.g. Antigravity gemini/frontier) return the empty
+  // pool first in index order, so forecasts[0] would default to an
+  // insufficient-data trajectory. The dropdown still exposes every pool.
   const selected =
-    forecasts.find((f) => forecastKey(f) === selectedKey) ?? forecasts[0] ?? null;
+    forecasts.find((f) => forecastKey(f) === selectedKey) ??
+    findForecast(entry.critical_gauge, forecasts) ??
+    forecasts[0] ??
+    null;
 
   const anomalies = useProviderAnomalies(providerId, accountId);
   const spikes = anomalies.data?.anomalies ?? [];
