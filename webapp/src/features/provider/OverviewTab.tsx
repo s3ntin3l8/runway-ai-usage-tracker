@@ -35,11 +35,15 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
   const kind = cardKind(entry.critical_gauge);
   const critical = entry.critical_gauge;
 
-  // Trajectory for the window we treat as critical (fall back to the first).
+  // Trajectory for the window we treat as critical. Match on the full card
+  // identity (window_type + variant + model_id) via findForecast, not window_type
+  // alone — providers like Antigravity emit two pools (gemini/frontier) per
+  // window, and a window_type-only match can land on the empty pool's
+  // insufficient-data forecast instead of the gauge's own.
   const criticalForecast = useMemo(() => {
     const fs = forecast.data?.forecasts ?? [];
-    return fs.find((f) => f.window_type === entry.critical_gauge.window_type) ?? fs[0] ?? null;
-  }, [forecast.data, entry.critical_gauge.window_type]);
+    return findForecast(entry.critical_gauge, fs);
+  }, [forecast.data, entry.critical_gauge]);
 
   // This month's bucket for the token-mix donut — same lookup as ProviderKpis,
   // so React Query serves it from cache (no extra request).

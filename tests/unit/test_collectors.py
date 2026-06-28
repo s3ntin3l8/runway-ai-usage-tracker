@@ -2224,9 +2224,13 @@ class TestOpenCodeCollector:
         assert bd["free"]["lifetime"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
         assert bd["api"]["lifetime"]["by_model"]["sonnet"]["tokens"]["input"] == 1000
 
-    @pytest.mark.skip(reason="local-db / browser-cookie fallback moved to sidecar")
-    def test_parse_usage_data_enriches_go_cards_and_emits_extra_cards(self):
-        """_parse_usage_data with a breakdown enriches detail and adds Free/API cards."""
+    def test_parse_usage_data_enriches_go_cards_and_emits_api_card(self):
+        """_parse_usage_data enriches Go cards and adds the API card.
+
+        The Free card is intentionally NOT emitted: free-tier usage is tracked by
+        the dedicated "opencode-free" passive provider, so emitting it here would
+        duplicate it as a spurious "rolling free" window.
+        """
         collector = OpenCodeCollector()
 
         # Minimal /go page text that produces the three standard Go cards
@@ -2278,8 +2282,8 @@ class TestOpenCodeCollector:
 
         cards = collector._parse_usage_data(go_text, "wrk_TEST", breakdown)
 
-        # 3 Go + 1 Free + 1 API
-        assert len(cards) == 5
+        # 3 Go + 1 API (no Free card — see docstring)
+        assert len(cards) == 4
 
         service_names = {c["service_name"] for c in cards}
         assert "OpenCode" in service_names
@@ -2297,12 +2301,10 @@ class TestOpenCodeCollector:
         )
         assert monthly_card["service_name"] == "OpenCode"
 
-        # Free card: is_unlimited=True shows token count instead of infinity
-        free_card = next(c for c in cards if c.get("variant") == "Free")
-        assert free_card["is_unlimited"] is True
-        assert free_card["health"] == "good"
-        assert "tokens" in free_card["remaining"]  # e.g. "105,000 tokens"
-        assert "Free tier" in free_card["detail"]
+        # Free card must NOT be emitted even though the breakdown carries
+        # free-tier usage — opencode-free owns that surface.
+        assert not any(c.get("variant") == "Free" for c in cards)
+        assert not any(c.get("window_type") == "rolling" and c.get("tier") == "Free" for c in cards)
 
         # API card: is_unlimited=False so detail renders as card subtitle
         api_card = next(c for c in cards if c.get("variant") == "API")
@@ -2312,7 +2314,6 @@ class TestOpenCodeCollector:
         # Tier badges
         go_cards = [c for c in cards if c.get("tier") == "Go"]
         assert all(c.get("tier") == "Go" for c in go_cards)
-        assert free_card.get("tier") == "Free"
         assert api_card.get("tier") == "API"
 
         # input_source defaults to "server"

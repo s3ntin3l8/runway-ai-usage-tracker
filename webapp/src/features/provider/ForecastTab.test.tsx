@@ -9,6 +9,7 @@ import {
   fleetEntry,
   forecastEntry,
   forecastResponse,
+  limitCard,
 } from './test-fixtures';
 
 vi.mock('@/api/endpoints');
@@ -110,6 +111,38 @@ describe('ForecastTab', () => {
     // The selected label also shows in the trigger, so both can appear twice.
     expect((await screen.findAllByText('Claude · sonnet · weekly')).length).toBeGreaterThan(0);
     expect((await screen.findAllByText('Claude · opus · weekly')).length).toBeGreaterThan(0);
+  });
+
+  it('defaults to the critical gauge pool, not the first (empty) forecast', async () => {
+    // Antigravity shape: the empty frontier pool sorts first in the response.
+    // The default selection must follow the critical gauge's variant (gemini),
+    // not forecasts[0], so the data-rich trajectory shows by default.
+    vi.mocked(api.fetchForecast).mockResolvedValue(
+      forecastResponse([
+        forecastEntry({
+          window_type: 'weekly',
+          variant: 'frontier',
+          service_name: 'Frontier',
+          status: 'insufficient_data',
+        }),
+        forecastEntry({
+          window_type: 'weekly',
+          variant: 'gemini',
+          service_name: 'Gemini',
+          status: 'risk',
+        }),
+      ]),
+    );
+    const entry = fleetEntry({
+      critical_gauge: limitCard({ window_type: 'weekly', variant: 'gemini', pct_used: 49 }),
+    });
+    renderWithProviders(
+      <ForecastTab providerId="anthropic" accountId="me@example.com" entry={entry} />,
+    );
+    // The selected forecast's status badge reflects the gemini pool ('risk'),
+    // not the frontier pool's 'insufficient data'.
+    expect(await screen.findByText('risk')).toBeInTheDocument();
+    expect(screen.queryByText('insufficient data')).not.toBeInTheDocument();
   });
 
   it('shows the no-forecast empty state', async () => {

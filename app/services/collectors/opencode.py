@@ -733,14 +733,11 @@ class OpenCodeCollector(BaseCollector):
                     existing = card.get("detail", "").rstrip()
                     card["detail"] = f"{existing} | {suffix}".strip(" |")
 
-            # Emit Free card if there is any free-tier usage
-            free_data = breakdown.get("free", {}).get("lifetime", {})
-            if free_data.get("msgs", 0) > 0:
-                cards.append(
-                    self._build_free_api_card(
-                        "free", free_data, workspace_id, email, now_iso, input_source
-                    )
-                )
+            # Free-tier usage is tracked by the dedicated "opencode-free" passive
+            # provider (sidecar event extractor remaps providerID="opencode" →
+            # "opencode-free"); emitting a Free card here would duplicate it as a
+            # spurious "rolling free" window, so we don't. Only the pay-as-you-go
+            # API card has no separate provider and is still emitted below.
 
             # Emit API card if there is any pay-as-you-go usage
             api_data = breakdown.get("api", {}).get("lifetime", {})
