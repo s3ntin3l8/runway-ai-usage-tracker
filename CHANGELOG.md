@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.6.2...v2.7.0) (2026-06-29)
+
+
+### Features
+
+* consolidate session project labels to the repo root ([#164](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/164)) ([e3b4212](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e3b4212315c5f0147eae258aa4bf04bd05c32665))
+
+
+### Bug Fixes
+
+* antigravity empty forecast chart + opencode duplicate "rolling free" window ([c3b7219](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c3b7219b8d796e09d1a3bf7f5de7d887bf1e22c3))
+* **forecast:** match forecast by full card identity, not window_type alone ([8ed6fbf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8ed6fbffbdf8daf413a0293f978895e6590117f9))
+* **opencode:** stop emitting duplicate "rolling free" window card ([09d23ed](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/09d23ed57598c6fa636a7d0be7f2ffbe8947aad9))
+* stop reset_at jitter from flooding usage_windows ([#165](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/165)) ([f2e6bd7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f2e6bd7e4aba61f63fb3aa7a47c7f9790f460342))
+
 ## [2.6.2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.6.1...v2.6.2) (2026-06-19)
 
 
