@@ -158,6 +158,35 @@ def test_window_close_not_triggered_when_reset_at_unchanged():
     assert len(windows) == 0, "No rows expected when reset_at has not advanced"
 
 
+def test_window_close_not_triggered_on_subduration_reset_jitter():
+    """A sub-duration reset_at advance (provider jitter) must not close a window.
+
+    Anthropic's weekly resets_at oscillates ~±2s around the boundary between
+    polls; every upward bounce previously archived a spurious window, flooding
+    usage_windows. Only an advance of ~one full duration is a real rollover.
+    """
+    s = _seeded_session()
+
+    existing = _make_latest_usage(s, _OLD_RESET)
+
+    mid = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
+    _add_event(s, "e1", mid, tokens_input=100, tokens_output=200, cost_usd=0.01)
+
+    # ~0.7s later — jitter, not a 7-day rollover.
+    jittered = _OLD_RESET.replace(microsecond=700_000)
+    _maybe_close_previous_window(
+        s,
+        existing=existing,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        new_reset_at=jittered,
+    )
+
+    windows = s.exec(select(UsageWindow)).all()
+    assert len(windows) == 0, "Sub-duration jitter must not archive a window"
+
+
 def test_window_close_not_triggered_when_no_existing_row():
     """When existing is None (first poll), no window-close occurs."""
     s = _seeded_session()
