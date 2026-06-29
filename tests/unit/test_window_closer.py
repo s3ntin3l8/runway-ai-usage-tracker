@@ -10,14 +10,15 @@ Tests verify:
 - Events outside the window range are excluded.
 """
 
+import json
 from datetime import UTC, datetime
 
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.models.db import UsageEvent, UsageWindow
+from app.models.db import LatestUsage, UsageEvent, UsageWindow
 from app.services.pricing_seed import seed_pricing_table
-from app.services.window_closer import close_window
+from app.services.window_closer import _maybe_close_previous_window, close_window
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -488,6 +489,75 @@ def test_close_window_with_only_error_events_inserts_nothing():
     )
     assert inserted == 0
     assert s.exec(select(UsageWindow)).all() == []
+
+
+def _existing_card(reset_at: datetime) -> LatestUsage:
+    """A LatestUsage row whose card_json carries the given reset_at."""
+    return LatestUsage(
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        card_json=json.dumps(
+            {"reset_at": reset_at.isoformat(), "limit_value": 100_000, "pct_used": 0.42}
+        ),
+    )
+
+
+def test_maybe_close_ignores_subduration_reset_jitter():
+    """Sub-duration reset_at advance (provider jitter) → no window closed.
+
+    Anthropic reports a weekly resets_at that oscillates ~±2s around the true
+    boundary between polls. Each upward bounce used to trip the old
+    `new_reset_at <= existing_reset_dt` guard and archive a spurious window.
+    A real rollover advances reset_at by ~one full duration, so a sub-second
+    bump must produce zero closes.
+    """
+    s = _seeded_session()
+    _add_event(s, "e1", _mid_window(), model_id="sonnet")
+
+    existing = _existing_card(_WINDOW_END)
+    # ~0.7s later — pure jitter, nowhere near a 7-day rollover.
+    jittered = _WINDOW_END.replace(microsecond=700_000)
+
+    inserted = _maybe_close_previous_window(
+        s,
+        existing=existing,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        new_reset_at=jittered,
+    )
+    assert inserted == 0
+    assert s.exec(select(UsageWindow)).all() == []
+
+
+def test_maybe_close_archives_on_full_duration_advance():
+    """A real rollover (reset_at advances ~one full window) → exactly one close."""
+    s = _seeded_session()
+    _add_event(s, "e1", _mid_window(), model_id="sonnet", tokens_input=100, tokens_output=200)
+
+    existing = _existing_card(_WINDOW_END)
+    # 7 days later — a genuine weekly rollover.
+    rolled_over = _WINDOW_END + (datetime(2026, 5, 19, 18, tzinfo=UTC) - _WINDOW_END)
+
+    inserted = _maybe_close_previous_window(
+        s,
+        existing=existing,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        new_reset_at=rolled_over,
+    )
+    assert inserted > 0
+    rollup = s.exec(
+        select(UsageWindow).where(
+            UsageWindow.model_id == "",
+            UsageWindow.sidecar_id == "",
+            UsageWindow.window_end == _WINDOW_END,
+        )
+    ).first()
+    assert rollup is not None, "Real rollover should archive the just-closed window"
+    assert rollup.msgs == 1
 
 
 def test_close_window_excludes_events_outside_range():

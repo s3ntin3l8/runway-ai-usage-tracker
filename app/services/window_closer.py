@@ -182,8 +182,15 @@ def _maybe_close_previous_window(
 
         existing_reset_dt = parse_iso8601_utc(existing_reset_str)
 
-        if new_reset_at <= existing_reset_dt:
-            return 0  # reset_at has not advanced — no window closed
+        # Provider reset_at can jitter by sub-second/sub-minute amounts between
+        # polls (e.g. Anthropic reports a drifting weekly resets_at that
+        # oscillates ~±2s around the true boundary). A real rollover advances
+        # reset_at by ~one full window duration; ignore anything smaller so
+        # jitter does not spawn spurious closes (each of which would otherwise
+        # write a distinct usage_windows row past the microsecond-precision
+        # UNIQUE constraint). `<=` also covers reset_at going backwards.
+        if new_reset_at - existing_reset_dt <= WINDOW_DURATION[window_type] / 2:
+            return 0  # reset_at has not meaningfully advanced — no window closed
 
         # Previous window closed at existing_reset_dt
         window_start = existing_reset_dt - WINDOW_DURATION[window_type]
