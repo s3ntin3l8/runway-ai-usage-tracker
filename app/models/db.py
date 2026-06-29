@@ -228,8 +228,10 @@ class UsageEvent(SQLModel, table=True):
     model_id: str | None = None  # normalized: opus-4.8, sonnet-4.5, gpt-5, ...
     session_id: str | None = None  # provider's conversation/session id
     # Working-directory / project context (enrichment; sidecar-provided). cwd is
-    # the full path; project is its basename (server-derived in EventIngestor) and
-    # indexed for the Top Projects ranking + the per-session project filter.
+    # the raw per-message path; project is the session's root basename
+    # (server-derived in EventIngestor via app/services/project_label.py, then
+    # consolidated per-session offline) and indexed for the Top Projects ranking +
+    # the per-session project filter.
     cwd: str | None = None
     project: str | None = Field(default=None, index=True)
     git_branch: str | None = None  # vcs branch at the time of the message, if logged
