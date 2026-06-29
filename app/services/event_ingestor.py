@@ -8,7 +8,6 @@ duplicates don't poison the surrounding batch.
 """
 
 import json
-import os
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +18,7 @@ from app.models.db import UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.cost_calculator import compute_event_cost_breakdown
 from app.services.period_rollups import update_rollups_for_event
+from app.services.project_label import derive_project
 
 
 @dataclass
@@ -91,7 +91,10 @@ class EventIngestor:
                     cwd=push.cwd,
                     # Derive the project label server-side (single source of truth)
                     # so all providers normalise the same way regardless of sidecar.
-                    project=(os.path.basename(push.cwd.rstrip("/")) if push.cwd else None),
+                    # Worktree/tmp cwds collapse to the project root (rule 1); the
+                    # per-session subfolder-drift fix runs offline in
+                    # scripts/consolidate_session_projects.py.
+                    project=derive_project(push.cwd),
                     git_branch=push.git_branch,
                     tools_json=(json.dumps(push.tool_names) if push.tool_names else None),
                     subagent_type=push.subagent_type,

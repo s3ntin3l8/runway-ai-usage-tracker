@@ -43,7 +43,7 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 
 | Table | Role |
 |-------|------|
-| `usage_events` | Per-message immutable events. Deduped by `(provider_id, account_id, event_id)`. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — `cwd`, indexed `project` (basename of `cwd`, derived in `EventIngestor`; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. |
+| `usage_events` | Per-message immutable events. Deduped by `(provider_id, account_id, event_id)`. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. |
 | `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
 | `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |

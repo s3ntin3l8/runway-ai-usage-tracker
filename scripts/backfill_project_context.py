@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +36,7 @@ from sqlmodel import Session, select  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
+from app.services.project_label import derive_project  # noqa: E402
 from scripts.sidecar import (  # noqa: E402
     _discover_anthropic_log_paths,
     _discover_codex_log_paths,
@@ -76,7 +76,7 @@ def _has_context(push: UsageEventPush) -> bool:
 def _apply(ev: UsageEvent, push: UsageEventPush) -> None:
     """Apply context from `push` to a NULL-cwd event (mirrors EventIngestor)."""
     ev.cwd = push.cwd
-    ev.project = os.path.basename(push.cwd.rstrip("/")) if push.cwd else None
+    ev.project = derive_project(push.cwd)
     ev.git_branch = push.git_branch
     ev.tools_json = json.dumps(push.tool_names) if push.tool_names else None
     if push.latency_ms is not None:
