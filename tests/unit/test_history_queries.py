@@ -42,6 +42,8 @@ def _make_event(
     tokens_cache_create: int = 0,
     tokens_reasoning: int = 0,
     cost_usd: float = 0.05,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
     kind: str = "message",
 ) -> UsageEvent:
     if event_id is None:
@@ -58,6 +60,8 @@ def _make_event(
         tokens_cache_create=tokens_cache_create,
         tokens_reasoning=tokens_reasoning,
         cost_usd=cost_usd,
+        cost_cache_read=cost_cache_read,
+        cost_cache_create=cost_cache_create,
         sidecar_id="local",
         kind=kind,
     )
@@ -276,8 +280,37 @@ class TestQueryHistoryDeltas:
 
         result = query_history_deltas(db_session, days=1.0)
         assert result["token_delta_total"] == 23000.0  # (10000+5000) + (5000+3000) = 23000
+        assert result["token_cache_total"] == 0.0  # no cache tokens on these events
         assert result["cost_delta_total"] == 0.23
+        assert result["cost_cache_total"] == 0.0  # no cache cost on these events
         assert "anthropic" in result["provider_token_deltas"]
+
+    def test_delta_includes_cache_tokens_and_cost(self, db_session):
+        """token/cost totals are cache-inclusive; *_cache_total carry the splits."""
+        now = datetime.now(UTC)
+        _make_event(
+            db_session,
+            ts=now - timedelta(hours=1),
+            tokens_input=1000,
+            tokens_output=500,
+            tokens_reasoning=200,
+            tokens_cache_read=8000,
+            tokens_cache_create=300,
+            cost_usd=1.00,
+            cost_cache_read=0.60,
+            cost_cache_create=0.15,
+            event_id="ev_cache",
+        )
+
+        result = query_history_deltas(db_session, days=1.0)
+        # input+output+reasoning + cache_read+cache_create = 1700 + 8300 = 10000
+        assert result["token_delta_total"] == 10000.0
+        assert result["token_cache_total"] == 8300.0
+        # cost total stays authoritative; cache split = 0.60 + 0.15 = 0.75
+        assert result["cost_delta_total"] == 1.00
+        assert result["cost_cache_total"] == 0.75
+        # per-provider total is cache-inclusive too
+        assert result["provider_token_deltas"]["anthropic"] == 10000.0
 
     def test_provider_filter(self, db_session):
         now = datetime.now(UTC)

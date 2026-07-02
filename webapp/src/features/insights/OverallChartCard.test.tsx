@@ -27,14 +27,17 @@ const bars: HistoryChartResponse = {
 };
 
 const deltas: HistoryDeltas = {
-  token_delta_total: 12345,
+  token_delta_total: 5_000_000,
+  token_cache_total: 4_000_000,
   cost_delta_total: 6.5,
+  cost_cache_total: 4.5,
   critical_series_count: 0,
 };
 
 describe('OverallChartCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     vi.mocked(api.fetchHistoryChart).mockResolvedValue(bars);
     vi.mocked(api.fetchHistoryDeltas).mockResolvedValue(deltas);
   });
@@ -58,6 +61,25 @@ describe('OverallChartCard', () => {
     expect(api.fetchHistoryChart).toHaveBeenCalledWith(
       expect.objectContaining({ metric: 'cost', group: 'provider' }),
     );
+  });
+
+  it('shows cache-inclusive token and cost totals by default', async () => {
+    renderWithProviders(<OverallChartCard days={7} />);
+    await screen.findByTestId('echart');
+    // token_delta_total is cache-inclusive: 5M
+    expect(screen.getByText('5.00M')).toBeInTheDocument();
+    // cost_delta_total is cache-inclusive: $6.50
+    expect(screen.getByText(/\$6\.50/)).toBeInTheDocument();
+  });
+
+  it('subtracts cache from token and cost totals when exclude-cache is on', async () => {
+    localStorage.setItem('runway_exclude_cache', '1');
+    renderWithProviders(<OverallChartCard days={7} />);
+    await screen.findByTestId('echart');
+    // 5M tokens - 4M cache = 1M
+    expect(screen.getByText('1.00M')).toBeInTheDocument();
+    // $6.50 - $4.50 cache = $2.00
+    expect(screen.getByText(/\$2\.00/)).toBeInTheDocument();
   });
 
   it('shows the empty state when no bars are returned', async () => {

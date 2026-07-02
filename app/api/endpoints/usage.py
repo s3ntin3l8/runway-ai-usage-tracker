@@ -808,9 +808,11 @@ async def get_usage_history_deltas(
 ) -> dict[str, Any]:
     """Compute actual consumption deltas from usage_events.
 
-    Returns token_delta_total, cost_delta_total, provider_token_deltas,
-    critical_series_count, and series_sampled. Since this uses event-sourced
-    data (not gauge readings), no glitch filtering is needed.
+    Returns token_delta_total (cache-inclusive), token_cache_total (the cache
+    split so callers can honor the exclude-cache toggle), cost_delta_total,
+    cost_cache_total (the cost cache split), provider_token_deltas,
+    critical_series_count, and series_sampled. Since this
+    uses event-sourced data (not gauge readings), no glitch filtering is needed.
     """
     return query_history_deltas(
         session,
