@@ -409,7 +409,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         core_keys = [
             "five_hour",
             "seven_day",
-            "seven_day_sonnet",
         ]
         all_keys = list(data.keys())
         for ck in core_keys:

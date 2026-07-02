@@ -6,7 +6,6 @@ Used in tests and fixtures.
 ANTHROPIC_OAUTH_RESPONSE = {
     "five_hour": {"utilization": 45.5, "resets_at": "2025-04-07T12:00:00Z"},
     "seven_day": {"utilization": 62.3, "resets_at": "2025-04-14T00:00:00Z"},
-    "seven_day_sonnet": {"utilization": 30.1, "resets_at": "2025-04-14T00:00:00Z"},
 }
 
 CLAUDE_WEB_API_ORGS_RESPONSE = [{"uuid": "org_test_123", "id": "org_test_123", "name": "Test Org"}]
@@ -14,7 +13,6 @@ CLAUDE_WEB_API_ORGS_RESPONSE = [{"uuid": "org_test_123", "id": "org_test_123", "
 CLAUDE_WEB_API_USAGE_RESPONSE = {
     "five_hour": {"utilization": 0.455, "resets_at": "2025-04-07T12:00:00Z"},
     "seven_day": {"utilization": 0.623, "resets_at": "2025-04-14T00:00:00Z"},
-    "seven_day_sonnet": {"utilization": 0.301, "resets_at": "2025-04-14T00:00:00Z"},
 }
 
 GEMINI_QUOTA_RESPONSE = {

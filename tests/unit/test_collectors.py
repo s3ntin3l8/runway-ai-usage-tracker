@@ -70,16 +70,18 @@ class TestAnthropicCollector:
         assert len(result) >= 1
         assert all("service_name" in card for card in result)
         assert any(card.get("window_type") == "session" for card in result)
-        # seven_day_sonnet must fold into weekly window_type with model_id="sonnet"
-        sonnet_card = next(
-            (
-                c
-                for c in result
-                if c.get("window_type") == "weekly" and c.get("model_id") == "sonnet"
-            ),
+        # Only the aggregate weekly window remains (Anthropic retired seven_day_sonnet);
+        # it carries no model_id.
+        weekly_card = next(
+            (c for c in result if c.get("window_type") == "weekly"),
             None,
         )
-        assert sonnet_card is not None, "Expected a Sonnet Weekly card from mock data"
+        assert weekly_card is not None, "Expected an aggregate Weekly card from mock data"
+        assert weekly_card.get("model_id") is None
+        # No per-model Sonnet weekly card should be produced anymore.
+        assert not any(
+            c.get("window_type") == "weekly" and c.get("model_id") == "sonnet" for c in result
+        )
 
     @pytest.mark.asyncio
     async def test_refresh_token_lookup_is_scoped_to_account(self, mock_http_client):
@@ -198,8 +200,8 @@ class TestAnthropicCollector:
             with patch.object(collector, "_get_valid_token", return_value="test_token"):
                 result = await collector.collect(mock_http_client)
 
-        # Should return 5 cards: 3 standard quota windows (Session, Weekly, Sonnet) + Balance + Extra Usage
-        assert len(result) == 5
+        # Should return 4 cards: 2 standard quota windows (Session, Weekly) + Balance + Extra Usage
+        assert len(result) == 4
 
         variants = {c.get("variant"): c for c in result if c.get("variant")}
         assert "Current Balance" in variants
@@ -366,9 +368,10 @@ class TestAnthropicCollector:
             ):
                 result = await collector.collect(mock_http_client)
 
-        # Should return Web API results — only 3 cards because seven_day_opus is missing from mock data
+        # Should return Web API results — 2 cards (session + aggregate weekly); the mock
+        # data has no per-model seven_day windows.
         assert isinstance(result, list)
-        assert len(result) == 3
+        assert len(result) == 2
         window_types = [r.get("window_type") for r in result]
         assert "session" in window_types
         assert "weekly" in window_types
@@ -750,7 +753,6 @@ class TestAnthropicCollector:
         usage_response.json.return_value = {
             "five_hour": {"utilization": 0.3, "resets_at": "2025-04-07T12:00:00Z"},
             "seven_day": {"utilization": 0.4, "resets_at": "2025-04-14T00:00:00Z"},
-            "seven_day_sonnet": {"utilization": 0.5, "resets_at": "2025-04-14T00:00:00Z"},
         }
 
         mock_http_client.request.side_effect = [
@@ -780,7 +782,7 @@ class TestAnthropicCollector:
                 result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
-        assert len(result) == 3  # only 3 core windows in mock usage data
+        assert len(result) == 2  # session + aggregate weekly in mock usage data
         assert any(card.get("data_source") == "web" for card in result)
 
         # Identity should be included in detail
@@ -812,9 +814,9 @@ class TestAnthropicCollector:
         result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
 
         # Should not crash, should return card with reset as "—"
-        # Returns 3 items: all core keys (Session, Weekly, Sonnet) get default cards when null
+        # Returns 2 items: both core keys (Session, Weekly) get default cards when null
         assert isinstance(result, list)
-        assert len(result) == 3
+        assert len(result) == 2
         assert result[0]["reset"] == "—"
 
     def test_parse_oauth_response_empty_windows(self):
