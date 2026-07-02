@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.7.0...v2.7.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* drop retired Anthropic Sonnet Weekly quota window ([#169](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/169)) ([72c731e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/72c731e94b7967a7c50c9b61232a068bbeb0fc78))
+* reconcile Insights token/cost tiles with lifetime totals ([#167](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/167)) ([1a9bfa5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1a9bfa57f2af55f1ab5a90c123271826bf761450))
+
 ## [2.7.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.6.2...v2.7.0) (2026-06-29)
 
 
