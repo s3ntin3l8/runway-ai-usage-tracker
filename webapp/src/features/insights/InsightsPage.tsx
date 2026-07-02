@@ -28,8 +28,22 @@ export function InsightsPage() {
     <>
       <PageHeader title="Insights" description="Cross-provider usage" />
       <div className="flex flex-col gap-4 p-4 lg:p-8">
-        <div className="flex flex-wrap items-center gap-2">
-          <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+        <div className="flex items-center justify-end">
+          <ExcludeCacheToggle />
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <h2 className="text-[13px] font-semibold tracking-tight">Global insights · All time</h2>
+          <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <h2 className="text-[13px] font-semibold tracking-tight">Over time</h2>
+          <Tabs
+            value={String(days)}
+            onValueChange={(v) => setDays(Number(v))}
+            className="ml-auto"
+          >
             <TabsList className="border-0">
               {RANGES.map((r) => (
                 <TabsTrigger key={r.days} value={String(r.days)} className="h-9 px-2.5">
@@ -38,14 +52,6 @@ export function InsightsPage() {
               ))}
             </TabsList>
           </Tabs>
-          <div className="ml-auto">
-            <ExcludeCacheToggle />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <h2 className="text-[13px] font-semibold tracking-tight">Global insights</h2>
-          <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
         </div>
 
         <OverallChartCard days={days} />

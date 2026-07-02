@@ -423,7 +423,9 @@ export interface WindowDetailResponse {
 
 export interface HistoryDeltas {
   token_delta_total?: number;
+  token_cache_total?: number;
   cost_delta_total?: number;
+  cost_cache_total?: number;
   provider_token_deltas?: Record<string, number>;
   critical_series_count?: number;
   series_sampled?: number;

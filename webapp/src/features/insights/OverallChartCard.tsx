@@ -21,6 +21,13 @@ export function OverallChartCard({ days }: { days: number }) {
 
   const hasData = (chart.data?.bars?.length ?? 0) > 0;
 
+  const rangeTokens =
+    (deltas.data?.token_delta_total ?? 0) -
+    (excludeCache ? (deltas.data?.token_cache_total ?? 0) : 0);
+  const rangeCost =
+    (deltas.data?.cost_delta_total ?? 0) -
+    (excludeCache ? (deltas.data?.cost_cache_total ?? 0) : 0);
+
   return (
     <Card>
       <CardHeader>
@@ -40,12 +47,12 @@ export function OverallChartCard({ days }: { days: number }) {
         <div className="grid grid-cols-2 gap-3">
           <StatTile
             label={`Tokens (${days}d)`}
-            value={formatTokens(deltas.data?.token_delta_total ?? 0)}
+            value={formatTokens(rangeTokens)}
             loading={deltas.isPending}
           />
           <StatTile
             label={`Cost (${days}d)`}
-            value={formatCost(deltas.data?.cost_delta_total)}
+            value={formatCost(rangeCost)}
             loading={deltas.isPending}
           />
         </div>

@@ -458,13 +458,18 @@ def query_history_deltas(
         params["account_id"] = account_id
     where = " AND ".join(filters)
 
-    # Token totals
+    # Token totals — cache-inclusive to match global-stats / top-models / chart
+    # bars / cumulative. cache_tokens is returned as a separate split so the UI
+    # can honor the exclude-cache toggle.
     sql = text(
         f"""
         SELECT
             provider_id,
-            SUM(tokens_input + tokens_output + tokens_reasoning) AS total_tokens,
-            SUM(cost_usd) AS total_cost
+            SUM(tokens_input + tokens_output + tokens_reasoning
+                + tokens_cache_read + tokens_cache_create) AS total_tokens,
+            SUM(tokens_cache_read + tokens_cache_create) AS cache_tokens,
+            SUM(cost_usd) AS total_cost,
+            SUM(cost_cache_read + cost_cache_create) AS cache_cost
         FROM usage_events
         WHERE {where}
           AND ts >= :since
@@ -475,15 +480,21 @@ def query_history_deltas(
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
 
     token_delta_total = 0
+    token_cache_total = 0
     cost_delta_total = 0.0
+    cost_cache_total = 0.0
     provider_token_deltas: dict[str, float] = {}
 
     for r in rows:
-        pid, tokens, cost = r
+        pid, tokens, cache_tokens, cost, cache_cost = r
         t = int(tokens or 0)
+        cache = int(cache_tokens or 0)
         c = float(cost or 0.0)
+        cc = float(cache_cost or 0.0)
         token_delta_total += t
+        token_cache_total += cache
         cost_delta_total += c
+        cost_cache_total += cc
         provider_token_deltas[pid] = provider_token_deltas.get(pid, 0.0) + t
 
     # Critical series count from latest_usage cards
@@ -513,7 +524,9 @@ def query_history_deltas(
 
     return {
         "token_delta_total": float(token_delta_total),
+        "token_cache_total": float(token_cache_total),
         "cost_delta_total": round(cost_delta_total, 6),
+        "cost_cache_total": round(cost_cache_total, 6),
         "provider_token_deltas": {k: round(v, 2) for k, v in provider_token_deltas.items()},
         "critical_series_count": critical_series_count,
         "series_sampled": False,
