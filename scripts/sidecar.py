@@ -391,6 +391,9 @@ __REGISTRY__: dict[str, Any] = {
                     "mapping": {
                         "token.access_token": "oauth_token",
                         "token.refresh_token": "refresh_token",
+                        # Raw ISO8601 expiry — converted to expiry_date (ms epoch)
+                        # below so the server's token_cache can compare freshness.
+                        "token.expiry": "_raw_expiry",
                     },
                 },
             ],
@@ -1878,6 +1881,33 @@ class GenericCollector:
                                 )
                         except Exception:
                             logging.debug("Statusline file rule failed", exc_info=True)
+
+        # Convert antigravity's raw ISO8601 token.expiry into expiry_date (ms
+        # epoch, matching gemini's oauth_creds.json convention) so the server's
+        # token_cache._is_staler can compare freshness. Without this, agy's
+        # opaque access token carries no exp signal at all, so an expired local
+        # token from one sidecar silently clobbers a valid one pushed by
+        # another (see docs/plans — the "app shows 55%, agy shows 0%" incident).
+        # If the local agy session has actually lapsed, don't push the dead
+        # credential at all: agy owns its own refresh cycle (no client_id in
+        # the file for Runway to refresh with), so pushing it would just keep
+        # re-poisoning the shared cache entry every cycle until the user re-runs
+        # agy. Let a sidecar with a live agy session keep serving quota instead.
+        if provider_id == "antigravity" and tokens.get("_raw_expiry"):
+            raw_expiry = tokens.pop("_raw_expiry")
+            try:
+                expiry_dt = datetime.datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+                if expiry_dt.timestamp() < time.time():
+                    logging.warning(
+                        f"  [{provider_id}] local token expired at {raw_expiry} — "
+                        "not pushing (run `agy` to refresh)"
+                    )
+                    tokens.pop("oauth_token", None)
+                    tokens.pop("refresh_token", None)
+                else:
+                    tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))
+            except (ValueError, TypeError):
+                logging.debug(f"  [{provider_id}] could not parse token expiry: {raw_expiry!r}")
 
         # Stamp the antigravity token with the resolved account identity. The agy
         # token file carries no id_token/email, so without this the server hashes

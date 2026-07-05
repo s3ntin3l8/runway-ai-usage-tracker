@@ -162,6 +162,67 @@ class TestSmartCollectorErrorHandling:
         assert "TestCollector" in result[0].get("service_name", "")
 
     @pytest.mark.asyncio
+    async def test_collector_error_card_treated_as_failure_not_success(
+        self, mock_collector, mock_client
+    ):
+        """A collector returning an error-shaped card (e.g. 401 auth failure)
+        must be treated as a failed fetch, not "successful" data.
+
+        This is the Antigravity incident: a collector's `collect()` returns
+        `[error_card(...)]` on a 401 rather than raising — SmartCollector used
+        to only special-case `error_type == "rate_limited"`, so any other
+        error card fell into the success branch and overwrote `last_result`
+        with the error card itself, permanently breaking cache-serving and
+        logging the failure as a "Successful fetch".
+        """
+        cached_data = [
+            {
+                "service_name": "Test",
+                "remaining": "55%",
+                "detail": "Real quota data",
+                "data_source": "api",
+            }
+        ]
+        auth_error_card = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "detail": "Token expired — run `agy`",
+                "data_source": "error",
+                "error_type": "auth_failed",
+            }
+        ]
+        mock_collector.collect.side_effect = [cached_data, auth_error_card]
+
+        smart = SmartCollector(
+            mock_collector,
+            "TestCollector",
+            ttl=0.1,
+            error_threshold=3,
+            error_retry_delay=0,
+        )
+
+        # First call succeeds and populates the cache with real data.
+        result1 = await smart.collect(mock_client)
+        assert result1 == cached_data
+
+        await asyncio.sleep(0.15)  # let the cache TTL expire
+
+        # Second call: collector returns an auth-failure card, not real data.
+        result2 = await smart.collect(mock_client)
+
+        # Must fall back to the last GOOD cached data, tagged as stale — not
+        # the error card itself.
+        assert result2[0]["remaining"] == "55%"
+        assert "[Cached" in result2[0]["detail"]
+        # The failure must be counted so retry/backoff logic engages.
+        assert smart.consecutive_errors == 1
+        # last_result must still hold real data, not the poisoning error card,
+        # so a THIRD call (still within retry delay would skip fetch, but here
+        # delay=0) keeps degrading gracefully instead of being stuck on "ERR".
+        assert smart.last_result == cached_data
+
+    @pytest.mark.asyncio
     async def test_consecutive_errors_tracked(self, mock_collector, mock_client):
         """Test that consecutive errors are counted."""
         mock_collector.collect.side_effect = Exception("API error")
@@ -309,6 +370,41 @@ class TestSmartCollectorCacheTags:
         assert "ago]" in cached_detail
         # Should preserve original detail
         assert original_detail in cached_detail
+
+    def test_stale_ceiling_degrades_card_visibly(self, mock_collector):
+        """Past STALE_CEILING_SECONDS, a cache-served card must visibly flag
+        that collection is failing rather than presenting old data as healthy
+        — this is the fix for the frozen-but-confident Antigravity card.
+
+        health/detail are used for the degrade signal (not data_source/
+        error_type/remaining) so accumulator.upsert_latest_usage's error-card
+        suppression does NOT swallow this update — it's still real data, just
+        old, and the row must keep refreshing.
+        """
+        smart = SmartCollector(mock_collector, "TestCollector")
+        smart.last_success_time = time.time() - 7200  # 2 hours ago > 1h ceiling
+        data = [{"service_name": "Test", "remaining": "55%", "detail": "Real data"}]
+
+        tagged = smart._tag_as_cached(data, time.time())
+
+        assert tagged[0]["health"] == "critical"
+        assert "Collection failing" in tagged[0]["detail"]
+        assert "[Cached" in tagged[0]["detail"]
+        # Must NOT flip these — accumulator would suppress the write entirely.
+        assert tagged[0].get("data_source") != "error"
+        assert tagged[0].get("remaining") == "55%"
+
+    def test_below_stale_ceiling_does_not_degrade_card(self, mock_collector):
+        """A recently-served cached card (under the ceiling) stays untouched
+        aside from the normal age tag — routine TTL churn is not an outage."""
+        smart = SmartCollector(mock_collector, "TestCollector")
+        smart.last_success_time = time.time() - 60  # 1 minute ago
+        data = [{"service_name": "Test", "remaining": "55%", "detail": "Real data"}]
+
+        tagged = smart._tag_as_cached(data, time.time())
+
+        assert "health" not in tagged[0]
+        assert "Collection failing" not in tagged[0]["detail"]
 
 
 class TestSmartCollectorRateLimit:

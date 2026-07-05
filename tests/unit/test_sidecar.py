@@ -112,6 +112,80 @@ class TestAntigravityTokenStamp:
         assert token_cards[0]["account_id"] == "default"
 
 
+class TestAntigravityTokenExpiry:
+    """agy's opaque access token carries no JWT exp claim, so `expiry_date`
+    (the freshness signal token_cache._is_staler needs) must be derived from
+    the token file's ISO8601 `token.expiry` field.
+
+    Without this, an expired local agy token from one sidecar silently
+    clobbers a valid token pushed by another sidecar under the same cache
+    key — the root cause of the "CLI shows 0% left, app shows 55% left"
+    incident (Antigravity Gemini session quota).
+    """
+
+    @staticmethod
+    def _write_token_file(tmp_path: Path, expiry_iso: str) -> Path:
+        tok = tmp_path / "antigravity-oauth-token"
+        tok.write_text(
+            json.dumps(
+                {
+                    "auth_method": "consumer",
+                    "token": {
+                        "access_token": "ya29.x",
+                        "refresh_token": "1//r",
+                        "expiry": expiry_iso,
+                    },
+                }
+            )
+        )
+        return tok
+
+    @staticmethod
+    def _config(tok_path: Path) -> dict:
+        """The real production antigravity rule config (not a hand-rolled
+        subset), so this exercises the actual `token.expiry` mapping."""
+        config = json.loads(json.dumps(sidecar.__REGISTRY__["providers"]["antigravity"]))
+        config["rules"][0]["paths"] = [str(tok_path)]
+        return config
+
+    def test_valid_token_gets_expiry_date_stamped_as_ms_epoch(self, tmp_path):
+        import datetime as dt
+
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+        tok = self._write_token_file(tmp_path, future)
+        config = self._config(tok)
+
+        with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert len(token_cards) == 1
+        meta = token_cards[0]["metadata"]
+        assert meta["oauth_token"] == "ya29.x"
+        assert "expiry_date" in meta
+        # ms epoch, roughly 1 hour in the future
+        assert int(meta["expiry_date"]) > int(time.time() * 1000)
+        assert "_raw_expiry" not in meta  # temp field must not leak into the push
+
+    def test_expired_token_is_not_pushed(self, tmp_path):
+        """A lapsed agy session must not push its dead credential at all —
+        agy owns its own refresh (no client_id in the file for Runway to
+        refresh with), so pushing it would just keep re-poisoning the shared
+        server-side cache entry every cycle."""
+        import datetime as dt
+
+        past = (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).isoformat()
+        tok = self._write_token_file(tmp_path, past)
+        config = self._config(tok)
+
+        with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+
+        # No oauth_token/refresh_token survives → no token card is emitted.
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert token_cards == []
+
+
 class TestQueueRotate:
     """C3: queue_rotate must not crash when called with no arguments."""
 

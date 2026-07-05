@@ -140,13 +140,26 @@ class TokenCache:
 
     @staticmethod
     def _is_staler(incoming: dict[str, str], existing: dict[str, str]) -> bool:
-        """True when *incoming* expires strictly before *existing*.
+        """True when *incoming* should not be allowed to replace *existing*.
 
-        Only meaningful when BOTH carry a comparable expiry (`exp_from_tokens` —
-        JWT `exp` or `expiry_date`). Opaque credentials (api keys, cookies) yield
-        None on either side, so this returns False and the normal overwrite wins.
+        A token with a *known* expiry already in the past is treated as
+        maximally stale regardless of the existing entry's expiry — this
+        guards against a sidecar with no comparable expiry signal on the
+        existing side (e.g. an unpatched binary, or a provider whose existing
+        entry predates an expiry-stamping fix) still holding a valid token
+        while a different sidecar re-pushes its own expired credential. Without
+        this, `exist_exp is None` would make the two sides incomparable and the
+        expired push would win on recency alone (this is exactly how one
+        sidecar's expired Antigravity token clobbered another's valid one).
+
+        Otherwise, only meaningful when BOTH carry a comparable expiry
+        (`exp_from_tokens` — JWT `exp` or `expiry_date`). Opaque credentials
+        (api keys, cookies) yield None on either side, so this returns False
+        and the normal overwrite wins.
         """
         inc_exp = IdentityExtractor.exp_from_tokens(incoming)
+        if inc_exp is not None and inc_exp < time.time():
+            return True
         exist_exp = IdentityExtractor.exp_from_tokens(existing)
         if inc_exp is None or exist_exp is None:
             return False
@@ -187,6 +200,7 @@ class TokenCache:
                         "account_id": acc_id,
                         "tokens": tokens,
                         "account_label": metadata.get("account_label"),
+                        "source": metadata.get("source"),
                         "age": now - timestamp,
                     }
                 )

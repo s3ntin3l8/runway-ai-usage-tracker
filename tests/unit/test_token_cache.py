@@ -203,6 +203,42 @@ async def test_staler_push_does_not_clobber_fresher(cache):
 
 
 @pytest.mark.asyncio
+async def test_known_expired_push_does_not_clobber_unknown_expiry_entry(cache):
+    """A push with a known-expired credential must not overwrite an existing
+    entry that has no comparable expiry signal of its own.
+
+    This is the Antigravity incident: agy's opaque access token carries no
+    exp/expiry_date at all (pre-fix), so an existing valid token and an
+    expired one pushed by a different sidecar were incomparable and the
+    expired push won purely on recency — silently breaking quota collection
+    on every host except the one that had just re-pushed. `expiry_date` is
+    now stamped for Antigravity, but this guards the general case (any
+    provider/sidecar where the existing entry predates an expiry-stamping
+    fix or the two sides are otherwise asymmetric).
+    """
+    now_ms = int(time.time() * 1000)
+    # A different sidecar's still-valid push arrives with no expiry signal
+    # (mirrors a pre-fix binary, or any opaque-token entry).
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "valid-no-signal"},
+        account_id="user@example.com",
+        source="sidecar-mgmt",
+    )
+    # This host's local agy session lapsed a day ago, but it still re-pushes
+    # on every poll cycle.
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "expired", "expiry_date": str(now_ms - 86_400_000)},
+        account_id="user@example.com",
+        source="sidecar-dev-01",
+    )
+
+    tokens = await cache.get("antigravity", "user@example.com")
+    assert tokens["oauth_token"] == "valid-no-signal"
+
+
+@pytest.mark.asyncio
 async def test_fresher_push_replaces_staler(cache):
     """A genuinely fresher push (later expiry) still wins."""
     now_ms = int(time.time() * 1000)
