@@ -12,6 +12,16 @@ from app.services.collectors.base import BaseCollector
 logger = logging.getLogger(__name__)
 
 
+def _is_error_result(result: list[dict[str, Any]]) -> bool:
+    """True when *result* is an error card (built by `error_card()`), not real data.
+
+    Every existing collector returns error cards as the sole content of the
+    list (never mixed with healthy cards — see `error_card()` callers), so
+    checking any() is safe: a hit means the whole result is a failure signal.
+    """
+    return any(r.get("data_source") == "error" or r.get("remaining") == "ERR" for r in result)
+
+
 class SmartCollector:
     """
     Wrapper around a BaseCollector that implements differential fetching.
@@ -27,6 +37,11 @@ class SmartCollector:
     - Return stale: If fetch fails but cache exists
     - Return error: If no cache and fetch fails
     """
+
+    # Beyond this cache age, a served card is almost certainly masking an
+    # ongoing collection failure rather than routine TTL churn — degrade it
+    # visibly (see _tag_as_cached) instead of presenting stale data as healthy.
+    STALE_CEILING_SECONDS = 3600  # 1 hour
 
     def __init__(
         self,
@@ -260,6 +275,22 @@ class SmartCollector:
                             return self._tag_as_cached(self.last_result, now)
                         return copy.deepcopy(result)
 
+                    # Any other error-shaped card (auth failure, parse error, ...)
+                    # is a failure signal, not data — treating it as "success"
+                    # would overwrite last_result with the error card itself,
+                    # permanently poisoning the cache-serving fallback, and log
+                    # a fetch failure as "Successful fetch". This is what let a
+                    # stale Antigravity quota card sit indefinitely, logged as
+                    # healthy, while the token was actually expired.
+                    if _is_error_result(result):
+                        self._mark_failure(
+                            Exception(result[0].get("detail") or "collector returned an error"),
+                            now,
+                        )
+                        if self.last_result:
+                            return self._tag_as_cached(self.last_result, now)
+                        return copy.deepcopy(result)
+
                     # Success: clear any 429 backoff
                     self._clear_429()
                     self._mark_success(result, now)
@@ -305,6 +336,20 @@ class SmartCollector:
         Add [Cached X seconds ago] tag to detail field.
         Preserves original data_source and input_source.
 
+        Age is recomputed against `now` on every call, so as long as
+        `collect()` keeps invoking this each poll cycle (rather than freezing
+        on a stale in-memory `last_result` — see the error-result handling
+        above), the tag stays truthful instead of freezing at whatever value
+        it happened to have the first time this card was cache-served.
+
+        Past `STALE_CEILING_SECONDS`, the card is additionally flagged
+        (health="critical" + a "Collection failing" prefix) so a long-running
+        outage reads as visibly degraded rather than confidently healthy. This
+        intentionally avoids touching `data_source`/`error_type`/`remaining`
+        (the fields `accumulator.upsert_latest_usage` uses to detect and
+        suppress error cards) — this is still real, if old, data, so it must
+        keep being written and refresh the row's `updated_at`.
+
         Args:
             result: Original result from collector
             now: Current timestamp
@@ -315,6 +360,7 @@ class SmartCollector:
         last_success = self.last_success_time or 0.0
         age = now - last_success
         age_str = f"{age:.0f}s" if age < 60 else f"{age / 60:.1f}m"
+        is_stale = age > self.STALE_CEILING_SECONDS
 
         tagged = []
         for card in result:
@@ -327,6 +373,9 @@ class SmartCollector:
             # Preserve original data_source and input_source if they exist
             if "data_source" not in card_copy:
                 card_copy["data_source"] = "cache"
+            if is_stale:
+                card_copy["health"] = "critical"
+                card_copy["detail"] = f"⚠ Collection failing — {card_copy['detail']}"
             tagged.append(card_copy)
 
         return tagged

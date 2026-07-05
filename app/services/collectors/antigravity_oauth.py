@@ -4,10 +4,21 @@ import time
 import httpx
 
 from app.core.date_utils import parse_iso8601_utc
+from app.core.utils import IdentityExtractor
 from app.services.collectors.oauth_base import OAuthBaseCollector
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
+
+
+def _is_token_expired(tokens: dict) -> bool:
+    """True when *tokens* carries a known expiry that has already passed.
+
+    Unknown/opaque expiry (no `exp`/`expiry_date`) returns False — absence of
+    a signal is not evidence of expiry.
+    """
+    exp = IdentityExtractor.exp_from_tokens(tokens)
+    return exp is not None and exp < time.time()
 
 
 class AntigravityOAuthMixin(OAuthBaseCollector):
@@ -38,14 +49,32 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             cache_data = await token_cache.get_with_metadata(
                 "antigravity", account_id=self.account_id
             )
-            if not cache_data:
+            if not cache_data or _is_token_expired(cache_data[0]):
                 # Identity-mismatch fallback: the agy token file carries no id_token,
                 # so the sidecar-pushed token is cached under a refresh-token-derived
                 # hash — NOT the email that seeds self.account_id from LatestUsage, and
                 # antigravity has no "default" cache entry to catch the miss. Fall back
                 # to the newest cached entry (single Google account → it is the right
                 # token). Keep self.account_id as the email; do not adopt the hash.
-                cache_data = await token_cache.get_with_metadata("antigravity", account_id=None)
+                #
+                # Also covers a present-but-expired email-keyed entry: two sidecars
+                # can push tokens for the same account (e.g. this host's agy session
+                # lapsed while another host's is still valid), and each push
+                # overwrites the single shared email-keyed slot. Prefer the newest
+                # entry across ALL cached accounts that isn't itself known-expired —
+                # falling back to the bare newest-by-recency only if every entry is
+                # expired (nothing better to offer).
+                candidates = await token_cache.get_accounts("antigravity")
+                fresh = [a for a in candidates if not _is_token_expired(a["tokens"])]
+                pool = fresh or candidates
+                if pool:
+                    newest = min(pool, key=lambda a: a["age"])
+                    cache_data = (
+                        newest["tokens"],
+                        {"account_label": newest["account_label"], "source": newest["source"]},
+                    )
+                else:
+                    cache_data = None
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"

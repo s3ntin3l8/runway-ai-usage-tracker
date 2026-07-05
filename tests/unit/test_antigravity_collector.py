@@ -51,6 +51,47 @@ class TestAntigravityTokenLookup:
         finally:
             await token_cache.reset()
 
+    @pytest.mark.asyncio
+    async def test_prefers_newest_non_expired_entry_over_expired_email_hit(self):
+        """The email-keyed entry can be a HIT but still expired — e.g. two
+        sidecars push tokens for the same account (one host's agy session
+        lapsed, another's is live), and each overwrites the single shared
+        email-keyed slot. A present-but-expired hit must not short-circuit
+        the fallback; the newest non-expired entry (any key) should be used
+        instead.
+
+        This is the root-cause incident: dev-01's expired agy token kept
+        clobbering mgmt's valid one under the same email key, and the
+        collector accepted the expired hit without ever looking further.
+        """
+        await token_cache.reset()
+        try:
+            import time
+
+            now_ms = int(time.time() * 1000)
+            # mgmt's valid push, stored under a different (hash) key.
+            await token_cache.store(
+                "antigravity",
+                {"oauth_token": "ya29.valid", "expiry_date": str(now_ms + 3_600_000)},
+                account_id=None,
+                source="sidecar-mgmt",
+            )
+            # dev-01's expired push, stored under the email key — a HIT, not a miss.
+            await token_cache.store(
+                "antigravity",
+                {"oauth_token": "ya29.expired", "expiry_date": str(now_ms - 3_600_000)},
+                account_id="user@example.com",
+                source="sidecar-dev-01",
+            )
+
+            collector = AntigravityCollector(account_id="user@example.com")
+            token = await collector._get_current_token()
+
+            assert token == "ya29.valid"
+            assert collector.account_id == "user@example.com"
+        finally:
+            await token_cache.reset()
+
 
 class TestAntigravityErrorCards:
     @pytest.mark.asyncio
