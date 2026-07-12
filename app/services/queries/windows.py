@@ -258,6 +258,7 @@ def query_window_aggregation(
         "window_start": window_start.isoformat(),
         "window_end": reset_at.isoformat(),
         "token_usage": token_usage,
+        "cost_usd": total["cost"],
         "by_model": by_model,
         "by_sidecar": by_sidecar,
     }
