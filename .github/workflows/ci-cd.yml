@@ -30,6 +30,7 @@ jobs:
       test-script: 'test:coverage'
       # Gate on total line coverage (currently ~93%); buffer for variance.
       coverage-fail-under: '85'
+      strict-checks: true
     secrets: inherit
 
   build-docker:
