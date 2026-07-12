@@ -196,6 +196,59 @@ def test_query_windows_respects_days_filter(session):
     assert len(result["windows"]) == 0
 
 
+def test_query_windows_closed_history_survives_alongside_open_window(session):
+    """Historical closed windows must still be returned even though a
+    currently-open window exists for the same (provider, account,
+    window_type). Regression for a bug where ANY open window suppressed
+    every closed window of that type, regardless of which window instance
+    it was — since a closed window's window_end is always strictly before
+    the current open window's boundary, they can never be the same
+    instance and closed history should never be dropped."""
+    import json
+
+    from app.models.db import LatestUsage
+    from app.services.event_query import query_windows
+
+    now = datetime.now(UTC)
+    for i in range(3):
+        w_end = now - timedelta(days=7 * (i + 1))
+        session.add(
+            _window(
+                window_start=w_end - timedelta(days=7),
+                window_end=w_end,
+                pct_used=80.0,
+            )
+        )
+
+    card = {
+        "provider_id": "anthropic",
+        "account_id": "user@example.com",
+        "window_type": "weekly",
+        "model_id": "",
+        "pct_used": 90.0,
+        "unit_type": "percent",
+        "reset_at": (now + timedelta(days=3)).isoformat(),
+        "service_name": "Claude",
+    }
+    session.add(
+        LatestUsage(
+            provider_id="anthropic",
+            account_id="user@example.com",
+            window_type="weekly",
+            model_id="",
+            card_json=json.dumps(card),
+        )
+    )
+    session.commit()
+
+    result = query_windows(session, days=90)
+    assert len(result["windows"]) == 4
+    open_rows = [r for r in result["windows"] if r["is_open"]]
+    closed_rows = [r for r in result["windows"] if not r["is_open"]]
+    assert len(open_rows) == 1
+    assert len(closed_rows) == 3
+
+
 def test_query_windows_open_row_falls_back_to_live_usage_events(session):
     """An open window whose card has no token_usage/cost_usd (e.g. the
     percent-only Anthropic quota card) still gets tokens/cost/top_model
