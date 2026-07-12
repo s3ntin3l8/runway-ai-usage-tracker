@@ -37,6 +37,27 @@ describe('FleetPage', () => {
     expect(await screen.findByText('My Laptop')).toBeInTheDocument();
   });
 
+  it('shows online status for a fresh sidecar the server marks not stale', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ stale: false })],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByRole('img', { name: 'online' })).toBeInTheDocument();
+  });
+
+  it('follows the server-computed `stale` flag rather than a client-side threshold', async () => {
+    // Regression: the badge used to recompute liveness client-side from
+    // last_seen with its own 30-minute threshold, which disagreed with the
+    // server's 60-minute `stale` gate on the update-available badge. A
+    // sidecar with a fresh-looking last_seen must still show "stale" once
+    // the server says so — there is only one source of truth now.
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ last_seen: new Date().toISOString(), stale: true })],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByRole('img', { name: 'stale' })).toBeInTheDocument();
+  });
+
   it('pauses an active sidecar via the pause control', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     vi.mocked(api.setSidecarEnabled).mockResolvedValue({ status: 'paused' });

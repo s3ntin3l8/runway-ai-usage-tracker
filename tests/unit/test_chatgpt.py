@@ -146,6 +146,109 @@ class TestChatGPTCollectorDetailed:
                     assert auth["source"] == "api"
 
     @pytest.mark.asyncio
+    async def test_auth_priority_3_identity_mismatch_falls_back_to_matching_account(
+        self, mock_http_client
+    ):
+        """Regression: the sidecar can key its push under a different account_id
+        than self.account_id (e.g. Codex CLI's internal OpenAI account UUID vs.
+        the email LatestUsage durably seeded the collector with). Without the
+        cross-account fallback, token_cache.get_with_metadata's own "exact key
+        missing -> fall back to 'default'" convenience path would silently
+        substitute a stale dashboard-configured cookie (no oauth_token) instead
+        — sending every collection cycle down the dead cookie-refresh path.
+        """
+        from app.services.token_cache import TokenCache
+
+        fresh_cache = TokenCache()
+        await fresh_cache.store(
+            "chatgpt",
+            {"oauth_token": "real-oauth-token", "refresh_token": "r1", "id_token": "idt"},
+            account_id="f0ab5b6d-295f-4e9e-9f4e-2ed5a8704363",
+            account_label="codex@example.com",
+            source="dev-01",
+        )
+        await fresh_cache.store(
+            "chatgpt",
+            {"session_cookie": "stale-dead-cookie"},
+            account_id="default",
+            source="config",
+        )
+
+        collector = ChatGPTCollector(account_id="codex@example.com")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("app.services.collectors.chatgpt_oauth.token_cache", fresh_cache),
+        ):
+            auth = await collector._get_auth_data(mock_http_client)
+
+        assert auth["token"] == "real-oauth-token"
+        assert auth["source"] == "api"
+        # The cookie-exchange path must never have been reached.
+        mock_http_client.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auth_priority_3_exact_match_skips_fallback_search(self, mock_http_client):
+        """When self.account_id matches exactly, Priority 3 must use that entry
+        directly without needing (or triggering) the cross-account search."""
+        from app.services.token_cache import TokenCache
+
+        fresh_cache = TokenCache()
+        await fresh_cache.store(
+            "chatgpt",
+            {"oauth_token": "matched-token", "refresh_token": "r1"},
+            account_id="codex@example.com",
+            source="dev-01",
+        )
+
+        collector = ChatGPTCollector(account_id="codex@example.com")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("app.services.collectors.chatgpt_oauth.token_cache", fresh_cache),
+            patch.object(
+                fresh_cache, "get_accounts", wraps=fresh_cache.get_accounts
+            ) as spy_get_accounts,
+        ):
+            auth = await collector._get_auth_data(mock_http_client)
+
+        assert auth["token"] == "matched-token"
+        spy_get_accounts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auth_priority_3_no_fallback_when_no_oauth_token_anywhere(self, mock_http_client):
+        """A genuinely cookie-only setup (no sidecar OAuth token cached under
+        ANY account) must still fall through to Priority 4 as before — the
+        cross-account search must not fabricate a token that doesn't exist."""
+        from app.services.token_cache import TokenCache
+
+        fresh_cache = TokenCache()
+        await fresh_cache.store(
+            "chatgpt",
+            {"session_cookie": "only-a-cookie"},
+            account_id="default",
+            source="config",
+        )
+
+        collector = ChatGPTCollector(account_id="codex@example.com")
+        refresh_resp = MagicMock(spec=httpx.Response)
+        refresh_resp.status_code = 200
+        refresh_resp.headers = {}
+        refresh_resp.json.return_value = {"accessToken": "refreshed-via-cookie"}
+        mock_http_client.request.return_value = refresh_resp
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("os.path.exists", return_value=False),
+            patch("app.services.collectors.chatgpt_oauth.token_cache", fresh_cache),
+        ):
+            auth = await collector._get_auth_data(mock_http_client)
+
+        assert auth["token"] == "refreshed-via-cookie"
+        assert auth["source"] == "web"
+        mock_http_client.request.assert_called_once()
+
+    @pytest.mark.asyncio
     @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_auth_priority_cookies_and_refresh(self, mock_http_client):
         """Priority 3: Browser cookies should trigger a token refresh."""

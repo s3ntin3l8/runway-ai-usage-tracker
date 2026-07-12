@@ -126,6 +126,23 @@ def _from_source_edge_suffix() -> str:
     return ""
 
 
+def _frozen_runtime_missing() -> bool:
+    """True when this is a frozen (PyInstaller onefile) process whose extraction
+    directory has been deleted out from under it — e.g. by an external `/tmp`
+    sweep or cleanup job racing a long-running daemon.
+
+    This is a precise, local corruption check: it doesn't fire on ordinary
+    network failures (server unreachable, 5xx, timeouts), only when the
+    running binary's own unpacked runtime is gone. `Restart=always` in the
+    systemd unit re-extracts a fresh copy on the next launch, so treating this
+    as fatal is the fix — the alternative is looping forever against a runtime
+    that can never recover on its own (see `http_post_signed`'s errno-2
+    failures once bundled files like certifi's CA bundle vanish).
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    return bool(meipass) and not os.path.isdir(meipass)
+
+
 _SIDECAR_VERSION_FALLBACK = (
     "0.13.0"  # last-resort default; release flow keeps package.json authoritative
 )
@@ -1919,6 +1936,21 @@ class GenericCollector:
         if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
             tokens["account_id"] = _ag_account_email()
 
+        # Stamp the codex/chatgpt token with the resolved account identity.
+        # The registry's file-rule mapping copies auth.json's own
+        # `tokens.account_id` through verbatim — Codex CLI's internal OpenAI
+        # account UUID — but the server's durable collector identity is
+        # seeded from LatestUsage's historical account_id, which is the
+        # email (see event extraction above, which already uses
+        # _codex_account_email()). The UUID and the email never match as a
+        # token_cache key, so the collector's lookup misses and silently
+        # falls back to whatever's cached under "default" (typically a
+        # stale dashboard-configured cookie). Unconditionally override: a
+        # resolved email is always the better identity here, not just a
+        # fallback for an absent value.
+        if provider_id == "chatgpt" and tokens:
+            tokens["account_id"] = _codex_account_email()
+
         # If tokens were extracted, add a hidden token card
         if tokens:
             logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
@@ -2499,6 +2531,20 @@ class DaemonRunner:
                 logging.error("=" * 60)
             else:
                 logging.error(f"Failed to send metrics (HTTP {code}): {result}")
+
+            # A code-0 failure (no HTTP response at all) combined with a missing
+            # extraction dir means the *local* frozen runtime is corrupted, not
+            # that the server is unreachable — retrying forever can never fix
+            # that. Exit hard so systemd's Restart=always re-extracts a clean
+            # runtime. Runs on a background daemon thread, so sys.exit() alone
+            # would only unwind this thread; os._exit() terminates the process.
+            if code == 0 and _frozen_runtime_missing():
+                logging.critical(
+                    "Frozen runtime extraction dir is gone (%s) — exiting so "
+                    "the service supervisor can restart with a clean unpack.",
+                    getattr(sys, "_MEIPASS", "?"),
+                )
+                os._exit(70)  # EX_SOFTWARE
 
             # Only queue metrics payloads; heartbeats don't need to be queued
             if metrics or events:

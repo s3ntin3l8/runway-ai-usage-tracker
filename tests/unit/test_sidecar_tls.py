@@ -68,3 +68,18 @@ def test_github_context_stays_verifying_under_insecure(monkeypatch):
     monkeypatch.setenv("RUNWAY_INSECURE", "1")
     ctx = _github_ssl_context("https://api.github.com/repos/x")
     assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_reaped_certifi_bundle_falls_through_to_default(monkeypatch):
+    # Regression for the dead-sidecar incident: a PyInstaller onefile's /tmp
+    # extraction dir (holding certifi's cacert.pem) got swept out from under a
+    # long-running daemon, so certifi.where() pointed at a path that no longer
+    # existed and every push died with FileNotFoundError ([Errno 2]). The
+    # existence guard must fall through to the OS trust store instead of
+    # raising.
+    import scripts.sidecar_pkg.tls as tls
+
+    monkeypatch.setattr(tls, "_certifi_cafile", lambda: "/tmp/_MEIreaped/cacert.pem")
+    ctx = tls.build_context("https://server")
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
