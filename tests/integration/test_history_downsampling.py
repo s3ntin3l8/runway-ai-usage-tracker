@@ -66,7 +66,8 @@ def test_bucket_resolution_picks_right_tier():
     assert _bucket_seconds_for(7.0) == 1800
     assert _bucket_seconds_for(15.0) == 10800
     assert _bucket_seconds_for(30.0) == 10800
-    assert _bucket_seconds_for(90.0) == 86400
+    assert _bucket_seconds_for(60.0) == 21600
+    assert _bucket_seconds_for(90.0) == 21600
     assert _bucket_seconds_for(365.0) == 86400
 
 

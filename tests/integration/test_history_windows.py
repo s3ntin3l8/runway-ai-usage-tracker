@@ -196,6 +196,108 @@ def test_query_windows_respects_days_filter(session):
     assert len(result["windows"]) == 0
 
 
+def test_query_windows_open_row_falls_back_to_live_usage_events(session):
+    """An open window whose card has no token_usage/cost_usd (e.g. the
+    percent-only Anthropic quota card) still gets tokens/cost/top_model
+    filled in from a live aggregation over usage_events, instead of
+    staying blank."""
+    import json
+
+    from app.models.db import LatestUsage, UsageEvent
+    from app.services.event_query import query_windows
+
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=2)
+
+    card = {
+        "provider_id": "anthropic",
+        "account_id": "user@example.com",
+        "window_type": "weekly",
+        "model_id": "",
+        "pct_used": 90.0,
+        "unit_type": "percent",
+        "reset_at": reset_at.isoformat(),
+        "service_name": "Claude",
+        # No token_usage / cost_usd — mirrors the real Anthropic card.
+    }
+    session.add(
+        LatestUsage(
+            provider_id="anthropic",
+            account_id="user@example.com",
+            window_type="weekly",
+            model_id="",
+            card_json=json.dumps(card),
+        )
+    )
+    session.add(
+        UsageEvent(
+            provider_id="anthropic",
+            account_id="user@example.com",
+            sidecar_id="dev-01",
+            event_id="e1",
+            ts=now - timedelta(days=1),
+            kind="message",
+            model_id="sonnet",
+            tokens_input=1000,
+            tokens_output=500,
+            cost_usd=0.05,
+        )
+    )
+    session.commit()
+
+    result = query_windows(session, days=30)
+    open_rows = [r for r in result["windows"] if r["is_open"]]
+    assert len(open_rows) == 1
+    row = open_rows[0]
+    assert row["pct_used"] == 90.0
+    assert row["tokens_total"] == 1500
+    assert row["cost_usd"] == 0.05
+    assert row["top_model"] == "sonnet"
+
+
+def test_query_windows_open_row_unknown_window_type_does_not_error(session):
+    """An open window with a provider-specific window_type not present in
+    WINDOW_DURATION (e.g. a per-model weekly quota) must not raise — it
+    just keeps the card-derived (possibly None) token/cost fields."""
+    import json
+
+    from app.models.db import LatestUsage
+    from app.services.event_query import query_windows
+
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=2)
+
+    card = {
+        "provider_id": "gemini",
+        "account_id": "user@example.com",
+        "window_type": "weekly_opus",
+        "model_id": "",
+        "pct_used": 40.0,
+        "unit_type": "percent",
+        "reset_at": reset_at.isoformat(),
+        "service_name": "Gemini",
+    }
+    session.add(
+        LatestUsage(
+            provider_id="gemini",
+            account_id="user@example.com",
+            window_type="weekly_opus",
+            model_id="",
+            card_json=json.dumps(card),
+        )
+    )
+    session.commit()
+
+    result = query_windows(session, days=30)
+    open_rows = [r for r in result["windows"] if r["is_open"]]
+    assert len(open_rows) == 1
+    row = open_rows[0]
+    assert row["pct_used"] == 40.0
+    assert row["tokens_total"] is None
+    assert row["cost_usd"] is None
+    assert row["top_model"] is None
+
+
 # ---------------------------------------------------------------------------
 # Task 4: query_chart
 # ---------------------------------------------------------------------------

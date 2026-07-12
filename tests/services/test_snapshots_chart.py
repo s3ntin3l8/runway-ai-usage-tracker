@@ -67,13 +67,14 @@ class TestPeakSurvivesEndOfBucketReset:
     """The Gemini-Pro May-13 scenario: peak hits mid-day, post-reset is 0."""
 
     def test_daily_bucket_returns_peak_not_end_of_day(self, db_session):
-        # 90-day window → 1-day buckets (86400s). Place a peak well inside the
+        # >90-day window → 1-day buckets (86400s; the 30-90d range now uses a
+        # 6-hour tier instead, see _BUCKET_TIERS). Place a peak well inside the
         # UTC day and a 0 sample near the end of the same day.
         day_start = (_NOW - timedelta(days=2)).replace(hour=0, minute=0, second=0)
         _add_snap(db_session, ts=day_start + timedelta(hours=12), pct_used=46.0)
         _add_snap(db_session, ts=day_start + timedelta(hours=23, minutes=55), pct_used=0.0)
 
-        result = query_chart(db_session, days=90.0, metric="percent")
+        result = query_chart(db_session, days=120.0, metric="percent")
         pro = _pro_series(result)
         assert pro is not None, "pro series should exist"
         assert len(pro["points"]) == 1
@@ -87,7 +88,7 @@ class TestPeakSurvivesEndOfBucketReset:
         _add_snap(db_session, ts=day_start + timedelta(hours=10), pct_used=0.0)
         _add_snap(db_session, ts=day_start + timedelta(hours=22), pct_used=0.0)
 
-        result = query_chart(db_session, days=90.0, metric="percent")
+        result = query_chart(db_session, days=120.0, metric="percent")
         pro = _pro_series(result)
         assert pro is not None
         assert len(pro["points"]) == 1
@@ -103,11 +104,31 @@ class TestPeakSurvivesEndOfBucketReset:
         _add_snap(db_session, ts=day2 + timedelta(hours=8), pct_used=20.0)
         _add_snap(db_session, ts=day2 + timedelta(hours=23), pct_used=0.0)
 
-        result = query_chart(db_session, days=90.0, metric="percent")
+        result = query_chart(db_session, days=120.0, metric="percent")
         pro = _pro_series(result)
         assert pro is not None
         pcts = sorted(p["pct_used"] for p in pro["points"])
         assert pcts == [20.0, 46.0]
+
+
+class TestNinetyDayWindowUsesSixHourBuckets:
+    """Regression test for the History tab 90d-chart-too-coarse fix: the
+    30-90d tier must use 6-hour buckets, not collapse to 1-day buckets,
+    so a weekly reset sawtooth within a single UTC day stays visible."""
+
+    def test_same_day_samples_in_different_six_hour_buckets_both_survive(self, db_session):
+        # Two samples 12 hours apart on the same UTC day land in different
+        # 6-hour buckets (00-06/06-12/12-18/18-24), so both peaks surface —
+        # at the old 1-day tier these would collapse into a single point.
+        day_start = (_NOW - timedelta(days=5)).replace(hour=0, minute=0, second=0)
+        _add_snap(db_session, ts=day_start + timedelta(hours=2), pct_used=90.0)
+        _add_snap(db_session, ts=day_start + timedelta(hours=14), pct_used=15.0)
+
+        result = query_chart(db_session, days=90.0, metric="percent")
+        pro = _pro_series(result)
+        assert pro is not None
+        pcts = sorted(p["pct_used"] for p in pro["points"])
+        assert pcts == [15.0, 90.0]
 
 
 def _add_day_rollup(

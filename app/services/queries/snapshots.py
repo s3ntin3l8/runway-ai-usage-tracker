@@ -16,6 +16,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
 from app.services.queries._shared import _parse_period_key
+from app.services.queries.windows import query_window_aggregation
 from app.services.window_closer import WINDOW_DURATION
 
 # Snapshot-bucket resolution for SQL downsampling. Pick the first tier whose
@@ -28,6 +29,7 @@ _BUCKET_TIERS: list[tuple[float, int]] = [
     (1.0, 300),  # ≤ 1d → 5-min
     (7.0, 1800),  # ≤ 7d → 30-min
     (30.0, 10800),  # ≤ 30d → 3-hour
+    (90.0, 21600),  # ≤ 90d → 6-hour (keeps the weekly sawtooth visible)
     (float("inf"), 86400),  # else → 1-day
 ]
 
@@ -80,6 +82,56 @@ def _parse_sqlite_dt(value: object) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _live_open_window_totals(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    window_type: str,
+    reset_dt: datetime | None,
+    tokens_total: float | None,
+    cost_usd: float | None,
+) -> tuple[float | None, float | None, str | None]:
+    """Fill in tokens_total/cost_usd/top_model for an open window row from a
+    live aggregation over usage_events, when the card itself didn't carry
+    them (e.g. the percent-only Anthropic quota card). Guarded because
+    WINDOW_DURATION only covers session/daily/weekly/monthly — provider-
+    specific window types (e.g. weekly_opus) would otherwise KeyError.
+    """
+    top_model: str | None = None
+    if reset_dt is None or window_type not in WINDOW_DURATION:
+        return tokens_total, cost_usd, top_model
+    try:
+        agg = query_window_aggregation(
+            session,
+            provider_id=provider_id,
+            account_id=account_id,
+            window_type=window_type,
+            reset_at=reset_dt,
+        )
+    except (KeyError, ValueError):
+        logger.debug("Failed to compute live window aggregation for open window", exc_info=True)
+        return tokens_total, cost_usd, top_model
+
+    if tokens_total is None:
+        tokens_total = agg["token_usage"]["total"]
+    if cost_usd is None:
+        cost_usd = agg["cost_usd"]
+    by_model = agg["by_model"]
+    if by_model:
+        top_model = max(
+            by_model,
+            key=lambda mid: (
+                by_model[mid]["tokens_input"]
+                + by_model[mid]["tokens_output"]
+                + by_model[mid]["tokens_cache_read"]
+                + by_model[mid]["tokens_cache_create"]
+                + by_model[mid]["tokens_reasoning"]
+            ),
+        )
+    return tokens_total, cost_usd, top_model
 
 
 def query_windows(
@@ -201,6 +253,7 @@ def query_windows(
         if window_type and window_type not in {"all", wt}:
             continue
         reset_at = card.get("reset_at")
+        reset_dt: datetime | None = None
 
         # Apply the days filter to open windows: skip if reset_at is older than `since`.
         # Windows with no reset_at are always current (e.g. session-scoped).
@@ -217,6 +270,17 @@ def query_windows(
         variant = lu.variant if lu.variant and lu.variant != "default" else None
         service_name = f"{base_name} · {variant}" if variant else base_name
         open_keys.add((lu.provider_id, lu.account_id, wt))
+
+        tokens_total, cost_usd, top_model = _live_open_window_totals(
+            session,
+            provider_id=lu.provider_id,
+            account_id=lu.account_id,
+            window_type=wt,
+            reset_dt=reset_dt,
+            tokens_total=token_usage.get("total"),
+            cost_usd=card.get("cost_usd"),
+        )
+
         rows.append(
             {
                 "provider_id": lu.provider_id,
@@ -230,10 +294,10 @@ def query_windows(
                 "pct_used": _derive_pct(card),
                 "limit_value": card.get("limit_value"),
                 "unit_type": card.get("unit_type", "tokens"),
-                "tokens_total": token_usage.get("total"),
-                "cost_usd": card.get("cost_usd"),
+                "tokens_total": tokens_total,
+                "cost_usd": cost_usd,
                 "msgs": card.get("msgs"),
-                "top_model": None,
+                "top_model": top_model,
             }
         )
 

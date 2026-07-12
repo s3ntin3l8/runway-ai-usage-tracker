@@ -104,6 +104,7 @@ def test_empty_events_returns_zero_totals():
     assert tu["cache_create"] == 0
     assert tu["reasoning"] == 0
     assert tu["total"] == 0
+    assert result["cost_usd"] == 0.0
     assert result["by_model"] == {}
     assert result["by_sidecar"] == {}
     assert result["window_type"] == _WINDOW_TYPE
@@ -155,6 +156,9 @@ def test_aggregates_tokens_per_model():
         window_type=_WINDOW_TYPE,
         reset_at=_RESET_AT,
     )
+
+    # 3 events, each with the default cost_usd=0.01 from _add_event.
+    assert result["cost_usd"] == 0.03
 
     bm = result["by_model"]
     assert set(bm.keys()) == {"sonnet", "opus"}
