@@ -31,6 +31,10 @@ class SidecarRegistry(SQLModel, table=True):
     collection_enabled: bool = Field(
         default=True
     )  # False = sidecar paused, server skips poll instructions
+    # One-shot admin "Update now" push, persisted (not in-memory) so it survives
+    # a server restart and is reliably delivered on the sidecar's next
+    # successful ingest — see fleet_registry.set_pending_update/consume_pending_update.
+    pending_update: bool = Field(default=False)
 
     @property
     def tags(self) -> list[str]:

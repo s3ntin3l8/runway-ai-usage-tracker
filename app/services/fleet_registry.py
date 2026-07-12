@@ -23,9 +23,12 @@ class FleetRegistryService:
         # The flag is consumed (cleared) the first time the sidecar polls after it is set.
         self._pending_triggers: set[str] = set()
 
-        # In-memory set of sidecar IDs awaiting a one-shot "update now" push.
-        # Consumed (cleared) on the sidecar's next heartbeat after it is set.
-        self._pending_updates: set[str] = set()
+        # NOTE: the one-shot "update now" push used to live here as an in-memory
+        # set, but that meant a queued update was silently dropped by a server
+        # restart between the admin click and the sidecar's next check-in — with
+        # a dead/slow sidecar that window can be long. It's now the persisted
+        # `SidecarRegistry.pending_update` column instead; see
+        # set_pending_update / consume_pending_update below.
 
         # In-memory tracking of the last time each sidecar was asked to poll a specific provider.
         # Key: sidecar_id -> dict(provider_id -> unix_timestamp)
@@ -74,18 +77,37 @@ class FleetRegistryService:
             return True
         return False
 
-    def set_pending_update(self, sidecar_id: str) -> None:
-        """Schedule a one-shot self-update for the given sidecar."""
-        self._pending_updates.add(sidecar_id)
-        logger.info(f"Remote update queued for sidecar '{scrub_log(sidecar_id)}'")
+    def set_pending_update(self, sidecar_id: str, session: Session) -> SidecarRegistry | None:
+        """Schedule a one-shot self-update for the given sidecar.
 
-    def consume_pending_update(self, sidecar_id: str) -> bool:
-        """Return True (and clear the flag) if an update push is pending for this sidecar."""
-        if sidecar_id in self._pending_updates:
-            self._pending_updates.discard(sidecar_id)
-            logger.info(f"Remote update delivered to sidecar '{scrub_log(sidecar_id)}'")
-            return True
-        return False
+        Persisted on the registry row (not in-memory) so the intent survives a
+        server restart between the admin click and the sidecar's next
+        check-in. Returns None if the sidecar isn't registered yet — mirrors
+        `update_sidecar`; the caller (endpoint) turns that into a 404, same as
+        `_set_sidecar_collection_enabled` does for pause/resume.
+        """
+        row = session.get(SidecarRegistry, sidecar_id)
+        if not row:
+            return None
+        row.pending_update = True
+        session.commit()
+        session.refresh(row)
+        logger.info(f"Remote update queued for sidecar '{scrub_log(sidecar_id)}'")
+        return row
+
+    def consume_pending_update(self, sidecar_id: str, session: Session) -> bool:
+        """Return True (and clear the flag) if an update push is pending for this sidecar.
+
+        Safe to call for an unregistered sidecar_id (returns False) — this
+        runs on every ingest, which must never 404.
+        """
+        row = session.get(SidecarRegistry, sidecar_id)
+        if not row or not row.pending_update:
+            return False
+        row.pending_update = False
+        session.commit()
+        logger.info(f"Remote update delivered to sidecar '{scrub_log(sidecar_id)}'")
+        return True
 
     def upsert_sidecar(
         self,
@@ -178,8 +200,14 @@ class FleetRegistryService:
         # Only offer an update when the build can actually self-update in place.
         # `None` (not reported) stays permissive so already-deployed frozen
         # sidecars keep working; `False` (from-source / Docker) suppresses it.
-        update_available = row.self_update_capable is not False and is_update_available(
-            row.sidecar_version, latest_version, latest_edge_sha
+        # A stale sidecar can't actually receive the push either way — delivery
+        # rides its next successful ingest response (see fleet.py:ingest_metrics)
+        # — so a dead sidecar would otherwise show "update available" forever
+        # even though nothing can apply it. Gate the offer on liveness too.
+        update_available = (
+            not stale
+            and row.self_update_capable is not False
+            and is_update_available(row.sidecar_version, latest_version, latest_edge_sha)
         )
         return {
             "sidecar_id": row.sidecar_id,
@@ -198,6 +226,7 @@ class FleetRegistryService:
             "self_update_capable": row.self_update_capable,
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
+            "pending_update": row.pending_update,
             "stale": stale,
             "stale_threshold_minutes": _STALE_THRESHOLD_MINUTES,
             "recent_logs": json.loads(row.recent_logs) if row.recent_logs else [],

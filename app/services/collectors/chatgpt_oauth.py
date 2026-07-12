@@ -67,6 +67,10 @@ class ChatGPTWebOAuthMixin:
 
         # Priority 3: Direct OAuth token (Manual Config / Sidecar from global cache)
         cache_data = await token_cache.get_with_metadata("chatgpt", account_id=self.account_id)
+        if cache_data and not cache_data[0].get("oauth_token"):
+            cache_data = None
+        if not cache_data:
+            cache_data = await self._find_cross_account_oauth_token()
         if cache_data:
             tokens, metadata = cache_data
             if tokens.get("oauth_token"):
@@ -178,6 +182,31 @@ class ChatGPTWebOAuthMixin:
                     }
 
         return {}
+
+    async def _find_cross_account_oauth_token(
+        self,
+    ) -> tuple[dict[str, str], dict[str, Any]] | None:
+        """Search every cached chatgpt account for one with a usable oauth_token.
+
+        Identity-mismatch fallback, mirroring antigravity_oauth.py's
+        _get_current_token: the sidecar may key its push under a different
+        account_id than self.account_id (e.g. Codex CLI's internal account
+        UUID vs. the email LatestUsage durably seeded us with). Left alone,
+        get_with_metadata's own "exact key missing -> fall back to 'default'"
+        convenience path would silently substitute whatever's cached under
+        "default" — typically a stale dashboard-configured cookie with no
+        oauth_token — so this searches for one that actually has a token
+        instead of trusting that fallback.
+        """
+        candidates = await token_cache.get_accounts("chatgpt")
+        usable = [a for a in candidates if a["tokens"].get("oauth_token")]
+        if not usable:
+            return None
+        newest = min(usable, key=lambda a: a["age"])
+        return newest["tokens"], {
+            "account_label": newest["account_label"],
+            "source": newest["source"],
+        }
 
     async def _refresh_oauth_token(
         self, client: httpx.AsyncClient, refresh_token: str

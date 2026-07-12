@@ -449,12 +449,19 @@ export interface Sidecar {
   collection_enabled?: boolean;
   collection_errors?: string[] | null;
   last_log_lines?: string[] | null;
-  // Update status computed server-side by fleet_registry.to_dict().
+  // Update status computed server-side by fleet_registry.to_dict(). A stale
+  // sidecar (no check-in within stale_threshold_minutes) never reports
+  // update_available=true — it can't receive the push either way.
   update_available?: boolean;
   latest_version?: string | null;
   // Whether the build can self-update in place (frozen, non-Docker). null = not
   // reported; false = from-source/Docker (no update push offered).
   self_update_capable?: boolean | null;
+  // One-shot "Update now" push queued but not yet delivered (persisted
+  // server-side; survives a server restart until the sidecar's next check-in).
+  pending_update?: boolean;
+  stale?: boolean;
+  stale_threshold_minutes?: number;
   [key: string]: unknown;
 }
 

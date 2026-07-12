@@ -328,7 +328,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     # One-shot admin "Update now" push: consumed once so the sidecar self-updates
     # on this heartbeat (independent of the auto-update toggle / pause state).
     update_now = (
-        fleet_registry.consume_pending_update(payload.sidecar_id) if payload.sidecar_id else False
+        fleet_registry.consume_pending_update(payload.sidecar_id, session)
+        if payload.sidecar_id
+        else False
     )
 
     return {
@@ -563,7 +565,9 @@ async def update_sidecar_now(
     """Push a one-shot self-update to the named sidecar. It self-installs on its
     next heartbeat (independent of the auto-update toggle); a no-op on non-frozen
     or Docker sidecars."""
-    fleet_registry.set_pending_update(sidecar_id)
+    row = fleet_registry.set_pending_update(sidecar_id, session)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     audit_log.record(session, request, action="sidecar.update_now", target_id=sidecar_id)
     return {"status": "update_queued", "sidecar_id": sidecar_id}
 

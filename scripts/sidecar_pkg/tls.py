@@ -67,6 +67,16 @@ def build_context(
         return ssl.create_default_context(cafile=ca)
 
     cafile = _certifi_cafile()
-    if cafile:
+    if cafile and os.path.exists(cafile):
         return ssl.create_default_context(cafile=cafile)
+    if cafile:
+        # certifi.where() resolved to a path that no longer exists — typically a
+        # PyInstaller onefile extraction dir (/tmp/_MEIxxxx) reaped out from under
+        # a long-running daemon. Fall through to the OS trust store rather than
+        # raising FileNotFoundError on every send.
+        logger.warning(
+            "certifi CA bundle missing at %s (frozen runtime likely reaped) — "
+            "falling back to OS default trust store",
+            cafile,
+        )
     return ssl.create_default_context()

@@ -112,6 +112,84 @@ class TestAntigravityTokenStamp:
         assert token_cards[0]["account_id"] == "default"
 
 
+class TestChatGPTTokenStamp:
+    """The registry's file rule copies auth.json's own `tokens.account_id`
+    through verbatim — Codex CLI's internal OpenAI account UUID — but the
+    server's durable collector identity is seeded from LatestUsage's email.
+    The two never match as a token_cache key, so the collector's lookup
+    silently falls back to a stale dashboard-configured cookie (see
+    chatgpt_oauth.py's Priority 3). The token card must be stamped with the
+    resolved email instead, overriding whatever raw account_id the file
+    mapping already found.
+    """
+
+    @staticmethod
+    def _codex_config(auth_path: Path) -> dict:
+        return {
+            "name": "ChatGPT",
+            "icon": "💬",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [str(auth_path)],
+                    "format": "json",
+                    "mapping": {
+                        "tokens.access_token": "oauth_token",
+                        "tokens.refresh_token": "refresh_token",
+                        "tokens.id_token": "id_token",
+                        "tokens.account_id": "account_id",
+                    },
+                }
+            ],
+        }
+
+    def test_token_card_stamped_with_resolved_email_not_raw_uuid(self, tmp_path):
+        id_token = _make_jwt({"email": "codex@example.com"})
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": "sk-live-token",
+                        "refresh_token": "refresh-abc",
+                        "id_token": id_token,
+                        # Codex CLI's internal OpenAI account UUID — must NOT
+                        # end up as the pushed account_id.
+                        "account_id": "f0ab5b6d-295f-4e9e-9f4e-2ed5a8704363",
+                    }
+                }
+            )
+        )
+        config = self._codex_config(auth_file)
+        with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
+            cards = sidecar.GenericCollector.collect_provider("chatgpt", config)
+
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert len(token_cards) == 1
+        assert token_cards[0]["account_id"] == "codex@example.com"
+        assert token_cards[0]["account_id"] != "f0ab5b6d-295f-4e9e-9f4e-2ed5a8704363"
+
+    def test_token_card_defaults_when_email_undecodable(self, tmp_path):
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": "sk-live-token",
+                        "account_id": "f0ab5b6d-295f-4e9e-9f4e-2ed5a8704363",
+                    }
+                }
+            )
+        )
+        config = self._codex_config(auth_file)
+        with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
+            cards = sidecar.GenericCollector.collect_provider("chatgpt", config)
+
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert len(token_cards) == 1
+        assert token_cards[0]["account_id"] == "default"
+
+
 class TestAntigravityTokenExpiry:
     """agy's opaque access token carries no JWT exp claim, so `expiry_date`
     (the freshness signal token_cache._is_staler needs) must be derived from
@@ -369,6 +447,98 @@ class TestDaemonRunnerRunOnceFailure:
         assert result is False
         assert runner.status == "err"
         assert "boom" in runner.last_error
+
+
+class TestFrozenRuntimeMissing:
+    """_frozen_runtime_missing(): the precise local-corruption signal.
+
+    Distinguishes "my own unpacked _MEIPASS dir got swept out from under me"
+    (fatal — retrying can never fix it) from ordinary network failures.
+    """
+
+    def test_not_frozen_never_reports_missing(self, monkeypatch):
+        monkeypatch.delattr(sidecar.sys, "_MEIPASS", raising=False)
+        assert sidecar._frozen_runtime_missing() is False
+
+    def test_frozen_with_intact_dir_is_fine(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sidecar.sys, "_MEIPASS", str(tmp_path), raising=False)
+        assert sidecar._frozen_runtime_missing() is False
+
+    def test_frozen_with_reaped_dir_is_missing(self, monkeypatch, tmp_path):
+        gone = tmp_path / "_MEIreaped"  # never created
+        monkeypatch.setattr(sidecar.sys, "_MEIPASS", str(gone), raising=False)
+        assert sidecar._frozen_runtime_missing() is True
+
+
+class TestDaemonRunnerRuntimeCorruptionExit:
+    """run_once() must hard-exit when the frozen runtime itself is gone —
+    Restart=always can only heal a process that actually exits. Regression
+    for the incident where a reaped /tmp/_MEIxxxx sent the daemon into an
+    infinite `HTTP 0: [Errno 2]` retry loop with no supervisor intervention.
+    """
+
+    def test_code_zero_plus_missing_runtime_exits_process(self):
+        runner = _make_runner()
+        with (
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(False, "[Errno 2] No such file or directory", 0),
+            ),
+            patch.object(sidecar, "_frozen_runtime_missing", return_value=True),
+            patch.object(sidecar, "queue_flush"),
+            patch.object(sidecar, "queue_push"),
+            patch.object(sidecar.os, "_exit") as mock_exit,
+        ):
+            runner.run_once()
+
+        mock_exit.assert_called_once_with(70)
+
+    def test_code_zero_with_intact_runtime_does_not_exit(self):
+        """A code-0 failure alone (server down, DNS failure, etc.) must NOT
+        exit — only a code-0 failure *combined with* a reaped runtime is
+        treated as fatal, so a plain network/server outage can't crash-loop
+        the daemon."""
+        runner = _make_runner()
+        with (
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(False, "Connection refused", 0),
+            ),
+            patch.object(sidecar, "_frozen_runtime_missing", return_value=False),
+            patch.object(sidecar, "queue_flush"),
+            patch.object(sidecar, "queue_push"),
+            patch.object(sidecar.os, "_exit") as mock_exit,
+        ):
+            result = runner.run_once()
+
+        mock_exit.assert_not_called()
+        assert result is False
+
+    def test_http_error_with_missing_runtime_does_not_exit(self):
+        """A real HTTP response (non-zero code) means the network path works —
+        even if the runtime dir check would report missing, that combination
+        shouldn't occur, but code must gate strictly on code==0 so a genuine
+        4xx/5xx from the server never triggers a process exit."""
+        runner = _make_runner()
+        with (
+            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(False, "Internal Server Error", 500),
+            ),
+            patch.object(sidecar, "_frozen_runtime_missing", return_value=True),
+            patch.object(sidecar, "queue_flush"),
+            patch.object(sidecar, "queue_push"),
+            patch.object(sidecar.os, "_exit") as mock_exit,
+        ):
+            runner.run_once()
+
+        mock_exit.assert_not_called()
 
 
 class TestDaemonRunnerQueuedStatus:
