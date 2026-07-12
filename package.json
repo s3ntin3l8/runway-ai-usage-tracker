@@ -10,5 +10,5 @@
     "web:build": "npm --prefix webapp run build",
     "web:test": "npm --prefix webapp test"
   },
-  "license": "ISC"
+  "license": "AGPL-3.0-only"
 }
