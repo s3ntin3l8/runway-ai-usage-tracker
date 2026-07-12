@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.7.2...v2.8.0) (2026-07-12)
+
+
+### Features
+
+* enable strict-checks for detect-secrets in test-frontend ([#173](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/173)) ([d64f9cc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d64f9ccdac8c9ca5514f79ecb1819d12ded1bcb2))
+
+
+### Bug Fixes
+
+* sharpen 90d history chart resolution and fill open quota-window totals ([#176](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/176)) ([edabfc5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/edabfc5611e061c4222da0b27e78e54dd2acb903))
+* sidecar runtime resilience, fleet update staleness, chatgpt identity mismatch ([#175](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/175)) ([3d7d360](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3d7d36077a66f687320e09769c3be2b96d58470a))
+
 ## [2.7.2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.7.1...v2.7.2) (2026-07-05)
 
 
