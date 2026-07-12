@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.8.0...v2.8.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* stop open quota windows from hiding all closed history of the same type ([#177](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/177)) ([0303d4c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0303d4cf6d817064fe1bb59bb8bd505952b5c2db))
+
 ## [2.8.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.7.2...v2.8.0) (2026-07-12)
 
 
