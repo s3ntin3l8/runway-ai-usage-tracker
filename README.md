@@ -230,6 +230,6 @@ Runway provides a flexible, multi-layered security model:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file.
+AGPL-3.0 License - see [LICENSE](LICENSE) file.
 
 *Last updated: 2026-06-14*
