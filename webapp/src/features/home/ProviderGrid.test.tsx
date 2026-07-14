@@ -95,6 +95,26 @@ describe('ProviderGrid', () => {
     // 'default' should not appear as visible text in the card.
     expect(screen.queryByText('default')).not.toBeInTheDocument();
   });
+
+  it('respects the exclude-cache toggle in the tokens-kind hero metric', () => {
+    const tokenCard = card({
+      pct_used: undefined,
+      is_unlimited: true,
+      token_usage: { input: 100, output: 50, reasoning: 10, cache_read: 700, cache_create: 140 },
+    });
+    const items = buildRiskItems([entry({ critical_gauge: tokenCard })], []);
+
+    localStorage.setItem('runway_exclude_cache', '0');
+    const { unmount } = renderWithProviders(
+      <ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />,
+    );
+    expect(screen.getByText('1K')).toBeInTheDocument();
+    unmount();
+
+    localStorage.setItem('runway_exclude_cache', '1');
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByText('160')).toBeInTheDocument();
+  });
 });
 
 describe('AtRiskRail', () => {

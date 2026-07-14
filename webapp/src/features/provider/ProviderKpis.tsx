@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import type { CumulativeBucket, CumulativeModelBucket, FleetEntry } from '@/api/types';
 import { StatTile } from '@/components/ui/StatTile';
 import { formatCost, formatNumber, formatPct, formatTokens } from '@/lib/format';
-import { cardKind, cardPct, cardStatus, findForecast, windowLabel } from '@/lib/quota';
+import { cardKind, cardPct, cardStatus, findForecast, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import { useProviderCostForecast, useProviderCumulative, useProviderForecast } from './queries';
 
 function sumTokens(b: CumulativeModelBucket | null | undefined, excludeCache = false): number {
@@ -120,14 +120,8 @@ export function ProviderKpis({
     // Compute lifetime total from the fleet card's per-component fields so the
     // exclude-cache toggle is respected consistently with the chart and month
     // tiles; fall back to the cumulative lifetime bucket sum.
-    const lifetimeTokenTotal = (() => {
-      const tu = critical.token_usage;
-      if (tu) {
-        return (tu.input ?? 0) + (tu.output ?? 0) + (tu.reasoning ?? 0)
-             + (excludeCache ? 0 : (tu.cache_read ?? 0) + (tu.cache_create ?? 0));
-      }
-      return sumTokens(lifetime, excludeCache) ?? null;
-    })();
+    const lifetimeTokenTotal =
+      tokenUsageTotal(critical.token_usage, excludeCache) ?? sumTokens(lifetime, excludeCache) ?? null;
     const lifetimeMsgs = critical.msgs ?? lifetime?.msgs ?? null;
     // Show spend tiles only when we actually have cost data (e.g. opencode API on free
     // tier that also has cost); otherwise show per-component token counts.

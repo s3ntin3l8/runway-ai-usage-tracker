@@ -7,7 +7,7 @@
 // independent daily quotas at the same percentage and reset time got
 // lumped into a fake "SHARED" pool.
 
-import type { ForecastEntry, LimitCard } from '@/api/types';
+import type { ForecastEntry, LimitCard, TokenUsage } from '@/api/types';
 
 export function sameQuota(a: LimitCard, b: LimitCard): boolean {
   return a.quota_pool_id != null && a.quota_pool_id === b.quota_pool_id;
@@ -98,6 +98,24 @@ export function cardKind(card: LimitCard): CardKind {
   if (card.is_unlimited || ut === 'token' || ut === 'tokens' || card.token_usage)
     return 'tokens';
   return 'quota';
+}
+
+// Lifetime token total from a card's per-component token_usage, respecting the
+// exclude-cache toggle (unlike the pre-aggregated token_usage.total, which always
+// excludes cache). Returns null only when token_usage itself is absent — callers
+// chain with `??` for their own fallback (e.g. used_value, or a cumulative-bucket
+// sum), since a present-but-zero total is a real value, not a missing one.
+export function tokenUsageTotal(
+  tu: TokenUsage | null | undefined,
+  excludeCache = false,
+): number | null {
+  if (!tu) return null;
+  return (
+    (tu.input ?? 0) +
+    (tu.output ?? 0) +
+    (tu.reasoning ?? 0) +
+    (excludeCache ? 0 : (tu.cache_read ?? 0) + (tu.cache_create ?? 0))
+  );
 }
 
 // "weekly" → "Weekly", "session" → "Session"; null for unknown windows.

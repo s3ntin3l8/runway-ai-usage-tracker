@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { OverviewTab } from './OverviewTab';
 import * as api from '@/api/endpoints';
@@ -22,7 +22,10 @@ vi.mock('@/api/endpoints');
 vi.mock('@/components/charts/TrajectoryChart', () => ({
   TrajectoryChart: () => <div data-testid="trajectory" />,
 }));
-vi.mock('@/components/charts/TokenDonut', () => ({
+// Keep the real SLICES/CACHE_KEYS exports — TokenBar (rendered by the
+// tokens-kind branch) imports them too, and a full-module stub would break it.
+vi.mock('@/components/charts/TokenDonut', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/charts/TokenDonut')>()),
   TokenDonut: () => <div data-testid="token-donut" />,
 }));
 vi.mock('@/components/charts/ModelDonut', () => ({
@@ -104,6 +107,29 @@ describe('OverviewTab', () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
     renderWithProviders(<OverviewTab entry={fleetEntry()} />);
     expect(await screen.findByText(/no usage this month/i)).toBeInTheDocument();
+  });
+
+  it('respects the exclude-cache toggle in the tokens-kind "Token usage" total', async () => {
+    // Same excludeCache-respecting total as the ProviderKpis "Tokens (total)" tile
+    // rendered above it — scope queries to this card so the two "1K"s don't collide.
+    const tokenEntry = fleetEntry({
+      critical_gauge: limitCard({
+        pct_used: undefined,
+        is_unlimited: true,
+        token_usage: { input: 100, output: 50, reasoning: 10, cache_read: 700, cache_create: 140 },
+      }),
+    });
+
+    localStorage.setItem('runway_exclude_cache', '0');
+    const { unmount } = renderWithProviders(<OverviewTab entry={tokenEntry} />);
+    const cardOff = (await screen.findByText('Token usage')).closest('.rounded-md') as HTMLElement;
+    expect(within(cardOff).getByText('1K')).toBeInTheDocument();
+    unmount();
+
+    localStorage.setItem('runway_exclude_cache', '1');
+    renderWithProviders(<OverviewTab entry={tokenEntry} />);
+    const cardOn = (await screen.findByText('Token usage')).closest('.rounded-md') as HTMLElement;
+    expect(within(cardOn).getByText('160')).toBeInTheDocument();
   });
 
   it('renders secondary limit rows in the quota card', async () => {

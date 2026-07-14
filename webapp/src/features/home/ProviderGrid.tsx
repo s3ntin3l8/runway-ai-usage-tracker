@@ -28,8 +28,9 @@ import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { StatusDot } from '@/components/ui/StatusDot';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
-import { cardKind, cardPct, cardStatus, chipLabel, windowLabel } from '@/lib/quota';
+import { cardKind, cardPct, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
@@ -79,6 +80,7 @@ function SortableProviderCard({
   providerNames: Map<string, string>;
 }) {
   const navigate = useNavigate();
+  const { excludeCache } = useExcludeCache();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.key,
   });
@@ -108,7 +110,7 @@ function SortableProviderCard({
     kind === 'quota'
       ? `${formatPct(cardPct(gauge))} used`
       : kind === 'tokens'
-        ? `${formatTokens(gauge.token_usage?.total ?? gauge.used_value ?? null)} tokens used`
+        ? `${formatTokens(tokenUsageTotal(gauge.token_usage, excludeCache) ?? gauge.used_value ?? null)} tokens used`
         : `${gauge.used_value != null ? formatCurrency(gauge.used_value, gauge.currency) : (gauge.remaining ?? '—')} ${gauge.unit ?? ''}`.trimEnd();
 
   return (
@@ -165,7 +167,7 @@ function SortableProviderCard({
         <>
           <div className="mt-3 flex items-baseline justify-between gap-2">
             <span className="font-mono text-lg font-semibold tabular">
-              {formatTokens(gauge.token_usage?.total ?? gauge.used_value ?? null)}
+              {formatTokens(tokenUsageTotal(gauge.token_usage, excludeCache) ?? gauge.used_value ?? null)}
             </span>
             <span className="truncate text-[11px] text-fg-subtle">
               tokens

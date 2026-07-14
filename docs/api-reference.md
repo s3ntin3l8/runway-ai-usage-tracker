@@ -126,7 +126,8 @@ interface LimitCard {
     output: number;       // Output tokens
     reasoning?: number;    // Reasoning tokens (if available)
     cache_read?: number;    // Cache read tokens (if available)
-    total: number;       // Total tokens
+    cache_create?: number;  // Cache creation tokens (if available)
+    total: number;       // Total tokens (input + output + reasoning; cache excluded)
   };
   by_model?: Record<string, {  // Per-model breakdown
     cost: number;           // Cost for this model
