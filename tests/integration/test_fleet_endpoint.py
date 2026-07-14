@@ -266,6 +266,58 @@ def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
     assert cg["msgs"] == 2
 
 
+def test_fleet_surfaces_opencode_byok_as_its_own_synthetic_card(session: Session):
+    """OpenCode bring-your-own-key events (issue #182) get their own passive
+    provider — 'opencode-byok' — distinct from both the Go card and
+    'opencode-free', instead of being folded into the Go tier's usage.
+    """
+    now = datetime.now(UTC)
+    _seed_event(
+        session,
+        "byok1",
+        now,
+        provider_id="opencode-byok",
+        account_id="default",
+        tokens_input=300,
+        tokens_output=50,
+        cost_usd=0.0,
+    )
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+
+    entries = resp.json()["fleet"]
+    entry = next(e for e in entries if e["provider_id"] == "opencode-byok")
+
+    cg = entry["critical_gauge"]
+    assert cg["service_name"] == "Opencode Byok"
+    assert cg["is_unlimited"] is True
+    assert cg["token_usage"]["input"] == 300
+    assert cg["token_usage"]["output"] == 50
+
+
+def test_fleet_ignores_opencode_error_events(session: Session):
+    """A failed openrouter/ollama request (kind='error') must not appear as
+    usage on its sub-provider's card — it never actually incurred any tokens.
+    """
+    now = datetime.now(UTC)
+    _seed_event(
+        session,
+        "err1",
+        now,
+        provider_id="opencode-openrouter",
+        account_id="default",
+        tokens_input=999,  # would be wrong if counted; error events carry none in practice
+        kind="error",
+    )
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+
+    entries = resp.json()["fleet"]
+    assert not any(e["provider_id"] == "opencode-openrouter" for e in entries)
+
+
 # ---------------------------------------------------------------------------
 # Phase 15.2 — window_aggregations field
 # ---------------------------------------------------------------------------

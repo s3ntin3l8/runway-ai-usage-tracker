@@ -20,7 +20,9 @@ import ollama from '@/assets/providers/ollama.svg';
 import antigravity from '@/assets/providers/antigravity.svg';
 
 // Keyed by provider_id (see app/core/registry.json). Kimi + opencode variants
-// share a single brand mark.
+// share a single brand mark. The opencode-* sub-providers (issue #182) are
+// derived runway ids, not registry entries — see scripts/sidecar_pkg/
+// event_extractors/opencode.py:map_opencode_provider_id.
 const PROVIDER_ICONS: Record<string, string> = {
   anthropic,
   chatgpt: openai,
@@ -28,6 +30,9 @@ const PROVIDER_ICONS: Record<string, string> = {
   github: githubCopilot,
   opencode,
   'opencode-free': opencode,
+  'opencode-byok': opencode,
+  'opencode-openrouter': openrouter,
+  'opencode-ollama': ollama,
   zai,
   kimi,
   kimi_api: kimi,
@@ -41,5 +46,9 @@ const PROVIDER_ICONS: Record<string, string> = {
 
 /** Asset URL for a provider's brand mark, or null if we don't vendor one. */
 export function providerIconUrl(providerId: string): string | null {
-  return PROVIDER_ICONS[providerId] ?? null;
+  if (PROVIDER_ICONS[providerId]) return PROVIDER_ICONS[providerId];
+  // Any future opencode-<slug> sub-provider (unrecognized OpenCode backend)
+  // still gets the opencode mark rather than no icon at all.
+  if (providerId.startsWith('opencode')) return opencode;
+  return null;
 }

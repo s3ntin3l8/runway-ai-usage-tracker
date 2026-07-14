@@ -8,9 +8,10 @@ new rates. Three passes are run in sequence:
   Phase C — delete and rebuild usage_period_rollup for the affected providers.
   Phase D — delete and rebuild usage_windows for the affected providers.
 
-OpenCode events (provider_id in 'opencode', 'opencode-free') carry an
-authoritative cost supplied by the provider; they are always skipped.
-Error events (kind != 'message') never had a cost and are always skipped.
+OpenCode events (provider_id 'opencode', 'opencode-free', and any other
+'opencode-*' sub-provider, e.g. 'opencode-byok') carry an authoritative cost
+supplied by the provider; they are always skipped. Error events (kind !=
+'message') never had a cost and are always skipped.
 
 Note on effective_from: cost_calculator only applies a pricing row when
 effective_from <= event.ts.date(). If the new seed rows are dated today,
@@ -53,7 +54,12 @@ from app.services.cost_calculator import compute_event_cost  # noqa: E402
 from app.services.period_rollups import update_rollups_for_event  # noqa: E402
 from app.services.window_closer import close_window  # noqa: E402
 
-_SKIP_PROVIDERS = ("opencode", "opencode-free")
+# "opencode" itself plus every opencode-* sub-provider (opencode-free,
+# opencode-byok, opencode-openrouter, opencode-ollama, and any future
+# opencode-<slug> derived by map_opencode_provider_id) — matched via a LIKE
+# prefix below rather than an exact-id tuple so new siblings are covered
+# automatically.
+_SKIP_PROVIDER_PREFIX = "opencode"
 
 # Phase D commits and expunges every _WINDOW_BATCH window rebuilds. close_window()
 # loads events and writes window rows into the session, so without periodic
@@ -66,7 +72,9 @@ _WINDOW_BATCH = 200
 
 def _event_scope(stmt, providers: list[str] | None, since: date | None):
     stmt = stmt.where(UsageEvent.kind == "message")
-    stmt = stmt.where(UsageEvent.provider_id.notin_(_SKIP_PROVIDERS))  # type: ignore[attr-defined]
+    stmt = stmt.where(
+        UsageEvent.provider_id.notlike(f"{_SKIP_PROVIDER_PREFIX}%")  # type: ignore[attr-defined]
+    )
     if providers:
         stmt = stmt.where(UsageEvent.provider_id.in_(providers))  # type: ignore[attr-defined]
     if since:

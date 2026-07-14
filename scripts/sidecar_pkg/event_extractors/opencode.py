@@ -10,14 +10,32 @@ Each assistant message row in the `message` table has:
 The data JSON contains:
   - role: "assistant" | "user"
   - modelID: model name string
-  - providerID: "opencode-go" | "opencode"
+  - providerID: "opencode-go" | "opencode" | "open-design-byok" | "openrouter"
+    | "ollama-cloud" | ... (OpenCode's own backend/billing-tier tag — NOT the
+    upstream model maker)
   - cost: float (USD — authoritative; skip pricing table lookup)
   - tokens: {input, output, reasoning, cache: {read, write}, total}
   - finish: stop reason
+  - error: {name, data: {message, statusCode, ...}} — present when the
+    request to the upstream backend failed (no tokens/cost were incurred)
 
 Because OpenCode logs the cost directly per message, these events carry
 cost_usd and the server's EventIngestor should use that value rather than
 computing from the pricing table.
+
+providerID -> runway provider_id mapping (see _OC_PROVIDER_MAP below):
+  - "opencode"          -> "opencode-free"      (free-tier models)
+  - "opencode-go"       -> "opencode"           (paid Go subscription; carries
+                                                   the web-scraper quota gauges)
+  - "open-design-byok"  -> "opencode-byok"      (bring-your-own-key)
+  - "openrouter"        -> "opencode-openrouter"
+  - "ollama-cloud"      -> "opencode-ollama"
+  - anything else       -> "opencode-<slug>"    (never silently folds into Go)
+  - missing/empty       -> "opencode"           (historical default)
+
+Messages whose `error` field is set are pushed with kind="error" (no tokens/
+cost were actually incurred) so they don't inflate usage totals on whichever
+card they land on.
 """
 
 import json
@@ -32,6 +50,56 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.models.schemas import UsageEventPush  # noqa: E402
+
+# OpenCode's own providerID (backend/billing tier) -> runway provider_id.
+# Keep this in sync with scripts/reclassify_opencode_providers.py, which
+# reapplies the same mapping to already-ingested events.
+_OC_PROVIDER_MAP: dict[str, str] = {
+    "opencode": "opencode-free",
+    "opencode-go": "opencode",
+    "open-design-byok": "opencode-byok",
+    "openrouter": "opencode-openrouter",
+    "ollama-cloud": "opencode-ollama",
+}
+
+
+def map_opencode_provider_id(oc_provider_id: str) -> str:
+    """Map an OpenCode `providerID` to a runway `provider_id`.
+
+    Unknown/new backends get their own derived `opencode-<slug>` id rather
+    than silently collapsing into the Go tier (the bug in issue #182). A
+    missing/empty providerID keeps the historical default of "opencode".
+    """
+    oc_provider_id = (oc_provider_id or "").strip().lower()
+    if not oc_provider_id:
+        return "opencode"
+    return _OC_PROVIDER_MAP.get(oc_provider_id, f"opencode-{oc_provider_id}")
+
+
+def _classify_opencode_error(err: dict) -> str:
+    """Best-effort short tag for an OpenCode message-level error.
+
+    `err` is the raw `data.error` dict, e.g.
+    `{"name": "APIError", "data": {"statusCode": 401, "message": "..."}}`.
+    """
+    status = None
+    err_data = err.get("data")
+    if isinstance(err_data, dict):
+        status = err_data.get("statusCode")
+
+    if status == 401:
+        return "auth_failed"
+    if status == 403:
+        return "quota_exceeded"
+    if status == 429:
+        return "rate_limit"
+    if status in (408, 504):
+        return "timeout"
+    if isinstance(status, int):
+        return f"http_{status}"
+
+    name = err.get("name")
+    return str(name).lower() if name else "unknown_error"
 
 
 def parse_opencode_events(
@@ -124,13 +192,33 @@ def parse_opencode_events(
         # Use the row's id (stable primary key) as event_id
         event_id = msg_id or f"opencode|{session_id or 'unknown'}|ts_{time_created_ms}"
 
-        # OpenCode tags messages with providerID = "opencode-go" (paid tier)
-        # or "opencode" (free models). Split them so the dashboard renders
-        # two fleet entries — paid usage on the OpenCode card (which carries
-        # the Go quota gauges from the web scraper) and free usage on a
-        # separate OpenCode Free card.
+        # OpenCode tags each message with a providerID identifying which
+        # backend/billing tier served it (Go subscription, free models,
+        # bring-your-own-key, OpenRouter, Ollama Cloud, ...). Map it to a
+        # dedicated runway provider_id so no backend is ever silently folded
+        # into the Go tier (issue #182).
         oc_provider_id = data.get("providerID") or ""
-        runway_provider_id = "opencode-free" if oc_provider_id == "opencode" else "opencode"
+        runway_provider_id = map_opencode_provider_id(oc_provider_id)
+
+        # A failed request (bad auth, no subscription, etc.) never actually
+        # incurred usage — push it as kind="error" so it doesn't inflate
+        # message/token counts on whichever card it lands on.
+        err = data.get("error")
+        if isinstance(err, dict):
+            events.append(
+                UsageEventPush(
+                    provider_id=runway_provider_id,
+                    account_id=account_id,
+                    event_id=event_id,
+                    ts=ts.isoformat(),
+                    model_id=model_id,
+                    session_id=session_id or None,
+                    cwd=cwd,
+                    kind="error",
+                    error_reason=_classify_opencode_error(err),
+                )
+            )
+            continue
 
         events.append(
             UsageEventPush(

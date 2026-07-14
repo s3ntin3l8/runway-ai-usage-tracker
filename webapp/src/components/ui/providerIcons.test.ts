@@ -19,6 +19,16 @@ describe('providerIconUrl', () => {
 
   it('shares one mark across opencode variants', () => {
     expect(providerIconUrl('opencode-free')).toBe(providerIconUrl('opencode'));
+    expect(providerIconUrl('opencode-byok')).toBe(providerIconUrl('opencode'));
+  });
+
+  it('maps opencode sub-providers to their real upstream brand mark', () => {
+    expect(providerIconUrl('opencode-openrouter')).toBe(providerIconUrl('openrouter'));
+    expect(providerIconUrl('opencode-ollama')).toBe(providerIconUrl('ollama'));
+  });
+
+  it('falls back to the opencode mark for an unrecognized opencode-* sub-provider', () => {
+    expect(providerIconUrl('opencode-some-new-backend')).toBe(providerIconUrl('opencode'));
   });
 
   it('returns null for an unknown provider', () => {
