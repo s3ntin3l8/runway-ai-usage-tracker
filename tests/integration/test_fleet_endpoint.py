@@ -219,7 +219,7 @@ def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
         tokens_input=1_000,
         tokens_output=200,
         tokens_cache_read=5_000,
-        tokens_cache_create=0,
+        tokens_cache_create=200,
         tokens_reasoning=100,
         cost_usd=0.05,
     )
@@ -233,7 +233,7 @@ def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
         tokens_input=500,
         tokens_output=80,
         tokens_cache_read=1_000,
-        tokens_cache_create=0,
+        tokens_cache_create=100,
         tokens_reasoning=20,
         cost_usd=0.01,
     )
@@ -255,6 +255,7 @@ def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
     assert tu["output"] == 280  # 200 + 80
     assert tu["reasoning"] == 120  # 100 + 20
     assert tu["cache_read"] == 6_000  # 5000 + 1000
+    assert tu["cache_create"] == 300  # 200 + 100
     # total = input + output + reasoning (cache excluded, matches Go card convention)
     assert tu["total"] == 1_500 + 280 + 120
 

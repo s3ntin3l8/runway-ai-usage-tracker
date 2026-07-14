@@ -8,6 +8,7 @@ export interface TokenUsage {
   output?: number;
   reasoning?: number;
   cache_read?: number;
+  cache_create?: number;
   total?: number;
 }
 

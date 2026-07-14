@@ -45,6 +45,41 @@ describe('ProviderKpis', () => {
     expect(screen.getByText('Tokens (month)')).toBeInTheDocument();
     expect(screen.getByText('Cache hit')).toBeInTheDocument();
   });
+
+  describe('tokens kind (unlimited / passive provider)', () => {
+    const tokenFleetEntry = () =>
+      fleetEntry({
+        provider_id: 'opencode-free',
+        critical_gauge: {
+          service_name: 'Opencode Free',
+          provider_id: 'opencode-free',
+          account_id: 'me@example.com',
+          is_unlimited: true,
+          window_type: 'lifetime',
+          token_usage: {
+            input: 45_000_000,
+            output: 600_000,
+            reasoning: 38_000,
+            cache_read: 700_000_000,
+            cache_create: 43_000_000,
+            total: 45_638_000,
+          },
+          msgs: 1000,
+        },
+      });
+
+    it('includes cache tokens in the lifetime total when excludeCache is off', async () => {
+      renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} excludeCache={false} />);
+      // 45M + 0.6M + 38K + 700M + 43M = 788,638,000 → "788.64M"
+      expect(await screen.findByText('788.64M')).toBeInTheDocument();
+    });
+
+    it('excludes cache tokens from the lifetime total when excludeCache is on', async () => {
+      renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} excludeCache />);
+      // 45M + 0.6M + 38K = 45,638,000 → "45.64M"
+      expect(await screen.findByText('45.64M')).toBeInTheDocument();
+    });
+  });
 });
 
 describe('ProviderAlerts', () => {
