@@ -217,12 +217,16 @@ async def fetch_fleet_view(
             _to = _life["tokens_output"]
             _tr = _life["tokens_reasoning"]
             _tcr = _life["tokens_cache_read"]
-            # total = input + output + reasoning; cache excluded (matches Go card convention)
+            _tcc = _life["tokens_cache_create"]
             synthetic["token_usage"] = {
                 "input": _ti,
                 "output": _to,
                 "reasoning": _tr,
                 "cache_read": _tcr,
+                "cache_create": _tcc,
+                # total = input + output + reasoning; cache excluded (matches Go card
+                # convention). Frontend derives its own cache-inclusive lifetime total
+                # from the per-component fields above via tokenUsageTotal().
                 "total": _ti + _to + _tr,
             }
             synthetic["used_value"] = _ti + _to + _tr

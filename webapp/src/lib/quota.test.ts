@@ -10,6 +10,7 @@ import {
   modelLabel,
   sameQuota,
   statusForPct,
+  tokenUsageTotal,
   windowLabel,
 } from './quota';
 
@@ -149,5 +150,23 @@ describe('cardKind', () => {
   it('falls back to quota for unclassifiable cards', () => {
     expect(cardKind(card({}))).toBe('quota');
     expect(cardKind(card({ unit_type: 'generic' }))).toBe('quota');
+  });
+});
+
+describe('tokenUsageTotal', () => {
+  const tu = { input: 100, output: 50, reasoning: 10, cache_read: 700, cache_create: 140 };
+
+  it('includes cache tokens by default', () => {
+    expect(tokenUsageTotal(tu)).toBe(1000);
+  });
+  it('excludes cache tokens when excludeCache is true', () => {
+    expect(tokenUsageTotal(tu, true)).toBe(160);
+  });
+  it('returns null when token_usage is absent, so callers can fall back', () => {
+    expect(tokenUsageTotal(null)).toBeNull();
+    expect(tokenUsageTotal(undefined)).toBeNull();
+  });
+  it('returns 0 (not null) for a present-but-empty token_usage', () => {
+    expect(tokenUsageTotal({})).toBe(0);
   });
 });

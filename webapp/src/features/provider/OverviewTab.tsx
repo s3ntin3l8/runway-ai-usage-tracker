@@ -14,7 +14,7 @@ import { TokenBar } from '@/components/charts/TokenBar';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
-import { cardKind, findForecast, windowLabel } from '@/lib/quota';
+import { cardKind, findForecast, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import { CostOutlookCard } from './CostOutlookCard';
 import { ProviderAlerts } from './ProviderAlerts';
 import { ProviderKpis } from './ProviderKpis';
@@ -132,7 +132,9 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
           <CardContent>
             <div className="flex items-baseline gap-3">
               <span className="font-mono text-2xl font-semibold tabular">
-                {formatTokens(critical.token_usage?.total ?? critical.used_value ?? null)}
+                {formatTokens(
+                  tokenUsageTotal(critical.token_usage, excludeCache) ?? critical.used_value ?? null,
+                )}
               </span>
               <span className="text-xs text-fg-subtle">tokens</span>
             </div>
