@@ -42,6 +42,24 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
+
+  /* Skeleton shimmer sweep */
+  --animate-shimmer: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@utility shimmer-bg {
+  background-image: linear-gradient(
+    110deg,
+    var(--surface-3) 30%,
+    var(--shimmer-highlight) 50%,
+    var(--surface-3) 70%
+  );
+  background-size: 200% 100%;
 }
 
 @layer base {

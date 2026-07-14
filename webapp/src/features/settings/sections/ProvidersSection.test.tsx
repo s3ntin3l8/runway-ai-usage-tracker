@@ -47,7 +47,7 @@ describe('ProvidersSection', () => {
   it('shows skeletons while configs load', () => {
     vi.mocked(api.fetchProviderConfigs).mockReturnValue(new Promise(() => {}));
     const { container } = renderWithProviders(<ProvidersSection />);
-    expect(container.querySelectorAll('[class*="animate-pulse"]').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('[class*="animate-shimmer"]').length).toBeGreaterThan(0);
   });
 
   it('lists providers with their state badges', async () => {

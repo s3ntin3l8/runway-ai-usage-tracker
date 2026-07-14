@@ -13,6 +13,7 @@
   --surface-3: #1f1f23;
   --overlay: #18181b;
   --scrim: rgb(0 0 0 / 0.6);
+  --shimmer-highlight: rgb(255 255 255 / 0.06);
 
   /* Hairlines */
   --edge: rgb(255 255 255 / 0.08);
@@ -70,6 +71,7 @@
   --surface-3: #e9e9eb;
   --overlay: #ffffff;
   --scrim: rgb(0 0 0 / 0.4);
+  --shimmer-highlight: rgb(0 0 0 / 0.05);
 
   --edge: rgb(0 0 0 / 0.08);
   --edge-strong: rgb(0 0 0 / 0.16);

@@ -16,7 +16,7 @@ describe('StatTile', () => {
   it('shows a skeleton instead of the value when loading', () => {
     const { container } = render(<StatTile label="Cost" value="$5" loading />);
     expect(screen.queryByText('$5')).not.toBeInTheDocument();
-    expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
+    expect(container.querySelector('.animate-shimmer')).toBeInTheDocument();
   });
 
   it('tints the value by status', () => {

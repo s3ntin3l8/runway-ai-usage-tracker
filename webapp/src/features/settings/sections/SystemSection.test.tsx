@@ -23,7 +23,7 @@ describe('SystemSection', () => {
   it('shows a skeleton while app config loads', () => {
     vi.mocked(api.fetchAppConfig).mockReturnValue(new Promise(() => {}));
     const { container } = renderWithProviders(<SystemSection />);
-    expect(container.querySelector('[class*="animate-pulse"]')).toBeTruthy();
+    expect(container.querySelector('[class*="animate-shimmer"]')).toBeTruthy();
   });
 
   it('populates the form fields from the loaded config', async () => {
