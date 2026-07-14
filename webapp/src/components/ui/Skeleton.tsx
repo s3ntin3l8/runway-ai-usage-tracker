@@ -4,7 +4,7 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
   return (
     <div
       aria-hidden
-      className={cn('rounded-sm shimmer-bg animate-shimmer', className)}
+      className={cn('rounded-sm bg-surface-3 shimmer-bg animate-shimmer', className)}
       {...props}
     />
   );
