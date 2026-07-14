@@ -47,8 +47,16 @@ from app.services.project_label import derive_project, pick_canonical_cwd  # noq
 
 # Per-message providers, where cwd drifts within a session and rule 2 applies.
 # Other providers carry a single cwd per session, so only rule 1 ever changes
-# them — covered by --all-providers.
-_DEFAULT_PROVIDERS = ["anthropic", "opencode", "opencode-free"]
+# them — covered by --all-providers. The opencode-* sub-providers (issue #182)
+# all come from the same per-message sqlite log, so they drift the same way.
+_DEFAULT_PROVIDERS = [
+    "anthropic",
+    "opencode",
+    "opencode-free",
+    "opencode-byok",
+    "opencode-openrouter",
+    "opencode-ollama",
+]
 
 
 def consolidate(session: Session, providers: list[str] | None, dry_run: bool) -> int:

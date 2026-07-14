@@ -83,10 +83,22 @@ def _apply(ev: UsageEvent, push: UsageEventPush) -> None:
         ev.latency_ms = push.latency_ms
 
 
-# OpenCode splits into two runway providers (paid vs free) at ingest; both map
-# back to the same log source.
-_OPENCODE_PROVIDERS = {"opencode", "opencode-free"}
-_PROVIDERS = ["anthropic", "chatgpt", "gemini", "opencode", "opencode-free"]
+# OpenCode splits into several runway providers at ingest (Go, free,
+# bring-your-own-key, OpenRouter, Ollama Cloud, ...) — see
+# map_opencode_provider_id in scripts/sidecar_pkg/event_extractors/opencode.py.
+# All of them map back to the same "opencode" log source (the sqlite DB), so
+# use the id prefix rather than an exact-id set to also cover new siblings.
+_OPENCODE_PROVIDER_PREFIX = "opencode"
+_PROVIDERS = [
+    "anthropic",
+    "chatgpt",
+    "gemini",
+    "opencode",
+    "opencode-free",
+    "opencode-byok",
+    "opencode-openrouter",
+    "opencode-ollama",
+]
 
 
 def backfill(session: Session, providers: list[str], dry_run: bool) -> int:
@@ -95,7 +107,7 @@ def backfill(session: Session, providers: list[str], dry_run: bool) -> int:
     push_cache: dict[str, dict[str, UsageEventPush]] = {}
 
     for provider in providers:
-        source = "opencode" if provider in _OPENCODE_PROVIDERS else provider
+        source = "opencode" if provider.startswith(_OPENCODE_PROVIDER_PREFIX) else provider
         pushes = push_cache.setdefault(source, _collect_pushes(source))
         if not pushes:
             print(f"{provider}: no log events found, skipping", flush=True)
