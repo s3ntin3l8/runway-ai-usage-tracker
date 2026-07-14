@@ -117,9 +117,17 @@ export function ProviderKpis({
 
   // --- Tokens: lifetime totals + optional spend (if there is cost), then month + cache ---
   if (kind === 'tokens') {
-    // Prefer the fleet card's pre-aggregated total (populated by PR #139 for passive
-    // providers); fall back to the cumulative lifetime bucket sum.
-    const lifetimeTokenTotal = critical.token_usage?.total ?? sumTokens(lifetime) ?? null;
+    // Compute lifetime total from the fleet card's per-component fields so the
+    // exclude-cache toggle is respected consistently with the chart and month
+    // tiles; fall back to the cumulative lifetime bucket sum.
+    const lifetimeTokenTotal = (() => {
+      const tu = critical.token_usage;
+      if (tu) {
+        return (tu.input ?? 0) + (tu.output ?? 0) + (tu.reasoning ?? 0)
+             + (excludeCache ? 0 : (tu.cache_read ?? 0) + (tu.cache_create ?? 0));
+      }
+      return sumTokens(lifetime, excludeCache) ?? null;
+    })();
     const lifetimeMsgs = critical.msgs ?? lifetime?.msgs ?? null;
     // Show spend tiles only when we actually have cost data (e.g. opencode API on free
     // tier that also has cost); otherwise show per-component token counts.
