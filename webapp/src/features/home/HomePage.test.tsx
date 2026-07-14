@@ -113,8 +113,8 @@ describe('HomePage', () => {
   it('shows skeleton loading state while the fleet query is pending', () => {
     vi.mocked(api.fetchFleetUsage).mockReturnValue(new Promise(() => {}));
     const { container } = renderWithProviders(<HomePage />);
-    // Skeletons use the animate-pulse utility.
-    expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
+    // Skeletons use the animate-shimmer utility.
+    expect(container.querySelector('.animate-shimmer')).toBeInTheDocument();
   });
 
   it('shows the empty state when no providers report', async () => {

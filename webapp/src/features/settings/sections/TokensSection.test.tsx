@@ -33,7 +33,7 @@ describe('TokensSection', () => {
   it('shows skeletons while loading', () => {
     vi.mocked(api.fetchTokenHealth).mockReturnValue(new Promise(() => {}));
     const { container } = renderWithProviders(<TokensSection />);
-    expect(container.querySelectorAll('[class*="animate-pulse"]').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('[class*="animate-shimmer"]').length).toBeGreaterThan(0);
   });
 
   it('renders the error state', async () => {

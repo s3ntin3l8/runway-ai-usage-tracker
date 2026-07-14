@@ -5,7 +5,8 @@ describe('Skeleton', () => {
   it('renders an animated, aria-hidden placeholder', () => {
     const { container } = render(<Skeleton />);
     const el = container.firstElementChild as HTMLElement;
-    expect(el).toHaveClass('animate-pulse');
+    expect(el).toHaveClass('animate-shimmer');
+    expect(el).toHaveClass('bg-surface-3');
     expect(el).toHaveAttribute('aria-hidden');
   });
 

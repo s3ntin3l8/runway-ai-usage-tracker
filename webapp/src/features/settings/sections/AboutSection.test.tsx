@@ -24,7 +24,7 @@ describe('AboutSection', () => {
     vi.mocked(api.fetchSettings).mockReturnValue(new Promise(() => {}));
     vi.mocked(api.fetchStatus).mockReturnValue(new Promise(() => {}));
     const { container } = renderWithProviders(<AboutSection />);
-    expect(container.querySelector('[class*="animate-pulse"]')).toBeTruthy();
+    expect(container.querySelector('[class*="animate-shimmer"]')).toBeTruthy();
   });
 
   it('renders identity, version and collector status JSON once loaded', async () => {
