@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.8.1...v2.9.0) (2026-07-14)
+
+
+### Features
+
+* **pwa:** add Apple launch/splash screens for iOS home-screen install ([#183](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/183)) ([79cbea7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/79cbea71d3771ed99de3a21fb85ad72421fa53e2))
+* **ui:** add shimmer sweep animation to Skeleton ([#181](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/181)) ([60e3f7a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/60e3f7aaff74de4ff1a3054bad23015704fac4f8))
+
+
+### Bug Fixes
+
+* **opencode-free:** all-time token total now respects exclude-cache toggle ([#185](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/185)) ([96afd92](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/96afd92cf56f40b1a96d977e99c143d81b8a3090))
+* **opencode:** stop lumping BYOK/OpenRouter/Ollama usage into the Go tier ([#188](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/188)) ([ff64a65](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ff64a6510a7599cbf4b94e60c6e7ddff305942d7)), closes [#182](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/182)
+
 ## [2.8.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.8.0...v2.8.1) (2026-07-12)
 
 
