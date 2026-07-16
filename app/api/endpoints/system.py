@@ -60,12 +60,11 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     # Share the one auth resolver with require_admin_key so the probe can
     # never report a different verdict than the gate enforces. A valid
     # session cookie, localhost trust, trusted-proxy SSO, or the admin-key
-    # header all count.
+    # header all count. Proxy identity headers are read internally by
+    # resolve_auth (their names are configurable via FORWARD_AUTH_*_HEADER).
     auth = resolve_auth(
         request,
         x_admin_key=request.headers.get("X-Admin-Key"),
-        x_forwarded_user=request.headers.get("X-Forwarded-User"),
-        remote_user=request.headers.get("Remote-User"),
         session_cookie=request.cookies.get(SESSION_COOKIE),
     )
     is_authenticated = auth.authenticated
@@ -75,6 +74,8 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     auth_methods = []
     if settings.ADMIN_API_KEY:
         auth_methods.append("admin_key")
+    if settings.forward_auth_enabled:
+        auth_methods.append("forward_auth")
 
     # The shared version checker caches the repo's latest release tag, which —
     # since release-please tags the whole repo — is also the latest server

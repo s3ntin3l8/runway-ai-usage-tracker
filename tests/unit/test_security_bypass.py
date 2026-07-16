@@ -19,34 +19,26 @@ async def test_require_admin_key_local_trust():
     request.client.host = "127.0.0.1"
 
     # Should not raise exception
-    await require_admin_key(
-        request, x_admin_key=None, x_forwarded_user=None, remote_user=None, session_cookie=None
-    )
+    await require_admin_key(request, x_admin_key=None, session_cookie=None)
 
 
 @pytest.mark.asyncio
-async def test_require_admin_key_proxy_trust():
-    if settings.ADMIN_API_KEY is None:
-        return
+async def test_require_admin_key_proxy_trust(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "192.168.1.1")
+
     request = MagicMock(spec=Request)
     request.client = MagicMock()
     request.client.host = "192.168.1.1"
+    request.headers = {"X-Forwarded-User": "user123"}
 
-    # Should not raise exception if proxy header is present
-    await require_admin_key(
-        request,
-        x_admin_key=None,
-        x_forwarded_user="user123",
-        remote_user=None,
-        session_cookie=None,
-    )
-    await require_admin_key(
-        request,
-        x_admin_key=None,
-        x_forwarded_user=None,
-        remote_user="user123",
-        session_cookie=None,
-    )
+    # Should not raise exception when the trusted proxy asserts a user.
+    await require_admin_key(request, x_admin_key=None, session_cookie=None)
+
+    # The CGI-style Remote-User fallback also works.
+    request.headers = {"Remote-User": "user123"}
+    await require_admin_key(request, x_admin_key=None, session_cookie=None)
 
 
 @pytest.mark.asyncio
@@ -61,13 +53,7 @@ async def test_require_admin_key_standard_fail(monkeypatch):
 
     # Should raise 403
     with pytest.raises(HTTPException) as excinfo:
-        await require_admin_key(
-            request,
-            x_admin_key="wrong-key",
-            x_forwarded_user=None,
-            remote_user=None,
-            session_cookie=None,
-        )
+        await require_admin_key(request, x_admin_key="wrong-key", session_cookie=None)
     assert excinfo.value.status_code == 403
 
 
@@ -84,7 +70,5 @@ async def test_empty_admin_key_is_not_a_valid_credential(monkeypatch):
     request.client.host = "203.0.113.5"
 
     # Must not raise, and must NOT be attributed as a valid api-key login.
-    await require_admin_key(
-        request, x_admin_key="", x_forwarded_user=None, remote_user=None, session_cookie=None
-    )
+    await require_admin_key(request, x_admin_key="", session_cookie=None)
     assert request.state.admin_actor == "no-admin-key-configured"

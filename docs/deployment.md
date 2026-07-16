@@ -107,6 +107,8 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 > [!NOTE]
 > Let's Encrypt's HTTP-01 challenge needs ports **80 and 443** publicly reachable and a real DNS **A record** for `RUNWAY_HOST` pointing at the host. The same labels apply if you already run Traefik — copy the `runway` service onto your existing proxy network.
 
+Once TLS is in place, layer a forward-auth identity provider (Authentik, Authelia, oauth2-proxy, Cloudflare Access) in front so the dashboard logs in via SSO instead of the admin key — see [`docs/forward-auth.md`](forward-auth.md) for a full Authentik walkthrough, and `docs/SECURITY.md` → *Application Authentication* for the trust model.
+
 #### Sidecars behind Traefik
 
 Runway publishes no host port in this topology — `:8765` lives only on the internal `proxy` network. Sidecars reach the server through the **public URL**; `/api/v1/fleet/ingest` is just another path under the `Host()` router, so it rides through Traefik on `:443`:

@@ -19,8 +19,6 @@ def _req(host: str = "1.2.3.4", headers: dict[str, str] | None = None) -> Reques
 def _resolve(req: Request, **kw):
     base = {
         "x_admin_key": None,
-        "x_forwarded_user": None,
-        "remote_user": None,
         "session_cookie": None,
     }
     base.update(kw)
@@ -48,8 +46,15 @@ def test_proxy_trust_captures_identity(monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
     monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
     monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
-    req = _req("10.0.0.5", headers={"X-Forwarded-Email": "a@b.c", "X-Forwarded-Groups": "admins"})
-    res = _resolve(req, x_forwarded_user="alice")
+    req = _req(
+        "10.0.0.5",
+        headers={
+            "X-Forwarded-User": "alice",
+            "X-Forwarded-Email": "a@b.c",
+            "X-Forwarded-Groups": "admins",
+        },
+    )
+    res = _resolve(req)
     assert res.authenticated
     assert res.actor_type == "proxy"
     assert res.actor_id == "alice"
@@ -61,8 +66,100 @@ def test_proxy_header_ignored_from_untrusted_ip(monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
     monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
     monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
-    res = _resolve(_req("9.9.9.9"), x_forwarded_user="alice")
+    res = _resolve(_req("9.9.9.9", headers={"X-Forwarded-User": "alice"}))
     assert not res.authenticated
+
+
+def test_remote_user_fallback_header(monkeypatch):
+    """Back-compat: Remote-User is still read when the configured header is absent."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    res = _resolve(_req("10.0.0.5", headers={"Remote-User": "bob"}))
+    assert res.authenticated
+    assert res.actor_type == "proxy"
+    assert res.actor_id == "bob"
+
+
+def test_configurable_header_names_support_authentik(monkeypatch):
+    """Pointing FORWARD_AUTH_*_HEADER at Authentik's outpost headers works
+    with no proxy-side header renaming."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_USER_HEADER", "X-authentik-username")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_EMAIL_HEADER", "X-authentik-email")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_GROUPS_HEADER", "X-authentik-groups")
+    req = _req(
+        "10.0.0.5",
+        headers={
+            "X-authentik-username": "carol",
+            "X-authentik-email": "carol@example.com",
+            "X-authentik-groups": "runway-admins|everyone",
+        },
+    )
+    res = _resolve(req)
+    assert res.authenticated
+    assert res.actor_type == "proxy"
+    assert res.actor_id == "carol"
+    assert res.actor_meta == {"email": "carol@example.com", "groups": "runway-admins|everyone"}
+
+
+def test_allowed_groups_match_grants_proxy_trust(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_GROUPS", "runway-admins")
+    req = _req(
+        "10.0.0.5",
+        headers={"X-Forwarded-User": "carol", "X-Forwarded-Groups": "everyone|runway-admins"},
+    )
+    res = _resolve(req)
+    assert res.authenticated
+    assert res.actor_type == "proxy"
+
+
+def test_allowed_groups_mismatch_falls_through_to_denied(monkeypatch):
+    """A proxy user who isn't in the configured allowlist doesn't get the
+    proxy branch — with nothing else to fall back to, the request is denied."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_GROUPS", "runway-admins")
+    req = _req(
+        "10.0.0.5",
+        headers={"X-Forwarded-User": "mallory", "X-Forwarded-Groups": "everyone"},
+    )
+    res = _resolve(req)
+    assert not res.authenticated
+
+
+def test_allowed_users_match_grants_proxy_trust(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_USERS", "alice, carol")
+    req = _req("10.0.0.5", headers={"X-Forwarded-User": "carol"})
+    res = _resolve(req)
+    assert res.authenticated
+    assert res.actor_type == "proxy"
+
+
+def test_unauthorized_proxy_user_falls_through_to_session_cookie(monkeypatch):
+    """A break-glass path: an unauthorized proxy user doesn't lock out a real
+    admin login — the session cookie (or api key) is still evaluated."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_GROUPS", "runway-admins")
+    monkeypatch.setattr(security, "verify_session", lambda t: t == "good")
+    req = _req(
+        "10.0.0.5",
+        headers={"X-Forwarded-User": "mallory", "X-Forwarded-Groups": "everyone"},
+    )
+    res = _resolve(req, session_cookie="good")
+    assert res.authenticated
+    assert res.actor_type == "session"
 
 
 def test_session_cookie_branch(monkeypatch):

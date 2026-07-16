@@ -10,6 +10,7 @@ supplies it, the asserted user identity for the audit log.
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass
 
 from fastapi import Cookie, Header, HTTPException, Request
@@ -19,6 +20,16 @@ from app.core.sessions import verify_session
 
 # Name of the HttpOnly cookie minted by POST /auth/session.
 SESSION_COOKIE = "runway_session"
+
+# Static fallback checked when the configured FORWARD_AUTH_USER_HEADER isn't
+# present, kept for back-compat with the CGI-style Remote-User convention.
+# The primary header name is configurable so Authentik's outpost headers
+# (X-authentik-username / -email / -groups) work with no proxy-side renaming.
+_REMOTE_USER_FALLBACK_HEADER = "Remote-User"
+
+# Some proxies (Authentik) delimit multi-valued group headers with "|"
+# rather than ",", since group names may themselves contain commas.
+_GROUP_SPLIT_RE = re.compile(r"[,|\s]+")
 
 # Legacy `actor` strings kept stable for audit-log readers; actor_types that
 # aren't listed here label themselves ("localhost", "session", "api-key").
@@ -50,8 +61,8 @@ class AuthResult:
 def _proxy_meta(request: Request) -> dict[str, str] | None:
     """Best-effort identity extras a forward-auth proxy may attach."""
     meta: dict[str, str] = {}
-    email = request.headers.get("X-Forwarded-Email")
-    groups = request.headers.get("X-Forwarded-Groups")
+    email = request.headers.get(settings.FORWARD_AUTH_EMAIL_HEADER)
+    groups = request.headers.get(settings.FORWARD_AUTH_GROUPS_HEADER)
     if email:
         meta["email"] = email
     if groups:
@@ -59,12 +70,33 @@ def _proxy_meta(request: Request) -> dict[str, str] | None:
     return meta or None
 
 
+def _proxy_authorized(request: Request, proxy_user: str) -> bool:
+    """Optional defense-in-depth allowlist on top of the IP trust gate.
+
+    Empty allow-lists (the default) trust any user the proxy asserts — the
+    IP allowlist plus the identity provider's own app binding is the only
+    gate, matching pre-existing behavior. When either list is configured,
+    the asserted user must appear in ALLOWED_USERS or share a group (from
+    FORWARD_AUTH_GROUPS_HEADER) with ALLOWED_GROUPS.
+    """
+    allowed_users = settings.forward_auth_allowed_users
+    allowed_groups = settings.forward_auth_allowed_groups
+    if not allowed_users and not allowed_groups:
+        return True
+    if proxy_user in allowed_users:
+        return True
+    if allowed_groups:
+        raw = request.headers.get(settings.FORWARD_AUTH_GROUPS_HEADER, "")
+        asserted = {g for g in _GROUP_SPLIT_RE.split(raw) if g}
+        if asserted & allowed_groups:
+            return True
+    return False
+
+
 def resolve_auth(
     request: Request,
     *,
     x_admin_key: str | None,
-    x_forwarded_user: str | None,
-    remote_user: str | None,
     session_cookie: str | None,
 ) -> AuthResult:
     """Evaluate the bypass ladder for a request. Pure aside from `verify_session`.
@@ -89,10 +121,15 @@ def resolve_auth(
         return AuthResult(True, "localhost")
 
     # 2. Reverse-proxy trust — gated by an IP allowlist so the user headers
-    # can't be forged by an arbitrary client.
-    proxy_user = x_forwarded_user or remote_user
+    # can't be forged by an arbitrary client, with an optional group/user
+    # allowlist layered on top. Header names are configurable (defaults
+    # match the previous X-Forwarded-User/Remote-User hardcoding) so an
+    # Authentik outpost's native X-authentik-* headers work directly.
+    proxy_user = request.headers.get(settings.FORWARD_AUTH_USER_HEADER) or request.headers.get(
+        _REMOTE_USER_FALLBACK_HEADER
+    )
     trusted = settings.trusted_proxy_ips
-    if trusted and client_host in trusted and proxy_user:
+    if trusted and client_host in trusted and proxy_user and _proxy_authorized(request, proxy_user):
         return AuthResult(True, "proxy", actor_id=proxy_user, actor_meta=_proxy_meta(request))
 
     # 3. Browser session cookie (admin key already exchanged at /auth/session).
@@ -109,11 +146,14 @@ def resolve_auth(
 async def require_admin_key(
     request: Request,
     x_admin_key: str = Header(default=None),
-    x_forwarded_user: str = Header(default=None, alias="X-Forwarded-User"),
-    remote_user: str = Header(default=None, alias="Remote-User"),
     session_cookie: str = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> None:
     """Gate a mutation on `resolve_auth`. 403 when the caller isn't authenticated.
+
+    Proxy identity headers are read directly off `request.headers` inside
+    `resolve_auth` (their names are configurable), not as FastAPI `Header`
+    params here — that keeps this signature stable regardless of which
+    header names an operator points at.
 
     Side effect: stashes the full `AuthResult` on `request.state.auth` (and a
     legacy `request.state.admin_actor` string) so the audit log can attribute
@@ -122,8 +162,6 @@ async def require_admin_key(
     result = resolve_auth(
         request,
         x_admin_key=x_admin_key,
-        x_forwarded_user=x_forwarded_user,
-        remote_user=remote_user,
         session_cookie=session_cookie,
     )
     request.state.auth = result

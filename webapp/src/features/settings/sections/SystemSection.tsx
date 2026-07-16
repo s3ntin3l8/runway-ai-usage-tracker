@@ -227,23 +227,42 @@ export function SystemSection() {
             <CardTitle>Session</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => signOut.mutate()} loading={signOut.isPending}>
-                Sign out
-              </Button>
-              <Button
-                variant="danger-ghost"
-                onClick={() => signOutEverywhere.mutate()}
-                loading={signOutEverywhere.isPending}
-              >
-                Sign out everywhere
-              </Button>
-            </div>
-            <HelperText>
-              "Sign out" clears this browser's session. "Sign out everywhere" rotates the server
-              session secret, immediately invalidating every signed-in device — use it if a session
-              cookie may be compromised.
-            </HelperText>
+            {settings.data?.user_context ? (
+              // Authenticated via a trusted forward-auth proxy (e.g. Authentik) —
+              // there's no local session cookie to sign out of; the proxy owns
+              // identity and re-authenticates on the very next request.
+              <>
+                <p className="text-sm">
+                  Signed in as <span className="font-medium">{settings.data.user_context}</span>{' '}
+                  via SSO.
+                </p>
+                <HelperText>
+                  This session is authenticated by your forward-auth identity provider — sign out
+                  there to sign out of Runway. Local sign-out doesn't apply while a trusted proxy
+                  is asserting your identity.
+                </HelperText>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => signOut.mutate()} loading={signOut.isPending}>
+                    Sign out
+                  </Button>
+                  <Button
+                    variant="danger-ghost"
+                    onClick={() => signOutEverywhere.mutate()}
+                    loading={signOutEverywhere.isPending}
+                  >
+                    Sign out everywhere
+                  </Button>
+                </div>
+                <HelperText>
+                  "Sign out" clears this browser's session. "Sign out everywhere" rotates the
+                  server session secret, immediately invalidating every signed-in device — use it
+                  if a session cookie may be compromised.
+                </HelperText>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : null}
