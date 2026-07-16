@@ -35,6 +35,7 @@ jobs:
 
   build-docker:
     needs: [test-python, test-frontend]
+    if: github.event_name == 'push'
     permissions:
       contents: read
       packages: write
@@ -42,5 +43,5 @@ jobs:
     uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@main
     with:
       image-name: 's3ntin3l8/runway'
-      push-edge: ${{ github.event_name == 'push' }}
+      push-edge: true
     secrets: inherit
