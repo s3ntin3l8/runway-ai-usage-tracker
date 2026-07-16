@@ -30,6 +30,7 @@ import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
+import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { cardKind, cardPct, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
@@ -49,6 +50,7 @@ export function ProviderGrid({ items, providerNames, onReorder }: ProviderGridPr
   );
 
   const handleDragEnd = (event: DragEndEvent) => {
+    setPullToRefreshSuspended(false);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const keys = items.map((i) => i.key);
@@ -59,7 +61,18 @@ export function ProviderGrid({ items, providerNames, onReorder }: ProviderGridPr
   return (
     <section aria-label="All providers" className="flex flex-col gap-2">
       <h2 className="text-xs font-semibold tracking-wide text-fg-subtle uppercase">Providers</h2>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        // Suspend the app-wide pull-to-refresh gesture (AppShell) for the
+        // duration of a drag — see lib/pullToRefresh.ts. dnd-kit only calls
+        // onDragStart once its own activation constraint (delay+tolerance for
+        // touch) is satisfied, so a fast downward swipe never triggers this
+        // and still reaches the pull-to-refresh gesture untouched.
+        onDragStart={() => setPullToRefreshSuspended(true)}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setPullToRefreshSuspended(false)}
+      >
         <SortableContext items={items.map((i) => i.key)} strategy={rectSortingStrategy}>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {items.map((item) => (

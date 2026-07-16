@@ -2,12 +2,13 @@ import { useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { forceCollect, putDashboardLayout } from '@/api/endpoints';
+import { putDashboardLayout } from '@/api/endpoints';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Inbox } from 'lucide-react';
+import { useForceCollect } from '@/hooks/useForceCollect';
 import { timeAgo } from '@/lib/format';
 import { AggregateStrip } from './AggregateStrip';
 import { AtRiskRail } from './AtRiskRail';
@@ -72,16 +73,7 @@ export function HomePage() {
     },
   });
 
-  const collect = useMutation({
-    mutationFn: forceCollect,
-    onSuccess: (result) => {
-      toast.success(
-        `Collection triggered — ${result.cards} cards, ${result.sidecars_triggered} sidecars`,
-      );
-      queryClient.invalidateQueries({ queryKey: ['usage'] });
-    },
-    onError: (err) => toast.error(`Collection failed: ${err.message}`),
-  });
+  const collect = useForceCollect();
 
   const generatedAt = fleet.data?.generated_at;
 
