@@ -204,7 +204,7 @@ All routes are mounted under `/api/v1/`. See **[docs/api-reference.md](docs/api-
 
 **`CORS_ORIGINS`** — Comma-separated allow-list of origins for cross-origin requests. **Required** when `APP_HOST` is not localhost.
 
-**`TRUSTED_PROXY_IPS`** — Comma-separated list of reverse-proxy source IPs allowed to assert identity via `X-Forwarded-User` / `Remote-User`. Without an IP allow-list these headers are forgeable and bypass `ADMIN_API_KEY`.
+**`TRUSTED_PROXY_IPS`** — Comma-separated list of reverse-proxy source IPs allowed to assert identity via a forward-auth header (`X-Forwarded-User` by default; `FORWARD_AUTH_USER_HEADER` and friends make the header names configurable, e.g. for Authentik). Without an IP allow-list these headers are forgeable and bypass `ADMIN_API_KEY`. See the [Forward-Auth / SSO guide](docs/forward-auth.md).
 
 **`LOG_FORMAT`** — `plain` (default) or `json` for structured logging.
 
@@ -223,8 +223,8 @@ By default, Runway binds to `127.0.0.1` (local only). To access from other devic
 Runway provides a flexible, multi-layered security model:
 
 - **Local Trust**: When accessing Runway from `127.0.0.1` (localhost), authentication is automated. You will jump straight to the dashboard even if an `ADMIN_API_KEY` is set.
-- **Login Screen**: For remote access or Docker deployments, setting `ADMIN_API_KEY` in your `.env` triggers a dedicated **Login Portal**. Enter the key once, and it is persisted in your browser's secure storage.
-- **Headless Auth (Proxy)**: If you offload authentication to a reverse proxy (e.g., Authelia, Cloudflare Access, Nginx Auth), Runway will automatically trust and bypass the login screen if `X-Forwarded-User` or `Remote-User` headers are present.
+- **Login Screen**: For remote access or Docker deployments, setting `ADMIN_API_KEY` in your `.env` triggers a dedicated **Login Portal**. Enter the key once, and it's exchanged for an HttpOnly session cookie — never stored in `localStorage`.
+- **Forward-Auth / SSO (Proxy)**: If you offload authentication to a reverse proxy (Authentik, Authelia, oauth2-proxy, Cloudflare Access, …), Runway automatically trusts and bypasses the login screen once `TRUSTED_PROXY_IPS` is set — configurable header names and an optional group/user allow-list mean the admin key never needs to be entered in the browser at all. See the [Forward-Auth / SSO guide](docs/forward-auth.md) for a full Authentik + Traefik walkthrough, including production hardening (bypassing SSO for sidecar ingestion and static assets) and troubleshooting.
 
 ⚠️ **Public Internet**: Never expose Runway directly to the public internet without a reverse proxy (Nginx/Traefik) and HTTPS.
 
