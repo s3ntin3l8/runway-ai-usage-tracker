@@ -48,9 +48,13 @@ jobs:
     secrets: inherit # pragma: allowlist secret
 
   on-demand-review:
+    # Same trusted-commenter gate as claude.yml (#192) -- otherwise any user on
+    # this public repo could post "@s3ntin3l8-hermes" and trigger a run that
+    # inherits the HERMES_* secrets and executes on the self-hosted runner.
     if: >-
       github.event_name == 'issue_comment' &&
-      github.actor != 's3ntin3l8-hermes[bot]'
+      github.actor != 's3ntin3l8-hermes[bot]' &&
+      contains(fromJSON('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.comment.author_association)
     permissions:
       contents: write
       pull-requests: write
