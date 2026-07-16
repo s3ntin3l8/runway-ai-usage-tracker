@@ -1,0 +1,62 @@
+name: Hermes (review)
+
+# Two ways to get a review from the s3ntin3l8-hermes bot:
+#   1. auto-review    -> exactly once per PR: on `opened` if it starts non-draft,
+#      or on `ready_for_review` if it starts as a draft.
+#   2. on-demand-review -> comment "@s3ntin3l8-hermes Review" (or "Triage" on
+#      an issue) any time you want another look -- including every follow-up
+#      after the initial auto-review.
+# Both call the same reusable workflow (s3ntin3l8/.github/.github/workflows/
+# hermes-review.yml@main) with a different `mode`, gated by github.event_name
+# so each job only runs for its own trigger.
+#
+# IMPORTANT: do NOT add `synchronize` back. It re-triggers a fresh review on
+# EVERY subsequent push, which on a PR under active iteration is an unbounded
+# review loop (each review's comments prompt more commits, each commit fires
+# another review...). Confirmed in practice on PR #16: 5 pushes while
+# responding to feedback produced 5 separate Hermes review submissions.
+# `ready_for_review` is safe to keep alongside `opened` -- it fires at most
+# once per PR (the draft->ready transition), not on every push.
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+    # `opened`           => review once, if the PR starts non-draft.
+    # `ready_for_review`  => review once, if the PR started as a draft (its
+    # `opened` event is skipped below since draft was true at that point).
+  issue_comment:
+    types: [created]
+    # Covers both PR-conversation comments and issue comments. The reusable
+    # workflow's "Check mention" step enforces the "@s3ntin3l8-hermes" substring
+    # in on-demand mode (default), so a plain comment without the mention is a
+    # cheap no-op, not a review.
+
+jobs:
+  auto-review:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor != 's3ntin3l8-hermes[bot]' &&
+      github.event.pull_request.draft == false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: write
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
+    with:
+      mode: auto # review on trigger, no @mention needed
+      mention-trigger: s3ntin3l8-hermes
+    secrets: inherit # pragma: allowlist secret
+
+  on-demand-review:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.actor != 's3ntin3l8-hermes[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: write
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
+    with:
+      mention-trigger: s3ntin3l8-hermes # mode: on-demand is the reusable workflow's default
+    secrets: inherit # pragma: allowlist secret
