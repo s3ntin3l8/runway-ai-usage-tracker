@@ -67,6 +67,9 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* The app has its own pull-to-refresh gesture (AppShell); this stops the
+       browser's native pull-to-refresh from double-firing alongside it. */
+    overscroll-behavior-y: contain;
   }
 
   body {
@@ -92,4 +95,19 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/* react-simple-pull-to-refresh (AppShell) wraps <Outlet/> in .ptr/.ptr__children
+   with overflow:hidden. This app scrolls at the window level (no internal
+   scroll container), so that overflow turns those wrapper divs into the
+   containing block for position:sticky descendants — breaking every page's
+   sticky PageHeader (it scrolls away instead of pinning to the viewport).
+   Force both back to visible; !important because the library injects its own
+   <style> tag at runtime, after this stylesheet, so an unqualified override
+   would lose the cascade tie. Confirmed via Playwright: header stays pinned
+   with this in place, and the pull/refreshing indicator is unaffected (its
+   own .ptr__pull-down keeps its separate overflow:hidden + visibility toggle). */
+.ptr,
+.ptr__children {
+  overflow: visible !important;
 }

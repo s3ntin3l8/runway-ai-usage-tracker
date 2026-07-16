@@ -2,6 +2,7 @@
 // via PUT /system/dashboard-layout. Keyboard + touch sensors included;
 // pointer drags need 8px of travel so taps stay taps.
 
+import { useEffect } from 'react';
 import {
   DndContext,
   KeyboardSensor,
@@ -30,6 +31,7 @@ import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
+import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { cardKind, cardPct, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
@@ -48,7 +50,15 @@ export function ProviderGrid({ items, providerNames, onReorder }: ProviderGridPr
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
+  // mid-drag unmount (e.g. the underlying fleet data refetches to empty, or
+  // the user navigates away) skips both — DndContext gives no unmount hook of
+  // its own. Without this, the flag could stay stuck true and permanently
+  // disable pull-to-refresh for the rest of the session.
+  useEffect(() => () => setPullToRefreshSuspended(false), []);
+
   const handleDragEnd = (event: DragEndEvent) => {
+    setPullToRefreshSuspended(false);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const keys = items.map((i) => i.key);
@@ -59,7 +69,18 @@ export function ProviderGrid({ items, providerNames, onReorder }: ProviderGridPr
   return (
     <section aria-label="All providers" className="flex flex-col gap-2">
       <h2 className="text-xs font-semibold tracking-wide text-fg-subtle uppercase">Providers</h2>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        // Suspend the app-wide pull-to-refresh gesture (AppShell) for the
+        // duration of a drag — see lib/pullToRefresh.ts. dnd-kit only calls
+        // onDragStart once its own activation constraint (delay+tolerance for
+        // touch) is satisfied, so a fast downward swipe never triggers this
+        // and still reaches the pull-to-refresh gesture untouched.
+        onDragStart={() => setPullToRefreshSuspended(true)}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setPullToRefreshSuspended(false)}
+      >
         <SortableContext items={items.map((i) => i.key)} strategy={rectSortingStrategy}>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {items.map((item) => (

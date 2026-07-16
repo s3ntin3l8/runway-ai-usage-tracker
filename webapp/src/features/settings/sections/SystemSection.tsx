@@ -6,7 +6,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   fetchSettings,
-  forceCollect,
   logout,
   postCleanup,
   postWake,
@@ -28,6 +27,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAppConfig } from '@/api/endpoints';
+import { useForceCollect } from '@/hooks/useForceCollect';
 import { setTzConfig } from '@/lib/tz';
 
 export function SystemSection() {
@@ -72,12 +72,7 @@ export function SystemSection() {
     onError: (err) => toast.error(err.message),
   });
 
-  const collect = useMutation({
-    mutationFn: forceCollect,
-    onSuccess: (r) =>
-      toast.success(`Collection triggered — ${r.cards} cards, ${r.sidecars_triggered} sidecars`),
-    onError: (err) => toast.error(err.message),
-  });
+  const collect = useForceCollect();
 
   const wake = useMutation({
     mutationFn: postWake,
