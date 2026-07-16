@@ -12,43 +12,16 @@ on:
 
 jobs:
   claude:
-    # Restrict to trusted commenters -- otherwise any user on a public repo could
-    # post "@claude" and trigger the workflow (API usage, and whatever repo access
-    # the action's own token carries).
-    if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.review.author_association)) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.issue.author_association))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Logic (trusted-commenter/@claude gate, review-capable tools — including
+    # mcp__github_inline_comment__create_inline_comment for inline suggested edits,
+    # previously missing) now lives in the shared reusable workflow so it isn't
+    # duplicated (and doesn't drift) across every s3ntin3l8 repo. See
+    # s3ntin3l8/.github's .github/workflows/claude-code.yml and s3ntin3l8/.github#34.
     permissions:
       contents: read
-      pull-requests: write # write: gh pr review (see claude_args below) needs this, not just read
+      pull-requests: write # write: gh pr review + inline comments need this, not just read
       issues: read
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Run Claude Code
-        id: claude
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
-          additional_permissions: |
-            actions: read
-
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Allow Claude to submit an actual GitHub review (gh pr review --approve/
-          # --request-changes/--comment) instead of only ever leaving a plain PR
-          # comment when asked to review -- scoped to just that subcommand, not the
-          # vendor example's broader `gh pr *` (no merge/close/edit access needed).
-          claude_args: '--allowedTools "Bash(gh pr review:*)"'
+    uses: s3ntin3l8/.github/.github/workflows/claude-code.yml@main
+    secrets: inherit # pragma: allowlist secret
