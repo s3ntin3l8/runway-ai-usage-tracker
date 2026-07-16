@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.9.0...v2.10.0) (2026-07-16)
+
+
+### Features
+
+* **auth:** support Authentik/forward-auth headers with optional group allowlist ([#191](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/191)) ([4b5765d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4b5765d5edf0d689f9e883e5733ae184558e7502))
+* **webapp:** add pull-to-refresh gesture ([#194](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/194)) ([994751f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/994751fca5e4058899c0e079a93f5ac2471cf0d5))
+
+
+### Bug Fixes
+
+* gate Claude workflow on trusted commenters, enable real PR reviews ([#192](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/192)) ([9e32274](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9e32274818f04e6a6e9a4ae0bcc478ed176bffd6))
+
 ## [2.9.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.8.1...v2.9.0) (2026-07-14)
 
 
