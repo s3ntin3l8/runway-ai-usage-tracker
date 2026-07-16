@@ -59,8 +59,8 @@ The `["*"]` CORS fallback only takes effect when `APP_HOST` resolves to `127.0.0
 Runway is local-first; its secondary mode is self-hosted behind a reverse proxy. The auth model reflects that — it does **not** try to be an identity provider. Three paths gate every mutating endpoint (resolved by `app/core/security.py:resolve_auth`, shared by the `require_admin_key` dependency and the `/system/settings` probe so they can never disagree):
 
 1. **Localhost trust** — client is `127.0.0.1`/`::1` *and* the server is bound localhost-only. Zero-touch for the developer-laptop case; no key needed.
-2. **Reverse-proxy SSO** *(recommended for multi-host)* — a forward-auth proxy asserts the user via `X-Forwarded-User` / `Remote-User`, trusted **only** when the source IP is in `TRUSTED_PROXY_IPS`. The proxy owns real identity; Runway just consumes it.
-3. **Built-in admin key** — `ADMIN_API_KEY`, presented either as the `X-Admin-Key` header (API/script clients) or, in the browser, exchanged once for a session cookie (below).
+2. **Reverse-proxy SSO** *(recommended for multi-host)* — a forward-auth proxy asserts the user via a configurable identity header (`X-Forwarded-User` by default, or e.g. Authentik's `X-authentik-username`), trusted **only** when the source IP is in `TRUSTED_PROXY_IPS`. The proxy owns real identity; Runway just consumes it. See *Forward-auth / SSO* below.
+3. **Built-in admin key** — `ADMIN_API_KEY`, presented either as the `X-Admin-Key` header (API/script clients) or, in the browser, exchanged once for a session cookie (below). This remains the **break-glass fallback** even when forward-auth is configured — it keeps working for scripts and for recovering access if the identity provider is unreachable.
 
 ### Decision (issue #92): why this shape
 
@@ -81,9 +81,9 @@ The SPA no longer keeps the admin key in `localStorage` (readable by any XSS). I
 - `POST /api/v1/auth/revoke-all` (admin) **rotates `SESSION_SECRET`**, invalidating every session everywhere at once (issue #100) — the "sign out everywhere" in **Settings → System → Session**. Because the session key is independent of `DB_ENCRYPTION_KEY`, this does **not** re-encrypt provider secrets.
 - Rotating `DB_ENCRYPTION_KEY` is *not* required to drop sessions; use revoke-all.
 
-### Recommended multi-host pattern
+### Forward-auth / SSO (recommended multi-host pattern)
 
-Put a forward-auth proxy in front and trust its identity header. Minimal shape, composed with the startup gates above:
+Put a forward-auth proxy in front and trust its identity header — this is how Runway supports Authentik, Authelia, oauth2-proxy, Cloudflare Access, and Tailscale without a built-in OIDC client (see *Decision* above). Minimal shape, composed with the startup gates above:
 
 ```yaml
 # Runway env
@@ -95,10 +95,41 @@ TRUSTED_PROXY_IPS=10.0.0.2          # the proxy's source IP, NOT a CIDR you don'
 # ADMIN_API_KEY optional — the proxy is the gate; the key is the break-glass fallback
 ```
 
-- **oauth2-proxy / Authelia**: configure them to inject `X-Forwarded-User` (and optionally `X-Forwarded-Email` / `X-Forwarded-Groups`, which Runway records in the audit log). Ensure the proxy **strips client-supplied** `X-Forwarded-*` so they can't be spoofed.
+**Header names are configurable** (`app/core/security.py:resolve_auth`), so a proxy that emits non-standard header names doesn't need remapping:
+
+| Setting                         | Default              | Purpose |
+|----------------------------------|----------------------|---------|
+| `FORWARD_AUTH_USER_HEADER`       | `X-Forwarded-User`   | Asserted username — grants the session when trusted. |
+| `FORWARD_AUTH_EMAIL_HEADER`      | `X-Forwarded-Email`  | Recorded in the audit log (`actor_meta_json`). |
+| `FORWARD_AUTH_GROUPS_HEADER`     | `X-Forwarded-Groups` | Recorded in the audit log, and checked against `FORWARD_AUTH_ALLOWED_GROUPS` if set. |
+
+A CGI-style `Remote-User` header is always accepted as a fallback when the configured user header is absent, for back-compat.
+
+**Authentik**: point the three header settings at the outpost's native headers — no proxy-side header renaming required:
+
+```yaml
+FORWARD_AUTH_USER_HEADER=X-authentik-username
+FORWARD_AUTH_EMAIL_HEADER=X-authentik-email
+FORWARD_AUTH_GROUPS_HEADER=X-authentik-groups   # Authentik pipe-delimits multiple groups; both "|" and "," are accepted
+```
+
+Configure an Authentik **Proxy Provider** in *forward auth (single application)* mode bound to Runway's outpost, then wire your reverse proxy's forward-auth middleware to it (e.g. Traefik's `forwardAuth` middleware pointed at the outpost, with `authResponseHeaders` listing the three headers above so they reach Runway). Other identity providers:
+
+- **oauth2-proxy / Authelia**: configure them to inject `X-Forwarded-User` (and optionally `X-Forwarded-Email` / `X-Forwarded-Groups`) — the defaults already match.
 - **Cloudflare Access / Tailscale**: terminate identity at the edge / tailnet; forward the asserted user header from a fixed proxy IP listed in `TRUSTED_PROXY_IPS`.
 
-The IP allowlist is load-bearing: without it, anyone could forge `X-Forwarded-User`. Never list an IP range you don't fully control.
+In every case, ensure the proxy **strips client-supplied** identity headers before adding its own — the IP allowlist (`TRUSTED_PROXY_IPS`) is load-bearing: without it, anyone could forge `X-Forwarded-User` directly. Never list an IP range you don't fully control.
+
+**Optional authorization allowlist** — defense-in-depth on top of the identity provider's own app binding. Empty (default) trusts any user the proxy asserts, matching prior behavior:
+
+```yaml
+FORWARD_AUTH_ALLOWED_GROUPS=runway-admins    # comma-separated; matched against FORWARD_AUTH_GROUPS_HEADER
+FORWARD_AUTH_ALLOWED_USERS=alice,bjorn       # comma-separated; matched against the asserted username
+```
+
+If set, a proxy-asserted user who matches neither list does **not** get the proxy trust branch — the request falls through to the session cookie / admin-key checks instead of a hard failure, so a real admin can still log in with the break-glass key even while SSO is locked down to a specific group.
+
+Once forward-auth is configured, the `/system/settings` probe adds `"forward_auth"` to `auth_methods` and the dashboard's Settings → About / System sections surface the SSO user — the browser never needs the admin key.
 
 ## 🔒 Response Headers
 

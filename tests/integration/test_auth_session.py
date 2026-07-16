@@ -117,3 +117,48 @@ def test_admin_key_header_still_works(client):
     c, _ = client
     r = c.get("/api/v1/system/settings", headers={"X-Admin-Key": "admin-secret"})
     assert r.json()["is_authenticated"] is True
+
+
+def test_auth_methods_omits_forward_auth_when_unconfigured(client):
+    c, _ = client
+    assert c.get("/api/v1/system/settings").json()["auth_methods"] == ["admin_key"]
+
+
+def test_forward_auth_via_authentik_headers(client, monkeypatch):
+    """A trusted-proxy deployment pointed at Authentik's native outpost
+    headers authenticates without the browser ever seeing the admin key."""
+    c, _ = client
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "testclient")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_USER_HEADER", "X-authentik-username")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_EMAIL_HEADER", "X-authentik-email")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_GROUPS_HEADER", "X-authentik-groups")
+
+    r = c.get(
+        "/api/v1/system/settings",
+        headers={"X-authentik-username": "bjorn", "X-authentik-email": "bjorn@example.com"},
+    )
+    body = r.json()
+    assert body["is_authenticated"] is True
+    assert body["user_context"] == "bjorn"
+    assert "forward_auth" in body["auth_methods"]
+
+    # And the same headers authorize a mutating admin endpoint.
+    assert (
+        c.post(
+            "/api/v1/auth/revoke-all",
+            headers={"X-authentik-username": "bjorn", "X-authentik-email": "bjorn@example.com"},
+        ).status_code
+        == 204
+    )
+
+
+def test_forward_auth_allowed_groups_denies_unmatched_user(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "testclient")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_GROUPS", "runway-admins")
+
+    r = c.get(
+        "/api/v1/system/settings",
+        headers={"X-Forwarded-User": "mallory", "X-Forwarded-Groups": "everyone"},
+    )
+    assert r.json()["is_authenticated"] is False

@@ -12,6 +12,18 @@ import { useInstallPrompt } from '@/hooks/useInstallPrompt';
 
 const RELEASES_URL = 'https://github.com/s3ntin3l8/runway/releases';
 
+// Friendly labels for the `auth_methods` the /settings probe advertises —
+// raw values (`admin_key`, `forward_auth`) are internal wire strings.
+const AUTH_METHOD_LABELS: Record<string, string> = {
+  admin_key: 'Admin key',
+  forward_auth: 'Forward Auth (SSO)',
+};
+
+function formatAuthMethods(methods: string[] | undefined): string {
+  if (!methods || methods.length === 0) return '—';
+  return methods.map((m) => AUTH_METHOD_LABELS[m] ?? m).join(', ');
+}
+
 export function AboutSection() {
   const queryClient = useQueryClient();
   const { canInstall, promptInstall } = useInstallPrompt();
@@ -77,7 +89,7 @@ export function AboutSection() {
             <InfoItem label="Host" value={`${s?.app_host ?? '—'}:${s?.app_port ?? ''}`} />
             <InfoItem label="Encryption" value={s?.encryption_enabled ? 'enabled' : 'off'} />
             <InfoItem label="Admin auth" value={s?.admin_auth_required ? 'required' : 'open'} />
-            <InfoItem label="Auth methods" value={(s?.auth_methods ?? []).join(', ') || '—'} />
+            <InfoItem label="Auth methods" value={formatAuthMethods(s?.auth_methods)} />
             <InfoItem label="User" value={s?.user_context ?? 'local'} />
           </dl>
           {s?.ingest_api_key_is_default ? (

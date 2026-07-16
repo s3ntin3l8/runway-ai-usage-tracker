@@ -106,6 +106,23 @@ class Settings(BaseSettings):
     # disabled (default). Without this, anyone could forge the header.
     TRUSTED_PROXY_IPS: str = ""
 
+    # Header names the trusted proxy asserts identity in. Defaults match the
+    # oauth2-proxy/Authelia convention; point these at Authentik's outpost
+    # headers (X-authentik-username / X-authentik-email / X-authentik-groups)
+    # to use Authentik without any header renaming at the proxy.
+    FORWARD_AUTH_USER_HEADER: str = "X-Forwarded-User"
+    FORWARD_AUTH_EMAIL_HEADER: str = "X-Forwarded-Email"
+    FORWARD_AUTH_GROUPS_HEADER: str = "X-Forwarded-Groups"
+
+    # Optional defense-in-depth authorization on top of the IP allowlist.
+    # Comma-separated. Empty (default) = trust any user the proxy asserts,
+    # matching today's behavior. When set, an asserted user must appear in
+    # ALLOWED_USERS or have a group (from FORWARD_AUTH_GROUPS_HEADER) in
+    # ALLOWED_GROUPS, or the proxy branch is not granted (falls through to
+    # session cookie / admin key instead of a hard 403).
+    FORWARD_AUTH_ALLOWED_GROUPS: str = ""
+    FORWARD_AUTH_ALLOWED_USERS: str = ""
+
     # Operator's assertion that something in front of the server (nginx,
     # caddy, cloudflare, kube ingress, etc.) terminates TLS. Required to
     # start when bound to a non-localhost interface — sidecar payloads
@@ -232,6 +249,19 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_ips(self) -> set[str]:
         return {ip.strip() for ip in self.TRUSTED_PROXY_IPS.split(",") if ip.strip()}
+
+    @property
+    def forward_auth_enabled(self) -> bool:
+        """Whether a reverse-proxy trust path is configured at all."""
+        return bool(self.trusted_proxy_ips)
+
+    @property
+    def forward_auth_allowed_groups(self) -> set[str]:
+        return {g.strip() for g in self.FORWARD_AUTH_ALLOWED_GROUPS.split(",") if g.strip()}
+
+    @property
+    def forward_auth_allowed_users(self) -> set[str]:
+        return {u.strip() for u in self.FORWARD_AUTH_ALLOWED_USERS.split(",") if u.strip()}
 
     @computed_field  # type: ignore[prop-decorator]
     @property
