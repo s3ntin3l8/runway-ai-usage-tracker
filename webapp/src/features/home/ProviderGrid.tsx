@@ -2,6 +2,7 @@
 // via PUT /system/dashboard-layout. Keyboard + touch sensors included;
 // pointer drags need 8px of travel so taps stay taps.
 
+import { useEffect } from 'react';
 import {
   DndContext,
   KeyboardSensor,
@@ -48,6 +49,13 @@ export function ProviderGrid({ items, providerNames, onReorder }: ProviderGridPr
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
+  // mid-drag unmount (e.g. the underlying fleet data refetches to empty, or
+  // the user navigates away) skips both — DndContext gives no unmount hook of
+  // its own. Without this, the flag could stay stuck true and permanently
+  // disable pull-to-refresh for the rest of the session.
+  useEffect(() => () => setPullToRefreshSuspended(false), []);
 
   const handleDragEnd = (event: DragEndEvent) => {
     setPullToRefreshSuspended(false);
