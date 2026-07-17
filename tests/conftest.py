@@ -26,7 +26,7 @@ os.environ.pop("TLS_TERMINATED", None)
 import httpx
 import pytest
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.main import app
 from app.services.token_cache import token_cache
 from tests.fixtures.mock_data import (
@@ -46,6 +46,19 @@ from tests.fixtures.mock_data import (
 def setup_test_settings(monkeypatch):
     """Ensure consistent settings for all tests, isolating them from the local .env."""
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+    # An operator's .env may configure real forward-auth values (e.g. Authentik
+    # header names, TRUSTED_PROXY_IPS) for their deployment; reset to the
+    # Settings model's own defaults (not re-hardcoded here) so proxy-trust
+    # tests aren't at the mercy of the local environment.
+    for field in (
+        "TRUSTED_PROXY_IPS",
+        "FORWARD_AUTH_USER_HEADER",
+        "FORWARD_AUTH_EMAIL_HEADER",
+        "FORWARD_AUTH_GROUPS_HEADER",
+        "FORWARD_AUTH_ALLOWED_GROUPS",
+        "FORWARD_AUTH_ALLOWED_USERS",
+    ):
+        monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
 
 
 @pytest.fixture(autouse=True)
