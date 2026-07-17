@@ -12,8 +12,8 @@ from pathlib import Path
 import certifi
 import pytest
 
+import scripts.sidecar_pkg.tls as tls
 from scripts.sidecar_pkg.self_update import _github_ssl_context
-from scripts.sidecar_pkg.tls import build_context
 
 # Import sidecar as a module (it lives in scripts/, not a package)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
@@ -21,7 +21,7 @@ import sidecar  # noqa: E402
 
 
 def test_http_url_returns_no_context():
-    assert build_context("http://server:8765") is None
+    assert tls.build_context("http://server:8765") is None
     assert sidecar.build_ssl_context("http://server:8765") is None
 
 
@@ -77,8 +77,6 @@ def test_reaped_certifi_bundle_falls_through_to_default(monkeypatch):
     # existed and every push died with FileNotFoundError ([Errno 2]). The
     # existence guard must fall through to the OS trust store instead of
     # raising.
-    import scripts.sidecar_pkg.tls as tls
-
     monkeypatch.setattr(tls, "_certifi_cafile", lambda: "/tmp/_MEIreaped/cacert.pem")
     ctx = tls.build_context("https://server")
     assert isinstance(ctx, ssl.SSLContext)
