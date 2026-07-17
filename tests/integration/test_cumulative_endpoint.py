@@ -303,38 +303,90 @@ def test_multiple_periods_returns_all_three_buckets(session):
 
 
 def test_query_param_filters_period_type(session):
-    """?period_type=month → only month bucket populated; lifetime/year are empty stubs.
+    """?period_type=year → only year bucket populated; lifetime/month are empty stubs.
 
-    The "stable shape" rule: the entry still has lifetime and current-year keys
-    but they carry zero values because no matching rows exist for those buckets.
+    The "stable shape" rule: the entry still has lifetime and current-month keys
+    but they carry zero values because no matching rows survived the filter.
+
+    Uses period_type=year (not month) because period_type='month' with no
+    period_key is special-cased to the live current-month path — see
+    test_current_month_live_when_period_type_month_has_no_key below.
     """
     now = datetime.now(UTC)
     month_key = now.strftime("%Y-%m")
     year_key = now.strftime("%Y")
 
-    # Insert all three period types, but only month should survive the filter
+    # Insert all three period types, but only year should survive the filter
     _rollup(session, period_type="lifetime", period_key="all", msgs=100, tokens_input=5000)
     _rollup(session, period_type="year", period_key=year_key, msgs=60, tokens_input=3000)
     _rollup(session, period_type="month", period_key=month_key, msgs=20, tokens_input=1000)
 
-    resp = _client().get("/api/v1/usage/cumulative?period_type=month")
+    resp = _client().get("/api/v1/usage/cumulative?period_type=year")
     assert resp.status_code == 200
     cumulative = resp.json()["cumulative"]
 
-    # At least one entry should exist (month row matched)
+    # At least one entry should exist (year row matched)
     assert len(cumulative) == 1
     entry = cumulative[0]
 
-    # Month bucket populated
-    assert entry[f"month_{month_key}"]["msgs"] == 20
-    assert entry[f"month_{month_key}"]["tokens_input"] == 1000
+    # Year bucket populated
+    assert entry[f"year_{year_key}"]["msgs"] == 60
+    assert entry[f"year_{year_key}"]["tokens_input"] == 3000
 
     # Lifetime bucket is the zero-stub (no matching row survived the filter)
     assert entry["lifetime"]["msgs"] == 0
     assert entry["lifetime"]["tokens_input"] == 0
 
-    # Year bucket is the zero-stub
-    assert entry[f"year_{year_key}"]["msgs"] == 0
+    # Month bucket is the zero-stub
+    assert entry[f"month_{month_key}"]["msgs"] == 0
+
+
+def test_current_month_live_when_period_type_month_has_no_key(session):
+    """?period_type=month with no period_key aggregates just the *current*
+    local-tz month, live from usage_events — skipping the rollup fetch (and
+    the default call's year scan) entirely. This is the path the Home page's
+    Tokens card uses instead of the full default call."""
+    now = datetime.now(UTC)
+    month_key = now.strftime("%Y-%m")
+    # Stale/wrong rollup row for the current month — must be ignored; this
+    # path never touches usage_period_rollup.
+    _rollup(session, period_type="month", period_key=month_key, msgs=999, tokens_input=999_999)
+    _event(session, "e1", now, tokens_input=42)
+
+    resp = _client().get("/api/v1/usage/cumulative?period_type=month")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["current_month_key"] == f"month_{month_key}"
+    entry = body["cumulative"][0]
+    bucket = entry[f"month_{month_key}"]
+    assert bucket["tokens_input"] == 42  # live event, not the rollup's 999_999
+    assert bucket["msgs"] == 1
+    # Rollup isn't fetched at all on this path — lifetime/year come back as stubs.
+    assert entry["lifetime"]["msgs"] == 0
+    assert entry[body["current_year_key"]]["msgs"] == 0
+
+
+def test_current_month_live_respects_provider_and_account_filters(session):
+    """?period_type=month&provider_id=...&account_id=... scopes the live
+    current-month aggregation to that identity, same as the other live paths
+    (is_month_live / is_range_live) already do."""
+    now = datetime.now(UTC)
+    month_key = now.strftime("%Y-%m")
+    _event(session, "mine", now, provider_id="anthropic", account_id="u@x.com", tokens_input=10)
+    _event(session, "other", now, provider_id="chatgpt", account_id="other@x.com", tokens_input=99)
+
+    resp = _client().get(
+        "/api/v1/usage/cumulative?period_type=month&provider_id=anthropic&account_id=u@x.com"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    cumulative = body["cumulative"]
+
+    assert len(cumulative) == 1
+    entry = cumulative[0]
+    assert entry["provider_id"] == "anthropic"
+    assert entry["account_id"] == "u@x.com"
+    assert entry[f"month_{month_key}"]["tokens_input"] == 10
 
 
 def test_month_live_aggregates_from_events_not_rollup(session):

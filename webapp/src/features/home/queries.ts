@@ -36,8 +36,12 @@ export const useCostForecast = () =>
 
 export const useCumulative = () =>
   useQuery({
-    queryKey: ['usage', 'cumulative'],
-    queryFn: () => fetchCumulative(),
+    // 'month' scope only — the strip's Tokens card needs just the current
+    // local-tz month total, so this skips the default call's full rollup
+    // read + year-to-date event scan. Distinct key from provider-page
+    // fetchCumulative() calls, which fetch the full (lifetime/year/month) shape.
+    queryKey: ['usage', 'cumulative', 'month'],
+    queryFn: () => fetchCumulative({ period_type: 'month' }),
     refetchInterval: 120_000,
   });
 

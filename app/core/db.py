@@ -155,6 +155,7 @@ _DEFERRED_INDEXES: list[tuple[str, str, str]] = [
     # Note: ix_quota_snapshots_series_ts is handled by _rebuild_quota_snapshot_indexes
     # so it can be rebuilt with variant included on existing databases.
     ("ix_usage_events_project_ts", "usage_events", "project, ts"),
+    ("ix_usage_events_kind_ts", "usage_events", "kind, ts"),
 ]
 
 

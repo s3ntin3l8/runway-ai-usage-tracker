@@ -11,7 +11,10 @@ import { formatCost, formatTokens } from '@/lib/format';
 interface AggregateStripProps {
   cost: CostForecastResponse | undefined;
   cumulative: CumulativeResponse | undefined;
-  loading: boolean;
+  // Split so the three cost-forecast cards don't wait on the (slower)
+  // cumulative token/msg query — they resolve independently.
+  costLoading: boolean;
+  tokensLoading: boolean;
 }
 
 function monthTotals(
@@ -38,28 +41,37 @@ function monthTotals(
   return { tokens, msgs };
 }
 
-export function AggregateStrip({ cost, cumulative, loading }: AggregateStripProps) {
+export function AggregateStrip({
+  cost,
+  cumulative,
+  costLoading,
+  tokensLoading,
+}: AggregateStripProps) {
   const { excludeCache } = useExcludeCache();
   const { tokens, msgs } = monthTotals(cumulative, excludeCache);
 
-  const stats: { label: string; value: string; hint?: string }[] = [
+  const stats: { label: string; value: string; hint?: string; loading: boolean }[] = [
     {
       label: 'Spend (MTD)',
       value: formatCost(cost?.current_month_to_date ?? null),
+      loading: costLoading,
     },
     {
       label: 'Projected EOM',
       value: formatCost(cost?.projected_eom ?? null),
       hint: cost ? `${cost.days_remaining}d left` : undefined,
+      loading: costLoading,
     },
     {
       label: 'Daily burn (7d)',
       value: formatCost(cost?.daily_burn_avg_7d ?? null),
+      loading: costLoading,
     },
     {
       label: 'Tokens this month',
       value: formatTokens(tokens),
       hint: msgs > 0 ? `${msgs.toLocaleString()} msgs` : undefined,
+      loading: tokensLoading,
     },
   ];
 
@@ -70,7 +82,7 @@ export function AggregateStrip({ cost, cumulative, loading }: AggregateStripProp
         {stats.map((stat) => (
           <Card key={stat.label} className="px-4 py-3">
             <p className="text-[11px] font-medium text-fg-subtle">{stat.label}</p>
-            {loading ? (
+            {stat.loading ? (
               <Skeleton className="mt-1.5 h-6 w-20" />
             ) : (
               <div className="mt-0.5 flex items-baseline gap-2">
