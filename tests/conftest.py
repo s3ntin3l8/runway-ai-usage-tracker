@@ -46,6 +46,15 @@ from tests.fixtures.mock_data import (
 def setup_test_settings(monkeypatch):
     """Ensure consistent settings for all tests, isolating them from the local .env."""
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+    # An operator's .env may configure real forward-auth values (e.g. Authentik
+    # header names, TRUSTED_PROXY_IPS) for their deployment; reset to defaults
+    # so proxy-trust tests aren't at the mercy of the local environment.
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_USER_HEADER", "X-Forwarded-User")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_EMAIL_HEADER", "X-Forwarded-Email")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_GROUPS_HEADER", "X-Forwarded-Groups")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_GROUPS", "")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_ALLOWED_USERS", "")
 
 
 @pytest.fixture(autouse=True)
