@@ -217,6 +217,10 @@ class UsageEvent(SQLModel, table=True):
         Index("ix_usage_events_account_ts", "provider_id", "account_id", "ts"),
         Index("ix_usage_events_account_model_ts", "provider_id", "account_id", "model_id", "ts"),
         Index("ix_usage_events_sidecar_ts", "sidecar_id", "ts"),
+        # Covers query_cumulative_live's WHERE kind='message' AND ts >= :since —
+        # the identity-agnostic scans (Home's month-only cumulative, /fleet's
+        # sidecar contributions) filter only on these two columns.
+        Index("ix_usage_events_kind_ts", "kind", "ts"),
         Index("ix_usage_events_project_ts", "project", "ts"),
     )
 

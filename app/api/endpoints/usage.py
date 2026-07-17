@@ -387,6 +387,13 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
     path the provider Activity/Cost tabs use for "last N days" (issue #87).
     `current_month_key` points at the range bucket so callers read it the same
     way. Takes precedence over period_type/period_key.
+
+    Passing `period_type='month'` with no `period_key` aggregates just the
+    *current* local-tz month, live — the same boundary and query the default
+    call uses for its month bucket, but without the accompanying full
+    `usage_period_rollup` read or year-to-date scan. For a caller (e.g. the
+    Home token/message card) that only needs "this month," this is much
+    cheaper than the default call.
     """
     from app.models.db import UsagePeriodRollup
 
@@ -399,6 +406,12 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
         and bool(period_key)
         and bool(_MONTH_KEY_RE.match(period_key or ""))
     )
+    # period_type=month with no period_key: current local-tz month only, live —
+    # the same live aggregation the default call does for its month bucket, but
+    # without the accompanying full rollup read + year-to-date scan. Lets a
+    # caller that only needs "this month" (e.g. the Home token/msg card) skip
+    # both without losing the local-calendar boundary.
+    is_current_month_live = not is_range_live and period_type == "month" and not period_key
 
     stmt = select(UsagePeriodRollup)
     if provider_id:
@@ -411,7 +424,11 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
         stmt = stmt.where(UsagePeriodRollup.period_key == period_key)
     # The live-aggregation paths (tz-correct month, arbitrary range) ignore the
     # rollup rows in favour of an on-demand event aggregation, so skip the fetch.
-    rows = [] if (is_month_live or is_range_live) else session.exec(stmt).all()
+    rows = (
+        []
+        if (is_month_live or is_range_live or is_current_month_live)
+        else session.exec(stmt).all()
+    )
 
     # The default (unfiltered) call powers the live "This period" / "Yearly"
     # gauges, which reset on the user's local calendar. Anchor those two
@@ -449,6 +466,20 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
         )
         current_year = (period_key or "")[:4]
         current_month = period_key or ""
+        live_month = {}
+        live_year = {}
+    elif is_current_month_live:
+        # Current local-tz month only, live — no `until` (open-ended, matches
+        # "now"). Same anchor the default call uses for its month bucket.
+        anchors = _local_period_anchors(resolve_user_tz(session))
+        month_live = query_cumulative_live(
+            session,
+            since=anchors["month_start_utc"],
+            provider_id=provider_id,
+            account_id=account_id,
+        )
+        current_year = anchors["current_year"]
+        current_month = anchors["current_month"]
         live_month = {}
         live_year = {}
     else:
@@ -550,9 +581,10 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
         if is_default:
             entry[year_key_out] = live_year.get((pid, aid), _empty_bucket())
             entry[month_key_out] = live_month.get((pid, aid), _empty_bucket())
-        elif is_month_live or is_range_live:
-            # Live aggregation (tz-correct historical month, or an arbitrary
-            # range); the rollup year bucket isn't fetched here, so report empty.
+        elif is_month_live or is_range_live or is_current_month_live:
+            # Live aggregation (tz-correct historical or current month, or an
+            # arbitrary range); the rollup year bucket isn't fetched here, so
+            # report empty.
             entry[year_key_out] = _empty_bucket()
             entry[month_key_out] = month_live.get((pid, aid), _empty_bucket())
         else:

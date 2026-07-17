@@ -122,7 +122,8 @@ export function HomePage() {
             <AggregateStrip
               cost={cost.data}
               cumulative={cumulative.data}
-              loading={cost.isPending || cumulative.isPending}
+              costLoading={cost.isPending}
+              tokensLoading={cumulative.isPending}
             />
             <ProviderGrid
               items={ordered}

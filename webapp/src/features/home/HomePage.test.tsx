@@ -8,6 +8,7 @@ import type {
   LimitCard,
 } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
+import { formatCost } from '@/lib/format';
 import { HomePage } from './HomePage';
 import * as api from '@/api/endpoints';
 
@@ -190,6 +191,23 @@ describe('HomePage', () => {
     renderWithProviders(<HomePage />);
     expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected EOM')).toBeInTheDocument();
+  });
+
+  it('scopes the home cumulative query to the current month only', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderWithProviders(<HomePage />);
+    await screen.findByText('Providers');
+    expect(api.fetchCumulative).toHaveBeenCalledWith({ period_type: 'month' });
+  });
+
+  it('renders the cost cards as soon as cost-forecast resolves, independent of the slower cumulative query', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.fetchCumulative).mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
+    expect(await screen.findByText(formatCost(costResponse.current_month_to_date))).toBeInTheDocument();
+    // Tokens card stays in skeleton state while cumulative never resolves.
+    expect(screen.getByText('Tokens this month')).toBeInTheDocument();
   });
 });
 
