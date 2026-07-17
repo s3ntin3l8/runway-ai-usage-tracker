@@ -117,6 +117,28 @@ describe('BootGate', () => {
     expect(mockSettings.mock.calls.length).toBeGreaterThan(1);
   });
 
+  it(
+    'auto-recovers from a transient backend outage without a retry click',
+    async () => {
+      mockSettings.mockRejectedValueOnce(new Error('offline'));
+      mockAppConfig.mockResolvedValue({} as never);
+      renderGate();
+
+      expect(await screen.findByText(/backend unreachable/i)).toBeTruthy();
+      expect(mockSettings).toHaveBeenCalledTimes(1);
+
+      // Backend is back — the error-only refetchInterval (3s, real timers here)
+      // should pick this up on its own, with no user interaction.
+      mockSettings.mockResolvedValue({
+        admin_auth_required: false,
+        is_authenticated: false,
+      } as never);
+
+      expect(await screen.findByText('dashboard-content', {}, { timeout: 8000 })).toBeTruthy();
+    },
+    10_000,
+  );
+
   it('ignores an empty-key submit on the auth screen', async () => {
     const user = userEvent.setup();
     mockSettings.mockResolvedValue({

@@ -11,7 +11,14 @@ import { RunwayMark } from '@/components/layout/RunwayMark';
 
 export function BootGate({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const settings = useQuery({ queryKey: ['system', 'settings'], queryFn: fetchSettings });
+  const settings = useQuery({
+    queryKey: ['system', 'settings'],
+    queryFn: fetchSettings,
+    // A backend blip (an :edge redeploy → brief 5xx/network) shouldn't strand the
+    // user on the error card. Once the global retry budget is spent, keep polling
+    // while errored so the app self-heals when the server is back — no manual refresh.
+    refetchInterval: (query) => (query.state.status === 'error' ? 3000 : false),
+  });
   const appConfig = useQuery({
     queryKey: ['system', 'app-config'],
     queryFn: fetchAppConfig,
