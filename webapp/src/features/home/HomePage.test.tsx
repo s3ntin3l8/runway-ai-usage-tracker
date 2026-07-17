@@ -204,10 +204,17 @@ describe('HomePage', () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     vi.mocked(api.fetchCumulative).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
-    expect(await screen.findByText(formatCost(costResponse.current_month_to_date))).toBeInTheDocument();
-    // Tokens card stays in skeleton state while cumulative never resolves.
-    expect(screen.getByText('Tokens this month')).toBeInTheDocument();
+    expect(
+      await screen.findByText(formatCost(costResponse.current_month_to_date)),
+    ).toBeInTheDocument();
+
+    // Spend (MTD) resolved: no skeleton left in that card.
+    const spendCard = screen.getByText('Spend (MTD)').parentElement;
+    expect(spendCard?.querySelector('.animate-shimmer')).not.toBeInTheDocument();
+
+    // Tokens this month stays in skeleton state since cumulative never resolves.
+    const tokensCard = screen.getByText('Tokens this month').parentElement;
+    expect(tokensCard?.querySelector('.animate-shimmer')).toBeInTheDocument();
   });
 });
 

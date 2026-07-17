@@ -366,6 +366,29 @@ def test_current_month_live_when_period_type_month_has_no_key(session):
     assert entry[body["current_year_key"]]["msgs"] == 0
 
 
+def test_current_month_live_respects_provider_and_account_filters(session):
+    """?period_type=month&provider_id=...&account_id=... scopes the live
+    current-month aggregation to that identity, same as the other live paths
+    (is_month_live / is_range_live) already do."""
+    now = datetime.now(UTC)
+    month_key = now.strftime("%Y-%m")
+    _event(session, "mine", now, provider_id="anthropic", account_id="u@x.com", tokens_input=10)
+    _event(session, "other", now, provider_id="chatgpt", account_id="other@x.com", tokens_input=99)
+
+    resp = _client().get(
+        "/api/v1/usage/cumulative?period_type=month&provider_id=anthropic&account_id=u@x.com"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    cumulative = body["cumulative"]
+
+    assert len(cumulative) == 1
+    entry = cumulative[0]
+    assert entry["provider_id"] == "anthropic"
+    assert entry["account_id"] == "u@x.com"
+    assert entry[f"month_{month_key}"]["tokens_input"] == 10
+
+
 def test_month_live_aggregates_from_events_not_rollup(session):
     """?period_type=month&period_key=YYYY-MM takes the tz-correct live path:
     the month bucket is aggregated from usage_events, not the UTC rollup."""

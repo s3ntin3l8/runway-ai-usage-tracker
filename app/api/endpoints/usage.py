@@ -410,8 +410,11 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
     # the same live aggregation the default call does for its month bucket, but
     # without the accompanying full rollup read + year-to-date scan. Lets a
     # caller that only needs "this month" (e.g. the Home token/msg card) skip
-    # both without losing the local-calendar boundary.
-    is_current_month_live = not is_range_live and period_type == "month" and not period_key
+    # both without losing the local-calendar boundary. (No need to also guard
+    # on `not is_range_live` here — the elif chain below checks is_range_live
+    # first, so a caller passing both `since` and period_type='month' still
+    # takes the range-live branch.)
+    is_current_month_live = period_type == "month" and not period_key
 
     stmt = select(UsagePeriodRollup)
     if provider_id:
