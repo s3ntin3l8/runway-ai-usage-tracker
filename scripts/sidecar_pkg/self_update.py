@@ -19,9 +19,11 @@ Safety model:
   * The previous binary/bundle is renamed aside as ``.old`` — a rollback
     breadcrumb the user can restore by hand if a build misbehaves.
 
-The OS-mutating ``apply_update`` is intentionally a thin per-platform shell and
-is verified manually during release QA rather than in unit tests; the pure
-parts (asset-name resolution, checksum, frozen/target detection) are tested.
+The OS-mutating ``apply_update`` is a thin per-platform shell, mostly verified
+manually during release QA; the pure parts (asset-name resolution, checksum,
+frozen/target detection) are unit tested, plus a targeted test for the macOS
+.app exec-bit swap (see tests/unit/test_self_update.py) since a regression
+there bricks the launch entirely rather than merely failing an update.
 """
 
 from __future__ import annotations
@@ -298,6 +300,17 @@ def _extract(archive: pathlib.Path, dest: pathlib.Path) -> None:
                 if not _is_within(dest, dest / name):
                     raise SelfUpdateError(f"unsafe path in archive: {name!r}")
             zf.extractall(dest)
+            # zipfile.extractall drops Unix permission bits (it only writes
+            # file *contents*), even though `zip -r` recorded the original
+            # mode in each member's external_attr. Restore it so bundled
+            # Mach-O/ELF executables (e.g. Contents/MacOS/RunwaySidecar in a
+            # macOS .app) stay launchable after extraction.
+            for zinfo in zf.infolist():
+                mode = (zinfo.external_attr >> 16) & 0o777
+                if mode:  # 0 on archives written without Unix attrs — no-op
+                    member = dest / zinfo.filename
+                    if member.is_file():
+                        os.chmod(member, mode)
     else:
         with tarfile.open(archive) as tf:
             # PEP 706 "data" filter blocks absolute paths, "..", and unsafe links.
@@ -446,6 +459,17 @@ def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> boo
             # Owner-only rwx: the binary is re-exec'd as the user that runs it,
             # so it needs no group/world bits.
             os.chmod(install, 0o700)
+        elif sys.platform == "darwin" and install.suffix == ".app":
+            # `install` is a bundle directory, not a file, so the branch above
+            # never fires — this used to leave Contents/MacOS/* without an
+            # exec bit whenever the archive's own permissions were lost (see
+            # _extract). Chmod the entry-point(s) directly as a safety net
+            # that doesn't depend on archive metadata surviving extraction.
+            macos_dir = install / "Contents" / "MacOS"
+            if macos_dir.is_dir():
+                for entry in macos_dir.iterdir():
+                    if entry.is_file():
+                        entry.chmod(entry.stat().st_mode | 0o755)
     except PermissionError:
         logger.error(
             "Self-update aborted: install path %s is not writable; update manually", install
