@@ -1,14 +1,18 @@
 """Unit tests for the sidecar self-update apply layer (scripts/sidecar_pkg/self_update.py).
 
-Only the *pure* parts are tested here: asset-name resolution, checksum verify,
-release-asset URL lookup, target detection, and the frozen/single-flight guards.
-The OS-mutating ``apply_update`` swaps the running binary and is intentionally
-NOT unit-tested — it is verified manually per platform during release QA.
+Mostly the *pure* parts are tested here: asset-name resolution, checksum
+verify, release-asset URL lookup, target detection, and the frozen/single-flight
+guards. The OS-mutating ``apply_update`` swaps the running binary and is
+otherwise verified manually per platform during release QA — except for the
+macOS .app exec-bit swap below, which gets a targeted test because a
+regression there bricks the launch entirely (see the "can't be opened"
+incident this guards against) rather than merely failing an update.
 """
 
 import hashlib
 import io
 import os
+import stat
 import sys
 import tarfile
 import time
@@ -21,6 +25,7 @@ from scripts.sidecar_pkg.self_update import (
     SelfUpdateError,
     SelfUpdateUnsupportedError,
     _extract,
+    apply_update,
     find_asset_urls,
     resolve_asset_name,
     verify_sha256,
@@ -402,3 +407,92 @@ class TestExtractSafety:
         with pytest.raises(SelfUpdateError):
             _extract(archive, dest)
         assert not (tmp_path / "evil").exists()  # nothing escaped dest
+
+    def test_zip_restores_exec_bit(self, tmp_path):
+        """Regression test for the "can't be opened" incident: zipfile.extractall
+        writes file contents but drops Unix permission bits, so a member stored
+        with mode 0o755 (as `zip -r` records for the real RunwaySidecar binary)
+        must come out executable after _extract, not read-only."""
+        archive = tmp_path / "ok.zip"
+        zinfo = zipfile.ZipInfo("Contents/MacOS/RunwaySidecar")
+        zinfo.external_attr = (0o755 & 0o777) << 16
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr(zinfo, "x")
+        dest = tmp_path / "out"
+        dest.mkdir()
+        _extract(archive, dest)
+        extracted = dest / "Contents" / "MacOS" / "RunwaySidecar"
+        assert extracted.is_file()
+        assert os.access(extracted, os.X_OK)
+
+    def test_zip_without_unix_attrs_is_a_noop(self, tmp_path):
+        """Archives written without Unix external_attr (e.g. Windows-built
+        zips, or writestr's default) must not blow up — external_attr is 0
+        there, and the `if mode:` guard should just skip the chmod."""
+        archive = tmp_path / "ok.zip"
+        self._make_zip(archive, ["runway-sidecar.exe"])
+        dest = tmp_path / "out"
+        dest.mkdir()
+        _extract(archive, dest)
+        assert (dest / "runway-sidecar.exe").is_file()
+
+
+# ---------------------------------------------------------------------------
+# apply_update — macOS .app exec-bit safety net
+# ---------------------------------------------------------------------------
+
+
+class TestApplyUpdateMacOSExecBit:
+    def _make_app(self, root, name, *, executable):
+        """Build a minimal `<name>.app/Contents/MacOS/<name>` bundle, plus a
+        nested helper executable under Contents/MacOS/Helpers/ — some bundles
+        ship those, and the safety net must reach them too, not just the
+        top-level entry point."""
+        app = root / f"{name}.app"
+        macos_dir = app / "Contents" / "MacOS"
+        macos_dir.mkdir(parents=True)
+        mode = 0o755 if executable else 0o644
+        binary = macos_dir / name
+        binary.write_bytes(b"x")
+        binary.chmod(mode)
+        helpers_dir = macos_dir / "Helpers"
+        helpers_dir.mkdir()
+        helper = helpers_dir / f"{name} Helper"
+        helper.write_bytes(b"x")
+        helper.chmod(mode)
+        return app
+
+    def test_swap_restores_exec_bit_when_archive_lost_it(self, tmp_path, monkeypatch):
+        """Simulates the exact bricking scenario: the staged (extracted)
+        bundle's entry-point already lost its exec bit (as it would have
+        before the _extract fix, or via any other archiver quirk), and
+        apply_update's own chmod must still make it launchable post-swap."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        install_dir = tmp_path / "install"
+        install_dir.mkdir()
+        installed_app = self._make_app(install_dir, "Runway Sidecar", executable=True)
+        monkeypatch.setattr(self_update, "_install_path", lambda: installed_app)
+
+        staged_dir = tmp_path / "staged"
+        staged_dir.mkdir()
+        self._make_app(staged_dir, "Runway Sidecar", executable=False)
+
+        relaunched = []
+        monkeypatch.setattr(
+            self_update, "_relaunch_posix", lambda target, install: relaunched.append(install)
+        )
+
+        result = apply_update("tray", staged_dir, restart=False)
+
+        assert result is True
+        assert not relaunched  # restart=False
+        macos_dir = installed_app / "Contents" / "MacOS"
+        entry_point = macos_dir / "Runway Sidecar"
+        helper = macos_dir / "Helpers" / "Runway Sidecar Helper"
+        for binary in (entry_point, helper):
+            assert binary.is_file()
+            assert os.access(binary, os.X_OK)
+            # Owner-only rwx, matching the file branch's stated policy —
+            # not a blanket +rx that would widen group/world permissions.
+            assert stat.S_IMODE(binary.stat().st_mode) == 0o700
