@@ -2,4 +2,4 @@
 # literal below in lockstep with package.json / pyproject.toml (registered in
 # release-please-config.json `extra-files`), so it stays correct inside the
 # Docker image too — the image copies app/ but not the root package.json.
-__version__ = "2.10.2"  # x-release-please-version
+__version__ = "2.10.3"  # x-release-please-version
