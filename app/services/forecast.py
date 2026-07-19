@@ -37,6 +37,18 @@ WINDOW_DURATIONS: dict[str, timedelta] = {
     "rolling": timedelta(days=30),
 }
 
+# A window whose reset_at is more than one full window-duration in the past
+# has not rolled over — the provider/sidecar has stopped reporting for that
+# card. Forecasting it is both meaningless (there's no "current window" to
+# project) and dangerous: the snapshot cache keeps every historical point
+# under that card's identity key, so an unrefreshed window_start can pull in
+# months of snapshots and blow up Theil-Sen's O(n^2) pairwise-slope pass
+# (observed: one stale session card with reset_at ~2 months old produced
+# ~3.7k bucketed points -> ~6.9M pairwise ops -> ~2s of a dashboard load).
+# Cap staleness at one window-duration so `_resolve_window` opts these cards
+# out before they reach the batch query or the regression.
+STALE_WINDOW_MULTIPLIER = 1.0
+
 # Bucket resolution per window type (seconds).
 _FORECAST_BUCKET_SECONDS: dict[str, int] = {
     "session": 300,  # 5 min  → up to  60 buckets
@@ -433,7 +445,11 @@ def _build_forecast_entry(  # noqa: PLR0913
 
 
 def _resolve_window(card: LimitCard, now: datetime) -> tuple[datetime, datetime, float] | None:
-    """Parse reset_at and compute (window_start, reset_at_dt, total_window_secs)."""
+    """Parse reset_at and compute (window_start, reset_at_dt, total_window_secs).
+
+    Returns None (no forecast) for a card whose window has gone stale — see
+    STALE_WINDOW_MULTIPLIER.
+    """
     if not card.reset_at:
         return None
     effective_window_type = card.window_type
@@ -448,6 +464,8 @@ def _resolve_window(card: LimitCard, now: datetime) -> tuple[datetime, datetime,
     except (ValueError, TypeError):
         return None
     window_duration = WINDOW_DURATIONS[effective_window_type]
+    if now - reset_at_dt > window_duration * STALE_WINDOW_MULTIPLIER:
+        return None
     window_start = reset_at_dt - window_duration
     if window_start > now:
         window_start = now - window_duration

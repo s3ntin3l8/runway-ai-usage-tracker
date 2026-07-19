@@ -949,6 +949,12 @@ async def upsert_app_config(
                     detail=f"Invalid IANA timezone: {body.user_timezone!r}",
                 ) from e
             cfg.user_timezone = body.user_timezone
+        # resolve_user_tz() and every period-boundary-dependent response
+        # (/fleet, /global-stats, /top-*, /forecast) cache their output — a
+        # tz change must take effect immediately, not wait out the TTL.
+        from app.core.cache import cache_clear
+
+        cache_clear()
     if body.sidecar_update_channel is not None:
         channel = body.sidecar_update_channel.strip().lower()
         if channel in ("", "stable"):

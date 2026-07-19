@@ -3,9 +3,14 @@
 // TokenDonut for tight spaces — shares its SLICES/CACHE_KEYS and palette so the
 // two read identically. Colors follow the --chart-N tokens by visible position,
 // matching how ECharts assigns the donut's palette after filtering.
+//
+// Imports slice constants from ./tokenSlices, NOT from ./TokenDonut — this
+// component renders on the eager Home route, and TokenDonut.tsx statically
+// imports echarts/core, which would drag the ~685KB echarts chunk into
+// Home's critical path for a component that never renders a chart.
 
-import type { TokenSliceKey } from './TokenDonut';
-import { CACHE_KEYS, SLICES } from './TokenDonut';
+import type { TokenSliceKey } from './tokenSlices';
+import { CACHE_KEYS, SLICES } from './tokenSlices';
 import { formatTokens } from '@/lib/format';
 import { cn } from '@/lib/cn';
 

@@ -6,25 +6,12 @@ import type { CumulativeModelBucket } from '@/api/types';
 import { formatTokens } from '@/lib/format';
 import { EChart } from './EChart';
 import { baseTooltip, useChartTokens } from './theme';
+import { CACHE_KEYS, SLICES } from './tokenSlices';
 
-// Token composition slices, shared with TokenBar so the donut and the
-// segmented bar stay in lockstep (same order, labels, and cache handling).
-export type TokenSliceKey =
-  | 'tokens_input'
-  | 'tokens_output'
-  | 'tokens_cache_read'
-  | 'tokens_cache_create'
-  | 'tokens_reasoning';
-
-export const SLICES: { key: TokenSliceKey; label: string }[] = [
-  { key: 'tokens_input', label: 'Input' },
-  { key: 'tokens_output', label: 'Output' },
-  { key: 'tokens_cache_read', label: 'Cache read' },
-  { key: 'tokens_cache_create', label: 'Cache create' },
-  { key: 'tokens_reasoning', label: 'Reasoning' },
-];
-
-export const CACHE_KEYS = new Set<TokenSliceKey>(['tokens_cache_read', 'tokens_cache_create']);
+// Slice definitions live in ./tokenSlices (chart-free — see that file's
+// header for why); re-exported here so existing `from './TokenDonut'`
+// imports of the type keep working.
+export type { TokenSliceKey } from './tokenSlices';
 
 export function TokenDonut({
   bucket,

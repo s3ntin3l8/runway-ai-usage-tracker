@@ -33,7 +33,7 @@ def configure_sqlite_engine(engine_: Engine) -> None:
     """Wire up the SQLAlchemy-recommended pattern for proper SQLite
     transaction semantics.
 
-    Three things happen at connect time, in order:
+    Four things happen at connect time, in order:
 
     1. `isolation_level=None` puts the DBAPI connection in autocommit so
        SQLAlchemy controls BEGIN/COMMIT/ROLLBACK. Without this, Python's
@@ -43,7 +43,11 @@ def configure_sqlite_engine(engine_: Engine) -> None:
        before any transaction is open. WAL lets readers proceed alongside
        a writer; without it, every read serialises through the same lock
        as every write, and BEGIN times out under fleet contention.
-    3. The "begin" event emits plain `BEGIN` (DEFERRED). Combined with WAL
+    3. Read-performance pragmas (temp_store, cache_size, mmap_size) — see
+       inline comments. Connection-scoped like the pragmas above (unlike
+       journal_mode, SQLite doesn't persist these in the DB header), so they
+       must be reapplied on every connect, not just once at startup.
+    4. The "begin" event emits plain `BEGIN` (DEFERRED). Combined with WAL
        this is correct: writers serialise through SQLite's single writer
        lock with busy_timeout retry, readers use snapshots and never
        conflict. BEGIN IMMEDIATE would serialise reads as well — a 30s
@@ -60,6 +64,20 @@ def configure_sqlite_engine(engine_: Engine) -> None:
             # safe to set on every connect — it's a no-op once enabled.
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
+            # temp_store=MEMORY keeps SQLite's temp b-trees (built for
+            # ORDER BY / GROUP BY / window-function work that can't be
+            # satisfied by an index — the ranking and forecast aggregations
+            # all do this) in RAM instead of spilling to a temp file on disk.
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            # cache_size=-20000: ~20MB page cache (negative = KiB), up from
+            # SQLite's ~2MB default. Cheap given this app's local-first,
+            # single-instance deployment; keeps the hot working set (recent
+            # usage_events/quota_snapshots pages) resident across requests.
+            cursor.execute("PRAGMA cache_size=-20000")
+            # mmap_size=268435456 (256MB): memory-map the DB file so reads
+            # against pages outside the page cache avoid a read() syscall.
+            # A no-op on platforms/builds without mmap support.
+            cursor.execute("PRAGMA mmap_size=268435456")
         except Exception as e:
             logger.warning(f"Could not set SQLite concurrency pragmas: {e}")
         finally:

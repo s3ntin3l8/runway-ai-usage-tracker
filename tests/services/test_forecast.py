@@ -295,6 +295,38 @@ def test_forecast_missing_reset_at_returns_none(db_session):
     assert result is None
 
 
+def test_forecast_stale_window_returns_none(db_session):
+    """reset_at more than one window-duration in the past -> no forecast.
+
+    A window that hasn't rolled over in over a full cycle is dead data, not a
+    live forecast target — and letting it through lets `_snapshots_for_card`
+    trim against `now` instead of the window's real end, admitting the card's
+    entire historical snapshot backlog and blowing up Theil-Sen's O(n^2) pass
+    (regression: a single such card turned a ~2s dashboard load into a
+    sub-100ms one once excluded). See STALE_WINDOW_MULTIPLIER.
+    """
+    now = datetime.now(UTC)
+    stale_reset_at = now - timedelta(days=30)  # weekly window duration is 7 days
+    card = _make_card(window_type="weekly", reset_at=stale_reset_at.isoformat())
+    result = compute_forecast(card, db_session)
+    assert result is None
+
+
+def test_forecast_excludes_stale_card_from_batch(db_session):
+    """compute_all_forecasts silently drops a stale card, keeps a fresh one."""
+    now = datetime.now(UTC)
+    fresh_card = _make_card(account_id="acc1", reset_at=(now + timedelta(days=4)).isoformat())
+    stale_card = _make_card(
+        account_id="acc2",
+        window_type="session",
+        reset_at=(now - timedelta(days=60)).isoformat(),
+    )
+    response = compute_all_forecasts([fresh_card, stale_card], db_session)
+    account_ids = {f.account_id for f in response.forecasts}
+    assert "acc2" not in account_ids
+    assert "acc1" in account_ids
+
+
 def test_forecast_includes_session_window(db_session):
     """window_type=session → uses 5-min buckets; no snapshots → insufficient_data."""
     card = _make_card(window_type="session")

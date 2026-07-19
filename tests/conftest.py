@@ -68,6 +68,22 @@ async def clear_token_cache():
 
 
 @pytest.fixture(autouse=True)
+def clear_response_cache():
+    """Clear the process-wide TTL response cache before each test.
+
+    app/core/cache.py backs resolve_user_tz + the /fleet, /global-stats,
+    /top-*, and /forecast response caches with a module-level dict keyed by
+    strings like "fleet" or "user_tz" — without this, a value cached by one
+    test (e.g. a resolved timezone) would leak into the next test's assertions.
+    """
+    from app.core.cache import cache_clear
+
+    cache_clear()
+    yield
+    cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def mock_db_session():
     """Mock the DB session to prevent tests from hitting the local database."""
     # We patch sqlmodel.Session directly as it is used via context manager in CredentialProvider

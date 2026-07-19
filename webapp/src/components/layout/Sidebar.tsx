@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useFleetUpdateCount } from '@/features/fleet/queries';
 import { NAV_ITEMS } from './nav';
+import { prefetchRoute } from './routePrefetch';
 import { RunwayMark } from './RunwayMark';
 
 // Updating the server means pulling a new image — link to the GitHub releases
@@ -32,6 +33,8 @@ export function Sidebar() {
             key={item.to}
             to={item.to}
             end={item.end}
+            onMouseEnter={() => prefetchRoute(item.to)}
+            onFocus={() => prefetchRoute(item.to)}
             className={({ isActive }) =>
               cn(
                 'flex h-9 items-center gap-2.5 rounded-sm px-2.5 text-[13px] font-medium transition-colors duration-150',

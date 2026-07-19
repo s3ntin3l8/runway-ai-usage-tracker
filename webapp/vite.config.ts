@@ -128,8 +128,25 @@ export default defineConfig({
         // Function form (not the record form) so the type stays valid under
         // Vite 8's Rollup: split echarts into its own chunk to keep the main
         // bundle small.
+        //
+        // Also splits the framework/query/Radix deps into their own vendor
+        // chunk. These change far less often than app code (a react/router/
+        // query bump is a deliberate dependency-update commit, not part of
+        // routine feature work), so separating them lets the browser cache
+        // reuse this chunk across app releases instead of refetching it
+        // alongside every code change bundled into the main chunk.
         manualChunks(id) {
           if (id.includes('node_modules/echarts')) return 'echarts';
+          if (
+            id.includes('node_modules/react/') ||
+            id.includes('node_modules/react-dom/') ||
+            id.includes('node_modules/scheduler/') ||
+            id.includes('node_modules/react-router/') ||
+            id.includes('node_modules/@tanstack/react-query/') ||
+            id.includes('node_modules/@radix-ui/')
+          ) {
+            return 'vendor';
+          }
         },
       },
     },
