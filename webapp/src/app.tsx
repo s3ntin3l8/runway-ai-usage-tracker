@@ -10,7 +10,7 @@ import { InstallProvider } from '@/hooks/useInstallPrompt';
 import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { HomePage } from '@/features/home/HomePage';
-import { createAuthRedirectGuard } from '@/lib/authRedirect';
+import { createAuthRedirectGuard, createQueryErrorAuthRedirectHandler } from '@/lib/authRedirect';
 
 const ProviderPage = lazy(() =>
   import('@/features/provider/ProviderPage').then((m) => ({ default: m.ProviderPage })),
@@ -39,7 +39,9 @@ const handleAuthRedirect = createAuthRedirectGuard(() => {
 });
 
 const queryClient = new QueryClient({
-  queryCache: new QueryCache({ onError: handleAuthRedirect }),
+  // BootGate's own settings query is excluded (via meta) since it owns its
+  // own "Session expired" UI — see lib/authRedirect.ts.
+  queryCache: new QueryCache({ onError: createQueryErrorAuthRedirectHandler(handleAuthRedirect) }),
   mutationCache: new MutationCache({ onError: handleAuthRedirect }),
   defaultOptions: {
     queries: {

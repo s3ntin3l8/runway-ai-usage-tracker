@@ -63,6 +63,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(0, 'Network error — unable to reach server');
   }
 
+  // Invariant this relies on: Runway's own backend must never issue a real
+  // 3xx. If that ever changes, this would misread a legitimate app redirect
+  // as a lost SSO session.
   if (resp.type === 'opaqueredirect') {
     throw new ApiError(0, 'Authentication required', true);
   }

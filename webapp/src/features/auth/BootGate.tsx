@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
 import { ApiError, clearAdminKey, getAdminKey } from '@/api/client';
 import { setTzConfig } from '@/lib/tz';
+import { SKIP_AUTH_REDIRECT_GUARD_META } from '@/lib/authRedirect';
 import { RunwayMark } from '@/components/layout/RunwayMark';
 
 export function BootGate({ children }: { children: React.ReactNode }) {
@@ -18,6 +19,10 @@ export function BootGate({ children }: { children: React.ReactNode }) {
     // user on the error card. Once the global retry budget is spent, keep polling
     // while errored so the app self-heals when the server is back — no manual refresh.
     refetchInterval: (query) => (query.state.status === 'error' ? 3000 : false),
+    // This query owns its own "Session expired" UI below on an authRedirect —
+    // exclude it from app.tsx's global auto-reload guard so a cold boot
+    // doesn't also toast-and-reload out from under this screen's own button.
+    meta: SKIP_AUTH_REDIRECT_GUARD_META,
   });
   const appConfig = useQuery({
     queryKey: ['system', 'app-config'],
