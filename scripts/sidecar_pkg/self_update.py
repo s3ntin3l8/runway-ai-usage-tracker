@@ -304,7 +304,11 @@ def _extract(archive: pathlib.Path, dest: pathlib.Path) -> None:
             # file *contents*), even though `zip -r` recorded the original
             # mode in each member's external_attr. Restore it so bundled
             # Mach-O/ELF executables (e.g. Contents/MacOS/RunwaySidecar in a
-            # macOS .app) stay launchable after extraction.
+            # macOS .app) stay launchable after extraction. Directories are
+            # intentionally left alone: extractall's own directory-creation
+            # default (currently 0o755, traversable) is what keeps `.app`
+            # dirs walkable, and the apply_update() safety net below covers
+            # files regardless of what that default does.
             for zinfo in zf.infolist():
                 mode = (zinfo.external_attr >> 16) & 0o777
                 if mode:  # 0 on archives written without Unix attrs — no-op
@@ -463,13 +467,15 @@ def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> boo
             # `install` is a bundle directory, not a file, so the branch above
             # never fires — this used to leave Contents/MacOS/* without an
             # exec bit whenever the archive's own permissions were lost (see
-            # _extract). Chmod the entry-point(s) directly as a safety net
-            # that doesn't depend on archive metadata surviving extraction.
+            # _extract). Chmod every entry-point directly (recursively, since
+            # some bundles nest helper executables under Contents/MacOS/) as
+            # a safety net that doesn't depend on archive metadata surviving
+            # extraction. Owner-only rwx, same policy as the file branch above.
             macos_dir = install / "Contents" / "MacOS"
             if macos_dir.is_dir():
-                for entry in macos_dir.iterdir():
+                for entry in macos_dir.rglob("*"):
                     if entry.is_file():
-                        entry.chmod(entry.stat().st_mode | 0o755)
+                        os.chmod(entry, 0o700)
     except PermissionError:
         logger.error(
             "Self-update aborted: install path %s is not writable; update manually", install

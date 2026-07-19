@@ -12,6 +12,7 @@ incident this guards against) rather than merely failing an update.
 import hashlib
 import io
 import os
+import stat
 import sys
 import tarfile
 import time
@@ -443,13 +444,22 @@ class TestExtractSafety:
 
 class TestApplyUpdateMacOSExecBit:
     def _make_app(self, root, name, *, executable):
-        """Build a minimal `<name>.app/Contents/MacOS/<name>` bundle."""
+        """Build a minimal `<name>.app/Contents/MacOS/<name>` bundle, plus a
+        nested helper executable under Contents/MacOS/Helpers/ — some bundles
+        ship those, and the safety net must reach them too, not just the
+        top-level entry point."""
         app = root / f"{name}.app"
         macos_dir = app / "Contents" / "MacOS"
         macos_dir.mkdir(parents=True)
+        mode = 0o755 if executable else 0o644
         binary = macos_dir / name
         binary.write_bytes(b"x")
-        binary.chmod(0o644 if not executable else 0o755)
+        binary.chmod(mode)
+        helpers_dir = macos_dir / "Helpers"
+        helpers_dir.mkdir()
+        helper = helpers_dir / f"{name} Helper"
+        helper.write_bytes(b"x")
+        helper.chmod(mode)
         return app
 
     def test_swap_restores_exec_bit_when_archive_lost_it(self, tmp_path, monkeypatch):
@@ -477,6 +487,12 @@ class TestApplyUpdateMacOSExecBit:
 
         assert result is True
         assert not relaunched  # restart=False
-        entry_point = installed_app / "Contents" / "MacOS" / "Runway Sidecar"
-        assert entry_point.is_file()
-        assert os.access(entry_point, os.X_OK)
+        macos_dir = installed_app / "Contents" / "MacOS"
+        entry_point = macos_dir / "Runway Sidecar"
+        helper = macos_dir / "Helpers" / "Runway Sidecar Helper"
+        for binary in (entry_point, helper):
+            assert binary.is_file()
+            assert os.access(binary, os.X_OK)
+            # Owner-only rwx, matching the file branch's stated policy —
+            # not a blanket +rx that would widen group/world permissions.
+            assert stat.S_IMODE(binary.stat().st_mode) == 0o700
