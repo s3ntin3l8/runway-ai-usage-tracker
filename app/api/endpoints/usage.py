@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, select
 
-from app.core.cache import cache_get, cache_set
+from app.core.cache import cache_clear, cache_get, cache_set
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -83,12 +83,30 @@ _MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
 # app/core/cache.py). TTLs are set below each endpoint's own client poll
 # cadence (webapp/src/features/home/queries.ts) so a full recompute happens
 # at most once per cadence, not once per dashboard load/tab.
+#
+# Every cached response carries a `generated_at` field, frozen at the moment
+# it was actually computed (cache miss) — a cache hit replays that same
+# timestamp verbatim rather than stamping "now". This is deliberate: the
+# frontend renders it as an "updated N ago" freshness indicator
+# (HomePage.tsx), and it must report how old the underlying computation
+# really is (up to the TTL above) — restamping it at serve time would make
+# a cache hit falsely claim to be as fresh as a live recompute.
 _FLEET_CACHE_KEY = "fleet"
 _FLEET_CACHE_TTL = 30.0
 _GLOBAL_STATS_CACHE_KEY = "global-stats"
 _GLOBAL_STATS_CACHE_TTL = 300.0
 _TOP_N_CACHE_TTL = 300.0
 _FORECAST_CACHE_TTL = 45.0
+
+
+def _normalize_filter(value: str | None) -> str | None:
+    """Canonicalize an optional string filter used both as a cache key
+    component and a query predicate, so equivalent requests that differ only
+    in casing/whitespace share one cache entry and one SQL path instead of
+    silently forking into two."""
+    if value is None:
+        return None
+    return value.strip().lower() or None
 
 
 def _month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime]:
@@ -712,6 +730,9 @@ async def get_usage_forecast(
     rows on a poll cycle, so the forecast can't meaningfully change faster
     than that.
     """
+    provider_id = _normalize_filter(provider_id)
+    account_id = _normalize_filter(account_id)
+    window_type = _normalize_filter(window_type)
     cache_key = f"forecast:{provider_id}:{account_id}:{window_type}:{include_series}"
     cached = cache_get(cache_key)
     if cached is not None:
@@ -1223,6 +1244,7 @@ async def get_top_projects(
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
+    provider_id = _normalize_filter(provider_id)
     cache_key = (
         f"top-projects:{metric}:{days}:{since}:{until}:{exclude_cache}:{provider_id}:{limit}"
     )
@@ -1267,6 +1289,7 @@ async def get_top_tools(
     usage_events, inherently unindexable. Response is cached (keyed by every
     query param) for `_TOP_N_CACHE_TTL`.
     """
+    provider_id = _normalize_filter(provider_id)
     cache_key = f"top-tools:{days}:{since}:{until}:{provider_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
@@ -1318,6 +1341,7 @@ async def reset_provider(
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     await manager.reset_collector(provider, account_id)
+    cache_clear()  # card status changed — don't serve a stale fleet/forecast cache
     return {"status": "reset", "provider": provider, "account_id": account_id}
 
 
@@ -1330,6 +1354,7 @@ async def collect_provider(
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     cards = await manager.collect_one(provider, account_id)
+    cache_clear()  # the whole point of a manual "collect now" is to see it immediately
     return {"status": "ok", "provider": provider, "cards": len(cards)}
 
 

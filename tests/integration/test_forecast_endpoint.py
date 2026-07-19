@@ -79,6 +79,22 @@ class TestForecastEndpoint:
         response = client.get("/api/v1/usage/forecast?provider_id=p1")
         assert len(response.json()["forecasts"]) == 1
 
+    def test_forecast_endpoint_provider_id_filter_is_case_and_whitespace_insensitive(self, session):
+        """provider_id/account_id/window_type are normalized before both the
+        cache key and the SQL filter, so a differently-cased/spaced query
+        still matches the canonical (lowercase) stored value instead of
+        silently returning zero results and minting a separate cache entry."""
+        _add_latest(session, provider_id="p1", account_id="acc1", window_type="weekly")
+
+        client = TestClient(fastapi_app)
+        response = client.get(
+            "/api/v1/usage/forecast?provider_id=P1&account_id=ACC1&window_type=WEEKLY"
+        )
+        assert len(response.json()["forecasts"]) == 1
+
+        response = client.get("/api/v1/usage/forecast?provider_id= p1 ")
+        assert len(response.json()["forecasts"]) == 1
+
     def test_forecast_endpoint_filters_by_window_type(self, session):
         _add_latest(session, window_type="weekly", service_name="W1")
         _add_latest(session, window_type="monthly", service_name="M1")

@@ -60,3 +60,20 @@ def test_independent_keys_do_not_collide():
     cache_set("global-stats", {"y": 2}, ttl_seconds=60.0)
     assert cache_get("fleet") == {"x": 1}
     assert cache_get("global-stats") == {"y": 2}
+
+
+def test_store_is_bounded_and_evicts_least_recently_used():
+    """Filling past _MAX_ENTRIES evicts the LRU entry, not just the oldest
+    by insertion order — a re-read entry survives a later eviction round."""
+    limit = cache_mod._MAX_ENTRIES
+    for i in range(limit):
+        cache_set(f"k{i}", i, ttl_seconds=60.0)
+    assert len(cache_mod._store) == limit
+
+    cache_get("k0")  # touch k0 so it's no longer the LRU entry
+
+    cache_set("new", "value", ttl_seconds=60.0)  # pushes store over the cap
+    assert len(cache_mod._store) == limit
+    assert cache_get("k0") == 0
+    assert cache_get("k1") is None  # was LRU after k0 was touched
+    assert cache_get("new") == "value"
