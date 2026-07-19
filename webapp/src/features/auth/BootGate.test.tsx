@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BootGate } from './BootGate';
 import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
-import { clearAdminKey, getAdminKey } from '@/api/client';
+import { ApiError, clearAdminKey, getAdminKey } from '@/api/client';
 
 vi.mock('@/api/endpoints', () => ({
   fetchSettings: vi.fn(),
@@ -14,10 +14,17 @@ vi.mock('@/api/endpoints', () => ({
   login: vi.fn(),
 }));
 
-vi.mock('@/api/client', () => ({
-  getAdminKey: vi.fn(),
-  clearAdminKey: vi.fn(),
-}));
+vi.mock('@/api/client', async () => {
+  // Keep the real ApiError export — BootGate does `instanceof ApiError` to
+  // tell an upstream SSO redirect apart from a genuine outage, and only the
+  // admin-key helpers below need mocking.
+  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  return {
+    ...actual,
+    getAdminKey: vi.fn(),
+    clearAdminKey: vi.fn(),
+  };
+});
 
 const mockSettings = vi.mocked(fetchSettings);
 const mockAppConfig = vi.mocked(fetchAppConfig);
@@ -53,6 +60,28 @@ describe('BootGate', () => {
     renderGate();
     expect(await screen.findByText(/backend unreachable/i)).toBeTruthy();
     expect(screen.queryByText('dashboard-content')).toBeNull();
+  });
+
+  it('shows a session-expired screen when settings hits an upstream SSO redirect', async () => {
+    mockSettings.mockRejectedValue(new ApiError(0, 'Authentication required', true));
+    mockAppConfig.mockResolvedValue({} as never);
+    renderGate();
+    expect(await screen.findByText(/session expired/i)).toBeTruthy();
+    expect(screen.queryByText(/backend unreachable/i)).toBeNull();
+    expect(screen.queryByText('dashboard-content')).toBeNull();
+  });
+
+  it('reloads the page when "Sign in" is clicked on the session-expired screen', async () => {
+    const user = userEvent.setup();
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload });
+    mockSettings.mockRejectedValue(new ApiError(0, 'Authentication required', true));
+    mockAppConfig.mockResolvedValue({} as never);
+    renderGate();
+
+    await user.click(await screen.findByRole('button', { name: /sign in/i }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 
   it('shows the admin-key screen when the instance is locked', async () => {

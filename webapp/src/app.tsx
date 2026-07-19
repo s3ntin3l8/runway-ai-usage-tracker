@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { ApiError } from '@/api/client';
 import { AppShell } from '@/components/layout/AppShell';
 import { BootGate } from '@/features/auth/BootGate';
@@ -10,6 +10,7 @@ import { InstallProvider } from '@/hooks/useInstallPrompt';
 import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { HomePage } from '@/features/home/HomePage';
+import { createAuthRedirectGuard } from '@/lib/authRedirect';
 
 const ProviderPage = lazy(() =>
   import('@/features/provider/ProviderPage').then((m) => ({ default: m.ProviderPage })),
@@ -28,13 +29,29 @@ const SettingsPage = lazy(() =>
 );
 const KitPage = lazy(() => import('@/features/dev/KitPage').then((m) => ({ default: m.KitPage })));
 
+// With the service worker's network-first navigation route (see sw.ts), this
+// reload is a real top-level request and the browser follows the upstream
+// SSO 302 straight to the login page — no interstitial needed for the common
+// case of the session expiring while the dashboard is already open.
+const handleAuthRedirect = createAuthRedirectGuard(() => {
+  toast.error('Your session has expired. Signing in again…');
+  window.setTimeout(() => window.location.reload(), 1500);
+});
+
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: handleAuthRedirect }),
+  mutationCache: new MutationCache({ onError: handleAuthRedirect }),
   defaultOptions: {
     queries: {
       staleTime: 15_000,
       // Server errors are worth one retry; 4xx (auth, validation) are not.
+      // An authRedirect (upstream SSO bounce) also isn't worth retrying — the
+      // session is gone until the user signs back in, so retrying just delays
+      // BootGate showing the "Session expired" screen.
       retry: (failureCount, error) =>
-        error instanceof ApiError && (error.status === 0 || error.status >= 500)
+        error instanceof ApiError &&
+        !error.authRedirect &&
+        (error.status === 0 || error.status >= 500)
           ? failureCount < 2
           : false,
     },

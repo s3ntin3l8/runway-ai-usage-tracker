@@ -11,11 +11,24 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       // New versions take over on the next navigation (no update prompt UI).
+      // Note: under injectManifest this only works because sw.ts calls
+      // self.skipWaiting() + clientsClaim() itself — generateSW wired those up
+      // for us, injectManifest does not.
       registerType: 'autoUpdate',
       // We call registerSW() ourselves from main.tsx (bundled into a hashed
       // /assets script), so the strict CSP (script-src 'self') stays intact —
       // never let the plugin inject an inline registration script.
       injectRegister: null,
+      // Hand-authored SW (src/sw.ts) instead of generateSW: generateSW's
+      // built-in navigateFallback registers a cache-first NavigationRoute
+      // before any runtimeCaching route, so it always wins and there is no
+      // way to make navigations network-first from config alone. We need
+      // network-first navigations so a forward-auth proxy's redirect to its
+      // login page (when the upstream SSO session has expired) is followed by
+      // the browser instead of masked by a cached app shell — see sw.ts.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       // Precached so the install + offline shell has its icons. The raster
       // icons themselves are committed in public/ (run `make logo` to refresh)
       // and picked up by globPatterns below.
@@ -88,15 +101,11 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
         // Install-dialog screenshots are fetched by the browser/OS, not the app
         // shell — keep them out of the precache.
         globIgnores: ['**/screenshots/*'],
-        // Offline SPA shell — but never let the SW answer API calls.
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
-        cleanupOutdatedCaches: true,
       },
     }),
   ],

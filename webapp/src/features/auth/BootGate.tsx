@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
-import { clearAdminKey, getAdminKey } from '@/api/client';
+import { ApiError, clearAdminKey, getAdminKey } from '@/api/client';
 import { setTzConfig } from '@/lib/tz';
 import { RunwayMark } from '@/components/layout/RunwayMark';
 
@@ -55,6 +55,30 @@ export function BootGate({ children }: { children: React.ReactNode }) {
   }
 
   if (settings.isError) {
+    // An upstream forward-auth proxy (Authentik/oauth2-proxy/Authelia in front
+    // of Runway) bounced the settings probe to its login page — the session
+    // with *that* proxy is gone, not the Runway backend. Reloading the page is
+    // a top-level navigation, so the browser (or the service worker's
+    // network-first navigation route) follows the redirect to the real login
+    // screen instead of us faking one here.
+    if (settings.error instanceof ApiError && settings.error.authRedirect) {
+      return (
+        <CenteredCard>
+          <h1 className="text-base font-semibold">Session expired</h1>
+          <p className="mt-1 text-sm text-fg-muted">
+            Your login with the upstream auth provider has expired. Sign in again to continue.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-4 h-9 cursor-pointer rounded-sm bg-accent px-4 text-sm font-medium text-accent-fg transition-colors duration-150 hover:bg-accent-hover"
+          >
+            Sign in
+          </button>
+        </CenteredCard>
+      );
+    }
+
     return (
       <CenteredCard>
         <h1 className="text-base font-semibold">Backend unreachable</h1>

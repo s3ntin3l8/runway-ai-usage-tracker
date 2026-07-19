@@ -123,4 +123,20 @@ describe('api', () => {
     expect(err.status).toBe(0);
     expect(err.message).toMatch(/network error/i);
   });
+
+  it('requests redirect:"manual" so an upstream SSO bounce surfaces instead of being followed', async () => {
+    mockFetch().mockResolvedValue(jsonResponse({}));
+    await api('/api/v1/thing');
+    expect(mockFetch().mock.calls[0][1]).toMatchObject({ redirect: 'manual' });
+  });
+
+  it('flags an opaque redirect as an authRedirect ApiError, not a network outage', async () => {
+    // fetch resolves (doesn't reject) when redirect:'manual' hits a 3xx — the
+    // response comes back with type:'opaqueredirect' instead of being followed.
+    mockFetch().mockResolvedValue({ type: 'opaqueredirect' });
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.authRedirect).toBe(true);
+    expect(err.message).toMatch(/authentication required/i);
+  });
 });
