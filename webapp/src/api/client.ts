@@ -26,6 +26,12 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    // Set when the response was actually an opaque redirect (see below) — an
+    // upstream forward-auth proxy (Authentik/oauth2-proxy/Authelia in front of
+    // Runway) bouncing the request to its login page because the SSO session
+    // is gone. Distinct from a genuine backend outage: retrying won't help,
+    // and the UI should offer to sign in again, not report "unreachable".
+    public readonly authRedirect: boolean = false,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -46,9 +52,22 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     // by /auth/session — the primary auth path now that the key no longer
     // lives in localStorage. The X-Admin-Key header above is a transitional
     // fallback for not-yet-migrated logins and API/script clients.
-    resp = await fetch(path, { ...init, headers, credentials: 'include' });
+    //
+    // redirect:'manual' so a same-site-fronting SSO proxy's 302 to its login
+    // page comes back as an opaque `type: 'redirect'` response instead of the
+    // browser silently following it cross-origin (where it would just fail
+    // CORS). Runway's own backend never issues redirects, so any redirect we
+    // see here is unambiguously an upstream auth bounce, not app behavior.
+    resp = await fetch(path, { ...init, headers, credentials: 'include', redirect: 'manual' });
   } catch {
     throw new ApiError(0, 'Network error — unable to reach server');
+  }
+
+  // Invariant this relies on: Runway's own backend must never issue a real
+  // 3xx. If that ever changes, this would misread a legitimate app redirect
+  // as a lost SSO session.
+  if (resp.type === 'opaqueredirect') {
+    throw new ApiError(0, 'Authentication required', true);
   }
 
   if (!resp.ok) {
