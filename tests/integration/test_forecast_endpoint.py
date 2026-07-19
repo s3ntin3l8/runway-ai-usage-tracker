@@ -157,6 +157,69 @@ class TestForecastEndpoint:
         forecasts = response.json()["forecasts"]
         assert any(f.get("series") for f in forecasts), forecasts
 
+    def test_forecast_endpoint_second_call_is_served_from_cache(self, session):
+        """`account_id=acc1` is passed on every call so an eventual empty
+        result never satisfies the unfiltered bootstrap condition — this
+        test isolates cache-hit behavior, not the (separately-tested)
+        collect_all() fallback."""
+        from sqlalchemy import delete
+
+        from app.core.cache import cache_clear
+
+        _add_latest(session, service_name="Service A", account_id="acc1")
+
+        client = TestClient(fastapi_app)
+        first = client.get("/api/v1/usage/forecast?account_id=acc1")
+        assert len(first.json()["forecasts"]) == 1
+
+        session.exec(delete(LatestUsage))
+        session.commit()
+
+        second = client.get("/api/v1/usage/forecast?account_id=acc1")
+        assert len(second.json()["forecasts"]) == 1, "expected the cached payload"
+
+        cache_clear()
+        third = client.get("/api/v1/usage/forecast?account_id=acc1")
+        assert len(third.json()["forecasts"]) == 0
+
+    def test_forecast_endpoint_bootstraps_when_table_empty_and_unfiltered(self, session):
+        """No LatestUsage rows and no provider/account/window_type filter ->
+        falls back to manager.collect_all() to seed the table before forecasting."""
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "app.api.endpoints.usage.manager.collect_all", new_callable=AsyncMock
+        ) as mock_collect_all:
+            mock_collect_all.return_value = []
+            client = TestClient(fastapi_app)
+            response = client.get("/api/v1/usage/forecast")
+            assert response.status_code == 200
+            assert response.json()["forecasts"] == []
+            mock_collect_all.assert_awaited_once()
+
+    def test_forecast_endpoint_skips_malformed_card_json(self, session):
+        """A row with invalid JSON in card_json must not 500 the whole
+        response — it's dropped, sibling valid rows still forecast."""
+        from app.models.db import LatestUsage
+
+        session.add(
+            LatestUsage(
+                provider_id="broken",
+                account_id="acc1",
+                sidecar_id="local",
+                window_type="weekly",
+                variant="default",
+                card_json="{not valid json",
+            )
+        )
+        session.commit()
+        _add_latest(session, service_name="Service A", account_id="acc1")
+
+        client = TestClient(fastapi_app)
+        response = client.get("/api/v1/usage/forecast?account_id=acc1")
+        assert response.status_code == 200
+        assert len(response.json()["forecasts"]) == 1
+
     def test_forecast_endpoint_exposes_glide_pct(self, session):
         """glide_pct must be present on every entry and equal confidence × 100."""
         import pytest
