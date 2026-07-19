@@ -11,8 +11,9 @@ from sqlmodel.pool import StaticPool
 
 import app.core.db as db_module
 from app.core.cache import cache_get, cache_set
-from app.core.db import get_session
 from app.main import app
+
+get_session = db_module.get_session
 
 
 @pytest.fixture(name="session")
