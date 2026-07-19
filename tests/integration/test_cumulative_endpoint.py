@@ -484,3 +484,33 @@ def test_query_param_filters_provider_id(session):
     assert len(cumulative) == 1
     assert cumulative[0]["provider_id"] == "anthropic"
     assert cumulative[0]["lifetime"]["msgs"] == 10
+
+
+def test_default_call_with_identity_filter_scopes_live_month_and_year(session):
+    """?provider_id=X&account_id=Y with no period_type (the "default" branch,
+    e.g. ProviderPage's `fetchCumulative({ provider_id, account_id })` call)
+    must scope the live current-month/current-year aggregation to that
+    identity too — not just the rollup row fetch.
+
+    Regression: the `is_default` branch's two `query_cumulative_live` calls
+    omitted `provider_id`/`account_id` (every other branch passes them
+    through), so a single-provider request silently pulled in *every*
+    provider/account's current-month and current-year totals — inflating
+    both the response size and the aggregation cost to fleet-wide, the exact
+    shape behind the measured 850KB/~450ms default-call payload.
+    """
+    now = datetime.now(UTC)
+    _event(session, "mine", now, provider_id="anthropic", account_id="u@x.com", tokens_input=10)
+    _event(session, "other", now, provider_id="chatgpt", account_id="other@x.com", tokens_input=99)
+
+    resp = _client().get("/api/v1/usage/cumulative?provider_id=anthropic&account_id=u@x.com")
+    assert resp.status_code == 200
+    body = resp.json()
+    cumulative = body["cumulative"]
+
+    assert len(cumulative) == 1
+    assert cumulative[0]["provider_id"] == "anthropic"
+    month_key = body["current_month_key"]
+    year_key = body["current_year_key"]
+    assert cumulative[0][month_key]["tokens_input"] == 10
+    assert cumulative[0][year_key]["tokens_input"] == 10

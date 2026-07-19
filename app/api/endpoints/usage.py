@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -7,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, select
 
+from app.core.cache import cache_clear, cache_get, cache_set
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -76,6 +78,35 @@ def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[
 
 
 _MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
+
+# TTL response-cache config for the read-heavy dashboard endpoints (see
+# app/core/cache.py). TTLs are set below each endpoint's own client poll
+# cadence (webapp/src/features/home/queries.ts) so a full recompute happens
+# at most once per cadence, not once per dashboard load/tab.
+#
+# Every cached response carries a `generated_at` field, frozen at the moment
+# it was actually computed (cache miss) — a cache hit replays that same
+# timestamp verbatim rather than stamping "now". This is deliberate: the
+# frontend renders it as an "updated N ago" freshness indicator
+# (HomePage.tsx), and it must report how old the underlying computation
+# really is (up to the TTL above) — restamping it at serve time would make
+# a cache hit falsely claim to be as fresh as a live recompute.
+_FLEET_CACHE_KEY = "fleet"
+_FLEET_CACHE_TTL = 30.0
+_GLOBAL_STATS_CACHE_KEY = "global-stats"
+_GLOBAL_STATS_CACHE_TTL = 300.0
+_TOP_N_CACHE_TTL = 300.0
+_FORECAST_CACHE_TTL = 45.0
+
+
+def _normalize_filter(value: str | None) -> str | None:
+    """Canonicalize an optional string filter used both as a cache key
+    component and a query predicate, so equivalent requests that differ only
+    in casing/whitespace share one cache entry and one SQL path instead of
+    silently forking into two."""
+    if value is None:
+        return None
+    return value.strip().lower() or None
 
 
 def _month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime]:
@@ -147,7 +178,27 @@ async def fetch_fleet_view(
       LED row.
     - sidecar_contributions: per-sidecar token totals for the current local
       month, aggregated live from usage_events, used by the Fuel Dump bar.
+
+    The body below is synchronous SQLite work (several `session.exec` scans
+    plus per-group aggregation); it's offloaded to a worker thread via
+    `asyncio.to_thread` so it doesn't block the event loop while other
+    dashboard queries are in flight (they'd otherwise serialize behind it —
+    FastAPI only threadpools `def` routes, never `async def` ones calling
+    sync code inline).
+
+    Response is cached for `_FLEET_CACHE_TTL` seconds — matches the client's
+    own 30s poll cadence, so a full recompute only happens once per cadence
+    instead of once per dashboard load/tab.
     """
+    cached = cache_get(_FLEET_CACHE_KEY)
+    if cached is not None:
+        return cached
+    result = await asyncio.to_thread(_fetch_fleet_view_sync, session)
+    cache_set(_FLEET_CACHE_KEY, result, _FLEET_CACHE_TTL)
+    return result
+
+
+def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     from app.models.db import LatestUsage
 
     records = session.exec(select(LatestUsage)).all()
@@ -394,7 +445,34 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
     `usage_period_rollup` read or year-to-date scan. For a caller (e.g. the
     Home token/message card) that only needs "this month," this is much
     cheaper than the default call.
+
+    Synchronous rollup/live-aggregation work is offloaded to a worker thread
+    via `asyncio.to_thread` (see `fetch_fleet_view` for why) — this is the
+    largest home-page payload (~850KB raw) and the slowest of the cheap
+    endpoints, so keeping it off the event loop matters most here.
     """
+    return await asyncio.to_thread(
+        _get_cumulative_usage_sync,
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        period_type=period_type,
+        period_key=period_key,
+        since=since,
+        until=until,
+    )
+
+
+def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-live/range-live/filtered bucket assembly, splits poorly
+    session: Session,
+    *,
+    provider_id: str | None,
+    account_id: str | None,
+    period_type: str | None,
+    period_key: str | None,
+    since: str | None,
+    until: str | None,
+) -> dict[str, Any]:
     from app.models.db import UsagePeriodRollup
 
     now = datetime.now(UTC)
@@ -442,8 +520,23 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
         anchors = _local_period_anchors(resolve_user_tz(session))
         current_year = anchors["current_year"]
         current_month = anchors["current_month"]
-        live_month = query_cumulative_live(session, since=anchors["month_start_utc"])
-        live_year = query_cumulative_live(session, since=anchors["year_start_utc"])
+        # provider_id/account_id must be threaded through here too — every
+        # other live-aggregation branch below does — otherwise a caller that
+        # scopes the request to one identity (e.g. ProviderPage's
+        # `fetchCumulative({ provider_id, account_id })`, which hits this
+        # branch since it passes no period_type) silently gets the live
+        # month/year totals for *every* provider/account mixed into the
+        # response: inflated payload, inflated aggregation cost, and a
+        # response that leaks other accounts' data into a filtered request.
+        live_month = query_cumulative_live(
+            session,
+            since=anchors["month_start_utc"],
+            provider_id=provider_id,
+            account_id=account_id,
+        )
+        live_year = query_cumulative_live(
+            session, since=anchors["year_start_utc"], provider_id=provider_id, account_id=account_id
+        )
     elif is_range_live:
         # Arbitrary [since, until) window — aggregate live, surfaced under a
         # synthetic 'range' bucket that `current_month_key` points at.
@@ -628,32 +721,60 @@ async def get_usage_forecast(
 
     `include_series=true` populates each entry's `series` field with the
     cumulative-pct bucket trajectory for client-side drill-down rendering.
+
+    The record fetch and the forecast computation are each synchronous SQLite
+    work, offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why); the rare bootstrap fallback below is real
+    async I/O and stays on the event loop. Response is cached (keyed by every
+    query param) for `_FORECAST_CACHE_TTL` — quota_snapshots only gains new
+    rows on a poll cycle, so the forecast can't meaningfully change faster
+    than that.
     """
+    provider_id = _normalize_filter(provider_id)
+    account_id = _normalize_filter(account_id)
+    window_type = _normalize_filter(window_type)
+    cache_key = f"forecast:{provider_id}:{account_id}:{window_type}:{include_series}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     from app.models.db import LatestUsage
-    from app.services.forecast import compute_forecast
 
-    # Push known filters into SQL so we don't materialise the whole table
-    # when the caller only wants one card's forecast.
-    stmt = select(LatestUsage)
-    if provider_id:
-        stmt = stmt.where(LatestUsage.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(LatestUsage.account_id == account_id)
-    if window_type:
-        stmt = stmt.where(LatestUsage.window_type == window_type)
+    def _fetch_records() -> list[dict[str, Any]]:
+        # Push known filters into SQL so we don't materialise the whole table
+        # when the caller only wants one card's forecast.
+        stmt = select(LatestUsage)
+        if provider_id:
+            stmt = stmt.where(LatestUsage.provider_id == provider_id)
+        if account_id:
+            stmt = stmt.where(LatestUsage.account_id == account_id)
+        if window_type:
+            stmt = stmt.where(LatestUsage.window_type == window_type)
+        records = session.exec(stmt).all()
+        parsed = []
+        for r in records:
+            try:
+                parsed.append(json.loads(r.card_json))
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return parsed
 
-    records = session.exec(stmt).all()
-    results = []
-    for r in records:
-        try:
-            results.append(json.loads(r.card_json))
-        except (json.JSONDecodeError, TypeError):
-            continue
+    results = await asyncio.to_thread(_fetch_records)
 
     if not results:
         # Bootstrap fallback — only when the caller asked for everything.
         if not (provider_id or account_id or window_type):
             results = await manager.collect_all()
+
+    result = await asyncio.to_thread(_compute_forecast_response, results, session, include_series)
+    cache_set(cache_key, result, _FORECAST_CACHE_TTL)
+    return result
+
+
+def _compute_forecast_response(
+    results: list[dict[str, Any]], session: Session, include_series: bool
+) -> ForecastResponse:
+    from app.services.forecast import compute_forecast
 
     cards = [LimitCard(**item) for item in results]
 
@@ -778,20 +899,33 @@ async def get_top_models(
     (exclusive) pair wins; else the last `days`; else the current month on the
     user's local calendar (the UTC-keyed rollup lags that boundary, so this
     aggregates the event log live like the cumulative gauges do).
-    """
-    since_utc = _resolve_ranking_since(session, since, days)
 
-    models = query_top_models(
-        session,
-        since=since_utc,
-        until=parse_iso8601_utc(until) if until else None,
-        metric=metric,
-        exclude_cache=exclude_cache,
-        limit=limit,
-    )
-    return TopModelsResponse.model_validate(
-        {"models": models, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
-    )
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
+    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    """
+    cache_key = f"top-models:{metric}:{days}:{since}:{until}:{exclude_cache}:{limit}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _work() -> TopModelsResponse:
+        since_utc = _resolve_ranking_since(session, since, days)
+        models = query_top_models(
+            session,
+            since=since_utc,
+            until=parse_iso8601_utc(until) if until else None,
+            metric=metric,
+            exclude_cache=exclude_cache,
+            limit=limit,
+        )
+        return TopModelsResponse.model_validate(
+            {"models": models, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+        )
+
+    result = await asyncio.to_thread(_work)
+    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    return result
 
 
 @router.get("/global-stats")
@@ -801,8 +935,20 @@ async def get_global_stats(
     session: Session = Depends(get_session),
 ) -> GlobalStatsResponse:
     """Global cross-provider snapshot: lifetime totals, session economics,
-    cache savings, model/provider diversity, and peak day/hour."""
-    return GlobalStatsResponse(**query_global_stats(session, tz=resolve_user_tz(session)))
+    cache savings, model/provider diversity, and peak day/hour.
+
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — includes a full `usage_events` session-economics
+    scan (no index on session_id). Response is cached for `_GLOBAL_STATS_CACHE_TTL`.
+    """
+    cached = cache_get(_GLOBAL_STATS_CACHE_KEY)
+    if cached is not None:
+        return cached
+    result = await asyncio.to_thread(
+        lambda: GlobalStatsResponse(**query_global_stats(session, tz=resolve_user_tz(session)))
+    )
+    cache_set(_GLOBAL_STATS_CACHE_KEY, result, _GLOBAL_STATS_CACHE_TTL)
+    return result
 
 
 @router.get("/history/window-detail")
@@ -1092,19 +1238,37 @@ async def get_top_projects(
     session: Session = Depends(get_session),
 ) -> TopProjectsResponse:
     """Rank projects by tokens, cost, or session count. Without `provider_id`
-    the ranking spans every provider (one repo's total across all tools)."""
-    projects = query_top_projects(
-        session,
-        since=_resolve_ranking_since(session, since, days),
-        until=parse_iso8601_utc(until) if until else None,
-        metric=metric,
-        exclude_cache=exclude_cache,
-        provider_id=provider_id,
-        limit=limit,
+    the ranking spans every provider (one repo's total across all tools).
+
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
+    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    """
+    provider_id = _normalize_filter(provider_id)
+    cache_key = (
+        f"top-projects:{metric}:{days}:{since}:{until}:{exclude_cache}:{provider_id}:{limit}"
     )
-    return TopProjectsResponse.model_validate(
-        {"projects": projects, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
-    )
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _work() -> TopProjectsResponse:
+        projects = query_top_projects(
+            session,
+            since=_resolve_ranking_since(session, since, days),
+            until=parse_iso8601_utc(until) if until else None,
+            metric=metric,
+            exclude_cache=exclude_cache,
+            provider_id=provider_id,
+            limit=limit,
+        )
+        return TopProjectsResponse.model_validate(
+            {"projects": projects, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+        )
+
+    result = await asyncio.to_thread(_work)
+    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    return result
 
 
 @router.get("/top-tools")
@@ -1118,17 +1282,34 @@ async def get_top_tools(
     limit: int = Query(default=15, ge=1, le=50),
     session: Session = Depends(get_session),
 ) -> TopToolsResponse:
-    """Most-used tools by invocation count (Anthropic tool_use names today)."""
-    tools = query_top_tools(
-        session,
-        since=_resolve_ranking_since(session, since, days),
-        until=parse_iso8601_utc(until) if until else None,
-        provider_id=provider_id,
-        limit=limit,
-    )
-    return TopToolsResponse.model_validate(
-        {"tools": tools, "generated_at": iso_utc(datetime.now(UTC))}
-    )
+    """Most-used tools by invocation count (Anthropic tool_use names today).
+
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — includes a `json_each` unnest over
+    usage_events, inherently unindexable. Response is cached (keyed by every
+    query param) for `_TOP_N_CACHE_TTL`.
+    """
+    provider_id = _normalize_filter(provider_id)
+    cache_key = f"top-tools:{days}:{since}:{until}:{provider_id}:{limit}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _work() -> TopToolsResponse:
+        tools = query_top_tools(
+            session,
+            since=_resolve_ranking_since(session, since, days),
+            until=parse_iso8601_utc(until) if until else None,
+            provider_id=provider_id,
+            limit=limit,
+        )
+        return TopToolsResponse.model_validate(
+            {"tools": tools, "generated_at": iso_utc(datetime.now(UTC))}
+        )
+
+    result = await asyncio.to_thread(_work)
+    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    return result
 
 
 @router.get("/projects")
@@ -1160,6 +1341,7 @@ async def reset_provider(
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     await manager.reset_collector(provider, account_id)
+    cache_clear()  # card status changed — don't serve a stale fleet/forecast cache
     return {"status": "reset", "provider": provider, "account_id": account_id}
 
 
@@ -1172,6 +1354,7 @@ async def collect_provider(
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     cards = await manager.collect_one(provider, account_id)
+    cache_clear()  # the whole point of a manual "collect now" is to see it immediately
     return {"status": "ok", "provider": provider, "cards": len(cards)}
 
 

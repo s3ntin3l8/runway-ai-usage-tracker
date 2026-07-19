@@ -2,6 +2,7 @@ import { NavLink } from 'react-router';
 import { cn } from '@/lib/cn';
 import { useFleetUpdateCount } from '@/features/fleet/queries';
 import { NAV_ITEMS } from './nav';
+import { prefetchRoute } from './routePrefetch';
 
 export function BottomNav() {
   // Reuses the shared ['fleet','sidecars'] cache — no extra request.
@@ -17,6 +18,10 @@ export function BottomNav() {
             key={item.to}
             to={item.to}
             end={item.end}
+            // touchstart, not mouseenter/hover — this nav is mobile-only
+            // (lg:hidden) and touch has no hover phase, but touchstart still
+            // fires a beat before the tap completes navigation.
+            onTouchStart={() => prefetchRoute(item.to)}
             className={({ isActive }) =>
               cn(
                 'flex min-h-11 flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors duration-150',

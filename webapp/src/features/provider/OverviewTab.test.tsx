@@ -22,8 +22,6 @@ vi.mock('@/api/endpoints');
 vi.mock('@/components/charts/TrajectoryChart', () => ({
   TrajectoryChart: () => <div data-testid="trajectory" />,
 }));
-// Keep the real SLICES/CACHE_KEYS exports — TokenBar (rendered by the
-// tokens-kind branch) imports them too, and a full-module stub would break it.
 vi.mock('@/components/charts/TokenDonut', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/components/charts/TokenDonut')>()),
   TokenDonut: () => <div data-testid="token-donut" />,

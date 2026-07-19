@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_USER_TZ_CACHE_KEY = "user_tz"
+_USER_TZ_CACHE_TTL = 60.0  # SystemConfig write path calls cache_clear(), so this is a safety net
+
+
 def resolve_user_tz(session: "Session") -> ZoneInfo:
     """Resolve the display timezone for period-boundary math.
 
@@ -25,7 +29,20 @@ def resolve_user_tz(session: "Session") -> ZoneInfo:
     detection): ``SystemConfig.user_timezone`` → ``settings.env_timezone``
     (the ``TZ`` env var) → UTC. Used to anchor "this period" / "yearly"
     cumulative gauges to the user's local calendar instead of UTC.
+
+    Callers hit this multiple times per request (and it's called from every
+    dashboard read endpoint), each time issuing a `SELECT SystemConfig` —
+    cheap individually, but it adds up across the ~8 queries a home-page load
+    fires in parallel. Cached with a short TTL; `system.upsert_app_config`
+    calls `cache_clear()` on a timezone write so changes take effect
+    immediately rather than waiting out the TTL.
     """
+    from app.core.cache import cache_get, cache_set
+
+    cached = cache_get(_USER_TZ_CACHE_KEY)
+    if cached is not None:
+        return cached
+
     from sqlmodel import select
 
     from app.core.config import settings
@@ -33,12 +50,14 @@ def resolve_user_tz(session: "Session") -> ZoneInfo:
 
     cfg = session.exec(select(SystemConfig)).first()
     name = (cfg.user_timezone if cfg else None) or settings.env_timezone
+    tz = ZoneInfo("UTC")
     if name:
         try:
-            return ZoneInfo(name)
+            tz = ZoneInfo(name)
         except Exception:
             logger.warning("Invalid user timezone %r — falling back to UTC.", name)
-    return ZoneInfo("UTC")
+    cache_set(_USER_TZ_CACHE_KEY, tz, _USER_TZ_CACHE_TTL)
+    return tz
 
 
 class IdentityExtractor:

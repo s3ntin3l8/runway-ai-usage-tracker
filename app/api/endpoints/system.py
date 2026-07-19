@@ -159,6 +159,7 @@ async def force_collect(
     """
     from sqlmodel import Session, select
 
+    from app.core.cache import cache_clear
     from app.core.db import engine
     from app.models.db import LatestUsage, SidecarRegistry
     from app.services.fleet_registry import fleet_registry
@@ -175,6 +176,10 @@ async def force_collect(
                     fleet_registry.set_pending_trigger(sc.sidecar_id)
                     sidecars_triggered += 1
             cards = session.exec(select(LatestUsage)).all()
+        # poll_now() already updated LatestUsage synchronously above — clear
+        # the response cache so a manual "force collect" is visible right away
+        # instead of waiting out the fleet/forecast/top-* TTLs.
+        cache_clear()
         return {
             "ok": True,
             "cards": len(cards),
@@ -247,6 +252,14 @@ async def cleanup_database(
             results["sidecars_removed"] = res.rowcount
 
         session.commit()
+
+        # Deleted LatestUsage rows / removed sidecars must not keep showing up
+        # via a stale fleet/forecast/top-* response cache — clear it whenever
+        # this endpoint actually mutated something.
+        if body.clear_cache or body.remove_inactive_sidecars_days is not None:
+            from app.core.cache import cache_clear
+
+            cache_clear()
 
         if body.clear_cache:
             # Trigger an immediate background poll to repopulate the cache
@@ -949,6 +962,12 @@ async def upsert_app_config(
                     detail=f"Invalid IANA timezone: {body.user_timezone!r}",
                 ) from e
             cfg.user_timezone = body.user_timezone
+        # resolve_user_tz() and every period-boundary-dependent response
+        # (/fleet, /global-stats, /top-*, /forecast) cache their output — a
+        # tz change must take effect immediately, not wait out the TTL.
+        from app.core.cache import cache_clear
+
+        cache_clear()
     if body.sidecar_update_channel is not None:
         channel = body.sidecar_update_channel.strip().lower()
         if channel in ("", "stable"):

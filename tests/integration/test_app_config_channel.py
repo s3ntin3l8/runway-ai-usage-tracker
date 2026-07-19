@@ -64,6 +64,22 @@ def test_default_auto_update_is_off(client: TestClient):
     assert r.json()["sidecar_auto_update"] is False
 
 
+def test_setting_user_timezone_clears_response_cache(client: TestClient):
+    """resolve_user_tz() and every period-boundary-dependent response
+    (/fleet, /global-stats, /top-*, /forecast) cache their output — a tz
+    change must invalidate that cache immediately, not wait out the TTL."""
+    from app.core.cache import cache_get, cache_set
+
+    cache_set("user_tz", "stale-marker", ttl_seconds=60.0)
+    cache_set("fleet", {"stale": True}, ttl_seconds=60.0)
+
+    r = client.put("/api/v1/system/app-config", json={"user_timezone": "America/New_York"})
+    assert r.status_code == 200
+
+    assert cache_get("user_tz") is None
+    assert cache_get("fleet") is None
+
+
 def test_set_auto_update_roundtrip(client: TestClient):
     r = client.put("/api/v1/system/app-config", json={"sidecar_auto_update": True})
     assert r.status_code == 200
