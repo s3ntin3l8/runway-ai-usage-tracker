@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.10.0...v2.10.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* **home:** decouple summary cards from the slow cumulative query ([#201](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/201)) ([2710e06](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2710e066ef850f6efd8414cdbeb3de73fae7c654))
+* resolve CodeQL duplicate-import alert + forward-auth test isolation ([#198](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/198)) ([d919869](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d919869b8ce53f5e1da291ed5d03cae136888e2b))
+* **sidecar:** preserve exec bit through macOS self-update swap ([#203](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/203)) ([934c250](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/934c25074e62ab9849c129f23441e2f2ba2414e3))
+* **webapp:** auto-recover BootGate from transient backend outages ([#200](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/200)) ([8217fb9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8217fb9ee735017a30ed72fe88c334e17061e85c))
+
 ## [2.10.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.9.0...v2.10.0) (2026-07-16)
 
 
