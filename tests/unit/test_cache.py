@@ -1,7 +1,10 @@
 """Unit tests for the process-wide TTL response cache (app/core/cache.py)."""
 
 import app.core.cache as cache_mod
-from app.core.cache import cache_clear, cache_get, cache_set
+
+cache_clear = cache_mod.cache_clear
+cache_get = cache_mod.cache_get
+cache_set = cache_mod.cache_set
 
 
 def test_get_missing_key_returns_none():
