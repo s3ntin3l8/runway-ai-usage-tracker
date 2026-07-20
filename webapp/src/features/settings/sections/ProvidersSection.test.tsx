@@ -120,6 +120,87 @@ describe('ProvidersSection', () => {
     expect(body).not.toHaveProperty('api_key');
     expect(body).not.toHaveProperty('session_cookie');
   });
+
+  it('renders drag handles on each strategy in the settings dialog', async () => {
+    const multi = provider({
+      collection_strategies: [
+        { id: 'web', enabled: true },
+        { id: 'oauth', enabled: false },
+        { id: 'sidecar', enabled: true },
+      ],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    const grips = within(dialog).getAllByRole('button', { name: /reorder/i });
+    expect(grips).toHaveLength(3);
+  });
+
+  it('each strategy grip has an accessible label naming the strategy', async () => {
+    const multi = provider({
+      collection_strategies: [
+        { id: 'api', enabled: true },
+        { id: 'web', enabled: false },
+      ],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByRole('button', { name: /reorder api/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /reorder web/i })).toBeInTheDocument();
+  });
+
+  it('preserves strategy order when saving after toggling a strategy', async () => {
+    const multi = provider({
+      collection_strategies: [
+        { id: 'web', enabled: true },
+        { id: 'oauth', enabled: false },
+      ],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.click(within(dialog).getByRole('switch', { name: 'oauth' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    expect(body.collection_strategies).toEqual([
+      { id: 'web', enabled: true },
+      { id: 'oauth', enabled: true },
+    ]);
+  });
+
+  it('renders the collection strategies fieldset only when strategies exist', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText('Collection strategies')).toBeInTheDocument();
+    expect(within(dialog).getByRole('switch', { name: 'api' })).toBeInTheDocument();
+  });
+
+  it('omits the collection strategies fieldset when there are no strategies', async () => {
+    const noStrats = provider({ collection_strategies: undefined, supported_strategies: [] });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [noStrats] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).queryByText('Collection strategies')).not.toBeInTheDocument();
+  });
 });
 
 describe('GitHubLoginSection', () => {

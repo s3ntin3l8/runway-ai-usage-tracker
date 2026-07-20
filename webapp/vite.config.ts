@@ -164,6 +164,7 @@ export default defineConfig({
     // jsdom by default so component tests render; pure-logic tests run fine in
     // it too. `globals: true` enables RTL auto-cleanup + jest-dom matchers.
     environment: 'jsdom',
+    env: { NODE_ENV: 'development' },
     globals: true,
     setupFiles: ['src/test/setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
