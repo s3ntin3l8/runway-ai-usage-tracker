@@ -21,6 +21,7 @@ from app.core.utils import (
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_model_id_for,
+    build_anthropic_limit_cards,
     classify_anthropic_window_type,
 )
 from app.services.collectors.oauth_base import OAuthBaseCollector
@@ -405,11 +406,34 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         if identity_str:
             self.account_label = identity_str
 
-        # Guaranteed keys to show even if null from API
-        core_keys = [
-            "five_hour",
-            "seven_day",
-        ]
+        # Newer OAuth response shape: a top-level `limits` array of self-describing
+        # window objects (kind/group/percent/severity/scope) that coexists with (and
+        # duplicates) the legacy dict-keyed-by-window-name shape. Parse it directly
+        # as authoritative and skip synthesizing empty core cards for those, since
+        # the array already supplies session/weekly (and any per-model weekly).
+        limits = data.get("limits")
+        limits_present = isinstance(limits, list)
+        core_keys: list[str]
+        if limits_present:
+            results.extend(
+                build_anthropic_limit_cards(
+                    limits,
+                    tier=tier,
+                    identity_str=identity_str,
+                    identity_suffix=identity_suffix,
+                    data_source=self.DATA_SOURCE_API,
+                    input_source=getattr(self, "_current_input_source", "unknown"),
+                    source_label="OAuth",
+                    usage_url="https://claude.ai/settings/usage",
+                )
+            )
+            core_keys = []
+        else:
+            # Guaranteed keys to show even if null from API
+            core_keys = [
+                "five_hour",
+                "seven_day",
+            ]
         all_keys = list(data.keys())
         for ck in core_keys:
             if ck not in all_keys:
@@ -510,6 +534,13 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 continue
 
             # 3. Handle Standard Percentage windows
+            # limits[] is authoritative for percentage windows when present — skip
+            # legacy keys here to avoid duplicate/phantom cards (e.g. five_hour vs
+            # the "session" entry, or a disabled "spend"/"extra_usage" object that
+            # has neither a matching balance nor spend/limit shape).
+            if limits_present:
+                continue
+
             raw_utilization = usage.get("utilization")
             pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
             remaining_pct = 100.0 - pct_used

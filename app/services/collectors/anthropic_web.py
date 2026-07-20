@@ -24,6 +24,7 @@ from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_r
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_model_id_for,
+    build_anthropic_limit_cards,
     classify_anthropic_window_type,
 )
 from app.services.token_cache import token_cache
@@ -466,62 +467,83 @@ class AnthropicWebMixin:
         # the windows loop produces no results (all window_data keys are None).
         tier_label = f" [{tier}]" if tier else ""
 
-        for api_key in all_keys:
-            window_data = data.get(api_key)
-
-            # Skip null results per user request (not active usage limits)
-            if window_data is None:
-                continue
-
-            if not isinstance(window_data, dict):
-                continue
-
-            # Web API uses 0-100 scale directly (e.g. 1 means 1%)
-            raw_util = window_data.get("utilization")
-            if raw_util is not None:
-                pct_used = float(raw_util)
-            else:
-                raw_pct = window_data.get("percentUsed")
-                pct_used = float(raw_pct) if raw_pct is not None else 0.0
-
-            remaining_pct = 100.0 - pct_used
-
-            reset_at = None
-            reset_raw = window_data.get("resets_at") or window_data.get("resetsAt")
-            if reset_raw:
-                try:
-                    reset_at = parse_iso8601_utc(reset_raw)
-                except (ValueError, TypeError):
-                    logger.debug("Failed to parse reset_at %r", reset_raw, exc_info=True)
-
-            w_type = classify_anthropic_window_type(api_key)
-            service_name = "Claude"
-
-            results.append(
-                {
-                    "service_name": service_name,
-                    "icon": "🟠",
-                    "remaining": f"{remaining_pct:.1f}%",
-                    "unit": "capacity",
-                    "reset": human_delta(reset_at),
-                    "health": HealthCalculator.from_percentage(pct_used),
-                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used{tier_label} [Web API]{identity_suffix}",
-                    "used_value": pct_used,
-                    "limit_value": 100.0,
-                    "is_unlimited": False,
-                    "unit_type": "percent",
-                    "window_type": w_type,
-                    "model_id": anthropic_model_id_for(api_key),
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": self.DATA_SOURCE_WEB,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
-                    "tier": tier,
-                    "account_label": identity_str,
-                    "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                }
+        # Newer Web API response shape: a top-level `limits` array of self-describing
+        # window objects (kind/group/percent/severity/scope) that coexists with (and
+        # duplicates) the legacy dict-keyed-by-window-name shape. Parse it directly as
+        # authoritative instead of the per-key window loop, since the array already
+        # supplies session/weekly (and any per-model weekly like a scoped Fable card).
+        limits = data.get("limits")
+        if isinstance(limits, list):
+            results.extend(
+                build_anthropic_limit_cards(
+                    limits,
+                    tier=tier,
+                    identity_str=identity_str,
+                    identity_suffix=identity_suffix,
+                    data_source=self.DATA_SOURCE_WEB,
+                    input_source=getattr(self, "_current_input_source", "unknown"),
+                    source_label="Web API",
+                    usage_url="https://claude.ai/settings/usage",
+                    tier_label=tier_label,
+                )
             )
+        else:
+            for api_key in all_keys:
+                window_data = data.get(api_key)
+
+                # Skip null results per user request (not active usage limits)
+                if window_data is None:
+                    continue
+
+                if not isinstance(window_data, dict):
+                    continue
+
+                # Web API uses 0-100 scale directly (e.g. 1 means 1%)
+                raw_util = window_data.get("utilization")
+                if raw_util is not None:
+                    pct_used = float(raw_util)
+                else:
+                    raw_pct = window_data.get("percentUsed")
+                    pct_used = float(raw_pct) if raw_pct is not None else 0.0
+
+                remaining_pct = 100.0 - pct_used
+
+                reset_at = None
+                reset_raw = window_data.get("resets_at") or window_data.get("resetsAt")
+                if reset_raw:
+                    try:
+                        reset_at = parse_iso8601_utc(reset_raw)
+                    except (ValueError, TypeError):
+                        logger.debug("Failed to parse reset_at %r", reset_raw, exc_info=True)
+
+                w_type = classify_anthropic_window_type(api_key)
+                service_name = "Claude"
+
+                results.append(
+                    {
+                        "service_name": service_name,
+                        "icon": "🟠",
+                        "remaining": f"{remaining_pct:.1f}%",
+                        "unit": "capacity",
+                        "reset": human_delta(reset_at),
+                        "health": HealthCalculator.from_percentage(pct_used),
+                        "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                        "detail": f"{pct_used:.1f}% used{tier_label} [Web API]{identity_suffix}",
+                        "used_value": pct_used,
+                        "limit_value": 100.0,
+                        "is_unlimited": False,
+                        "unit_type": "percent",
+                        "window_type": w_type,
+                        "model_id": anthropic_model_id_for(api_key),
+                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "data_source": self.DATA_SOURCE_WEB,
+                        "input_source": getattr(self, "_current_input_source", "unknown"),
+                        "tier": tier,
+                        "account_label": identity_str,
+                        "usage_url": "https://claude.ai/settings/usage",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
 
         # 2. Balance / Prepaid Credits (New)
         balance_keys = ["current_balance", "available_balance", "balance", "credits"]

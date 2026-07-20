@@ -28,6 +28,7 @@ from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.zai import ZaiCollector
+from tests.fixtures.mock_data import ANTHROPIC_OAUTH_LIMITS_RESPONSE
 
 
 class TestAnthropicCollector:
@@ -831,6 +832,82 @@ class TestAnthropicCollector:
         data_no_util = {"five_hour": {"resets_at": "2025-04-07T12:00:00Z"}}
         result = collector._parse_oauth_response(data_no_util, {"five_hour": "Session Window"})
         assert result[0]["remaining"] == "100.0%"
+
+    def test_parse_oauth_response_limits_array(self):
+        """Test the newer `limits[]` OAuth response shape (kind/group/percent/scope).
+
+        Anthropic's usage response is now a HYBRID: the legacy dict-keyed-by-window
+        (five_hour/seven_day/seven_day_opus/...) coexists with a new top-level
+        `limits` array of self-describing objects carrying the SAME values. This
+        must produce exactly a session card, an aggregate weekly card, and a
+        per-model weekly card (Fable) — with no duplicate session/weekly cards from
+        the legacy keys and no phantom cards from the disabled extra_usage/spend
+        objects (both non-null dicts with neither a balance nor spend/limit shape).
+        """
+        collector = AnthropicCollector()
+        name_map = {"five_hour": "Session", "seven_day": "Weekly"}
+
+        result = collector._parse_oauth_response(ANTHROPIC_OAUTH_LIMITS_RESPONSE, name_map)
+
+        assert len(result) == 3, (
+            f"Expected exactly 3 cards, got {[c['window_type'] for c in result]}"
+        )
+
+        session_cards = [c for c in result if c["window_type"] == "session"]
+        assert len(session_cards) == 1, "five_hour must not duplicate the limits[] session card"
+        session_card = session_cards[0]
+        assert session_card["used_value"] == 25
+        assert session_card["model_id"] is None
+        assert session_card["remaining"] == "75.0%"
+        assert "[OAuth]" in session_card["detail"]
+
+        weekly_cards = [c for c in result if c["window_type"] == "weekly"]
+        assert len(weekly_cards) == 2, "seven_day must not duplicate the limits[] weekly_all card"
+        assert not any(c.get("model_id") == "opus" for c in result)
+        assert not any(c.get("model_id") == "sonnet" for c in result)
+
+        weekly_all = next(c for c in weekly_cards if c["model_id"] is None)
+        assert weekly_all["used_value"] == 89
+        assert weekly_all["health"] == "warning"
+
+        weekly_fable = next(c for c in weekly_cards if c["model_id"] == "fable")
+        assert weekly_fable["used_value"] == 0
+        assert weekly_fable["reset_at"] is None
+        assert weekly_fable["reset"] == "—"
+
+    def test_parse_web_api_response_limits_array(self):
+        """Web scraper endpoint (claude.ai/api/organizations/{id}/usage) is the ACTIVE
+        strategy for most users (first-success-wins dispatch) and returns the same
+        hybrid `limits[]` shape confirmed live via debug/raw. Must produce the same
+        three cards as OAuth, tagged as the web data source, with no duplicates.
+        """
+        collector = AnthropicCollector()
+
+        result = collector._parse_web_api_response(ANTHROPIC_OAUTH_LIMITS_RESPONSE)
+
+        assert len(result) == 3, (
+            f"Expected exactly 3 cards, got {[c['window_type'] for c in result]}"
+        )
+        assert all(c["data_source"] == "web" for c in result)
+        assert all("[Web API]" in c["detail"] for c in result)
+
+        session_cards = [c for c in result if c["window_type"] == "session"]
+        assert len(session_cards) == 1, "five_hour must not duplicate the limits[] session card"
+        assert session_cards[0]["used_value"] == 25
+
+        weekly_cards = [c for c in result if c["window_type"] == "weekly"]
+        assert len(weekly_cards) == 2, "seven_day must not duplicate the limits[] weekly_all card"
+        assert not any(c.get("model_id") == "opus" for c in result)
+        assert not any(c.get("model_id") == "sonnet" for c in result)
+
+        weekly_all = next(c for c in weekly_cards if c["model_id"] is None)
+        assert weekly_all["used_value"] == 89
+        assert weekly_all["health"] == "warning"
+
+        weekly_fable = next(c for c in weekly_cards if c["model_id"] == "fable")
+        assert weekly_fable["used_value"] == 0
+        assert weekly_fable["reset_at"] is None
+        assert weekly_fable["reset"] == "—"
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="local strategy moved to sidecar")
