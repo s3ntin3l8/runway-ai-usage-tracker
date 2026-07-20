@@ -2,6 +2,18 @@
 // interval, per-strategy toggles. Credentials are write-only (server stores
 // them encrypted and only reports *_set flags).
 
+export function reorderStrategies<T extends { id: string }>(
+  items: T[],
+  activeId: string,
+  overId: string,
+): T[] {
+  const ids = items.map((s) => s.id);
+  const oldIndex = ids.indexOf(activeId);
+  const newIndex = ids.indexOf(overId);
+  if (oldIndex === -1 || newIndex === -1) return items;
+  return arrayMove(items, oldIndex, newIndex);
+}
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -172,11 +184,7 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
     setPullToRefreshSuspended(false);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const ids = strategies.map((s) => s.id);
-    const oldIndex = ids.indexOf(String(active.id));
-    const newIndex = ids.indexOf(String(over.id));
-    if (oldIndex === -1 || newIndex === -1) return;
-    setStrategies(arrayMove(strategies, oldIndex, newIndex));
+    setStrategies(reorderStrategies(strategies, String(active.id), String(over.id)));
   };
 
   // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
