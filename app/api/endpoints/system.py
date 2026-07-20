@@ -37,6 +37,124 @@ from app.services.token_health import token_health_service
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Headers to mask in debug output (case-insensitive key match).
+_SECRET_HEADERS: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "x-api-key",
+        "x-auth-token",
+        "x-amz-security-token",
+        "x-session-token",
+        "x-iam-token",
+        "set-cookie",
+    }
+)
+
+
+def _mask_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Return a copy of *headers* with known secret values masked."""
+    safe = dict(headers)
+    for key in safe:
+        if key.lower() in _SECRET_HEADERS:
+            safe[key] = "[MASKED]"
+    return safe
+
+
+# --- Debug/raw per-strategy helpers -----------------------------------------
+
+
+def _debug_strategy_label(strategies_dict: dict[str, Any], s_id: str) -> str:
+    """Look up the human-readable label for a strategy by id."""
+    entry = strategies_dict.get(s_id)
+    if entry:
+        return entry[0]
+    return s_id
+
+
+def _debug_split_strategies(
+    collector: Any,
+    dynamic: list[tuple[Any, str]],
+) -> tuple[list[tuple[Any, str]], list[tuple[Any, str]]]:
+    """Separate resolved strategies into primary and enrichment lists."""
+    primary: list[tuple[Any, str]] = []
+    enrichment: list[tuple[Any, str]] = []
+    for strategy_fn, s_id in dynamic:
+        opts = collector._get_strategy_options(s_id)
+        if opts.get("enrich"):
+            enrichment.append((strategy_fn, s_id))
+        else:
+            primary.append((strategy_fn, s_id))
+    return primary, enrichment
+
+
+async def _debug_run_one_strategy(
+    collector: Any,
+    strategy_fn: Any,
+    s_id: str,
+    kind: str,
+) -> dict[str, Any]:
+    """Run a single strategy and capture its HTTP traffic."""
+    reqs: list[dict[str, Any]] = []
+    resps: list[dict[str, Any]] = []
+    errs: list[dict[str, Any]] = []
+
+    async def _capture_request(r: httpx.Request) -> None:
+        reqs.append(
+            {
+                "method": r.method,
+                "url": str(r.url),
+                "timestamp": time.time(),
+            }
+        )
+
+    async def _capture_response(r: httpx.Response) -> None:
+        await r.aread()
+        try:
+            data = r.json()
+        except Exception:
+            data = r.text
+        safe_headers = _mask_headers(dict(r.headers))
+        resps.append(
+            {
+                "url": str(r.url),
+                "method": r.request.method,
+                "status": r.status_code,
+                "headers": safe_headers,
+                "body": data,
+                "timestamp": time.time(),
+            }
+        )
+
+    card_results: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(
+        event_hooks={
+            "request": [_capture_request],
+            "response": [_capture_response],
+        },
+        timeout=30.0,
+    ) as cl:
+        try:
+            card_results = await strategy_fn(cl)
+        except Exception as exc:
+            errs.append({"type": type(exc).__name__, "message": str(exc)})
+
+    is_err = not card_results or any(r.get("remaining") == "ERR" for r in card_results)
+
+    return {
+        "label": _debug_strategy_label(collector.STRATEGIES, s_id),
+        "kind": kind,
+        "status": "error" if errs else ("error" if is_err else "success"),
+        "cards_returned": len(card_results),
+        "cards_summary": [
+            {"service_name": c.get("service_name"), "remaining": c.get("remaining")}
+            for c in card_results[:5]
+        ],
+        "requests": reqs,
+        "responses": resps,
+        "errors": errs,
+    }
+
 
 @router.get("/health")
 @limiter.limit("30/minute")
@@ -332,12 +450,7 @@ async def get_raw_provider_data(
         except Exception:
             data = response.text
 
-        # Mask authorization headers for safety in debug output
-        safe_headers = dict(response.headers)
-        if "Authorization" in safe_headers:
-            safe_headers["Authorization"] = "Bearer [MASKED]"
-        if "Cookie" in safe_headers:
-            safe_headers["Cookie"] = "[MASKED]"
+        safe_headers = _mask_headers(dict(response.headers))
 
         raw_responses.append(
             {
@@ -351,12 +464,8 @@ async def get_raw_provider_data(
         )
 
     try:
-        # 1. Ensure collectors are loaded
         await manager._sync_collectors()
 
-        # 2. Find and run the specific collector
-        # We look through all active collectors (handles multi-account)
-        # Note: manager uses 'smart_collectors' which are wrappers around the actual collectors
         target_collectors = [
             sc.collector
             for key, sc in manager.smart_collectors.items()
@@ -364,7 +473,6 @@ async def get_raw_provider_data(
         ]
 
         if not target_collectors:
-            # Try to get one from registry if not active yet
             collector = manager._create_collector(provider_id)
             if collector:
                 target_collectors = [collector]
@@ -377,14 +485,7 @@ async def get_raw_provider_data(
         collector = target_collectors[0]
         is_configured = await collector.is_configured()
 
-        # Probe credential sources independently of the collector so the debug
-        # response reports WHICH source (DB config, env var, local file) provided
-        # the token — or why none did.
         creds = CredentialProvider.get_credentials(provider_id)
-        # Determine the primary credential key stored by CredentialProvider (if any).
-        # OAuth providers (e.g. antigravity) keep their token in the in-memory cache
-        # populated by sidecar push — CredentialProvider returns empty for them, so
-        # fall back to is_configured as the authoritative "token available" signal.
         _cred_key = next((k for k, v in creds.items() if v), None)
         credential_debug: dict[str, Any] = {
             "token_found": bool(_cred_key) or is_configured,
@@ -393,38 +494,81 @@ async def get_raw_provider_data(
             ),
         }
 
-        cards_returned = 0
-        async with httpx.AsyncClient(
-            event_hooks={
-                "request": [intercept_request],
-                "response": [intercept_response],
-            },
-            timeout=30.0,
-        ) as client:
-            # Run the primary strategy for the first matching collector.
-            # Reset the collector's in-memory cache first so the debug endpoint
-            # always fires live HTTP calls rather than returning a cache hit.
-            if hasattr(collector, "reset"):
-                await collector.reset()
-            try:
-                result = await collector.collect(client)
-                cards_returned = len(result) if result else 0
-            except Exception as exc:
-                collect_errors.append({"type": type(exc).__name__, "message": str(exc)})
+        if hasattr(collector, "reset"):
+            await collector.reset()
+
+        strategy_results: dict[str, Any] = {}
+        active_strategy: str | None = None
+        active_strategy_card_count = 0
+
+        dynamic = collector._resolve_strategies() if collector.STRATEGIES else []
+
+        if not dynamic:
+            async with httpx.AsyncClient(
+                event_hooks={
+                    "request": [intercept_request],
+                    "response": [intercept_response],
+                },
+                timeout=30.0,
+            ) as client:
+                result: list[dict[str, Any]] = []
+                try:
+                    result = await collector.collect(client)
+                    active_strategy_card_count = len(result) if result else 0
+                except Exception as exc:
+                    collect_errors.append({"type": type(exc).__name__, "message": str(exc)})
+            # Fold legacy collector data into a synthetic strategy entry so
+            # the response shape is consistent with the per-strategy path.
+            strategy_results["_legacy"] = {
+                "label": f"{provider_id} (legacy)",
+                "kind": "primary",
+                "status": "error" if collect_errors else "success",
+                "cards_returned": active_strategy_card_count,
+                "cards_summary": [
+                    {"service_name": c.get("service_name"), "remaining": c.get("remaining")}
+                    for c in (result or [])[:5]
+                ],
+                "requests": raw_requests,
+                "responses": raw_responses,
+                "errors": collect_errors,
+            }
+            return {
+                "provider_id": provider_id,
+                "is_configured": is_configured,
+                "credentials": credential_debug,
+                "active_strategy": None,
+                "active_strategy_card_count": active_strategy_card_count,
+                "strategies": strategy_results,
+                "timestamp": time.time(),
+            }
+
+        primary_strategies, enrich_strategies = _debug_split_strategies(collector, dynamic)
+
+        for strategy_fn, s_id in primary_strategies:
+            strategy_result = await _debug_run_one_strategy(collector, strategy_fn, s_id, "primary")
+            strategy_results[s_id] = strategy_result
+            if active_strategy is None and strategy_result["status"] == "success":
+                active_strategy = s_id
+                active_strategy_card_count = strategy_result["cards_returned"]
+            await asyncio.sleep(0.5)
+
+        for strategy_fn, s_id in enrich_strategies:
+            strategy_result = await _debug_run_one_strategy(
+                collector, strategy_fn, s_id, "enrichment"
+            )
+            strategy_results[s_id] = strategy_result
+            await asyncio.sleep(0.5)
 
         return {
             "provider_id": provider_id,
             "is_configured": is_configured,
             "credentials": credential_debug,
-            "requests": raw_requests,
-            "responses": raw_responses,
-            "errors": collect_errors,
-            "cards_returned": cards_returned,
+            "active_strategy": active_strategy,
+            "active_strategy_card_count": active_strategy_card_count,
+            "strategies": strategy_results,
             "timestamp": time.time(),
         }
     except HTTPException:
-        # Deliberate status (e.g. 404 no collector) — propagate as-is rather
-        # than masking it behind a generic 500.
         raise
     except Exception as e:
         logger.error(f"Raw debug collection failed for {scrub_log(provider_id)}: {e}")

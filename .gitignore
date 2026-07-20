@@ -95,3 +95,4 @@ docs/comparison/
 docs/sidecar_implementation.md
 .worktrees
 artifacts/
+*.py,cover
