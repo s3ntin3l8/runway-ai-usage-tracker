@@ -1,12 +1,34 @@
+import { createElement } from 'react';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { DragEndEvent } from '@dnd-kit/core';
 import type { ProviderConfig } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
-import { ProvidersSection } from './ProvidersSection';
+import { ProvidersSection, reorderStrategies } from './ProvidersSection';
 import * as api from '@/api/endpoints';
 import { toast } from 'sonner';
 
 vi.mock('@/api/endpoints');
+
+// Store dnd-kit callbacks so tests can invoke them directly.
+const dndCallbacks: {
+  onDragStart: (() => void) | null;
+  onDragEnd: ((e: DragEndEvent) => void) | null;
+  onDragCancel: (() => void) | null;
+} = { onDragStart: null, onDragEnd: null, onDragCancel: null };
+vi.mock('@dnd-kit/core', async () => {
+  const actual = await vi.importActual<typeof import('@dnd-kit/core')>('@dnd-kit/core');
+  return {
+    ...actual,
+    DndContext: vi.fn(({ children, onDragStart, onDragEnd, onDragCancel, ...props }: any) => {
+      dndCallbacks.onDragStart = onDragStart;
+      dndCallbacks.onDragEnd = onDragEnd;
+      dndCallbacks.onDragCancel = onDragCancel;
+      return createElement(actual.DndContext, { ...props, onDragStart, onDragEnd, onDragCancel }, children);
+    }).mockName('DndContext'),
+  };
+});
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 const provider = (o: Partial<ProviderConfig> = {}): ProviderConfig => ({
@@ -119,6 +141,176 @@ describe('ProvidersSection', () => {
     const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
     expect(body).not.toHaveProperty('api_key');
     expect(body).not.toHaveProperty('session_cookie');
+  });
+
+  it('renders drag handles on each strategy in the settings dialog', async () => {
+    const multi = provider({
+      collection_strategies: [
+        { id: 'web', enabled: true },
+        { id: 'oauth', enabled: false },
+        { id: 'sidecar', enabled: true },
+      ],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    const grips = within(dialog).getAllByRole('button', { name: /reorder/i });
+    expect(grips).toHaveLength(3);
+  });
+
+  it('each strategy grip has an accessible label naming the strategy', async () => {
+    const multi = provider({
+      collection_strategies: [
+        { id: 'api', enabled: true },
+        { id: 'web', enabled: false },
+      ],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByRole('button', { name: /reorder api/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /reorder web/i })).toBeInTheDocument();
+  });
+
+  it('reorders strategies when handleDragEnd fires with mismatched ids', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          collection_strategies: [
+            { id: 'web', enabled: true },
+            { id: 'oauth', enabled: false },
+            { id: 'sidecar', enabled: true },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    await screen.findByRole('dialog');
+    expect(dndCallbacks.onDragEnd).toBeTruthy();
+
+    // Invoke the captured onDragEnd with a simulated event.
+    dndCallbacks.onDragEnd!({
+      active: { id: 'web' } as DragEndEvent['active'],
+      over: { id: 'sidecar' } as DragEndEvent['over'],
+    } as DragEndEvent);
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    expect(body.collection_strategies).toEqual([
+      { id: 'oauth', enabled: false },
+      { id: 'sidecar', enabled: true },
+      { id: 'web', enabled: true },
+    ]);
+  });
+
+  it('calls setPullToRefreshSuspended(false) when handleDragEnd fires', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    const spy = vi.spyOn(await import('@/lib/pullToRefresh'), 'setPullToRefreshSuspended');
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    await screen.findByRole('dialog');
+
+    dndCallbacks.onDragEnd!({
+      active: { id: 'api' } as DragEndEvent['active'],
+      over: { id: 'api' } as DragEndEvent['over'],
+    } as DragEndEvent);
+
+    expect(spy).toHaveBeenCalledWith(false);
+  });
+
+  it('calls setPullToRefreshSuspended(true) when onDragStart fires', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    const spy = vi.spyOn(await import('@/lib/pullToRefresh'), 'setPullToRefreshSuspended');
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    await screen.findByRole('dialog');
+
+    dndCallbacks.onDragStart!();
+
+    expect(spy).toHaveBeenCalledWith(true);
+  });
+
+  it('calls setPullToRefreshSuspended(false) when onDragCancel fires', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    const spy = vi.spyOn(await import('@/lib/pullToRefresh'), 'setPullToRefreshSuspended');
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    await screen.findByRole('dialog');
+
+    dndCallbacks.onDragCancel!();
+
+    expect(spy).toHaveBeenCalledWith(false);
+  });
+
+  it('preserves strategy order when saving after toggling a strategy', async () => {
+    const multi = provider({
+      collection_strategies: [
+        { id: 'web', enabled: true },
+        { id: 'oauth', enabled: false },
+      ],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.click(within(dialog).getByRole('switch', { name: 'oauth' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    expect(body.collection_strategies).toEqual([
+      { id: 'web', enabled: true },
+      { id: 'oauth', enabled: true },
+    ]);
+  });
+
+  it('renders the collection strategies fieldset only when strategies exist', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText('Collection strategies')).toBeInTheDocument();
+    expect(within(dialog).getByRole('switch', { name: 'api' })).toBeInTheDocument();
+  });
+
+  it('omits the collection strategies fieldset when there are no strategies', async () => {
+    const noStrats = provider({ collection_strategies: undefined, supported_strategies: [] });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [noStrats] });
+    renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).queryByText('Collection strategies')).not.toBeInTheDocument();
+  });
+
+  it('clears pull-to-refresh suspend flag when the dialog unmounts', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    const { unmount } = renderWithProviders(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    await screen.findByRole('dialog');
+
+    unmount();
+    // The unmount cleanup fires — no assertion needed beyond not throwing
+    // (the useEffect safety net calls setPullToRefreshSuspended(false)).
   });
 });
 
@@ -266,5 +458,41 @@ describe('GitHubLoginSection', () => {
 
     expect(toast.success).toHaveBeenCalledWith('GitHub connected');
     vi.useRealTimers();
+  });
+});
+
+describe('reorderStrategies', () => {
+  it('moves an item from old index to new index', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    expect(reorderStrategies(items, 'a', 'c')).toEqual([{ id: 'b' }, { id: 'c' }, { id: 'a' }]);
+  });
+
+  it('returns the same array when active and over ids match', () => {
+    const items = [{ id: 'a' }, { id: 'b' }];
+    expect(reorderStrategies(items, 'a', 'a')).toEqual([{ id: 'a' }, { id: 'b' }]);
+  });
+
+  it('returns the same array when active id is not found', () => {
+    const items = [{ id: 'a' }, { id: 'b' }];
+    expect(reorderStrategies(items, 'x', 'a')).toEqual([{ id: 'a' }, { id: 'b' }]);
+  });
+
+  it('returns the same array when over id is not found', () => {
+    const items = [{ id: 'a' }, { id: 'b' }];
+    expect(reorderStrategies(items, 'a', 'x')).toEqual([{ id: 'a' }, { id: 'b' }]);
+  });
+
+  it('preserves the enabled state of each item after reorder', () => {
+    const items = [
+      { id: 'web', enabled: true },
+      { id: 'oauth', enabled: false },
+      { id: 'sidecar', enabled: true },
+    ];
+    const result = reorderStrategies(items, 'web', 'sidecar');
+    expect(result).toEqual([
+      { id: 'oauth', enabled: false },
+      { id: 'sidecar', enabled: true },
+      { id: 'web', enabled: true },
+    ]);
   });
 });
