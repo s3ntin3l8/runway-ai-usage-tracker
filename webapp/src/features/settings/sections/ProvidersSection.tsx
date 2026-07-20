@@ -175,6 +175,7 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
     const ids = strategies.map((s) => s.id);
     const oldIndex = ids.indexOf(String(active.id));
     const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
     setStrategies(arrayMove(strategies, oldIndex, newIndex));
   };
 
@@ -311,6 +312,7 @@ function SortableStrategyRow({
         {...attributes}
         {...listeners}
         className="flex items-center gap-2 touch-none"
+        aria-label={"Reorder " + strategy.label}
       >
         <GripVertical className="size-3.5 text-fg-muted" />
         <span className="text-[13px]">{strategy.label}</span>
