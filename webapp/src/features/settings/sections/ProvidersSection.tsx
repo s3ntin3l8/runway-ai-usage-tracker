@@ -4,7 +4,25 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, ExternalLink, LogIn, LogOut } from 'lucide-react';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Copy, ExternalLink, GripVertical, LogIn, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   getGitHubOAuthStatus,
@@ -24,6 +42,7 @@ import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
+import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { useProviderConfigs } from '@/features/home/queries';
 
 type FlowState =
@@ -143,6 +162,26 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
     onError: (err) => toast.error(err.message),
   });
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setPullToRefreshSuspended(false);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = strategies.map((s) => s.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    setStrategies(arrayMove(strategies, oldIndex, newIndex));
+  };
+
+  // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
+  // mid-drag unmount skips both — prevent permanently stuck pull-to-refresh.
+  useEffect(() => () => setPullToRefreshSuspended(false), []);
+
   return (
     <form
       onSubmit={(e) => {
@@ -215,22 +254,29 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
       </div>
 
       {strategies.length > 0 ? (
-        <fieldset className="flex flex-col gap-2 rounded-sm border border-edge p-3">
+        <fieldset className="flex flex-col gap-1 rounded-sm border border-edge p-3">
           <legend className="px-1 text-xs font-medium text-fg-muted">Collection strategies</legend>
-          {strategies.map((s, i) => (
-            <div key={s.id} className="flex items-center justify-between">
-              <span className="text-[13px]">{s.label}</span>
-              <Switch
-                checked={s.enabled}
-                onCheckedChange={(on) =>
-                  setStrategies((prev) =>
-                    prev.map((x, j) => (j === i ? { ...x, enabled: on } : x)),
-                  )
-                }
-                aria-label={s.label}
-              />
-            </div>
-          ))}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={() => setPullToRefreshSuspended(true)}
+            onDragEnd={handleDragEnd}
+            onDragCancel={() => setPullToRefreshSuspended(false)}
+          >
+            <SortableContext items={strategies.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+              {strategies.map((s) => (
+                <SortableStrategyRow
+                  key={s.id}
+                  strategy={s}
+                  onToggle={(enabled) =>
+                    setStrategies((prev) =>
+                      prev.map((x) => (x.id === s.id ? { ...x, enabled } : x)),
+                    )
+                  }
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         </fieldset>
       ) : null}
 
@@ -238,6 +284,43 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
         Save
       </Button>
     </form>
+  );
+}
+
+function SortableStrategyRow({
+  strategy,
+  onToggle,
+}: {
+  strategy: { id: string; enabled: boolean; label: string };
+  onToggle: (enabled: boolean) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: strategy.id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={
+        'flex items-center justify-between rounded-sm px-1 py-1.5 ' +
+        (isDragging ? 'z-10 opacity-60' : '')
+      }
+    >
+      <div
+        {...attributes}
+        {...listeners}
+        className="flex items-center gap-2 touch-none"
+      >
+        <GripVertical className="size-3.5 text-fg-muted" />
+        <span className="text-[13px]">{strategy.label}</span>
+      </div>
+      <Switch
+        checked={strategy.enabled}
+        onCheckedChange={onToggle}
+        aria-label={strategy.label}
+      />
+    </div>
   );
 }
 
