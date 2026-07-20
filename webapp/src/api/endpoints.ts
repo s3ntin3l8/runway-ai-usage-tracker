@@ -32,6 +32,7 @@ import type {
   TopToolsResponse,
   UpdateCheckResult,
   Webhook,
+  DebugRawResponse,
   WindowDetailResponse,
 } from './types';
 
@@ -249,7 +250,7 @@ export const fetchAuditLog = (limit = 200) =>
   api<{ entries: AuditEntry[] }>(`/api/v1/system/audit-log${qs({ limit })}`);
 
 export const fetchDebugRaw = (providerId: string) =>
-  api<Record<string, unknown>>(`/api/v1/system/debug/raw/${encodeURIComponent(providerId)}`);
+  api<DebugRawResponse>(`/api/v1/system/debug/raw/${encodeURIComponent(providerId)}`);
 
 // --- Webhooks ----------------------------------------------------------------
 

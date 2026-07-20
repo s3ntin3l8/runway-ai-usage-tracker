@@ -3,8 +3,15 @@
 // live HTTP calls — never auto-fetches).
 
 import { useState } from 'react';
-import { Bug } from 'lucide-react';
-import type { FleetEntry, TokenHealthEntry, TokenHealthStatus } from '@/api/types';
+import { Bug, ChevronDown, ChevronRight } from 'lucide-react';
+import type {
+  DebugRawResponse,
+  FleetEntry,
+  StrategyCapture,
+  StrategyCaptureResponse,
+  TokenHealthEntry,
+  TokenHealthStatus,
+} from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -222,6 +229,9 @@ function RawCapturePane({
     );
   }
 
+  const data = debug.data as DebugRawResponse;
+  const strategyIds = Object.keys(data.strategies ?? {});
+
   return (
     <Card>
       <CardHeader>
@@ -230,11 +240,157 @@ function RawCapturePane({
           Re-run
         </Button>
       </CardHeader>
-      <CardContent>
-        <pre className="max-h-[32rem] overflow-auto rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-          {JSON.stringify(debug.data, null, 2)}
-        </pre>
+      <CardContent className="flex flex-col gap-3">
+        {strategyIds.length === 0 ? (
+          <div className="text-[12px] text-fg-muted">
+            No per-strategy breakdown available (legacy collector or no strategies declared).
+          </div>
+        ) : (
+          strategyIds.map((sId) => {
+            const cap = data.strategies[sId];
+            return (
+              <StrategySection
+                key={sId}
+                strategyId={sId}
+                capture={cap}
+                isActive={sId === data.active_strategy}
+              />
+            );
+          })
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+function StrategySection({
+  strategyId,
+  capture,
+  isActive,
+}: {
+  strategyId: string;
+  capture: StrategyCapture;
+  isActive: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const statusBadge: { variant: 'ok' | 'critical' | 'neutral'; label: string } =
+    capture.status === 'success'
+      ? { variant: 'ok', label: 'success' }
+      : capture.errors.length > 0
+        ? { variant: 'critical', label: capture.errors[0].type }
+        : { variant: 'neutral', label: capture.status };
+
+  return (
+    <div className="rounded-sm border border-border">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-surface-2"
+      >
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="font-medium">{capture.label}</span>
+        <code className="text-[11px] text-fg-muted">{strategyId}</code>
+        <Badge variant={capture.kind === 'primary' ? 'accent' : 'ok'}>{capture.kind}</Badge>
+        <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+        {capture.cards_returned > 0 && (
+          <span className="text-[11px] text-fg-muted">{capture.cards_returned} cards</span>
+        )}
+        {isActive && (
+          <Badge variant="warning" className="ml-auto">
+            Active
+          </Badge>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-2">
+          {capture.errors.length > 0 && (
+            <Section title="Errors" defaultOpen>
+              {capture.errors.map((e, i) => (
+                <div key={i} className="mb-1 text-[12px] text-critical">
+                  <strong>{e.type}:</strong> {e.message}
+                </div>
+              ))}
+            </Section>
+          )}
+          {capture.requests.length > 0 && (
+            <Section title={`Requests (${capture.requests.length})`}>
+              {capture.requests.map((r, i) => (
+                <div key={i} className="mb-1 text-[12px]">
+                  <Badge variant="neutral" className="mr-1">
+                    {r.method}
+                  </Badge>
+                  <span className="break-all font-mono text-fg-muted">{r.url}</span>
+                </div>
+              ))}
+            </Section>
+          )}
+          {capture.responses.length > 0 && (
+            <Section title={`Responses (${capture.responses.length})`}>
+              {capture.responses.map((r, i) => (
+                <ResponseBlock key={i} response={r} />
+              ))}
+            </Section>
+          )}
+          {capture.requests.length === 0 &&
+            capture.responses.length === 0 &&
+            capture.errors.length === 0 && (
+              <div className="text-[12px] text-fg-muted">
+                No HTTP traffic captured for this strategy.
+              </div>
+            )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section({
+  title,
+  children,
+  defaultOpen,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 py-1 text-[12px] font-medium text-fg-muted hover:text-fg"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {title}
+      </button>
+      {open && <div className="ml-4">{children}</div>}
+    </div>
+  );
+}
+
+function ResponseBlock({ response }: { response: StrategyCaptureResponse }) {
+  const [expanded, setExpanded] = useState(false);
+  const statusColor =
+    response.status < 300 ? 'text-success' : response.status < 500 ? 'text-warning' : 'text-critical';
+
+  return (
+    <div className="mb-2 border-l-2 border-border pl-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-[12px]"
+      >
+        <Badge variant="neutral">{response.method}</Badge>
+        <span className={statusColor}>{response.status}</span>
+        <span className="truncate font-mono text-fg-muted">{response.url}</span>
+      </button>
+      {expanded && (
+        <pre className="mt-1 max-h-48 overflow-auto rounded-sm bg-surface-2 p-2 font-mono text-[11px] whitespace-pre-wrap">
+          {JSON.stringify(response.body, null, 2)}
+        </pre>
+      )}
+    </div>
   );
 }

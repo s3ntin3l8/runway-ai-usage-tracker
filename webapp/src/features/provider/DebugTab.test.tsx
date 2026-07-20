@@ -1,6 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { TokenHealthEntry } from '@/api/types';
+import type { DebugRawResponse, TokenHealthEntry } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { DebugTab } from './DebugTab';
 import { fleetEntry, limitCard } from './test-fixtures';
@@ -121,13 +121,70 @@ describe('DebugTab', () => {
     expect(api.fetchDebugRaw).not.toHaveBeenCalled();
   });
 
-  it('runs the capture and renders the raw JSON', async () => {
-    vi.mocked(api.fetchDebugRaw).mockResolvedValue({ provider: 'anthropic', ok: true } as never);
+  it('runs the capture and renders the strategy accordion', async () => {
+    const mockData: DebugRawResponse = {
+      provider_id: 'anthropic',
+      is_configured: true,
+      credentials: { token_found: true, token_source: 'config' },
+      active_strategy: 'web',
+      active_strategy_card_count: 2,
+      strategies: {
+        web: {
+          label: 'Web API (web)',
+          kind: 'primary',
+          status: 'success',
+          cards_returned: 2,
+          cards_summary: [
+            { service_name: 'Claude', remaining: '45%' },
+          ],
+          requests: [
+            { method: 'GET', url: 'https://claude.ai/api/usage', timestamp: 1000 },
+          ],
+          responses: [
+            {
+              url: 'https://claude.ai/api/usage',
+              method: 'GET',
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              body: { ok: true },
+              timestamp: 1001,
+            },
+          ],
+          errors: [],
+        },
+        oauth: {
+          label: 'OAuth API (api)',
+          kind: 'primary',
+          status: 'error',
+          cards_returned: 0,
+          cards_summary: [],
+          requests: [{ method: 'POST', url: 'https://api.anthropic.com/v1/limits', timestamp: 1002 }],
+          responses: [],
+          errors: [{ type: 'HTTPStatusError', message: '401 Unauthorized' }],
+        },
+      },
+      timestamp: 1003,
+    };
+    vi.mocked(api.fetchDebugRaw).mockResolvedValue(mockData as never);
     renderTab();
 
     await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
     expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
     await waitFor(() => expect(api.fetchDebugRaw).toHaveBeenCalledWith('anthropic'));
+
+    // Strategy sections rendered
+    expect(screen.getByText('Web API (web)')).toBeInTheDocument();
+    expect(screen.getByText('OAuth API (api)')).toBeInTheDocument();
+
+    // Kind badges
+    expect(screen.getAllByText('primary')).toHaveLength(2);
+
+    // Active badge only on the winning strategy
+    expect(screen.getByText('Active')).toBeInTheDocument();
+
+    // Status badges
+    expect(screen.getByText('success')).toBeInTheDocument();
+    expect(screen.getByText('HTTPStatusError')).toBeInTheDocument();
   });
 
   it('shows a failure state with retry on error', async () => {
@@ -138,5 +195,177 @@ describe('DebugTab', () => {
     expect(await screen.findByText(/capture failed/i)).toBeInTheDocument();
     expect(screen.getByText(/rate limited/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it('expands a strategy section to show requests and errors', async () => {
+    const mockData: DebugRawResponse = {
+      provider_id: 'anthropic',
+      is_configured: true,
+      credentials: { token_found: true, token_source: 'config' },
+      active_strategy: 'web',
+      active_strategy_card_count: 2,
+      strategies: {
+        web: {
+          label: 'Web API (web)',
+          kind: 'primary',
+          status: 'success',
+          cards_returned: 2,
+          cards_summary: [{ service_name: 'Claude', remaining: '45%' }],
+          requests: [{ method: 'GET', url: 'https://claude.ai/api/usage', timestamp: 1000 }],
+          responses: [{ url: 'https://claude.ai/api/usage', method: 'GET', status: 200, headers: { 'content-type': 'application/json' }, body: { ok: true }, timestamp: 1001 }],
+          errors: [],
+        },
+      },
+      timestamp: 1003,
+    };
+    vi.mocked(api.fetchDebugRaw).mockResolvedValue(mockData as never);
+    renderTab();
+
+    await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
+    expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
+
+    // Strategy section starts collapsed
+    expect(screen.queryByText(/Requests/)).not.toBeInTheDocument();
+
+    // Click to expand strategy
+    await userEvent.click(screen.getByText('Web API (web)'));
+
+    // Sub-section headers visible
+    expect(screen.getByText(/Requests \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Responses \(1\)/)).toBeInTheDocument();
+
+    // Request sub-section starts collapsed — expand it
+    await userEvent.click(screen.getByText(/Requests \(1\)/));
+    expect(screen.getByText(/claude\.ai/)).toBeInTheDocument();
+
+    // Collapse strategy
+    await userEvent.click(screen.getByText('Web API (web)'));
+    expect(screen.queryByText(/Requests \(1\)/)).not.toBeInTheDocument();
+  });
+
+  it('expands a ResponseBlock to show response body', async () => {
+    const mockData: DebugRawResponse = {
+      provider_id: 'anthropic',
+      is_configured: true,
+      credentials: { token_found: true, token_source: 'config' },
+      active_strategy: 'web',
+      active_strategy_card_count: 1,
+      strategies: {
+        web: {
+          label: 'Web API (web)',
+          kind: 'primary',
+          status: 'success',
+          cards_returned: 1,
+          cards_summary: [],
+          requests: [],
+          responses: [{ url: 'https://claude.ai/api/usage', method: 'GET', status: 200, headers: {}, body: { data: 'test' }, timestamp: 1000 }],
+          errors: [],
+        },
+      },
+      timestamp: 1003,
+    };
+    vi.mocked(api.fetchDebugRaw).mockResolvedValue(mockData as never);
+    renderTab();
+
+    await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
+    expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
+
+    // Expand strategy section
+    await userEvent.click(screen.getByText('Web API (web)'));
+
+    // Expand response sub-section
+    await userEvent.click(screen.getByText(/Responses \(1\)/));
+
+    // Response body not visible yet
+    expect(screen.queryByText(/"data"/)).not.toBeInTheDocument();
+
+    // Click status code to expand
+    await userEvent.click(screen.getByText('200'));
+    expect(screen.getByText(/"data"/)).toBeInTheDocument();
+    expect(screen.getByText(/"test"/)).toBeInTheDocument();
+  });
+
+  it('shows the legacy collector message when no strategies returned', async () => {
+    const mockData: DebugRawResponse = {
+      provider_id: 'anthropic',
+      is_configured: true,
+      credentials: { token_found: true, token_source: 'config' },
+      active_strategy: null,
+      active_strategy_card_count: 0,
+      strategies: {},
+      timestamp: 1003,
+    };
+    vi.mocked(api.fetchDebugRaw).mockResolvedValue(mockData as never);
+    renderTab();
+
+    await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
+    expect(await screen.findByText(/no per-strategy breakdown/i)).toBeInTheDocument();
+  });
+
+  it('renders errors when a strategy with errors is expanded', async () => {
+    const mockData: DebugRawResponse = {
+      provider_id: 'anthropic',
+      is_configured: true,
+      credentials: { token_found: true, token_source: 'config' },
+      active_strategy: null,
+      active_strategy_card_count: 0,
+      strategies: {
+        oauth: {
+          label: 'OAuth Strategy',
+          kind: 'primary',
+          status: 'error',
+          cards_returned: 0,
+          cards_summary: [],
+          requests: [],
+          responses: [],
+          errors: [{ type: 'HTTPStatusError', message: '401 Unauthorized' }],
+        },
+      },
+      timestamp: 1003,
+    };
+    vi.mocked(api.fetchDebugRaw).mockResolvedValue(mockData as never);
+    renderTab();
+
+    await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
+    expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
+
+    // Expand strategy section
+    await userEvent.click(screen.getByText('OAuth Strategy'));
+
+    // Errors section visible and expanded by default (defaultOpen)
+    expect(screen.getByText('Errors')).toBeInTheDocument();
+    expect(screen.getByText(/401 Unauthorized/)).toBeInTheDocument();
+  });
+
+  it('shows empty traffic message for a strategy with no HTTP data', async () => {
+    const mockData: DebugRawResponse = {
+      provider_id: 'anthropic',
+      is_configured: true,
+      credentials: { token_found: true, token_source: 'config' },
+      active_strategy: null,
+      active_strategy_card_count: 0,
+      strategies: {
+        api: {
+          label: 'API Strategy',
+          kind: 'primary',
+          status: 'success',
+          cards_returned: 0,
+          cards_summary: [],
+          requests: [],
+          responses: [],
+          errors: [],
+        },
+      },
+      timestamp: 1003,
+    };
+    vi.mocked(api.fetchDebugRaw).mockResolvedValue(mockData as never);
+    renderTab();
+
+    await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
+    expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
+
+    // Expand strategy section
+    await userEvent.click(screen.getByText('API Strategy'));
+    expect(screen.getByText(/no HTTP traffic captured/i)).toBeInTheDocument();
   });
 });

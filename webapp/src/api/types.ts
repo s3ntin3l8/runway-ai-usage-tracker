@@ -639,3 +639,46 @@ export interface GlobalStatsResponse {
   busiest_hour: GlobalBusiestHour | null;
   generated_at: string;
 }
+
+// --- Debug/raw per-strategy capture -----------------------------------------
+
+export interface StrategyCaptureRequest {
+  method: string;
+  url: string;
+  timestamp: number;
+}
+
+export interface StrategyCaptureResponse {
+  url: string;
+  method: string;
+  status: number;
+  headers: Record<string, string>;
+  body: unknown;
+  timestamp: number;
+}
+
+export interface StrategyCaptureError {
+  type: string;
+  message: string;
+}
+
+export interface StrategyCapture {
+  label: string;
+  kind: 'primary' | 'enrichment';
+  status: 'success' | 'error' | 'skipped';
+  cards_returned: number;
+  cards_summary: Array<{ service_name?: string; remaining?: string }>;
+  requests: StrategyCaptureRequest[];
+  responses: StrategyCaptureResponse[];
+  errors: StrategyCaptureError[];
+}
+
+export interface DebugRawResponse {
+  provider_id: string;
+  is_configured: boolean;
+  credentials: { token_found: boolean; token_source: string | null };
+  active_strategy: string | null;
+  active_strategy_card_count: number;
+  strategies: Record<string, StrategyCapture>;
+  timestamp: number;
+}
