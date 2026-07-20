@@ -114,7 +114,7 @@ def build_anthropic_limit_cards(
             try:
                 reset_at = parse_iso8601_utc(reset_raw)
             except (ValueError, TypeError):
-                logger.debug("Failed to parse reset_at %r", reset_raw, exc_info=True)
+                logger.debug("Failed to parse reset_at in limits[] entry", exc_info=True)
 
         w_type = classify_anthropic_group(entry.get("group"))
         model_id = anthropic_scope_model_id(entry.get("scope"))

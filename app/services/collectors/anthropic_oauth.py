@@ -551,7 +551,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 try:
                     reset_at = parse_iso8601_utc(reset_raw)
                 except (ValueError, TypeError):
-                    logger.debug("Failed to parse reset_at %r", reset_raw, exc_info=True)
+                    logger.debug("Failed to parse reset_at in OAuth window", exc_info=True)
 
             w_type = classify_anthropic_window_type(key)
             service_name = "Claude"
