@@ -491,7 +491,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     # Only emit one balance card even if multiple keys exist
                     break
                 except (ValueError, TypeError):
-                    logger.debug("Failed to parse balance tier for key %r", key, exc_info=True)
+                    logger.debug("Failed to parse balance tier", exc_info=True)
                 continue
 
             # Skip overage when extra_usage is also present to avoid duplicate
