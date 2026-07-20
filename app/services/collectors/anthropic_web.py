@@ -23,6 +23,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
+    anthropic_limits_from,
     anthropic_model_id_for,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
@@ -472,8 +473,9 @@ class AnthropicWebMixin:
         # duplicates) the legacy dict-keyed-by-window-name shape. Parse it directly as
         # authoritative instead of the per-key window loop, since the array already
         # supplies session/weekly (and any per-model weekly like a scoped Fable card).
-        limits = data.get("limits")
-        if isinstance(limits, list):
+        # A present-but-empty array (partial rollout) falls back to the legacy loop.
+        limits = anthropic_limits_from(data)
+        if limits is not None:
             results.extend(
                 build_anthropic_limit_cards(
                     limits,

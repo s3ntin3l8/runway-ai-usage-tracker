@@ -76,6 +76,21 @@ def anthropic_scope_model_id(scope: dict | None) -> str | None:
     return None
 
 
+def anthropic_limits_from(data: dict[str, Any]) -> list[Any] | None:
+    """Return the `limits[]` array from a response dict if present and non-empty.
+
+    Returns None when `limits` is missing, not a list, or an empty list, so
+    callers fall back to parsing the legacy dict-keyed-by-window-name shape — a
+    present-but-empty array can occur during partial API rollout while the
+    legacy keys still carry real values, and treating it as authoritative would
+    silently drop every card.
+    """
+    limits = data.get("limits")
+    if isinstance(limits, list) and limits:
+        return limits
+    return None
+
+
 def build_anthropic_limit_cards(
     limits: list[Any],
     *,

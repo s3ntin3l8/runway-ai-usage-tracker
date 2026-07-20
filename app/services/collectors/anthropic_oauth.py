@@ -20,6 +20,7 @@ from app.core.utils import (
 )
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
+    anthropic_limits_from,
     anthropic_model_id_for,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
@@ -411,8 +412,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         # duplicates) the legacy dict-keyed-by-window-name shape. Parse it directly
         # as authoritative and skip synthesizing empty core cards for those, since
         # the array already supplies session/weekly (and any per-model weekly).
-        limits = data.get("limits")
-        limits_present = isinstance(limits, list)
+        # A present-but-empty array (partial rollout) falls back to the legacy loop.
+        limits = anthropic_limits_from(data)
+        limits_present = limits is not None
         core_keys: list[str]
         if limits_present:
             results.extend(

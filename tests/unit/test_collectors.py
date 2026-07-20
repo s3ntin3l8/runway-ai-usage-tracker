@@ -909,6 +909,45 @@ class TestAnthropicCollector:
         assert weekly_fable["reset_at"] is None
         assert weekly_fable["reset"] == "—"
 
+    def test_parse_oauth_response_empty_limits_array_falls_back_to_legacy(self):
+        """A present-but-empty `limits: []` (plausible during partial API rollout)
+        must NOT be treated as authoritative — it should fall back to parsing the
+        legacy dict-keyed-by-window-name keys, or the Claude tile would go empty
+        even though five_hour/seven_day still carry real values.
+        """
+        collector = AnthropicCollector()
+        name_map = {"five_hour": "Session", "seven_day": "Weekly"}
+        data = {
+            "five_hour": {"utilization": 25.0, "resets_at": "2026-07-20T21:30:00Z"},
+            "seven_day": {"utilization": 89.0, "resets_at": "2026-07-21T18:00:00Z"},
+            "limits": [],
+        }
+
+        result = collector._parse_oauth_response(data, name_map)
+
+        assert len(result) == 2
+        session_card = next(c for c in result if c["window_type"] == "session")
+        assert session_card["used_value"] == 25.0
+        weekly_card = next(c for c in result if c["window_type"] == "weekly")
+        assert weekly_card["used_value"] == 89.0
+
+    def test_parse_web_api_response_empty_limits_array_falls_back_to_legacy(self):
+        """Same empty-array fallback guarantee as OAuth, for the web parser."""
+        collector = AnthropicCollector()
+        data = {
+            "five_hour": {"utilization": 25.0, "resets_at": "2026-07-20T21:30:00Z"},
+            "seven_day": {"utilization": 89.0, "resets_at": "2026-07-21T18:00:00Z"},
+            "limits": [],
+        }
+
+        result = collector._parse_web_api_response(data)
+
+        assert len(result) == 2
+        session_card = next(c for c in result if c["window_type"] == "session")
+        assert session_card["used_value"] == 25.0
+        weekly_card = next(c for c in result if c["window_type"] == "weekly")
+        assert weekly_card["used_value"] == 89.0
+
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_get_claude_local_enhanced_uses_to_thread(self):

@@ -4,6 +4,7 @@ import pytest
 
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
+    anthropic_limits_from,
     anthropic_model_id_for,
     anthropic_scope_model_id,
     classify_anthropic_group,
@@ -78,3 +79,21 @@ def test_classify_anthropic_group(group, expected):
 )
 def test_anthropic_scope_model_id(scope, expected):
     assert anthropic_scope_model_id(scope) == expected
+
+
+@pytest.mark.parametrize(
+    "data,expected",
+    [
+        ({"limits": [{"kind": "session", "group": "session", "percent": 1}]}, "non-empty"),
+        ({"limits": []}, None),
+        ({"limits": None}, None),
+        ({"limits": "not-a-list"}, None),
+        ({}, None),
+    ],
+)
+def test_anthropic_limits_from(data, expected):
+    result = anthropic_limits_from(data)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == data["limits"]
