@@ -116,6 +116,13 @@ def parse_anthropic_events(
 
                     subagent_type = e.get("attributionAgent") if e.get("isSidechain") else None
 
+                    # Cache writes split by TTL — `cache_creation_input_tokens` is
+                    # the total; `cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens`
+                    # is the breakdown cost_calculator needs to bill the 1h portion
+                    # at its own (2x input) rate instead of the 5m (1.25x) rate.
+                    cache_creation = usage.get("cache_creation") or {}
+                    server_tool_use = usage.get("server_tool_use") or {}
+
                     events.append(
                         UsageEventPush(
                             provider_id="anthropic",
@@ -132,9 +139,22 @@ def parse_anthropic_events(
                             tokens_output=int(usage.get("output_tokens", 0)),
                             tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),
                             tokens_cache_create=int(usage.get("cache_creation_input_tokens", 0)),
+                            tokens_cache_create_1h=int(
+                                cache_creation.get("ephemeral_1h_input_tokens", 0)
+                            ),
+                            tokens_cache_create_5m=int(
+                                cache_creation.get("ephemeral_5m_input_tokens", 0)
+                            ),
                             tokens_reasoning=0,
                             stop_reason=msg.get("stop_reason"),
                             tool_calls=tool_calls,
+                            effort=e.get("effort"),
+                            speed=usage.get("speed"),
+                            service_tier=usage.get("service_tier"),
+                            entrypoint=e.get("entrypoint"),
+                            app_version=e.get("version"),
+                            web_search_requests=int(server_tool_use.get("web_search_requests", 0)),
+                            web_fetch_requests=int(server_tool_use.get("web_fetch_requests", 0)),
                         )
                     )
         except Exception:

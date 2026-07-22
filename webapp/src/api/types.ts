@@ -311,7 +311,19 @@ export interface UsageEvent {
   tokens_output?: number;
   tokens_cache_read?: number;
   tokens_cache_create?: number;
+  // Cache writes split by TTL (Anthropic only; both 0 = split unknown, e.g.
+  // events ingested before this split existed). Sums to tokens_cache_create.
+  tokens_cache_create_1h?: number;
+  tokens_cache_create_5m?: number;
   tokens_reasoning?: number;
+  // Claude Code per-message dimensions (Anthropic only; null/0 elsewhere).
+  effort?: string | null;
+  speed?: string | null;
+  service_tier?: string | null;
+  entrypoint?: string | null;
+  app_version?: string | null;
+  web_search_requests?: number;
+  web_fetch_requests?: number;
   [key: string]: unknown;
 }
 

@@ -40,7 +40,7 @@ def _price_row(
     ).first()
 
 
-def compute_event_cost_breakdown(
+def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced token dimension
     session: Session,
     *,
     provider_id: str,
@@ -51,6 +51,8 @@ def compute_event_cost_breakdown(
     tokens_cache_read: int,
     tokens_cache_create: int,
     tokens_reasoning: int = 0,
+    tokens_cache_create_1h: int = 0,
+    tokens_cache_create_5m: int = 0,
 ) -> CostBreakdown:
     """Per-component USD cost for an event using the price row in effect at `ts`.
 
@@ -64,6 +66,15 @@ def compute_event_cost_breakdown(
 
     All components are 0.0 when no pricing row matches. Reasoning tokens are
     billed at the output rate (Anthropic / OpenAI convention).
+
+    Cache writes: `tokens_cache_create` is priced in full at `cache_create_per_mtok`
+    (the 5-minute-TTL rate) UNLESS the caller also breaks it down into
+    `tokens_cache_create_1h`/`_5m` (Anthropic only, from JSONL `cache_creation.
+    ephemeral_*_input_tokens`), in which case the 1h portion bills at
+    `cache_create_1h_per_mtok` instead — falling back to the 5m rate if no
+    dedicated 1h rate is seeded. When both split params are 0 (every other
+    provider, and any event predating this split), behavior is unchanged from
+    before this split existed.
     """
     if not model_id:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
@@ -78,15 +89,33 @@ def compute_event_cost_breakdown(
             row = _price_row(session, provider_id, family, ts)
     if row is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
+
+    split_total = tokens_cache_create_1h + tokens_cache_create_5m
+    if split_total:
+        # Split known: price the 1h portion at its own rate (falling back to
+        # the 5m rate if unseeded) and the 5m portion — plus any remainder not
+        # accounted for by the split, e.g. rounding — at the 5m rate.
+        rate_1h = row.cache_create_1h_per_mtok or row.cache_create_per_mtok
+        remainder = max(tokens_cache_create - split_total, 0)
+        cache_create_cost = round(
+            tokens_cache_create_1h / 1_000_000 * rate_1h
+            + (tokens_cache_create_5m + remainder) / 1_000_000 * row.cache_create_per_mtok,
+            6,
+        )
+    else:
+        # No split provided — treat the whole total as 5m-rate, identical to
+        # every call site before this split was introduced.
+        cache_create_cost = round(tokens_cache_create / 1_000_000 * row.cache_create_per_mtok, 6)
+
     return CostBreakdown(
         input=round(tokens_input / 1_000_000 * row.input_per_mtok, 6),
         output=round((tokens_output + tokens_reasoning) / 1_000_000 * row.output_per_mtok, 6),
         cache_read=round(tokens_cache_read / 1_000_000 * row.cache_read_per_mtok, 6),
-        cache_create=round(tokens_cache_create / 1_000_000 * row.cache_create_per_mtok, 6),
+        cache_create=cache_create_cost,
     )
 
 
-def compute_event_cost(
+def compute_event_cost(  # noqa: PLR0913 — one param per priced token dimension
     session: Session,
     *,
     provider_id: str,
@@ -97,6 +126,8 @@ def compute_event_cost(
     tokens_cache_read: int,
     tokens_cache_create: int,
     tokens_reasoning: int = 0,
+    tokens_cache_create_1h: int = 0,
+    tokens_cache_create_5m: int = 0,
 ) -> float:
     """Total USD cost for an event — the sum of `compute_event_cost_breakdown`."""
     return compute_event_cost_breakdown(
@@ -109,4 +140,6 @@ def compute_event_cost(
         tokens_cache_read=tokens_cache_read,
         tokens_cache_create=tokens_cache_create,
         tokens_reasoning=tokens_reasoning,
+        tokens_cache_create_1h=tokens_cache_create_1h,
+        tokens_cache_create_5m=tokens_cache_create_5m,
     ).total

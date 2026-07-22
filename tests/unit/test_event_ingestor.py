@@ -168,6 +168,39 @@ def test_ingest_stores_components_even_with_authoritative_total():
     assert ev.cost_cache_read == 0.30  # component still computed from pricing
 
 
+def test_ingest_persists_claude_code_dimensions_and_prices_cache_split():
+    """effort/speed/service_tier/entrypoint/app_version/web-tool counts persist
+    verbatim, and the 1h/5m cache split is priced through to cost_cache_create
+    (sonnet: 1h @ $6.00/MT, 5m @ $3.75/MT)."""
+    s = _seeded_session()
+    push = _make_push(
+        event_id="msg_dims",
+        tokens_cache_create=1_000_000,
+        tokens_cache_create_1h=700_000,
+        tokens_cache_create_5m=300_000,
+        effort="high",
+        speed="standard",
+        service_tier="standard",
+        entrypoint="cli",
+        app_version="2.1.217",
+        web_search_requests=1,
+        web_fetch_requests=2,
+    )
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    ev = s.exec(select(UsageEvent).where(UsageEvent.event_id == "msg_dims")).first()
+
+    assert ev.effort == "high"
+    assert ev.speed == "standard"
+    assert ev.service_tier == "standard"
+    assert ev.entrypoint == "cli"
+    assert ev.app_version == "2.1.217"
+    assert ev.web_search_requests == 1
+    assert ev.web_fetch_requests == 2
+    assert ev.tokens_cache_create_1h == 700_000
+    assert ev.tokens_cache_create_5m == 300_000
+    assert ev.cost_cache_create == round(700_000 / 1_000_000 * 6.00 + 300_000 / 1_000_000 * 3.75, 6)
+
+
 def test_ingest_then_replay_is_idempotent():
     """Replaying the exact same batch must not double-count anything.
 

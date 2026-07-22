@@ -250,7 +250,13 @@ class UsageEvent(SQLModel, table=True):
     tokens_input: int = Field(default=0)  # non-cached prompt tokens
     tokens_output: int = Field(default=0)  # completion tokens
     tokens_cache_read: int = Field(default=0)  # free reads
-    tokens_cache_create: int = Field(default=0)  # Anthropic cache writes (1.25x cost)
+    tokens_cache_create: int = Field(default=0)  # Anthropic cache writes, sum of 1h+5m below
+    # Split of tokens_cache_create by TTL (1h writes cost 2x base input, 5m cost
+    # 1.25x — see cost_calculator.compute_event_cost_breakdown). Both 0 means the
+    # split is unknown (pre-fix backfill or a non-Anthropic provider); the total
+    # is then priced as all-5m, matching the historical single-rate behavior.
+    tokens_cache_create_1h: int = Field(default=0)
+    tokens_cache_create_5m: int = Field(default=0)
     tokens_reasoning: int = Field(default=0)  # o1-style thinking tokens
     cost_usd: float = Field(default=0.0)  # provider-reported or computed (authoritative total)
     # USD cost components (sum ≈ cost_usd; reasoning billed at the output rate folds
@@ -264,6 +270,14 @@ class UsageEvent(SQLModel, table=True):
     tool_calls: int = Field(default=0)  # number of tool_use blocks
     latency_ms: int | None = None  # request duration if logged
     raw_json: str | None = None  # original log line for debugging
+    # Claude Code per-message dimensions (Anthropic JSONL; None/0 elsewhere).
+    effort: str | None = None  # "low" | "medium" | "high" | "xhigh" | "max"
+    speed: str | None = None  # "fast" when fast mode was active, else "standard"
+    service_tier: str | None = None  # "standard" | "priority" | "batch"
+    entrypoint: str | None = None  # "cli" | "sdk-ts" | "claude-vscode" | ...
+    app_version: str | None = None  # Claude Code version that logged the message
+    web_search_requests: int = Field(default=0)
+    web_fetch_requests: int = Field(default=0)
     ingested_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -426,7 +440,13 @@ class ProviderPricing(SQLModel, table=True):
     input_per_mtok: float  # $/M input tokens (non-cached)
     output_per_mtok: float
     cache_read_per_mtok: float = Field(default=0.0)
-    cache_create_per_mtok: float = Field(default=0.0)
+    cache_create_per_mtok: float = Field(
+        default=0.0
+    )  # 5-minute TTL cache writes (Anthropic: 1.25x)
+    # 1-hour TTL cache writes (Anthropic: 2x input). 0.0 = no dedicated rate, so
+    # compute_event_cost_breakdown falls back to cache_create_per_mtok for any
+    # 1h-flagged tokens too (matches pre-split behavior for other providers).
+    cache_create_1h_per_mtok: float = Field(default=0.0)
     notes: str | None = None
 
 
