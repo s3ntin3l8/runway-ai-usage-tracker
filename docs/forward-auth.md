@@ -79,12 +79,13 @@ If `is_authenticated` is `false`:
 
 ## 5. Production hardening: split the Traefik router
 
-Gating the *entire* host behind `chain-authentik@file` (or whatever your forwardAuth middleware is named) breaks two things that don't authenticate as a browser:
+Gating the *entire* host behind `chain-authentik@file` (or whatever your forwardAuth middleware is named) breaks three things that don't authenticate as a browser:
 
 - **Sidecar ingestion.** `POST /api/v1/fleet/ingest` authenticates via its own HMAC signing (`INGEST_API_KEY`), not Authentik. A remote sidecar's push would get redirected into the SSO challenge instead of ever reaching Runway.
 - **Performance.** Vite's content-hashed JS/CSS/font bundle (`/assets/*`) is a couple dozen separate requests per page load, and each one would separately pay the forwardAuth round-trip cost (see *Why this matters* below).
+- **The PWA's own update mechanism.** The browser's periodic fetch of `/sw.js` treats a redirect response as a failed update — that's spec behavior, not a Runway quirk. If `/sw.js` is SSO-gated, then the moment a client's Authentik session lapses, its service worker can no longer fetch its own successor and is stuck forever replaying whatever build was cached when the session was last valid. Concretely: a stale pre-fix service worker doesn't know how to distinguish an SSO bounce from a real backend outage, so it renders "Backend unreachable" instead of a login prompt — and re-authenticating in the browser doesn't fix it, because the broken SW is what's serving the page. `/manifest.webmanifest` and the install/splash icons need the same bypass so the PWA install experience isn't degraded either.
 
-Fix: three Traefik routers on the same `runway` service, differentiated by path and priority — only the default (Host-only) router carries the SSO middleware:
+Fix: four Traefik routers on the same `runway` service, differentiated by path and priority — only the default (Host-only) router carries the SSO middleware:
 
 ```yaml
 services:
@@ -108,6 +109,15 @@ services:
       - traefik.http.routers.runway-static.tls.certresolver=le
       - traefik.http.routers.runway-static.priority=100
       - traefik.http.routers.runway-static.service=runway
+
+      # PWA lifecycle files bypass SSO too — see explanation above. Without
+      # this, a client whose SSO session lapses can never receive an updated
+      # service worker again.
+      - "traefik.http.routers.runway-pwa.rule=Host(`runway.example.com`) && (Path(`/sw.js`) || Path(`/manifest.webmanifest`) || PathRegexp(`^/(pwa-|apple-|maskable-|favicon).*`))"
+      - traefik.http.routers.runway-pwa.entrypoints=websecure
+      - traefik.http.routers.runway-pwa.tls.certresolver=le
+      - traefik.http.routers.runway-pwa.priority=100
+      - traefik.http.routers.runway-pwa.service=runway
 
       # Everything else — the dashboard + admin API — stays SSO-gated.
       - "traefik.http.routers.runway.rule=Host(`runway.example.com`)"
