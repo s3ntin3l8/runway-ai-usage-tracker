@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.10.3...v2.11.0) (2026-07-23)
+
+
+### Features
+
+* **debug:** show output from every strategy in debug/raw endpoint ([#215](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/215)) ([36c39dc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/36c39dcd12de5b28b1d27a3bfeba250985bcf303)), closes [#212](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/212)
+* **webapp:** add drag-to-reorder UI for collector strategy priority ([#214](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/214)) ([0d71ffa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0d71ffa072f40e8e81debb28147cbc14804a8861))
+
+
+### Bug Fixes
+
+* **anthropic:** parse new limits[] quota shape (adds per-model Fable weekly) ([#210](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/210)) ([1e24b39](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1e24b399714fa80853d8e959d6862922fea4ff3f))
+* **anthropic:** price 1h cache writes correctly, capture discarded JSONL dimensions ([#216](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/216)) ([02024c8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/02024c89fac4b0a3c2d051046a24241bd0a29d85))
+
 ## [2.10.3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.10.2...v2.10.3) (2026-07-19)
 
 
