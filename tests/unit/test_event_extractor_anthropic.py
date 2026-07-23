@@ -79,6 +79,37 @@ def test_captures_token_dimensions():
     assert opus.tokens_cache_create == 1000
 
 
+def test_captures_new_dimensions():
+    """effort/speed/service_tier/entrypoint/version and the cache-TTL split /
+    web-tool counts, previously discarded, are now captured (opus message)."""
+    evts = parse_anthropic_events(
+        [FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    opus = next(e for e in evts if e.model_id == "opus-4.5")
+    sonnet = next(e for e in evts if e.model_id == "sonnet-4.5")
+
+    assert opus.effort == "high"
+    assert opus.entrypoint == "cli"
+    assert opus.app_version == "2.1.217"
+    assert opus.speed == "standard"
+    assert opus.service_tier == "standard"
+    assert opus.tokens_cache_create_1h == 700
+    assert opus.tokens_cache_create_5m == 300
+    assert opus.tokens_cache_create_1h + opus.tokens_cache_create_5m == opus.tokens_cache_create
+    assert opus.web_search_requests == 1
+    assert opus.web_fetch_requests == 0
+
+    # The sonnet line in the fixture predates these fields (no effort/version/
+    # cache_creation/server_tool_use) — everything defaults cleanly.
+    assert sonnet.effort is None
+    assert sonnet.app_version is None
+    assert sonnet.tokens_cache_create_1h == 0
+    assert sonnet.tokens_cache_create_5m == 0
+    assert sonnet.web_search_requests == 0
+
+
 def test_counts_tool_calls():
     evts = parse_anthropic_events(
         [FIXTURE],

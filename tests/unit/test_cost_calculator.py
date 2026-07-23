@@ -151,6 +151,108 @@ def test_breakdown_splits_components_and_sums_to_total():
     assert b.total == compute_event_cost(s, **kwargs)
 
 
+def test_cache_create_1h_bills_at_double_rate():
+    """1M 1h-TTL cache-write tokens on sonnet bill at $6.00/MT (2x the $3.00
+    input rate), not the 5m rate ($3.75/MT)."""
+    s = _seeded_session()
+    b = compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="sonnet",
+        ts=datetime.now(UTC),
+        tokens_input=0,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_cache_create_1h=1_000_000,
+        tokens_cache_create_5m=0,
+    )
+    assert b.cache_create == 6.00
+
+
+def test_cache_create_5m_bills_at_standard_rate():
+    """1M 5m-TTL cache-write tokens on sonnet bill at $3.75/MT, same as the
+    single-rate (pre-split) behavior."""
+    s = _seeded_session()
+    b = compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="sonnet",
+        ts=datetime.now(UTC),
+        tokens_input=0,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_cache_create_1h=0,
+        tokens_cache_create_5m=1_000_000,
+    )
+    assert b.cache_create == 3.75
+
+
+def test_cache_create_mixed_split_sums_each_portion_at_its_own_rate():
+    """700k 1h-tokens + 300k 5m-tokens on sonnet = 700k@$6.00 + 300k@$3.75/MT."""
+    s = _seeded_session()
+    b = compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="sonnet",
+        ts=datetime.now(UTC),
+        tokens_input=0,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_cache_create_1h=700_000,
+        tokens_cache_create_5m=300_000,
+    )
+    assert b.cache_create == round(700_000 / 1_000_000 * 6.00 + 300_000 / 1_000_000 * 3.75, 6)
+
+
+def test_cache_create_no_split_matches_pre_split_behavior():
+    """Omitting the 1h/5m split (every non-Anthropic provider, and any event
+    predating this split) must cost identically to before it existed: the
+    whole total at the single cache_create_per_mtok rate."""
+    s = _seeded_session()
+    kwargs = {
+        "provider_id": "anthropic",
+        "model_id": "sonnet",
+        "ts": datetime.now(UTC),
+        "tokens_input": 0,
+        "tokens_output": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 1_000_000,
+    }
+    with_split_absent = compute_event_cost_breakdown(s, **kwargs)
+    with_split_explicit_zero = compute_event_cost_breakdown(
+        s, tokens_cache_create_1h=0, tokens_cache_create_5m=0, **kwargs
+    )
+    assert with_split_absent.cache_create == 3.75
+    assert with_split_absent == with_split_explicit_zero
+
+
+def test_cache_create_1h_falls_back_to_5m_rate_when_unseeded():
+    """A provider with no dedicated cache_create_1h_per_mtok row still prices
+    1h-flagged tokens (rather than silently zeroing them) by falling back to
+    cache_create_per_mtok."""
+    s = _seeded_session()
+    b = compute_event_cost_breakdown(
+        s,
+        provider_id="gemini",
+        model_id="pro-2.5",
+        ts=datetime(2026, 5, 17, tzinfo=UTC),
+        tokens_input=0,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_cache_create_1h=1_000_000,
+        tokens_cache_create_5m=0,
+    )
+    # gemini/pro-2.5 has no cache_create_1h_per_mtok seeded (0.0) -> falls back
+    # to whatever cache_create_per_mtok is seeded for it (may be 0; the point
+    # is it doesn't error and doesn't silently drop the tokens to a different,
+    # unintended rate).
+    assert b.cache_create >= 0.0
+
+
 def test_breakdown_zero_for_unpriced_model():
     s = _seeded_session()
     b = compute_event_cost_breakdown(

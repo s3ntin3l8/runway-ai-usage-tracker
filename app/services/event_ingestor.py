@@ -74,6 +74,8 @@ class EventIngestor:
                     tokens_cache_read=push.tokens_cache_read,
                     tokens_cache_create=push.tokens_cache_create,
                     tokens_reasoning=push.tokens_reasoning,
+                    tokens_cache_create_1h=push.tokens_cache_create_1h,
+                    tokens_cache_create_5m=push.tokens_cache_create_5m,
                 )
                 # Provider-supplied cost (e.g. OpenCode logs it per message) is
                 # authoritative for the total; otherwise use the computed sum.
@@ -102,6 +104,8 @@ class EventIngestor:
                     tokens_output=push.tokens_output,
                     tokens_cache_read=push.tokens_cache_read,
                     tokens_cache_create=push.tokens_cache_create,
+                    tokens_cache_create_1h=push.tokens_cache_create_1h,
+                    tokens_cache_create_5m=push.tokens_cache_create_5m,
                     tokens_reasoning=push.tokens_reasoning,
                     cost_usd=cost,
                     cost_input=breakdown.input,
@@ -112,6 +116,13 @@ class EventIngestor:
                     tool_calls=push.tool_calls,
                     latency_ms=push.latency_ms,
                     raw_json=push.raw_json,
+                    effort=push.effort,
+                    speed=push.speed,
+                    service_tier=push.service_tier,
+                    entrypoint=push.entrypoint,
+                    app_version=push.app_version,
+                    web_search_requests=push.web_search_requests,
+                    web_fetch_requests=push.web_fetch_requests,
                 )
                 if not self._try_insert_event(ev):
                     result.events_duplicate += 1

@@ -105,11 +105,26 @@ class UsageEventPush(BaseModel):
     tokens_output: int = 0
     tokens_cache_read: int = 0
     tokens_cache_create: int = 0
+    # Anthropic splits cache writes by TTL (1h writes cost 2x base input, 5m cost
+    # 1.25x); tokens_cache_create stays the sum of these two so back-compat
+    # readers/rollups need no change. Both 0 (old sidecars, other providers)
+    # means "split unknown" and cost_calculator treats the total as all-5m.
+    tokens_cache_create_1h: int = 0
+    tokens_cache_create_5m: int = 0
     tokens_reasoning: int = 0
     stop_reason: str | None = None
     tool_calls: int = 0
     latency_ms: int | None = None
     raw_json: str | None = None
+    # Claude Code per-message dimensions (from JSONL, otherwise None/0 for
+    # providers/older sidecars that don't emit them).
+    effort: str | None = None  # "low" | "medium" | "high" | "xhigh" | "max"
+    speed: str | None = None  # "fast" when fast mode was active, else "standard"
+    service_tier: str | None = None  # "standard" | "priority" | "batch"
+    entrypoint: str | None = None  # "cli" | "sdk-ts" | "claude-vscode" | ...
+    app_version: str | None = None  # Claude Code version that logged the message
+    web_search_requests: int = 0
+    web_fetch_requests: int = 0
     # cost_usd: set by providers that log it directly (e.g. OpenCode); None = server computes
     # sidecar_id intentionally NOT here — comes from IngestRequest.sidecar_id
     cost_usd: float | None = None

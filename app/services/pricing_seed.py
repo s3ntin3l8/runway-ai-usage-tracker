@@ -19,7 +19,8 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 10.00,
         "output_per_mtok": 50.00,
         "cache_read_per_mtok": 1.00,
-        "cache_create_per_mtok": 12.50,
+        "cache_create_per_mtok": 12.50,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 20.00,  # 1h TTL writes: 2x input
         "notes": "Fable 5",
     },
     {
@@ -29,7 +30,8 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 3.00,
         "output_per_mtok": 15.00,
         "cache_read_per_mtok": 0.30,
-        "cache_create_per_mtok": 3.75,
+        "cache_create_per_mtok": 3.75,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 6.00,  # 1h TTL writes: 2x input
         "notes": "Sonnet 4.5",
     },
     {
@@ -39,7 +41,8 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 5.00,
         "output_per_mtok": 25.00,
         "cache_read_per_mtok": 0.50,
-        "cache_create_per_mtok": 6.25,
+        "cache_create_per_mtok": 6.25,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 10.00,  # 1h TTL writes: 2x input
         "notes": "Opus 4.x effective rate",
     },
     {
@@ -49,7 +52,8 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.00,
         "output_per_mtok": 5.00,
         "cache_read_per_mtok": 0.10,
-        "cache_create_per_mtok": 1.25,
+        "cache_create_per_mtok": 1.25,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 2.00,  # 1h TTL writes: 2x input
         "notes": "Haiku 4.5 effective rate",
     },
     # OpenAI ChatGPT / Codex (GPT-5 series)
@@ -352,6 +356,16 @@ def seed_pricing_table(session: Session) -> int:
             )
         ).first()
         if exists:
+            # cache_create_1h_per_mtok postdates the original seed rows (added
+            # when Runway started splitting cache writes by TTL). This isn't a
+            # real-world price change, so backfill it onto the already-seeded
+            # row in place rather than versioning a new effective_from row —
+            # but only when it's still at the column's default, so a rate a
+            # user tuned by hand is never clobbered.
+            seed_1h = row.get("cache_create_1h_per_mtok", 0.0)
+            if exists.cache_create_1h_per_mtok == 0.0 and seed_1h:
+                exists.cache_create_1h_per_mtok = seed_1h
+                session.add(exists)
             continue
         session.add(
             ProviderPricing(
@@ -362,6 +376,7 @@ def seed_pricing_table(session: Session) -> int:
                 output_per_mtok=row["output_per_mtok"],
                 cache_read_per_mtok=row["cache_read_per_mtok"],
                 cache_create_per_mtok=row["cache_create_per_mtok"],
+                cache_create_1h_per_mtok=row.get("cache_create_1h_per_mtok", 0.0),
                 notes=row.get("notes"),
             )
         )

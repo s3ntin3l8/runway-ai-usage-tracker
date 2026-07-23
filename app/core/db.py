@@ -165,6 +165,19 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("quota_snapshots", "variant", "TEXT NOT NULL DEFAULT ''"),
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session
     ("provider_configs", "oai_sc_cookie_encrypted", "VARCHAR"),
+    # Claude Code per-message dimensions previously discarded by the JSONL
+    # parser (effort, fast-mode, service tier, entrypoint/version, cache TTL
+    # split, web-tool counts) — see docs/collectors/claude.md.
+    ("usage_events", "tokens_cache_create_1h", "INTEGER NOT NULL DEFAULT 0"),
+    ("usage_events", "tokens_cache_create_5m", "INTEGER NOT NULL DEFAULT 0"),
+    ("usage_events", "effort", "VARCHAR"),
+    ("usage_events", "speed", "VARCHAR"),
+    ("usage_events", "service_tier", "VARCHAR"),
+    ("usage_events", "entrypoint", "VARCHAR"),
+    ("usage_events", "app_version", "VARCHAR"),
+    ("usage_events", "web_search_requests", "INTEGER NOT NULL DEFAULT 0"),
+    ("usage_events", "web_fetch_requests", "INTEGER NOT NULL DEFAULT 0"),
+    ("provider_pricing", "cache_create_1h_per_mtok", "FLOAT NOT NULL DEFAULT 0"),
 ]
 
 
