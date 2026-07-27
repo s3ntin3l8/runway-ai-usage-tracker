@@ -29,6 +29,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
     queryFn: fetchAppConfig,
     // tz is nice-to-have; don't block a locked instance on it
     retry: false,
+    meta: SKIP_AUTH_REDIRECT_GUARD_META,
   });
 
   useEffect(() => {
