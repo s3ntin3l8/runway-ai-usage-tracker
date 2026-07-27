@@ -15,6 +15,16 @@
 // this file exists to avoid (see BootGate.tsx's authRedirect handling for the
 // in-app-fetch half of the same problem).
 //
+// Important: NetworkOnly MUST use redirect:'manual' via a requestWillFetch
+// plugin (not fetchOptions — workbox explicitly strips fetchOptions for
+// navigate requests, see StrategyHandler.fetch in workbox v7). This ensures
+// the SW does NOT follow cross-origin SSO redirects internally. If the SW
+// follows the redirect and serves the login page HTML under the app's origin,
+// the login form breaks (wrong cookie domain, broken form actions, CSP issues).
+// With redirect:'manual', the SW passes the opaque redirect response to the
+// browser, which navigates to the SSO provider's domain directly, where the
+// login form works correctly (same flow as a native browser navigation).
+//
 // So: navigations always go to the network (NetworkOnly, never cached), and
 // the precached index.html is used only as a genuine offline fallback.
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from 'workbox-precaching';
@@ -29,7 +39,18 @@ cleanupOutdatedCaches();
 
 registerRoute(
   ({ request, url }) => request.mode === 'navigate' && !url.pathname.startsWith('/api/'),
-  new NetworkOnly(),
+  new NetworkOnly({
+    plugins: [
+      {
+        requestWillFetch: async ({ request }) => {
+          if (request.mode === 'navigate') {
+            return new Request(request, { redirect: 'manual' });
+          }
+          return request;
+        },
+      },
+    ],
+  }),
 );
 
 // Gated on navigate: setCatchHandler is global, and serving cached HTML for a
