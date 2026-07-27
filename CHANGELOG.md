@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.0...v2.11.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* suppress mypy call-arg and ruff PLR0917 on CI ([31a10cf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/31a10cf314365e807f7f73ed476958f7d40a3ffb))
+* **webapp:** stop infinite reload loop when upstream SSO session expires ([f1d643a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f1d643ae7fae2830c70dbd3eab570455ed7c9591))
+
 ## [2.11.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.10.3...v2.11.0) (2026-07-23)
 
 
