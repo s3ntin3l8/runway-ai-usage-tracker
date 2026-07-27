@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.1...v2.11.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **sw:** remove redundant requestWillFetch plugin causing TypeError on navigation ([#226](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/226)) ([3568cd4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3568cd44e0b5236e7034f26d2e61167bc1306597))
+* **sw:** use requestWillFetch plugin to stop following SSO redirects on navigation ([769883e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/769883e091969647c3b2fa6988fd7ba33d96e863))
+
 ## [2.11.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.0...v2.11.1) (2026-07-27)
 
 
