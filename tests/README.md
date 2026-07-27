@@ -154,7 +154,7 @@ async def test_collect_oauth_success(self, mock_http_client, mock_anthropic_oaut
     # Verify
     assert isinstance(result, list)
     assert len(result) >= 1
-    assert all('service' in card for card in result)
+    assert all("service" in card for card in result)
 ```
 
 ## Debugging Tests
@@ -239,7 +239,7 @@ When adding a new collector:
    ```python
    @pytest.fixture
    def mock_your_response():
-       return { ... }
+       return {...}
    ```
 
 3. Test both success and failure scenarios:

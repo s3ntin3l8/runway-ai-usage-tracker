@@ -84,10 +84,16 @@ The collector detects window type by examining `resetInSec` from the OpenCode AP
     "usage_url": "https://opencode.ai/workspace/{workspace_id}/go",
     "updated_at": "2026-04-26T14:30:00+00:00",
     # Token breakdown fields (when usage data available)
-    "token_usage": {"input": 300, "output": 22014, "reasoning": 0, "cache_read": 6812194, "total": 22314},
+    "token_usage": {
+        "input": 300,
+        "output": 22014,
+        "reasoning": 0,
+        "cache_read": 6812194,
+        "total": 22314,
+    },
     "by_model": {"qwen3.5-plus": {"cost": 0.23, "msgs": 50}},
     "msgs": 50,
-    "pct_used": 1.0
+    "pct_used": 1.0,
 }
 ```
 

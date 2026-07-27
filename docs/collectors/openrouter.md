@@ -78,7 +78,7 @@ returned — this is a best-effort enrichment.
     "limit_value": 10.0,
     "unit_type": "currency",
     "data_source": "api",
-    "updated_at": "2026-04-14T12:00:00+00:00"
+    "updated_at": "2026-04-14T12:00:00+00:00",
 }
 ```
 
@@ -98,7 +98,7 @@ returned — this is a best-effort enrichment.
     "limit_value": 20.0,
     "unit_type": "currency",
     "data_source": "api",
-    "updated_at": "2026-04-14T12:00:00+00:00"
+    "updated_at": "2026-04-14T12:00:00+00:00",
 }
 ```
 

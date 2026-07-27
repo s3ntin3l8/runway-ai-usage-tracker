@@ -38,7 +38,7 @@ The Kimi K2 collector tracks prepaid credits specifically for the coding agent u
     "pace": "Stable",
     "detail": "Credits (consumed: 54.20)",
     "data_source": "api",
-    "updated_at": "2026-04-19T06:51:51+00:00"
+    "updated_at": "2026-04-19T06:51:51+00:00",
 }
 ```
 

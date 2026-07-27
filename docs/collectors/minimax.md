@@ -58,7 +58,7 @@ Set `MINIMAX_HOST=minimaxi.com` to switch to the China host (`https://api.minima
     "unit_type": "count",
     "data_source": "api",
     "input_source": "config",
-    "updated_at": "2026-04-11T16:30:00+00:00"
+    "updated_at": "2026-04-11T16:30:00+00:00",
 }
 ```
 
