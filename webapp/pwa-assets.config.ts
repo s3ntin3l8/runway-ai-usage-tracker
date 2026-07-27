@@ -11,13 +11,11 @@ import { combinePresetAndAppleSplashScreens } from '@vite-pwa/assets-generator/c
 // Apple icons we fill the canvas with the brand dark (#09090b) so an OS
 // squircle/rounded mask never reveals transparent corners.
 //
-// Apple splash screens: portrait + landscape subset for modern devices (iPhone 14+,
-// iPad Pro 11"/12.9", iPad Air 11"/13") to keep the asset footprint reasonable.
+// Apple splash screens: portrait + landscape for modern devices (iPhone 13+,
+// iPad Pro 11"/12.9", iPad Air 11"/13", iPad mini) to keep the asset footprint reasonable.
 // Full matrix (all 50+ devices × both orientations) would add ~100 PNGs; this
-// subset adds 22 PNGs (11 unique screen sizes × 2 orientations — several device
-// generations share the same physical screen size). All use the brand dark
-// background (#0a0a0b matching theme_color) so the launch screen blends
-// seamlessly into the installed PWA.
+// subset adds 22 PNGs (11 portrait + 11 landscape). All use the brand dark background (#0a0a0b matching
+// theme_color) so the launch screen blends seamlessly into the installed PWA.
 
 export default defineConfig({
   preset: combinePresetAndAppleSplashScreens(
@@ -43,7 +41,7 @@ export default defineConfig({
         log: true,
       },
     },
-    // Most common modern devices (portrait + landscape generated for each).
+    // Both portrait and landscape for the most common modern devices.
     [
       'iPhone 16 Pro Max',
       'iPhone 16 Pro',
