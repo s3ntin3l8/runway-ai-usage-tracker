@@ -17,7 +17,8 @@ const clientsClaim = vi.fn();
 
 vi.mock('workbox-precaching', () => ({ precacheAndRoute, cleanupOutdatedCaches, matchPrecache }));
 vi.mock('workbox-routing', () => ({ registerRoute, setCatchHandler }));
-vi.mock('workbox-strategies', () => ({ NetworkOnly: class NetworkOnly {} }));
+const NetworkOnly = vi.fn();
+vi.mock('workbox-strategies', () => ({ NetworkOnly }));
 vi.mock('workbox-core', () => ({ clientsClaim }));
 
 const skipWaiting = vi.fn();
@@ -85,8 +86,15 @@ describe('sw.ts', () => {
 
     it('registers the route with a NetworkOnly strategy (never cache-first)', async () => {
       await import('./sw');
-      const strategy = registerRoute.mock.calls[0][1];
-      expect(strategy.constructor.name).toBe('NetworkOnly');
+      expect(NetworkOnly).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes a requestWillFetch plugin that sets redirect:manual for navigations', async () => {
+      await import('./sw');
+      const [options] = NetworkOnly.mock.calls[0];
+      expect(options.plugins).toHaveLength(1);
+      expect(options.plugins[0]).toHaveProperty('requestWillFetch');
+      expect(typeof options.plugins[0].requestWillFetch).toBe('function');
     });
   });
 
