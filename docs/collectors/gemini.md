@@ -44,7 +44,7 @@ The Gemini collector supports the following authentication methods:
 {
     "service": "Gemini 2.5 Flash",
     "icon": "🔵",
-    "remaining": "0%",           # % used (0% = fresh quota)
+    "remaining": "0%",  # % used (0% = fresh quota)
     "unit": "used",
     "reset": "Resets at 13:44",
     "health": "good",
@@ -59,7 +59,7 @@ The Gemini collector supports the following authentication methods:
     "input_source": "config",
     "tier": "pro",
     "usage_url": "https://one.google.com/settings",
-    "updated_at": "2026-04-08T10:30:00+00:00"
+    "updated_at": "2026-04-08T10:30:00+00:00",
 }
 ```
 

@@ -85,7 +85,7 @@ This is the preferred method, providing the most reliable and comprehensive data
     "input_source": "sidecar",
     "tier": "pro",
     "usage_url": "https://claude.ai/settings/usage",
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "updated_at": "2026-04-07T10:30:00+00:00",
 }
 ```
 

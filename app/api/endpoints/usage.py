@@ -1009,7 +1009,7 @@ async def get_usage_history_deltas(
 
 @router.get("/events")
 @limiter.limit("30/minute")
-async def get_usage_events(  # noqa: PLR0913 — known-debt: 12 query filters; collapse into a Pydantic params model in a follow-up
+async def get_usage_events(  # noqa: PLR0913, PLR0917 — known-debt: 12 query filters; collapse into a Pydantic params model in a follow-up
     request: Request,
     provider_id: str = Query(...),
     account_id: str = Query(...),
@@ -1193,7 +1193,7 @@ async def get_usage_sessions(
 
 @router.get("/sessions/paginated")
 @limiter.limit("30/minute")
-async def get_usage_sessions_paginated(  # noqa: PLR0913 — known-debt: query filters + sort; collapse into a Pydantic params model in a follow-up
+async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt: query filters + sort; collapse into a Pydantic params model in a follow-up
     request: Request,
     provider_id: str = Query(...),
     account_id: str = Query(...),

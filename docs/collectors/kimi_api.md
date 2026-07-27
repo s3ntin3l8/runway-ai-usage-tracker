@@ -47,7 +47,7 @@ The Kimi API collector uses a single API key for authentication:
     "input_source": "config",
     "tier": None,
     "usage_url": "https://platform.moonshot.cn",
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "updated_at": "2026-04-07T10:30:00+00:00",
 }
 ```
 

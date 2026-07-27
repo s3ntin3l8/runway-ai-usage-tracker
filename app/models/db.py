@@ -8,7 +8,7 @@ from app.core.encryption import encryption_service
 from app.models._datetime import UTCDateTime
 
 
-class SidecarRegistry(SQLModel, table=True):
+class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     """Persistent registry of known sidecars that have sent data."""
 
     __tablename__ = "sidecar_registry"
@@ -45,7 +45,7 @@ class SidecarRegistry(SQLModel, table=True):
         self.tags_json = json.dumps(value)
 
 
-class WebhookConfig(SQLModel, table=True):
+class WebhookConfig(SQLModel, table=True):  # type: ignore[call-arg]
     """Per-provider webhook alert configuration."""
 
     __tablename__ = "webhook_configs"
@@ -59,7 +59,7 @@ class WebhookConfig(SQLModel, table=True):
     last_fired_at: UTCDateTime | None = Field(default=None)  # None = reset/ready to fire
 
 
-class ProviderConfig(SQLModel, table=True):
+class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
     """Per-provider user configuration (API keys, labels, poll intervals, enabled toggle)."""
 
     __tablename__ = "provider_configs"
@@ -141,7 +141,7 @@ class ProviderConfig(SQLModel, table=True):
             self.oai_sc_cookie_encrypted = None
 
 
-class SystemConfig(SQLModel, table=True):
+class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
     """Global application configuration (single row)."""
 
     __tablename__ = "system_config"
@@ -168,7 +168,7 @@ class SystemConfig(SQLModel, table=True):
     session_secret_encrypted: str | None = None
 
 
-class LatestUsage(SQLModel, table=True):
+class LatestUsage(SQLModel, table=True):  # type: ignore[call-arg]
     __tablename__ = "latest_usage"
     __table_args__ = (
         # model_id must be in the identity tuple — collectors legitimately
@@ -199,7 +199,7 @@ class LatestUsage(SQLModel, table=True):
     updated_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class UsageEvent(SQLModel, table=True):
+class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     """One assistant-message-level usage record. Source of truth.
 
     Idempotency: (provider_id, account_id, event_id) is UNIQUE — re-pushing
@@ -281,7 +281,7 @@ class UsageEvent(SQLModel, table=True):
     ingested_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class UsageWindow(SQLModel, table=True):
+class UsageWindow(SQLModel, table=True):  # type: ignore[call-arg]
     """One row per (window_type, model_id × sidecar_id) combination per closed window.
 
     Written exactly once when a window's authoritative reset_at advances past
@@ -321,7 +321,7 @@ class UsageWindow(SQLModel, table=True):
     pct_used: float | None = None
 
 
-class UsagePeriodRollup(SQLModel, table=True):
+class UsagePeriodRollup(SQLModel, table=True):  # type: ignore[call-arg]
     """Pre-aggregated period totals for fast dashboard reads.
 
     Maintained incrementally: every UsageEvent insert updates the matching
@@ -371,7 +371,7 @@ class UsagePeriodRollup(SQLModel, table=True):
     last_updated: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-class QuotaSnapshot(SQLModel, table=True):
+class QuotaSnapshot(SQLModel, table=True):  # type: ignore[call-arg]
     """Append-only time series of scraped quota observations.
 
     Written on every upsert_latest_usage call when pct_used is non-null.
@@ -416,7 +416,7 @@ class QuotaSnapshot(SQLModel, table=True):
     reset_at: UTCDateTime | None = None
 
 
-class ProviderPricing(SQLModel, table=True):
+class ProviderPricing(SQLModel, table=True):  # type: ignore[call-arg]
     """Per-model pricing in USD per million tokens.
 
     Time-versioned: a row's effective_from defines when it became active.
@@ -450,7 +450,7 @@ class ProviderPricing(SQLModel, table=True):
     notes: str | None = None
 
 
-class AuditLog(SQLModel, table=True):
+class AuditLog(SQLModel, table=True):  # type: ignore[call-arg]
     """Append-only record of admin mutations.
 
     Captures every successful state-changing call against the admin

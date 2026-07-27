@@ -66,7 +66,7 @@ The ChatGPT collector supports multiple authentication and data collection metho
     "input_source": "config",
     "tier": "plus",
     "usage_url": "https://chatgpt.com/codex/settings/usage/",
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "updated_at": "2026-04-07T10:30:00+00:00",
 }
 ```
 

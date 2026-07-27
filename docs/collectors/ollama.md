@@ -51,7 +51,7 @@ The Ollama collector supports the following authentication methods:
     "data_source": "web",
     "tier": "free",
     "usage_url": "https://ollama.com/settings",
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "updated_at": "2026-04-07T10:30:00+00:00",
 }
 ```
 

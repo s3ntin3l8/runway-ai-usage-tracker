@@ -63,7 +63,7 @@ The GitHub Copilot collector supports multiple authentication methods:
     "input_source": "config",
     "tier": "free",
     "usage_url": "https://github.com/settings/copilot/features",
-    "updated_at": "2026-04-07T10:30:00+00:00"
+    "updated_at": "2026-04-07T10:30:00+00:00",
 }
 ```
 
