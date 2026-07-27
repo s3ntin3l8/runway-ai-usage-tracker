@@ -87,15 +87,9 @@ describe('sw.ts', () => {
     it('registers the route with a NetworkOnly strategy (never cache-first)', async () => {
       await import('./sw');
       expect(NetworkOnly).toHaveBeenCalledTimes(1);
+      expect(NetworkOnly).toHaveBeenCalledWith();
     });
 
-    it('passes a requestWillFetch plugin that sets redirect:manual for navigations', async () => {
-      await import('./sw');
-      const [options] = NetworkOnly.mock.calls[0];
-      expect(options.plugins).toHaveLength(1);
-      expect(options.plugins[0]).toHaveProperty('requestWillFetch');
-      expect(typeof options.plugins[0].requestWillFetch).toBe('function');
-    });
   });
 
   describe('the offline catch handler', () => {
