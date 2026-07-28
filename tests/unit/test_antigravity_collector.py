@@ -162,3 +162,68 @@ class TestAntigravityErrorCards:
 
         assert len(result) == 1
         assert result[0].get("error_type") == "api_error"
+
+
+class TestAntigravityTier:
+    @pytest.mark.asyncio
+    async def test_collect_via_api_extracts_tier_from_paid_tier(self, mock_http_client):
+        """Tier is extracted from paidTier in loadCodeAssist response and added to cards."""
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {
+            "cloudaicompanionProject": "proj-1",
+            "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"},
+        }
+
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Gemini Models Pool",
+                    "buckets": [
+                        {
+                            "bucketId": "g_weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.5,
+                            "displayName": "Weekly",
+                            "resetTime": "2026-08-04T00:00:00Z",
+                        },
+                        {
+                            "bucketId": "g_5h",
+                            "window": "5h",
+                            "remainingFraction": 0.8,
+                            "displayName": "Rolling",
+                        },
+                    ],
+                },
+                {
+                    "displayName": "Frontier Models Pool",
+                    "buckets": [
+                        {
+                            "bucketId": "f_weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.9,
+                            "displayName": "Weekly",
+                            "resetTime": "2026-08-04T00:00:00Z",
+                        },
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert len(result) == 3
+        for card in result:
+            assert card.get("tier") == "pro", (
+                f"Expected tier='pro' in card {card.get('service_name')}"
+            )
