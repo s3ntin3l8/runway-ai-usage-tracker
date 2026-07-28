@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.2...v2.11.3) (2026-07-28)
+
+
+### Bug Fixes
+
+* **antigravity:** extract and report tier from loadCodeAssist paidTier ([#227](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/227)) ([334d529](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/334d5293370508ca2183b86fe216b6e810fbd0dd))
+
 ## [2.11.2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.1...v2.11.2) (2026-07-27)
 
 
