@@ -173,6 +173,17 @@ class AntigravityApiMixin:
 
             lca_data = lca_resp.json()
             project_id = lca_data.get("cloudaicompanionProject", "")
+
+            # Extract tier from loadCodeAssist response
+            paid_tier = lca_data.get("paidTier") or {}
+            current_tier = lca_data.get("currentTier") or {}
+            tier_id_raw = paid_tier.get("id", current_tier.get("id", "unknown"))
+            tier_mapping = {
+                "g1-pro-tier": "pro",
+                "g1-ultra-tier": "ultra",
+                "standard-tier": "free",
+            }
+            tier = tier_mapping.get(tier_id_raw, tier_id_raw if tier_id_raw != "unknown" else None)
             if not project_id:
                 logger.warning("Antigravity: no cloudaicompanionProject in loadCodeAssist response")
                 return []
@@ -263,34 +274,35 @@ class AntigravityApiMixin:
                     # cards never merge in the accumulator.
                     pool_id = f"antigravity:{pool_family}:{win}"
 
-                    results.append(
-                        {
-                            "service_name": f"{group_name} – {display_name}",
-                            "icon": "🛸",
-                            "remaining": f"{pct_used:.1f}%",
-                            "unit": "used",
-                            "reset_at": reset_at,
-                            "health": health,
-                            "pace": pace,
-                            "detail": description or f"{group_name} | {display_name}",
-                            "used_value": pct_used,
-                            "limit_value": 100.0,
-                            "pct_used": pct_used,
-                            # Aggregate card: pool identity goes in variant so the
-                            # accumulator window-guard (fires only when model_id != "")
-                            # is skipped, letting weekly + session coexist in latest_usage.
-                            # See accumulator.py:226-236 for the aggregate-card convention.
-                            "model_id": "",
-                            "variant": pool_family,
-                            "unit_type": "percent",
-                            "window_type": win,
-                            "data_source": self.DATA_SOURCE_API,
-                            "input_source": getattr(self, "_current_input_source", "unknown"),
-                            "quota_pool_id": pool_id,
-                            "bucket_id": bucket_id,
-                            "updated_at": now.isoformat(),
-                        }
-                    )
+                    card = {
+                        "service_name": f"{group_name} – {display_name}",
+                        "icon": "🛸",
+                        "remaining": f"{pct_used:.1f}%",
+                        "unit": "used",
+                        "reset_at": reset_at,
+                        "health": health,
+                        "pace": pace,
+                        "detail": description or f"{group_name} | {display_name}",
+                        "used_value": pct_used,
+                        "limit_value": 100.0,
+                        "pct_used": pct_used,
+                        # Aggregate card: pool identity goes in variant so the
+                        # accumulator window-guard (fires only when model_id != "")
+                        # is skipped, letting weekly + session coexist in latest_usage.
+                        # See accumulator.py:226-236 for the aggregate-card convention.
+                        "model_id": "",
+                        "variant": pool_family,
+                        "unit_type": "percent",
+                        "window_type": win,
+                        "data_source": self.DATA_SOURCE_API,
+                        "input_source": getattr(self, "_current_input_source", "unknown"),
+                        "quota_pool_id": pool_id,
+                        "bucket_id": bucket_id,
+                        "updated_at": now.isoformat(),
+                    }
+                    if tier is not None:
+                        card["tier"] = tier
+                    results.append(card)
 
             results.sort(key=lambda x: x.get("window_type", ""), reverse=True)
             return results

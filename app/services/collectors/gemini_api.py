@@ -128,8 +128,8 @@ class GeminiApiMixin:
             project_id = tier_info.get("cloudaicompanionProject", "")
 
             # Extract tier
-            paid_tier = tier_info.get("paidTier", {})
-            current_tier = tier_info.get("currentTier", {})
+            paid_tier = tier_info.get("paidTier") or {}
+            current_tier = tier_info.get("currentTier") or {}
             tier_id_raw = paid_tier.get("id", current_tier.get("id", "unknown"))
 
             tier_mapping = {
