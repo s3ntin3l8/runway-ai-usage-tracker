@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.3...v2.11.4) (2026-07-30)
+
+
+### Bug Fixes
+
+* **webapp:** break infinite reload loop on Android PWA SSO expiry ([#229](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/229)) ([8fff09d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8fff09d19efe2031980d7389c86373a84717d5c3))
+
 ## [2.11.3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.2...v2.11.3) (2026-07-28)
 
 
