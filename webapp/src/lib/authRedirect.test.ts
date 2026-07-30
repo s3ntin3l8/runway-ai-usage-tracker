@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryCache, QueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/api/client';
 import {
+  clearAuthReloadCount,
   createAuthRedirectGuard,
   createQueryErrorAuthRedirectHandler,
   SKIP_AUTH_REDIRECT_GUARD_META,
 } from './authRedirect';
+
+beforeEach(() => sessionStorage.clear());
 
 describe('createAuthRedirectGuard', () => {
   it('fires once when an authRedirect ApiError is seen', () => {
@@ -93,5 +96,48 @@ describe('createQueryErrorAuthRedirectHandler', () => {
       .fetchQuery({ queryKey: ['usage', 'limits'], queryFn: authFailure })
       .catch(() => {});
     expect(onExpire).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Each call to createAuthRedirectGuard simulates a new page load (module-level
+// constant in app.tsx, recreated on every full page reload). The sessionStorage
+// counter persists across these reloads.
+describe('reload-loop circuit breaker', () => {
+  it('fires onExpire on the first two page loads (under the max)', () => {
+    for (let i = 0; i < 2; i++) {
+      const onExpire = vi.fn();
+      const guard = createAuthRedirectGuard(onExpire);
+      guard(new ApiError(0, 'Authentication required', true));
+      expect(onExpire).toHaveBeenCalledTimes(1);
+    }
+    expect(sessionStorage.getItem('runway_auth_reload_count')).toBe('2');
+  });
+
+  it('stops firing after the max consecutive reload attempts', () => {
+    // Simulate 2 previous page loads that each incremented the counter.
+    sessionStorage.setItem('runway_auth_reload_count', '2');
+    const onExpire = vi.fn();
+    const guard = createAuthRedirectGuard(onExpire);
+    guard(new ApiError(0, 'Authentication required', true));
+    expect(onExpire).not.toHaveBeenCalled();
+  });
+
+  it('resets after clearAuthReloadCount, allowing onExpire to fire again', () => {
+    sessionStorage.setItem('runway_auth_reload_count', '2');
+    clearAuthReloadCount();
+
+    const onExpire = vi.fn();
+    const guard = createAuthRedirectGuard(onExpire);
+    guard(new ApiError(0, 'Authentication required', true));
+    expect(onExpire).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem('runway_auth_reload_count')).toBe('1');
+  });
+
+  it('does not increment the counter for non-authRedirect errors', () => {
+    const onExpire = vi.fn();
+    const guard = createAuthRedirectGuard(onExpire);
+    guard(new ApiError(500, 'boom'));
+    expect(onExpire).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem('runway_auth_reload_count')).toBeNull();
   });
 });

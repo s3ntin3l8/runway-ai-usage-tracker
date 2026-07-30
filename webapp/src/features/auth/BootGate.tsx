@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
 import { ApiError, clearAdminKey, getAdminKey } from '@/api/client';
 import { setTzConfig } from '@/lib/tz';
-import { SKIP_AUTH_REDIRECT_GUARD_META } from '@/lib/authRedirect';
+import { SKIP_AUTH_REDIRECT_GUARD_META, clearAuthReloadCount } from '@/lib/authRedirect';
 import { RunwayMark } from '@/components/layout/RunwayMark';
 
 export function BootGate({ children }: { children: React.ReactNode }) {
@@ -35,6 +35,19 @@ export function BootGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (appConfig.data) setTzConfig(appConfig.data);
   }, [appConfig.data]);
+
+  // Reset the auth-redirect reload counter whenever the boot gate settles
+  // into a state that proves the SSO session is (still) valid, or into the
+  // "Session expired" / "Backend unreachable" card (where the user takes over
+  // manually). Without this, Android PWA standalone gets stuck: the global
+  // guard's auto-reload loop exhausts the counter, and then the user's own
+  // "Sign in" click (which also calls reload()) would be suppressed on the
+  // next page load because the counter is still at the max.
+  useEffect(() => {
+    if (settings.isError || (!settings.isPending && !appConfig.isPending)) {
+      clearAuthReloadCount();
+    }
+  }, [settings.isError, settings.isPending, appConfig.isPending]);
 
   // One-time migration: trade a legacy localStorage admin key for a session
   // cookie, then drop it from localStorage (XSS hardening). Non-blocking — if
