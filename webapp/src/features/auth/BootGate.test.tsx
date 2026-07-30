@@ -34,6 +34,7 @@ const mockClearAdminKey = vi.mocked(clearAdminKey);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
   // Default: no legacy key, so the migration effect is a no-op.
   mockGetAdminKey.mockReturnValue(null);
 });
@@ -278,5 +279,28 @@ describe('BootGate', () => {
 
     await waitFor(() => expect(mockLogin).toHaveBeenCalled());
     expect(mockClearAdminKey).not.toHaveBeenCalled();
+  });
+
+  it('clears the auth-reload counter when the session-expired card is shown', async () => {
+    sessionStorage.setItem('runway_auth_reload_count', '2');
+    mockSettings.mockRejectedValue(new ApiError(0, 'Authentication required', true));
+    mockAppConfig.mockResolvedValue({} as never);
+    renderGate();
+
+    await screen.findByText(/session expired/i);
+    expect(sessionStorage.getItem('runway_auth_reload_count')).toBeNull();
+  });
+
+  it('clears the auth-reload counter on successful boot', async () => {
+    sessionStorage.setItem('runway_auth_reload_count', '1');
+    mockSettings.mockResolvedValue({
+      admin_auth_required: false,
+      is_authenticated: false,
+    } as never);
+    mockAppConfig.mockResolvedValue({ user_timezone: 'UTC' } as never);
+    renderGate();
+
+    await screen.findByText('dashboard-content');
+    expect(sessionStorage.getItem('runway_auth_reload_count')).toBeNull();
   });
 });
