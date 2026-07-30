@@ -94,6 +94,16 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 - Merging that PR creates the GitHub Release and tag automatically
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create the GitHub Release by hand — Release Please picks up from there
 
+## Git Workflow
+- **Branch off the latest remote default branch, never off your local one.**
+  `git fetch` updates `origin/*` but never fast-forwards local `main`, so a
+  local `main` is routinely stale. Always:
+  `git fetch origin && git checkout -b <branch> origin/main`.
+  Branching off local `main` is what makes a PR show up as "out-of-date with
+  the base branch" the moment it is opened. (Exception: when deliberately
+  stacking on another feature branch.)
+- **No direct commits to `main`.** Branch and open a PR.
+
 ## Code Style & Patterns
 - **Backend**: Python 3.12+, FastAPI, Pydantic v2, `httpx` (async).
 - **Frontend**: React 19 + TypeScript SPA in `webapp/` (Vite, Tailwind CSS v4, TanStack Query, Radix primitives, ECharts). Dark-first semantic tokens live in `webapp/src/styles/tokens.css` — components use token utilities (`bg-surface-1`, `text-fg-muted`), never raw hex.
