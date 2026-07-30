@@ -19,7 +19,7 @@ export function createAuthRedirectGuard(onExpire: () => void): (error: unknown) 
   return (error: unknown) => {
     if (handled || !(error instanceof ApiError) || !error.authRedirect) return;
     handled = true;
-    const count = Number(sessionStorage.getItem(AUTH_RELOAD_KEY) || '0');
+    const count = Number(sessionStorage.getItem(AUTH_RELOAD_KEY)) || 0;
     if (count >= AUTH_RELOAD_MAX) {
       // We've reloaded AUTH_RELOAD_MAX times without reaching the SSO login
       // page — further reloads won't help (likely Android PWA standalone where

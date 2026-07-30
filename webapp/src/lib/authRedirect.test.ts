@@ -140,4 +140,13 @@ describe('reload-loop circuit breaker', () => {
     expect(onExpire).not.toHaveBeenCalled();
     expect(sessionStorage.getItem('runway_auth_reload_count')).toBeNull();
   });
+
+  it('handles malformed non-numeric sessionStorage values gracefully', () => {
+    sessionStorage.setItem('runway_auth_reload_count', 'invalid-string');
+    const onExpire = vi.fn();
+    const guard = createAuthRedirectGuard(onExpire);
+    guard(new ApiError(0, 'Authentication required', true));
+    expect(onExpire).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem('runway_auth_reload_count')).toBe('1');
+  });
 });
