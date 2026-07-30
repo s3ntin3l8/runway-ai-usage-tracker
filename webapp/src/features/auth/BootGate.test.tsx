@@ -34,6 +34,7 @@ const mockClearAdminKey = vi.mocked(clearAdminKey);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
   // Default: no legacy key, so the migration effect is a no-op.
   mockGetAdminKey.mockReturnValue(null);
 });
