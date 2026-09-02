@@ -53,9 +53,13 @@ Field notes (undocumented by MiniMax; derived from observation of a live account
 - `*_remaining_percent` is **remaining**, not used — the collector inverts it
   (`pct_used = 100 - remaining_percent`) when `total_count` is still 0 (a fresh/unused plan).
   Once `total_count > 0`, `pct_used = usage_count / total_count * 100` takes precedence.
-- `current_interval_status` (and `current_weekly_status`) — only `1` is treated as entitled.
-  The live account's `"video"` entry reports `3`; MiniMax doesn't document the enum, so this is
-  observed behavior, not a documented contract.
+- `current_interval_status` (and `current_weekly_status`) bundles two different things.
+  `{1, 2}` means "you own this bucket" — `1` = available, `2` = exhausted (0% remaining, observed
+  live once real traffic depleted the "general" bucket); both are shown. `3` (observed on the
+  `"video"` entry, always 100% remaining regardless of usage) means "not part of your plan" and is
+  excluded. MiniMax doesn't document the enum, so this is observed behavior, not a documented
+  contract — an earlier version of this collector treated status `2` the same as `3` and silently
+  hid the card at 0% remaining, exactly when a user most needs to see it.
 - `end_time` / `weekly_end_time` (ms epoch) map directly to `reset_at` — verified against
   `remains_time` (`remains_time == end_time - now`), so there's no need to reconstruct from it.
 - The weekly block (`weekly_start_time` / `weekly_end_time` / `current_weekly_*`) is **identical

@@ -11,6 +11,13 @@ from app.services.credential_provider import credential_provider
 
 logger = logging.getLogger(__name__)
 
+# `current_interval_status` / `current_weekly_status` values that mean "this
+# quota bucket is yours" — 1 = available, 2 = exhausted (0% remaining). Status
+# 3 (observed on the "video" bucket) means "not part of your plan" and is
+# intentionally excluded regardless of its remaining_percent. Undocumented by
+# MiniMax; see _parse_api_response's docstring for how this was derived.
+ENTITLED_STATUSES = frozenset({1, 2})
+
 
 class MiniMaxCollector(BaseCollector):
     """
@@ -133,21 +140,35 @@ class MiniMaxCollector(BaseCollector):
 
         `model_remains` holds one entry per quota bucket, not per billable model —
         "general" covers the text/coding models, "video" is a separate entitlement
-        this collector doesn't surface. Only entries with `current_interval_status
-        == 1` (observed as "entitled"; MiniMax doesn't document the status enum) are
-        considered. The weekly block is identical across every entry (one
-        account-level weekly quota), so it's emitted once, from the first
-        entitled entry, not per entry.
+        this collector doesn't surface. MiniMax doesn't document the status enum;
+        observed against a live account: "video" persists at status=3 with 100%
+        remaining regardless of actual usage (a fixed "not part of your plan"
+        marker), while "general" oscillates between status=1 (100% remaining,
+        available) and status=2 (0% remaining, exhausted) as real traffic depletes
+        it. So status is two different things bolted together — {1, 2} means "you
+        own this bucket" (available vs. exhausted are its two operational states),
+        while 3 (or anything else) means "not your bucket, don't show it". Gating
+        on status == 1 alone — the original assumption, made before "general" was
+        ever seen exhausted — silently hid the card at exactly the moment (0%
+        remaining) a user most needs to see it. The weekly block is identical
+        across every entry (one account-level weekly quota), so it's emitted
+        once, from the first ENTITLED_STATUSES entry, not per entry.
         """
         now_str = datetime.now(UTC).isoformat()
 
         model_remains = data.get("model_remains", [])
-        entitled = [item for item in model_remains if item.get("current_interval_status") == 1]
+        entitled = [
+            item
+            for item in model_remains
+            if item.get("current_interval_status") in ENTITLED_STATUSES
+        ]
         # Session and weekly entitlement are gated independently — MiniMax can
-        # report the 5h window active while the weekly bucket is meanwhile
-        # expired/not-entitled (or vice versa), so don't assume entitled[0]'s
-        # weekly block is safe to use just because the session is entitled.
-        weekly_entitled = [item for item in model_remains if item.get("current_weekly_status") == 1]
+        # report the 5h window owned while the weekly bucket is meanwhile not
+        # part of the plan (or vice versa), so don't assume entitled[0]'s weekly
+        # block is safe to use just because the session is owned.
+        weekly_entitled = [
+            item for item in model_remains if item.get("current_weekly_status") in ENTITLED_STATUSES
+        ]
 
         if not entitled and not weekly_entitled:
             return [

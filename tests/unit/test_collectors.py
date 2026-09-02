@@ -3605,8 +3605,10 @@ class TestMiniMaxCollector:
 
     @pytest.mark.asyncio
     async def test_collect_no_entitled_window(self, mock_http_client):
-        """No entry with current_interval_status == 1 -> treated the same as an
-        empty model_remains: a single 'No active plan' card."""
+        """No entry with current_interval_status in ENTITLED_STATUSES ({1, 2}) ->
+        treated the same as an empty model_remains: a single 'No active plan'
+        card. Uses the "video" bucket's status=3, which is the observed "not
+        your bucket" marker distinct from the {1, 2} available/exhausted pair."""
         payload = {
             "model_remains": [
                 {**self.REAL_PAYLOAD_UNUSED["model_remains"][1], "model_name": "video"}
@@ -3626,6 +3628,53 @@ class TestMiniMaxCollector:
 
         assert len(result) == 1
         assert "No active plan" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_exhausted_session_still_shown(self, mock_http_client):
+        """current_interval_status=2 (observed live: 0% remaining, an exhausted-
+        but-owned window) must still produce a session card — this is the bug
+        found in production: gating on status==1 alone hid the card at exactly
+        the moment (0% remaining) a user most needs to see it."""
+        payload = {
+            "model_remains": [
+                {
+                    "start_time": 1788379200000,
+                    "end_time": 1788393600000,
+                    "remains_time": 7367406,
+                    "current_interval_total_count": 0,
+                    "current_interval_usage_count": 0,
+                    "model_name": "general",
+                    "current_weekly_total_count": 0,
+                    "current_weekly_usage_count": 0,
+                    "weekly_start_time": 1788134400000,
+                    "weekly_end_time": 1788739200000,
+                    "weekly_remains_time": 352967406,
+                    "current_interval_status": 2,
+                    "current_interval_remaining_percent": 0,
+                    "current_weekly_status": 1,
+                    "current_weekly_remaining_percent": 82,
+                }
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 2
+        by_window = {c["window_type"]: c for c in result}
+        session = by_window["session"]
+        assert session["pct_used"] == 100.0
+        assert session["remaining"] == "0.0%"
+        assert session["health"] == "critical"
+        assert by_window["weekly"]["pct_used"] == 18.0
 
     @pytest.mark.asyncio
     async def test_session_entitled_but_weekly_not_omits_weekly_card(self, mock_http_client):
