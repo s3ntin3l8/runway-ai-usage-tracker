@@ -10,6 +10,7 @@ import pytest
 
 from scripts.sidecar_pkg.event_extractors.opencode import (
     _classify_opencode_error,
+    map_opencode_canonical,
     map_opencode_provider_id,
     parse_opencode_events,
 )
@@ -233,6 +234,104 @@ def test_byok_provider_gets_its_own_id():
         assert len(evts) == 1
         assert evts[0].provider_id == "opencode-byok"
         assert evts[0].kind == "message"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# providerID -> canonical provider_id + account_id (MiniMax coding-plan fold-in)
+# ---------------------------------------------------------------------------
+
+
+def test_map_opencode_canonical_minimax():
+    assert map_opencode_canonical("minimax-coding-plan") == ("minimax", "default")
+    assert map_opencode_canonical("MINIMAX-CODING-PLAN") == (
+        "minimax",
+        "default",
+    )  # case-insensitive
+
+
+def test_map_opencode_canonical_unmapped_returns_none():
+    """Unmapped providerIDs (including other opencode-* siblings) fall through
+    to map_opencode_provider_id's opencode-<slug> derivation, not a canonical id."""
+    assert map_opencode_canonical("openrouter") is None
+    assert map_opencode_canonical("some-new-backend") is None
+    assert map_opencode_canonical("") is None
+
+
+def _minimax_message(msg_id: str) -> dict:
+    return {
+        "id": msg_id,
+        "session_id": "ses_minimax",
+        "time_created": 1778248860000,
+        "data": {
+            "role": "assistant",
+            "path": {"cwd": "/home/user/project"},
+            "cost": 0,  # subscription — OpenCode always logs $0 here
+            "tokens": {
+                "input": 90429,
+                "output": 3102,
+                "reasoning": 0,
+                "cache": {"read": 23355693, "write": 0},
+            },
+            "modelID": "MiniMax-M3",
+            "providerID": "minimax-coding-plan",
+            "time": {"created": 1746709260000, "completed": 1746709262000},
+        },
+    }
+
+
+def test_minimax_coding_plan_retagged_onto_canonical_card():
+    """Events from OpenCode's MiniMax coding-plan backend land on provider_id
+    'minimax' / account_id 'default' — the same key the server-side MiniMax
+    collector's quota card uses — not a standalone 'opencode-minimax-coding-plan'
+    entry, and their $0 logged cost is dropped so the server prices them."""
+    db_path = _build_db([_minimax_message("msg_minimax_001")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@opencode.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "minimax"
+        assert evts[0].account_id == "default"
+        assert evts[0].model_id == "MiniMax-M3"
+        assert evts[0].cost_usd is None
+        assert evts[0].tokens_input == 90429
+        assert evts[0].tokens_cache_read == 23355693
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def _minimax_error_message(msg_id: str) -> dict:
+    return {
+        "id": msg_id,
+        "session_id": "ses_minimax_err",
+        "time_created": 1778248860000,
+        "data": {
+            "role": "assistant",
+            "path": {"cwd": "/home/user/project"},
+            "cost": 0,
+            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+            "modelID": "MiniMax-M3",
+            "providerID": "minimax-coding-plan",
+            "time": {"created": 1746709260000},
+            "error": {"name": "APIError", "data": {"message": "boom", "statusCode": 429}},
+        },
+    }
+
+
+def test_minimax_coding_plan_error_also_retagged():
+    """kind='error' events go through the same canonical remap as messages."""
+    db_path = _build_db([_minimax_error_message("msg_minimax_err_001")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@opencode.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "minimax"
+        assert evts[0].account_id == "default"
+        assert evts[0].kind == "error"
+        assert evts[0].error_reason == "rate_limit"
     finally:
         db_path.unlink(missing_ok=True)
 

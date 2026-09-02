@@ -88,8 +88,7 @@ class Settings(BaseSettings):
     OPENROUTER_HTTP_REFERER: str = ""
     OPENROUTER_X_TITLE: str = "Runway"
     MINIMAX_API_KEY: str = ""
-    MINIMAX_HOST: str = ""  # Override: "platform.minimaxi.com" for China
-    MINIMAX_COOKIE: str = ""  # Manual cookie override for fallback
+    MINIMAX_HOST: str = ""  # Bare domain override for China: "minimaxi.com"
     OPENCODE_GO_API_KEY: str = ""
     ZAI_API_KEY: str = ""
     ZAI_API_HOST: str = ""  # Override: "open.bigmodel.cn" for China

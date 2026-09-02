@@ -164,7 +164,7 @@ Alternatively: right-click the app in Finder → **Open** → **Open** again in 
 | **GitHub Copilot** | REST API | 2 | `GITHUB_TOKEN` | [📖](docs/collectors/github.md) |
 | **ChatGPT** | OAuth API → Chrome cookie → Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
 | **OpenRouter** | REST API (Credits) | 1 | `OPENROUTER_API_KEY` | [📖](docs/collectors/openrouter.md) |
-| **MiniMax** | REST API (IDE Quotas) | 1-3 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
+| **MiniMax** | REST API (Coding Plan) | 2 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
 | **Ollama** | Web API (Cloud) + Session cookie | 2 | `OLLAMA_SESSION_TOKEN` (opt) | [📖](docs/collectors/ollama.md) |
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
 | **zAI** | REST API (Balance + Quotas) | 1-3 | `ZAI_API_KEY` | [📖 API](docs/collectors/zai_api.md) · [📖 Plan](docs/collectors/zai_plan.md) |

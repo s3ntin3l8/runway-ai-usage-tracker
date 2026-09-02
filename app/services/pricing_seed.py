@@ -286,6 +286,59 @@ PRICING_SEED: list[dict] = [
         "notes": "Gemini 3.1 Flash-Lite",
     },
     # OpenCode (cost is on each event already; pricing rows here are fallback only)
+    # ── MiniMax ──────────────────────────────────────────────────────────────────
+    # Pay-as-you-go API rates (USD/Mtok), used to give Coding-Plan subscription
+    # traffic (cost_usd=None on ingest — see _OC_CANONICAL_MAP in
+    # scripts/sidecar_pkg/event_extractors/opencode.py) a notional "what this
+    # would have cost on the API" figure, the same way Anthropic subscription
+    # usage gets priced against Claude API rates above.
+    # M3 has an undocumented >512k-input pricing cliff ($0.60/$2.40, cache read
+    # $0.12) that this schema doesn't model per-event — fine at the token
+    # volumes seen so far (well under 512k), but a >512k call will undercount.
+    {
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M3",
+        "effective_from": "2026-06-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.06,
+        "cache_create_per_mtok": 0.0,
+        "notes": "MiniMax M3, standard tier ≤512k input. High confidence — "
+        "OpenRouter and independent aggregators agree.",
+    },
+    {
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M2.7",
+        "effective_from": "2026-06-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.06,
+        "cache_create_per_mtok": 0.375,
+        "notes": "MiniMax M2.7. Medium confidence — not observed in our own "
+        "event data yet; verify against platform.minimax.io before relying on it.",
+    },
+    {
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M2.5",
+        "effective_from": "2026-06-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.03,
+        "cache_create_per_mtok": 0.375,
+        "notes": "MiniMax M2.5 (legacy). Medium confidence — one source instead "
+        "quotes $0.27/$0.95; verify against platform.minimax.io before relying on it.",
+    },
+    {
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M2",
+        "effective_from": "2026-06-01",
+        "input_per_mtok": 0.255,
+        "output_per_mtok": 1.02,
+        "cache_read_per_mtok": 0.03,
+        "cache_create_per_mtok": 0.375,
+        "notes": "MiniMax M2 (legacy). Low confidence — single third-party source, "
+        "not cross-checked; verify against platform.minimax.io before relying on it.",
+    },
     # ── Antigravity ──────────────────────────────────────────────────────────────
     # Gemini models (standard tier — mirrors existing gemini pro-3.1-preview /
     # flash-3-preview / flash-lite-3.1 values).  Priority-tier is not modeled.

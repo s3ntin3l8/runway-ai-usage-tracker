@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime, timedelta, timezone
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -422,6 +423,76 @@ def test_gemini_versioned_id_still_matches_exactly():
         tokens_reasoning=0,
     )
     assert cost > 0.0
+
+
+# ── MiniMax cost resolution ────────────────────────────────────────────────────
+
+
+def test_minimax_m3_cost_basic():
+    """1M input + 1M output + 1M cache read on MiniMax-M3 = $0.30 + $1.20 + $0.06."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 0.30 + 1.20 + 0.06
+
+
+def test_minimax_m3_cost_matches_observed_opencode_traffic():
+    """Sanity-check against a real observed usage_events aggregate for the
+    MiniMax coding-plan traffic folded in from OpenCode (see
+    scripts/sidecar_pkg/event_extractors/opencode.py's _OC_CANONICAL_MAP):
+    ~1.86M input, ~49K output, ~23.4M cache-read tokens -> ~$2.02 notional."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3",
+        ts=datetime.now(UTC),
+        tokens_input=1_862_172,
+        tokens_output=49_223,
+        tokens_cache_read=23_355_693,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == pytest.approx(2.019061, abs=1e-5)
+
+
+def test_minimax_model_id_case_insensitive_fallback():
+    """OpenCode's modelID casing isn't contractually stable — the seed row is
+    'MiniMax-M3', but a differently-cased id must still price via the
+    case-insensitive fallback rather than costing zero."""
+    s = _seeded_session()
+    exact = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    differently_cased = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="minimax-m3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert differently_cased == exact > 0.0
 
 
 # ── Antigravity cost resolution ───────────────────────────────────────────────
