@@ -102,7 +102,16 @@ def _resolve_target(session: Session, provider_id: str, source: str) -> str | No
 
 
 def _pick_winner(a: UsageEvent, b: UsageEvent) -> tuple[UsageEvent, UsageEvent]:
-    """Return (winner, loser). See module docstring for the ordering rationale."""
+    """Return (winner, loser). See module docstring for the ordering rationale.
+
+    The token tier only sums tokens_input + tokens_output — the observed
+    divergent pairs (opencode, opencode-free) never disagreed on any other
+    token dimension, so that was sufficient. If a future provider's divergent
+    pairs differ only in tokens_cache_read/create or tokens_reasoning, this
+    tier won't see it and falls through to the id tie-break instead — verify
+    that assumption still holds (a query like the one in this script's PR
+    description) before trusting this tier for a new provider.
+    """
     a_is_message = a.kind == "message"
     b_is_message = b.kind == "message"
     if a_is_message != b_is_message:
@@ -162,21 +171,23 @@ def migrate(provider_id: str, source: str, target: str | None, apply: bool) -> d
                 f" (tokens {winner.tokens_input}+{winner.tokens_output}), "
                 f"drop {loser.account_id!r}{note}"
             )
+            stats["deleted"] += 1
+            if winner.account_id != resolved:
+                stats["retagged"] += 1
             if apply:
                 session.delete(loser)
                 session.flush()
-                stats["deleted"] += 1
-                if winner.account_id != resolved:
-                    winner.account_id = resolved
-                    stats["retagged"] += 1
+                winner.account_id = resolved
 
         if apply:
             session.commit()
 
+    verb = "" if apply else "would be "
     print(
         f"\n{'' if apply else '[DRY-RUN] '}{stats['pairs']:,} duplicate pair(s), "
-        f"{stats['lone_retagged']:,} lone 'default' row(s) retagged, "
-        f"{stats['deleted']:,} row(s) deleted, {stats['retagged']:,} winner(s) retagged.",
+        f"{stats['lone_retagged']:,} lone 'default' row(s) {verb}retagged, "
+        f"{stats['deleted']:,} row(s) {verb}deleted, "
+        f"{stats['retagged']:,} winner(s) {verb}retagged.",
         flush=True,
     )
 

@@ -163,6 +163,8 @@ def test_migration_explicit_account_id_overrides_autodetect(engine):
 
 def test_migration_dry_run_writes_nothing(engine):
     with Session(engine) as s:
+        # A true tie (equal tokens) falls to the id tie-break — "default" was
+        # added first (lower id) so it wins and would need retagging.
         s.add(_ev("antigravity", "default", "e_dup", tokens_input=1))
         s.add(_ev("antigravity", "user@example.com", "e_dup", tokens_input=1))
         s.commit()
@@ -172,8 +174,14 @@ def test_migration_dry_run_writes_nothing(engine):
 
         stats = migrate("antigravity", "default", None, apply=False)
 
-    assert stats["pairs"] == 1
+    # Dry-run must report the same counts an --apply run would (previously
+    # deleted/retagged stayed 0 in dry-run even though the per-pair log lines
+    # enumerated them, which read as "would apply, but nothing found to do").
+    assert stats == {"pairs": 1, "lone_retagged": 0, "deleted": 1, "retagged": 1}
     with Session(engine) as s:
         rows = s.exec(select(UsageEvent)).all()
-        assert len(rows) == 2  # nothing deleted
-        assert {r.account_id for r in rows} == {"default", "user@example.com"}  # nothing retagged
+        assert len(rows) == 2  # nothing actually deleted
+        assert {r.account_id for r in rows} == {
+            "default",
+            "user@example.com",
+        }  # nothing actually retagged
