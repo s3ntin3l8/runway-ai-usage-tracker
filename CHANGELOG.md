@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.5...v2.11.6) (2026-09-02)
+
+
+### Bug Fixes
+
+* **docker:** bump pinned curl to the Debian security patch actually in the repo ([#242](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/242)) ([c70ac36](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c70ac36afc5b3ea618c61e8c21e28d8956a0b7c7))
+
 ## [2.11.5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.4...v2.11.5) (2026-09-02)
 
 
