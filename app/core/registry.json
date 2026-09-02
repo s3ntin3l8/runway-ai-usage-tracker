@@ -78,18 +78,11 @@
       "icon": "🤖",
       "api_key_label": "API Key (api)",
       "api_key_help": "MiniMax official API key",
-      "session_cookie_label": "Web Session (web)",
-      "session_cookie_help": "Manual browser cookie for HTML scraping/web fallback",
       "rules": [
         {
           "type": "env",
           "variable": "MINIMAX_API_KEY",
           "mapping": { "value": "api_key" }
-        },
-        {
-          "type": "env",
-          "variable": "MINIMAX_COOKIE",
-          "mapping": { "value": "session_cookie" }
         }
       ]
     },

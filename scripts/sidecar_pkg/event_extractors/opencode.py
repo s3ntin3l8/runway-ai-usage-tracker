@@ -33,6 +33,15 @@ providerID -> runway provider_id mapping (see _OC_PROVIDER_MAP below):
   - anything else       -> "opencode-<slug>"    (never silently folds into Go)
   - missing/empty       -> "opencode"           (historical default)
 
+A second map, _OC_CANONICAL_MAP, catches providerIDs that front a provider
+Runway already collects directly (e.g. MiniMax's coding plan, reachable both
+through its own API key and through OpenCode). Those events are retagged onto
+the canonical provider_id *and* forced onto the account_id that provider's own
+collector uses, so they land on the same latest_usage card instead of a
+standalone opencode-<slug> entry. Their logged `cost` is dropped (cost_usd=
+None) so the server prices them from provider_pricing instead of trusting a
+subscription's $0 — see cost_calculator.compute_event_cost_breakdown.
+
 Messages whose `error` field is set are pushed with kind="error" (no tokens/
 cost were actually incurred) so they don't inflate usage totals on whichever
 card they land on.
@@ -76,6 +85,23 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
     return _OC_PROVIDER_MAP.get(oc_provider_id, f"opencode-{oc_provider_id}")
 
 
+# OpenCode providerIDs that front a provider Runway already collects directly
+# -> (canonical provider_id, account_id its own collector uses). Keep in sync
+# with scripts/reclassify_opencode_providers.py, which reapplies this mapping
+# to already-ingested events.
+_OC_CANONICAL_MAP: dict[str, tuple[str, str]] = {
+    # MiniMax's coding-plan collector is API-key-only (no account email), so
+    # every card it emits is account_id="default" — match that here.
+    "minimax-coding-plan": ("minimax", "default"),
+}
+
+
+def map_opencode_canonical(oc_provider_id: str) -> tuple[str, str] | None:
+    """If `oc_provider_id` fronts a provider Runway collects directly, return
+    the (provider_id, account_id) to retag onto. Otherwise None."""
+    return _OC_CANONICAL_MAP.get((oc_provider_id or "").strip().lower())
+
+
 def _classify_opencode_error(err: dict) -> str:
     """Best-effort short tag for an OpenCode message-level error.
 
@@ -111,7 +137,9 @@ def parse_opencode_events(
 
     Reads all assistant messages with time_created > since from the message table.
     Deduplicates by message id (the primary key is stable).
-    Sets cost_usd from the logged cost field (skip pricing table lookup).
+    Sets cost_usd from the logged cost field (skip pricing table lookup), except
+    for providerIDs in _OC_CANONICAL_MAP, where cost_usd is left None so the
+    server prices the event from provider_pricing instead.
 
     Args:
         db_path: Path to the opencode.db SQLite file.
@@ -199,6 +227,16 @@ def parse_opencode_events(
         # into the Go tier (issue #182).
         oc_provider_id = data.get("providerID") or ""
         runway_provider_id = map_opencode_provider_id(oc_provider_id)
+        event_account_id = account_id
+
+        # Some OpenCode providerIDs front a provider Runway already collects
+        # directly (e.g. MiniMax's coding plan) — retag onto that provider_id
+        # and its collector's account_id so this event lands on the same card,
+        # and drop the logged $0 subscription cost so the server prices it.
+        canonical = map_opencode_canonical(oc_provider_id)
+        if canonical is not None:
+            runway_provider_id, event_account_id = canonical
+            cost_usd = None
 
         # A failed request (bad auth, no subscription, etc.) never actually
         # incurred usage — push it as kind="error" so it doesn't inflate
@@ -208,7 +246,7 @@ def parse_opencode_events(
             events.append(
                 UsageEventPush(
                     provider_id=runway_provider_id,
-                    account_id=account_id,
+                    account_id=event_account_id,
                     event_id=event_id,
                     ts=ts.isoformat(),
                     model_id=model_id,
@@ -223,7 +261,7 @@ def parse_opencode_events(
         events.append(
             UsageEventPush(
                 provider_id=runway_provider_id,
-                account_id=account_id,
+                account_id=event_account_id,
                 event_id=event_id,
                 ts=ts.isoformat(),
                 model_id=model_id,

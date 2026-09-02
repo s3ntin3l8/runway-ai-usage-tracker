@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import NamedTuple
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.models.db import ProviderPricing
 
@@ -34,6 +34,24 @@ def _price_row(
         .where(
             ProviderPricing.provider_id == provider_id,
             ProviderPricing.model_id == model_id,
+            ProviderPricing.effective_from <= ts.date(),
+        )
+        .order_by(ProviderPricing.effective_from.desc())  # type: ignore[attr-defined]
+    ).first()
+
+
+def _price_row_ci(
+    session: Session, provider_id: str, model_id: str, ts: datetime
+) -> ProviderPricing | None:
+    """Case-insensitive fallback for providers whose upstream model_id casing
+    isn't guaranteed to match the seed exactly (e.g. OpenCode's `modelID` for
+    MiniMax — "MiniMax-M3" today, but not contractually stable). Only tried
+    after the exact and version-stripped lookups miss."""
+    return session.exec(
+        select(ProviderPricing)
+        .where(
+            ProviderPricing.provider_id == provider_id,
+            func.lower(ProviderPricing.model_id) == model_id.lower(),
             ProviderPricing.effective_from <= ts.date(),
         )
         .order_by(ProviderPricing.effective_from.desc())  # type: ignore[attr-defined]
@@ -87,6 +105,10 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
         family = _VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
             row = _price_row(session, provider_id, family, ts)
+    if row is None:
+        # Last resort: case-insensitive match on the exact id. One extra query,
+        # only hit when both prior lookups miss.
+        row = _price_row_ci(session, provider_id, model_id, ts)
     if row is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
 

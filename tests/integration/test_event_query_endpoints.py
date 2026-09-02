@@ -521,9 +521,13 @@ class TestHeatmapEndpoint:
         assert len(data["cells"]) == 168  # 7 * 24
 
     def test_heatmap_groups_events_by_dow_hour(self, session):
-        # Insert event at a known dow/hour
-        # 2026-05-08 is a Friday = dow 5 in strftime('%w') (0=Sun, 5=Fri)
-        ts = datetime(2026, 5, 8, 14, 30, 0, tzinfo=UTC)  # Friday 14:00 UTC
+        # Insert event at a known dow/hour, relative to now so it never ages
+        # out of the `days=90` window — a fixed past date here is a time
+        # bomb: it silently drops out of the window (and the test starts
+        # asserting 0 instead of 1500) once more than 90 days have passed.
+        ts = (datetime.now(UTC) - timedelta(days=5)).replace(
+            hour=14, minute=30, second=0, microsecond=0
+        )
         session.add(_event(event_id="e1", ts=ts, tokens_input=1000, tokens_output=500))
         session.commit()
 
@@ -533,8 +537,9 @@ class TestHeatmapEndpoint:
         )
         assert r.status_code == 200
         cells = {(c["dow"], c["hour"]): c["tokens"] for c in r.json()["cells"]}
-        # dow=5 (Friday), hour=14
-        assert cells[(5, 14)] == 1500  # 1000+500 (cache_read=0, cache_create=0 not counted)
+        # dow follows strftime('%w'): 0=Sun..6=Sat, matching Python's %w exactly.
+        dow = int(ts.strftime("%w"))
+        assert cells[(dow, 14)] == 1500  # 1000+500 (cache_read=0, cache_create=0 not counted)
 
     def test_heatmap_excludes_old_events(self, session):
         now = datetime.now(UTC)

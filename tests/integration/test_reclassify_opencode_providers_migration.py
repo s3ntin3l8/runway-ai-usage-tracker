@@ -192,6 +192,144 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         assert "opencode-openrouter" not in rollup_providers
 
 
+def test_migration_retags_minimax_coding_plan_and_forces_account_id(engine):
+    """Events under 'opencode-minimax-coding-plan' (the fallback id OpenCode's
+    minimax-coding-plan providerID mints) move to the canonical 'minimax'
+    provider AND account_id 'default' — the identity the server's MiniMax
+    quota collector uses — so they land on the same latest_usage card instead
+    of a standalone opencode-minimax-coding-plan entry."""
+    with Session(engine) as s:
+        s.add(
+            UsageEvent(
+                provider_id="opencode-minimax-coding-plan",
+                account_id="user@opencode.test",  # the OpenCode account email
+                sidecar_id="local",
+                event_id="msg_minimax",
+                ts=NOW,
+                kind="message",
+                model_id="MiniMax-M3",
+                tokens_input=90429,
+                tokens_output=3102,
+                tokens_cache_read=23355693,
+                cost_usd=0.0,
+            )
+        )
+        s.commit()
+
+    db_path = _make_opencode_db(
+        [
+            {
+                "id": "msg_minimax",
+                "data": {
+                    "role": "assistant",
+                    "providerID": "minimax-coding-plan",
+                    "modelID": "MiniMax-M3",
+                    "cost": 0,
+                    "tokens": {
+                        "input": 90429,
+                        "output": 3102,
+                        "cache": {"read": 23355693, "write": 0},
+                    },
+                },
+            }
+        ]
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            changed = migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert changed == 1
+    with Session(engine) as s:
+        ev = s.exec(select(UsageEvent)).one()
+        assert ev.provider_id == "minimax"
+        assert ev.account_id == "default"
+        assert ev.kind == "message"
+        # cost_usd untouched here — reclassify only retags identity;
+        # scripts/recost_events.py handles repricing.
+        assert ev.cost_usd == 0.0
+
+        rollup_providers = {
+            r.provider_id for r in s.exec(select(UsagePeriodRollup)).all() if r.msgs > 0
+        }
+        assert "minimax" in rollup_providers
+        assert "opencode-minimax-coding-plan" not in rollup_providers
+
+
+def test_migration_survives_and_restores_a_genuine_collision(engine):
+    """Two usage_events rows sharing the same event_id under different old
+    provider_ids (a pre-existing duplicate-ingestion artifact seen in real
+    data, not something this migration creates) both resolve to the identical
+    corrected target (same provider_id, account_id, event_id — _seed_event
+    always uses account_id="default"). The first row to be processed
+    succeeds; the second collides on the (provider_id, account_id, event_id)
+    unique constraint.
+
+    This must not crash the batch — session.begin_nested() autoflushes
+    pending changes as part of establishing its SAVEPOINT, and if the row is
+    mutated *before* that call, the autoflush's IntegrityError fires outside
+    the try/except meant to catch it, killing the whole run on one collision.
+    The loser row must also come back byte-identical to its pre-migration
+    state, not partially mutated."""
+    with Session(engine) as s:
+        _seed_event(s, "msg_dup", "opencode-free", tokens_input=10, tokens_output=5)
+        _seed_event(s, "msg_dup", "opencode", tokens_input=1, tokens_output=1)
+        s.commit()
+
+    db_path = _make_opencode_db(
+        [
+            {
+                "id": "msg_dup",
+                "data": {
+                    "role": "assistant",
+                    "providerID": "openrouter",
+                    "modelID": "google/gemma-4-31b-it:free",
+                    "cost": 0,
+                    "tokens": {"input": 1, "output": 1},
+                    "error": {"name": "APIError", "data": {"statusCode": 401}},
+                },
+            }
+        ]
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            # Must return normally (not raise) despite the guaranteed collision.
+            changed = migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    # Exactly one row can win the (opencode-openrouter, default, msg_dup) slot.
+    assert changed == 1
+
+    with Session(engine) as s:
+        rows = {r.provider_id: r for r in s.exec(select(UsageEvent)).all()}
+        winner = rows["opencode-openrouter"]
+        assert winner.kind == "error"
+        assert winner.stop_reason == "auth_failed"
+        assert winner.tokens_input == 0  # zeroed — this is the corrected error row
+
+        # The loser is restored byte-identical to its pre-migration state —
+        # NOT left half-mutated by the failed attempt.
+        loser_provider_id = "opencode-free" if "opencode-free" in rows else "opencode"
+        loser = rows[loser_provider_id]
+        assert loser.kind == "message"
+        original_tokens = 10 if loser_provider_id == "opencode-free" else 1
+        assert loser.tokens_input == original_tokens
+
+
 def test_migration_dry_run_writes_nothing(engine):
     with Session(engine) as s:
         _seed_event(s, "msg_byok", "opencode", tokens_input=999)

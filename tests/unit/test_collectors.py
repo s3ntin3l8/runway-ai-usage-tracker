@@ -3470,28 +3470,222 @@ class TestOpenRouterCollector:
 
 
 class TestMiniMaxCollector:
-    """Test suite for MiniMax collector."""
+    """Test suite for MiniMax collector, against the real /v1/coding_plan/remains
+    payload — the previous fixture here used a fabricated `remains` field that
+    never existed in MiniMax's actual response, which is exactly how the
+    original parsing bug shipped undetected."""
+
+    # Real response captured from a live account with a fresh (unused)
+    # subscription: both windows report 0/0 counts and 100% remaining. The
+    # "video" entry has current_interval_status=3 (not entitled) alongside
+    # "general"'s status=1 — video quota is a separate entitlement this
+    # collector doesn't surface.
+    REAL_PAYLOAD_UNUSED = {
+        "model_remains": [
+            {
+                "start_time": 1788361200000,
+                "end_time": 1788379200000,
+                "remains_time": 4692260,
+                "current_interval_total_count": 0,
+                "current_interval_usage_count": 0,
+                "model_name": "general",
+                "current_weekly_total_count": 0,
+                "current_weekly_usage_count": 0,
+                "weekly_start_time": 1788134400000,
+                "weekly_end_time": 1788739200000,
+                "weekly_remains_time": 364692260,
+                "current_interval_status": 1,
+                "current_interval_remaining_percent": 100,
+                "current_weekly_status": 1,
+                "current_weekly_remaining_percent": 100,
+            },
+            {
+                "start_time": 1788307200000,
+                "end_time": 1788393600000,
+                "remains_time": 19092260,
+                "current_interval_total_count": 0,
+                "current_interval_usage_count": 0,
+                "model_name": "video",
+                "current_weekly_total_count": 0,
+                "current_weekly_usage_count": 0,
+                "weekly_start_time": 1788134400000,
+                "weekly_end_time": 1788739200000,
+                "weekly_remains_time": 364692260,
+                "current_interval_status": 3,
+                "current_interval_remaining_percent": 100,
+                "current_weekly_status": 3,
+                "current_weekly_remaining_percent": 100,
+            },
+        ],
+        "base_resp": {"status_code": 0, "status_msg": "success"},
+    }
 
     @pytest.mark.asyncio
-    async def test_collect_success(self, mock_http_client):
-        """Test successful MiniMax API collection."""
+    async def test_collect_unused_plan(self, mock_http_client):
+        """Fresh/unused subscription: two cards (session + weekly), no video card,
+        pct_used explicitly 0.0 (not None), model_id None, reset_at from the real
+        end_time/weekly_end_time fields."""
         with patch("app.services.collectors.minimax.settings") as mock_settings:
             mock_settings.MINIMAX_API_KEY = "mm_valid_key"
             collector = MiniMaxCollector()
 
             response = MagicMock(spec=httpx.Response)
             response.status_code = 200
-            response.json.return_value = {
-                "model_remains": [{"model_name": "minimax-text-01", "remains": 500}]
-            }
-
+            response.json.return_value = self.REAL_PAYLOAD_UNUSED
             mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 2
+        by_window = {c["window_type"]: c for c in result}
+        assert set(by_window) == {"session", "weekly"}
+
+        session_card = by_window["session"]
+        assert session_card["service_name"] == "MiniMax"
+        assert session_card["model_id"] is None
+        assert session_card["pct_used"] == 0.0
+        assert session_card["reset_at"] == "2026-09-02T20:00:00+00:00"
+        assert session_card["health"] == "good"
+
+        weekly_card = by_window["weekly"]
+        assert weekly_card["pct_used"] == 0.0
+        assert weekly_card["reset_at"] == "2026-09-07T00:00:00+00:00"
+
+        # No standalone "video" card, and no monthly window at all.
+        assert all(c["window_type"] != "monthly" for c in result)
+        assert not any("video" in c.get("detail", "") for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_with_counts(self, mock_http_client):
+        """Once the plan reports real counts, pct_used is derived from
+        usage_count/total_count (not the *_remaining_percent field, which is
+        remaining, not used)."""
+        payload = {
+            "model_remains": [
+                {
+                    "start_time": 1788361200000,
+                    "end_time": 1788379200000,
+                    "remains_time": 4692260,
+                    "current_interval_total_count": 400,
+                    "current_interval_usage_count": 40,
+                    "model_name": "general",
+                    "current_weekly_total_count": 4000,
+                    "current_weekly_usage_count": 400,
+                    "weekly_start_time": 1788134400000,
+                    "weekly_end_time": 1788739200000,
+                    "weekly_remains_time": 364692260,
+                    "current_interval_status": 1,
+                    "current_interval_remaining_percent": 90,
+                    "current_weekly_status": 1,
+                    "current_weekly_remaining_percent": 90,
+                }
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 2
+        by_window = {c["window_type"]: c for c in result}
+        assert by_window["session"]["pct_used"] == 10.0
+        assert by_window["session"]["used_value"] == 40.0
+        assert by_window["session"]["limit_value"] == 400.0
+        assert by_window["session"]["unit_type"] == "requests"
+        assert by_window["weekly"]["pct_used"] == 10.0
+        assert by_window["weekly"]["used_value"] == 400.0
+        assert by_window["weekly"]["limit_value"] == 4000.0
+
+    @pytest.mark.asyncio
+    async def test_collect_no_entitled_window(self, mock_http_client):
+        """No entry with current_interval_status == 1 -> treated the same as an
+        empty model_remains: a single 'No active plan' card."""
+        payload = {
+            "model_remains": [
+                {**self.REAL_PAYLOAD_UNUSED["model_remains"][1], "model_name": "video"}
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert "MiniMax" in result[0]["service_name"]
-        assert "500" in result[0]["remaining"]
-        assert result[0]["health"] == "good"
+        assert "No active plan" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_session_entitled_but_weekly_not_omits_weekly_card(self, mock_http_client):
+        """Session (current_interval_status=1) and weekly (current_weekly_status)
+        entitlement are gated independently — a session-entitled, weekly-expired
+        entry must produce only a session card, not a stale/zero weekly one built
+        from unentitled weekly fields."""
+        payload = {
+            "model_remains": [
+                {
+                    **self.REAL_PAYLOAD_UNUSED["model_remains"][0],
+                    "current_interval_status": 1,
+                    "current_weekly_status": 3,
+                }
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert [c["window_type"] for c in result] == ["session"]
+
+    @pytest.mark.asyncio
+    async def test_remaining_clamps_at_zero_on_overage(self, mock_http_client):
+        """usage_count > total_count (overage) must not render a negative
+        remaining percentage."""
+        payload = {
+            "model_remains": [
+                {
+                    **self.REAL_PAYLOAD_UNUSED["model_remains"][0],
+                    "current_interval_total_count": 100,
+                    "current_interval_usage_count": 150,
+                    "current_weekly_total_count": 100,
+                    "current_weekly_usage_count": 150,
+                }
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        for card in result:
+            assert card["pct_used"] == 150.0  # not itself clamped
+            assert card["remaining"] == "0.0%"  # display clamped
 
     @pytest.mark.asyncio
     async def test_collect_api_error(self, mock_http_client):
