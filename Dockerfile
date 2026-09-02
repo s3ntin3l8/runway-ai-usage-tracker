@@ -26,7 +26,7 @@ RUN groupadd -r runway && useradd -r -g runway -u 1000 -m runway
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl=7.88.1-10+deb12u14 \
+    curl=7.88.1-10+deb12u15 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment
