@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.4...v2.11.5) (2026-09-02)
+
+
+### Bug Fixes
+
+* collapse duplicate usage_events from stale 'default' account_id ([#238](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/238)) ([1f42974](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1f429748d92c6831363dcb67a8add653f5a92e5c))
+* **minimax:** parse real coding-plan quota schema, fold OpenCode traffic in, add notional cost ([#237](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/237)) ([23a3403](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/23a3403434e6eab1e0fc7e463d69ced59ed47348))
+
 ## [2.11.4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.3...v2.11.4) (2026-07-30)
 
 
