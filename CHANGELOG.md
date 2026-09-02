@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.6...v2.11.7) (2026-09-02)
+
+
+### Bug Fixes
+
+* **minimax:** show exhausted session/weekly windows instead of hiding them ([#244](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/244)) ([d6c865c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d6c865c208642c64b8c8fa2057f1ccc430b93dc2))
+
 ## [2.11.6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.5...v2.11.6) (2026-09-02)
 
 
