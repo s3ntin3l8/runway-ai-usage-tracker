@@ -3628,6 +3628,66 @@ class TestMiniMaxCollector:
         assert "No active plan" in result[0]["detail"]
 
     @pytest.mark.asyncio
+    async def test_session_entitled_but_weekly_not_omits_weekly_card(self, mock_http_client):
+        """Session (current_interval_status=1) and weekly (current_weekly_status)
+        entitlement are gated independently — a session-entitled, weekly-expired
+        entry must produce only a session card, not a stale/zero weekly one built
+        from unentitled weekly fields."""
+        payload = {
+            "model_remains": [
+                {
+                    **self.REAL_PAYLOAD_UNUSED["model_remains"][0],
+                    "current_interval_status": 1,
+                    "current_weekly_status": 3,
+                }
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert [c["window_type"] for c in result] == ["session"]
+
+    @pytest.mark.asyncio
+    async def test_remaining_clamps_at_zero_on_overage(self, mock_http_client):
+        """usage_count > total_count (overage) must not render a negative
+        remaining percentage."""
+        payload = {
+            "model_remains": [
+                {
+                    **self.REAL_PAYLOAD_UNUSED["model_remains"][0],
+                    "current_interval_total_count": 100,
+                    "current_interval_usage_count": 150,
+                    "current_weekly_total_count": 100,
+                    "current_weekly_usage_count": 150,
+                }
+            ],
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_API_KEY = "mm_valid_key"
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = payload
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        for card in result:
+            assert card["pct_used"] == 150.0  # not itself clamped
+            assert card["remaining"] == "0.0%"  # display clamped
+
+    @pytest.mark.asyncio
     async def test_collect_api_error(self, mock_http_client):
         """Test MiniMax collection with API error."""
         with patch("app.services.collectors.minimax.settings") as mock_settings:

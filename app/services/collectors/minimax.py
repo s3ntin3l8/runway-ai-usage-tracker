@@ -143,8 +143,13 @@ class MiniMaxCollector(BaseCollector):
 
         model_remains = data.get("model_remains", [])
         entitled = [item for item in model_remains if item.get("current_interval_status") == 1]
+        # Session and weekly entitlement are gated independently — MiniMax can
+        # report the 5h window active while the weekly bucket is meanwhile
+        # expired/not-entitled (or vice versa), so don't assume entitled[0]'s
+        # weekly block is safe to use just because the session is entitled.
+        weekly_entitled = [item for item in model_remains if item.get("current_weekly_status") == 1]
 
-        if not entitled:
+        if not entitled and not weekly_entitled:
             return [
                 {
                     "service_name": "MiniMax",
@@ -164,7 +169,8 @@ class MiniMaxCollector(BaseCollector):
             ]
 
         results = [self._build_session_card(item, now_str) for item in entitled]
-        results.append(self._build_weekly_card(entitled[0], now_str))
+        if weekly_entitled:
+            results.append(self._build_weekly_card(weekly_entitled[0], now_str))
         return results
 
     def _window_pct_used(
@@ -251,10 +257,14 @@ class MiniMaxCollector(BaseCollector):
             unit_type = "percent"
             allowance = f"—/— prompts ({variant_label})"
 
+        # On overage (usage_count > total_count) pct_used can exceed 100 — clamp
+        # the displayed remaining percentage at 0 rather than showing negative.
+        remaining_pct = max(0.0, 100 - pct_used)
+
         return {
             "service_name": "MiniMax",
             "icon": "🤖",
-            "remaining": f"{100 - pct_used:.1f}%",
+            "remaining": f"{remaining_pct:.1f}%",
             "unit": "capacity",
             "reset": human_delta(reset_at),
             "health": health,
