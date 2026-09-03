@@ -31,11 +31,18 @@ on:
     # cheap no-op, not a review.
 
 jobs:
+  # `auto-review` deliberately excludes `mullion/task-*` branches (see the
+  # job's own `if:` below) -- Task Master's own review agent is the terminal
+  # review for its tasks (s3ntin3l8/mullion-session-manager#1003, ported
+  # from that repo's #998). `on-demand-review` is NOT excluded -- a human
+  # can still explicitly ask for a second opinion via
+  # `@s3ntin3l8-hermes Review`.
   auto-review:
     if: >-
       github.event_name == 'pull_request' &&
       github.actor != 's3ntin3l8-hermes[bot]' &&
-      github.event.pull_request.draft == false
+      github.event.pull_request.draft == false &&
+      !startsWith(github.event.pull_request.head.ref, 'mullion/task-')
     permissions:
       contents: write
       pull-requests: write
