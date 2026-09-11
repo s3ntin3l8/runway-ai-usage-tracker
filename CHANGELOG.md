@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.10](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.9...v2.11.10) (2026-09-11)
+
+
+### Bug Fixes
+
+* exclude bot-authored PRs by author, not actor; correct guard comment ([#259](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/259)) ([b7a12f2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b7a12f2ad9aacc8af265209cf168a2c7fcd97ecd))
+
 ## [2.11.9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.8...v2.11.9) (2026-09-09)
 
 
