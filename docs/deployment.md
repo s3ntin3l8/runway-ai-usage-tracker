@@ -192,7 +192,7 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | **OpenCode** | Optional | Web API preferred, sidecar provides local DB fallback |
 | **zAI API / zAI Plan** | No | API key works everywhere |
 | **Kimi API** | No | `KIMI_API_KEY` works everywhere |
-| **Kimi Coding** | ⚠️ Yes | Sidecar extracts cookie (or set `KIMI_AUTH_TOKEN`) |
+| **Kimi Coding** | No | `KIMI_CODE_API_KEY` works everywhere; sidecar adds the browser cookie / CLI credential for enrichment |
 | **Kimi K2** | No | API key works everywhere |
 | **Antigravity** | ⚠️ Yes | Sidecar-only — reads local IDE JSON file |
 
@@ -209,6 +209,7 @@ The relevant env vars apply to both runtimes:
 | `OPENROUTER_API_KEY` | optional | OpenRouter API |
 | `MINIMAX_API_KEY` | optional | MiniMax API |
 | `KIMI_API_KEY` | optional | Kimi API |
+| `KIMI_CODE_API_KEY` | optional | Kimi Coding (Kimi For Coding) |
 | `ZAI_API_KEY` | optional | zAI API & Plan |
 | `DB_ENCRYPTION_KEY` | ✅ when `APP_HOST != 127.0.0.1` | Fernet key for sensitive metadata at rest |
 | `TLS_TERMINATED` | ✅ when `APP_HOST != 127.0.0.1` | Operator assertion that an upstream proxy terminates TLS |

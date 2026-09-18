@@ -501,6 +501,76 @@ PRICING_SEED: list[dict] = [
         "notes": "MiniMax M2 (legacy). Low confidence — single third-party source, "
         "not cross-checked; verify against platform.minimax.io before relying on it.",
     },
+    # ── Kimi Coding ──────────────────────────────────────────────────────────────
+    # Notional "what this would have cost on the Moonshot API" figures for Kimi
+    # For Coding subscription traffic (cost_usd=None on ingest — see
+    # _OC_CANONICAL_MAP in scripts/sidecar_pkg/event_extractors/opencode.py),
+    # the same pattern as MiniMax above. Rates per 1M tokens from
+    # https://platform.kimi.ai/docs/pricing/chat (verified 2026-09-18).
+    # Cache-create pricing is not published -> 0.0.
+    {
+        "provider_id": "kimi_coding",
+        "model_id": "kimi-for-coding",
+        "effective_from": "2026-09-18",
+        "input_per_mtok": 0.95,
+        "output_per_mtok": 4.00,
+        "cache_read_per_mtok": 0.19,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Alias for the coding-plan default model (currently the 2.8 "
+        "preview) — kimi-k2.7-code rates used until 2.8 pricing is published.",
+    },
+    {
+        "provider_id": "kimi_coding",
+        "model_id": "kimi-2.8-preview",
+        "effective_from": "2026-09-18",
+        "input_per_mtok": 0.95,
+        "output_per_mtok": 4.00,
+        "cache_read_per_mtok": 0.19,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Kimi 2.8 preview — proxy kimi-k2.7-code rates until official "
+        "2.8 pricing is published. Low confidence.",
+    },
+    {
+        "provider_id": "kimi_coding",
+        "model_id": "k2.7-code",
+        "effective_from": "2026-09-18",
+        "input_per_mtok": 0.95,
+        "output_per_mtok": 4.00,
+        "cache_read_per_mtok": 0.19,
+        "cache_create_per_mtok": 0.0,
+        "notes": "kimi-k2.7-code official rates (platform.kimi.ai).",
+    },
+    {
+        "provider_id": "kimi_coding",
+        "model_id": "k2.7-code-highspeed",
+        "effective_from": "2026-09-18",
+        "input_per_mtok": 1.90,
+        "output_per_mtok": 8.00,
+        "cache_read_per_mtok": 0.38,
+        "cache_create_per_mtok": 0.0,
+        "notes": "kimi-k2.7-code-highspeed official rates (platform.kimi.ai).",
+    },
+    {
+        "provider_id": "kimi_coding",
+        "model_id": "k2.6",
+        "effective_from": "2026-09-18",
+        "input_per_mtok": 0.95,
+        "output_per_mtok": 4.00,
+        "cache_read_per_mtok": 0.16,
+        "cache_create_per_mtok": 0.0,
+        "notes": "kimi-k2.6 official rates (legacy).",
+    },
+    {
+        "provider_id": "kimi_coding",
+        "model_id": "k3-256k",
+        "effective_from": "2026-09-18",
+        "input_per_mtok": 3.00,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.30,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Kimi K3 rates (platform.kimi.ai/docs/pricing/chat); observed as "
+        "the kimi-code-plan-global backend modelID in OpenCode events.",
+    },
     # ── Antigravity ──────────────────────────────────────────────────────────────
     # Gemini models (standard tier — mirrors existing gemini pro-3.1-preview /
     # flash-3-preview / flash-lite-3.1 values).  Priority-tier is not modeled.

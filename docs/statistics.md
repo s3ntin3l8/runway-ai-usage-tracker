@@ -9,8 +9,8 @@ The `data_source` label identifies **how** the usage data was obtained from the 
 
 | Label | Tier | Description | Typical Use Cases |
 | :--- | :--- | :--- | :--- |
-| **`api`** | Primary | Official/Public API endpoint or OAuth-authenticated service. | `anthropic_oauth`, `gemini_api`, `github`, `openrouter` |
-| **`web`** | Secondary | Web-mimicking calls or scraping using browser cookies. | `chatgpt` (wham/usage), `ollama` (scraping), `kimi_coding` |
+| **`api`** | Primary | Official/Public API endpoint or OAuth-authenticated service. | `anthropic_oauth`, `gemini_api`, `github`, `openrouter`, `kimi_coding` |
+| **`web`** | Secondary | Web-mimicking calls or scraping using browser cookies. | `chatgpt` (wham/usage), `ollama` (scraping) |
 | **`local`** | Tertiary | Reading local logs, CLI output, or local application databases. | `claude_local` (statusline), `opencode_db`, sidecar event extractors (Claude/Codex/Gemini/OpenCode JSONL/SQLite) |
 
 ### Fallback Logic

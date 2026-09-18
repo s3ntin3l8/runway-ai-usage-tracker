@@ -259,6 +259,15 @@ def test_map_opencode_canonical_unmapped_returns_none():
     assert map_opencode_canonical("") is None
 
 
+def test_map_opencode_canonical_kimi():
+    """Kimi For Coding (kimi-code-plan-global backend) folds onto kimi_coding."""
+    assert map_opencode_canonical("kimi-code-plan-global") == ("kimi_coding", "default")
+    assert map_opencode_canonical("KIMI-CODE-PLAN-GLOBAL") == (
+        "kimi_coding",
+        "default",
+    )  # case-insensitive
+
+
 def _minimax_message(msg_id: str) -> dict:
     return {
         "id": msg_id,
@@ -332,6 +341,50 @@ def test_minimax_coding_plan_error_also_retagged():
         assert evts[0].account_id == "default"
         assert evts[0].kind == "error"
         assert evts[0].error_reason == "rate_limit"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def _kimi_message(msg_id: str, model_id: str = "k3-256k") -> dict:
+    return {
+        "id": msg_id,
+        "session_id": "ses_kimi",
+        "time_created": 1778248860000,
+        "data": {
+            "role": "assistant",
+            "path": {"cwd": "/home/user/project"},
+            "cost": 0,  # subscription — OpenCode always logs $0 here
+            "tokens": {
+                "input": 5000,
+                "output": 800,
+                "reasoning": 0,
+                "cache": {"read": 12000, "write": 0},
+            },
+            "modelID": model_id,
+            "providerID": "kimi-code-plan-global",
+            "time": {"created": 1746709260000, "completed": 1746709262000},
+        },
+    }
+
+
+@pytest.mark.parametrize("model_id", ["k3-256k", "kimi-for-coding"])
+def test_kimi_code_plan_global_retagged_onto_canonical_card(model_id):
+    """Events from OpenCode's kimi-code-plan-global backend (both the k3-256k
+    and the kimi-for-coding modelIDs) land on provider_id 'kimi_coding' /
+    account_id 'default' — the same key the kimi_coding collector's quota card
+    uses — and their $0 logged cost is dropped so the server prices them."""
+    db_path = _build_db([_kimi_message("msg_kimi_001", model_id)])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@opencode.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "kimi_coding"
+        assert evts[0].account_id == "default"
+        assert evts[0].model_id == model_id
+        assert evts[0].cost_usd is None
+        assert evts[0].tokens_input == 5000
+        assert evts[0].tokens_cache_read == 12000
     finally:
         db_path.unlink(missing_ok=True)
 

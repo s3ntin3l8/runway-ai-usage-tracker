@@ -97,6 +97,10 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str]] = {
     # MiniMax's coding-plan collector is API-key-only (no account email), so
     # every card it emits is account_id="default" — match that here.
     "minimax-coding-plan": ("minimax", "default"),
+    # Kimi For Coding (kimi-code-plan-global backend in OpenCode; modelIDs
+    # "k3-256k" / "kimi-for-coding") — the kimi_coding collector is
+    # API-key-first, so its cards are account_id="default" too.
+    "kimi-code-plan-global": ("kimi_coding", "default"),
 }
 
 

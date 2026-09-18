@@ -263,6 +263,72 @@ def test_migration_retags_minimax_coding_plan_and_forces_account_id(engine):
         assert "opencode-minimax-coding-plan" not in rollup_providers
 
 
+def test_migration_retags_kimi_code_plan_global_onto_kimi_coding(engine):
+    """Events under 'opencode-kimi-code-plan-global' (the fallback id OpenCode's
+    kimi-code-plan-global providerID mints) move to the canonical 'kimi_coding'
+    provider AND account_id 'default' — the identity the kimi_coding collector
+    uses — so they enrich the Kimi Coding quota card."""
+    with Session(engine) as s:
+        s.add(
+            UsageEvent(
+                provider_id="opencode-kimi-code-plan-global",
+                account_id="user@opencode.test",  # the OpenCode account email
+                sidecar_id="local",
+                event_id="msg_kimi",
+                ts=NOW,
+                kind="message",
+                model_id="k3-256k",
+                tokens_input=5000,
+                tokens_output=800,
+                tokens_cache_read=12000,
+                cost_usd=0.0,
+            )
+        )
+        s.commit()
+
+    db_path = _make_opencode_db(
+        [
+            {
+                "id": "msg_kimi",
+                "data": {
+                    "role": "assistant",
+                    "providerID": "kimi-code-plan-global",
+                    "modelID": "k3-256k",
+                    "cost": 0,
+                    "tokens": {"input": 5000, "output": 800, "cache": {"read": 12000, "write": 0}},
+                },
+            }
+        ]
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            changed = migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert changed == 1
+    with Session(engine) as s:
+        ev = s.exec(select(UsageEvent)).one()
+        assert ev.provider_id == "kimi_coding"
+        assert ev.account_id == "default"
+        assert ev.kind == "message"
+        # cost_usd untouched here — reclassify only retags identity;
+        # scripts/recost_events.py handles repricing.
+        assert ev.cost_usd == 0.0
+
+        rollup_providers = {
+            r.provider_id for r in s.exec(select(UsagePeriodRollup)).all() if r.msgs > 0
+        }
+        assert "kimi_coding" in rollup_providers
+        assert "opencode-kimi-code-plan-global" not in rollup_providers
+
+
 def test_migration_survives_and_restores_a_genuine_collision(engine):
     """Two usage_events rows sharing the same event_id under different old
     provider_ids (a pre-existing duplicate-ingestion artifact seen in real

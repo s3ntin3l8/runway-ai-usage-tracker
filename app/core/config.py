@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     KIMI_API_KEY: str = ""
     KIMI_AUTH_TOKEN: str = ""
     KIMI_K2_API_KEY: str = ""
+    KIMI_CODE_API_KEY: str = ""  # Kimi For Coding API key (kimi.com/code/console)
+    KIMI_CODE_BASE_URL: str = ""  # Override for compatible proxies (default: https://api.kimi.com)
 
     INGEST_API_KEY: str = ""  # Default empty = disabled; set to non-empty to enable ingestion
     ADMIN_API_KEY: str | None = None

@@ -169,7 +169,7 @@ Alternatively: right-click the app in Finder → **Open** → **Open** again in 
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
 | **zAI** | REST API (Balance + Quotas) | 1-3 | `ZAI_API_KEY` | [📖 API](docs/collectors/zai_api.md) · [📖 Plan](docs/collectors/zai_plan.md) |
 | **Kimi API** | REST API (Balance) | 1 | `KIMI_API_KEY` | [📖](docs/collectors/kimi_api.md) |
-| **Kimi Coding** | Web API (IDE Quotas) | 2 | `KIMI_AUTH_TOKEN` (opt) | [📖](docs/collectors/kimi_coding.md) |
+| **Kimi Coding** | REST API (IDE Quotas) | 2-4 | `KIMI_CODE_API_KEY` / CLI auto / `KIMI_AUTH_TOKEN` (legacy) | [📖](docs/collectors/kimi_coding.md) |
 | **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
 
 ### Sidecar-only providers
