@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import sys
 import threading
 import time
@@ -294,6 +295,76 @@ class TestQueueRotate:
         assert len(files) == 1
         entry = json.loads(files[0].read_text().strip())
         assert entry["payload"] == {"provider": "test", "metrics": []}
+
+
+class TestKimiCliCredentialGlob:
+    """kimi-cli writes a per-install credential file (kimi-code-env-<hash>.json),
+    so the kimi_coding file rule must glob the credentials dir — and the scrape
+    loop's 'later match overwrites' semantics must make the freshest file win."""
+
+    def _kimi_file_rule(self) -> dict:
+        for rule in sidecar.__REGISTRY__["providers"]["kimi_coding"]["rules"]:
+            if rule.get("type") == "file":
+                return rule
+        raise AssertionError("kimi_coding has no file rule")
+
+    def test_registry_rule_globs_credentials_dir(self):
+        rule = self._kimi_file_rule()
+        assert rule["paths"] == ["~/.kimi-code/credentials/kimi-code*.json"]
+        assert rule["mapping"] == {
+            "access_token": "cli_access_token",
+            "expires_at": "cli_expires_at",
+        }
+
+    def test_registry_never_maps_refresh_token(self):
+        """The kimi_coding rules must never copy the CLI's refresh token."""
+        for rule in sidecar.__REGISTRY__["providers"]["kimi_coding"]["rules"]:
+            targets = set(rule.get("mapping", {}).values())
+            assert "refresh_token" not in targets
+            assert "cli_refresh_token" not in targets
+
+    def test_expand_glob_returns_matches_freshest_last(self, tmp_path):
+        """Glob matches sort by mtime ascending so the scrape loop (which
+        overwrites tokens per file) ends with the freshest credential."""
+        older = tmp_path / "kimi-code-env-aaa.json"
+        older.write_text(json.dumps({"access_token": "old", "expires_at": 1}))
+        newer = tmp_path / "kimi-code-env-bbb.json"
+        newer.write_text(json.dumps({"access_token": "new", "expires_at": 2}))
+        os.utime(older, (1000, 1000))
+        os.utime(newer, (2000, 2000))
+
+        matches = sidecar.expand_file_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+        assert matches == [older, newer]
+
+    def test_valid_token_wins_over_newer_expired_file(self, tmp_path):
+        """A stale-but-recently-touched file must not beat a valid token:
+        expired files sort first, valid ones last (last file wins)."""
+        valid = tmp_path / "kimi-code-env-valid.json"
+        valid.write_text(json.dumps({"access_token": "good", "expires_at": 9999999999}))
+        stale = tmp_path / "kimi-code-env-stale.json"
+        stale.write_text(json.dumps({"access_token": "bad", "expires_at": 1000}))
+        os.utime(valid, (1000, 1000))  # older mtime …
+        os.utime(stale, (2000, 2000))  # … but stale is the recently-touched one
+
+        matches = sidecar.expand_file_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+        assert matches == [stale, valid]
+
+    def test_expand_plain_path_exact_match(self, tmp_path):
+        """Non-glob entries keep exact-match behavior; missing files are skipped."""
+        existing = tmp_path / "kimi-code.json"
+        existing.write_text("{}")
+        assert sidecar.expand_file_rule_paths([str(existing)]) == [existing]
+        assert sidecar.expand_file_rule_paths([str(tmp_path / "missing.json")]) == []
+
+    def test_expand_mixed_plain_and_glob(self, tmp_path):
+        plain = tmp_path / "kimi-code.json"
+        plain.write_text("{}")
+        env_file = tmp_path / "kimi-code-env-ccc.json"
+        env_file.write_text("{}")
+        matches = sidecar.expand_file_rule_paths(
+            [str(tmp_path / "kimi-code.json"), str(tmp_path / "kimi-code-env-*.json")]
+        )
+        assert set(matches) == {plain, env_file}
 
 
 class TestWindowsCredCache:

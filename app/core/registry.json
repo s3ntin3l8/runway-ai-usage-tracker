@@ -223,7 +223,7 @@
         },
         {
           "type": "file",
-          "paths": ["~/.kimi-code/credentials/kimi-code.json"],
+          "paths": ["~/.kimi-code/credentials/kimi-code*.json"],
           "format": "json",
           "mapping": {
             "access_token": "cli_access_token",

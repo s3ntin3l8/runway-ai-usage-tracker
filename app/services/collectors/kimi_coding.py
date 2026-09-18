@@ -31,9 +31,9 @@ Live response notes (verified 2026-09-18 against a Pro plan):
     (>0) but the code pool sits at exactly 0 — proof the code pool isn't
     the binding one. Both at 0 (fresh month) is ambiguous, so the card
     stays until usage disambiguates.
-- CLI credential (~/.kimi-code/credentials/kimi-code.json) is read-only;
-  the refresh token is never used. A token is fresh when
-  expires_at > now + 60s (CodexBar parity).
+- CLI credential (~/.kimi-code/credentials/kimi-code*.json — kimi-cli writes
+  a per-install kimi-code-env-<hash>.json) is read-only; the refresh token is
+  never used. A token is fresh when expires_at > now + 60s (CodexBar parity).
 
 See Also:
 - kimi_api.py for Moonshot Open Platform balance (different service)
@@ -249,7 +249,8 @@ class KimiCodingCollector(BaseCollector):
         """
         Read-only access token from the Kimi Code CLI credential file.
 
-        Local topology: parsed server-side from ~/.kimi-code/credentials/kimi-code.json
+        Local topology: parsed server-side from ~/.kimi-code/credentials/kimi-code*.json
+        (globbed — kimi-cli writes a per-install kimi-code-env-<hash>.json)
         via the registry file rule. Multi-host: pushed by the sidecar into the
         token cache. The refresh token is never used (CodexBar parity — the
         official CLI owns the refresh flow; when the token lapses, re-login).

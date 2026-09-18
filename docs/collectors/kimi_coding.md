@@ -27,7 +27,8 @@ balance — those are separate providers (see *Related Files*).
 
 Priority within the `api` strategy: **DB API key (UI) → `KIMI_CODE_API_KEY`
 env → Kimi Code CLI access token** (read-only, from
-`~/.kimi-code/credentials/kimi-code.json`; skipped when `expires_at` is stale
+`~/.kimi-code/credentials/kimi-code*.json` — kimi-cli writes a per-install
+`kimi-code-env-<hash>.json`; skipped when `expires_at` is stale
 — re-login with the CLI or set an API key). The `web` strategy uses the
 `kimi-auth` cookie: DB session cookie → `KIMI_AUTH_TOKEN` env → sidecar-pushed
 browser cookie.
@@ -35,7 +36,7 @@ browser cookie.
 | Method | Where | Notes |
 |--------|-------|-------|
 | **API key (recommended)** | Settings → Kimi Coding → "API Key (Kimi Code Console)", or `KIMI_CODE_API_KEY` | Create at [kimi.com/code/console](https://www.kimi.com/code/console). Never expires; works on hosts without a browser. |
-| Kimi Code CLI | auto-discovered from `~/.kimi-code/credentials/kimi-code.json` | Read-only reuse of the CLI's access token; the refresh token is never used. |
+| Kimi Code CLI | auto-discovered from `~/.kimi-code/credentials/kimi-code*.json` | Read-only reuse of the CLI's access token; the refresh token is never used. |
 | Cookie (legacy) | `KIMI_AUTH_TOKEN` env or browser `kimi-auth` cookie | Web JWT; expires. Only source that can see the weekly window + plan title on plans where the Code API omits them. |
 
 > **Note:** OpenCode events served by its `kimi-code-plan-global` backend are

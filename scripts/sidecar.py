@@ -372,8 +372,10 @@ __REGISTRY__: dict[str, Any] = {
                 {
                     # Kimi Code CLI OAuth credential — the access token is read-only
                     # (never the refresh token); the server checks expires_at freshness.
+                    # kimi-cli writes a per-install env file (kimi-code-env-<hash>.json),
+                    # so the rule globs the credentials dir; freshest match wins.
                     "type": "file",
-                    "paths": ["~/.kimi-code/credentials/kimi-code.json"],
+                    "paths": ["~/.kimi-code/credentials/kimi-code*.json"],
                     "format": "json",
                     "mapping": {
                         "access_token": "cli_access_token",
@@ -1124,6 +1126,59 @@ def resolve_path(path_str: str) -> Path:
     return Path(path_str)
 
 
+def has_unexpired_token(path: Path) -> bool:
+    """Best-effort freshness probe: True when the file's JSON carries an
+    '*expires*' key with a numeric epoch value still in the future (+60s
+    skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+    """
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    now = time.time()
+    for key, val in data.items():
+        if "expires" in str(key).lower():
+            try:
+                if float(val) > now + 60:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def expand_file_rule_paths(paths: list) -> list:
+    """Expand a file rule's path list to concrete existing files.
+
+    Plain entries resolve exactly (existing behavior). Entries containing glob
+    metacharacters (* ? [) are expanded against the filesystem — this applies
+    to ANY file rule, so a future rule with a literal metachar in a filename
+    would need escaping. Glob matches are sorted by (has_unexpired_token,
+    mtime) ascending — expired files first, valid ones last, mtime ascending
+    within each group. The scrape loop applies each file in order and later
+    matches overwrite earlier ones, so the last file is the freshest *valid*
+    credential (or the freshest expired one when nothing valid remains).
+    """
+    import glob as glob_module
+
+    out = []
+    for path_str in paths:
+        resolved = resolve_path(path_str)
+        if any(c in str(resolved) for c in "*?["):
+            try:
+                matches = sorted(
+                    (Path(p) for p in glob_module.glob(str(resolved)) if Path(p).is_file()),
+                    key=lambda p: (has_unexpired_token(p), p.stat().st_mtime),
+                )
+                out.extend(matches)
+            except OSError:
+                logging.debug("File rule glob failed for %s", resolved, exc_info=True)
+        elif resolved.exists():
+            out.append(resolved)
+    return out
+
+
 # --- Browser Cookie Extraction ---
 
 
@@ -1679,32 +1734,33 @@ class GenericCollector:
 
             # 2. Local Files (JSON/YAML)
             elif rule_type == "file":
-                for path_str in rule.get("paths", []):
-                    path = resolve_path(path_str)
-                    if path.exists():
-                        try:
-                            fmt = rule.get("format", "json")
-                            with open(path) as f:
-                                if fmt == "yaml":
-                                    # Very basic YAML parser for zero-dependency
-                                    # Only supports simple key: value
-                                    content = f.read()
-                                    data = {}
-                                    for line in content.splitlines():
-                                        if ":" in line:
-                                            k, v = line.split(":", 1)
-                                            data[k.strip()] = v.strip().strip('"').strip("'")
-                                else:
-                                    data = json.load(f)
+                # expand_file_rule_paths resolves plain paths exactly and
+                # expands glob patterns (e.g. kimi-cli's per-install
+                # kimi-code-env-<hash>.json), freshest match last.
+                for path in expand_file_rule_paths(rule.get("paths", [])):
+                    try:
+                        fmt = rule.get("format", "json")
+                        with open(path) as f:
+                            if fmt == "yaml":
+                                # Very basic YAML parser for zero-dependency
+                                # Only supports simple key: value
+                                content = f.read()
+                                data = {}
+                                for line in content.splitlines():
+                                    if ":" in line:
+                                        k, v = line.split(":", 1)
+                                        data[k.strip()] = v.strip().strip('"').strip("'")
+                            else:
+                                data = json.load(f)
 
-                            for key_path, target in mapping.items():
-                                val = GenericCollector.get_nested(data, key_path)
-                                if val:
-                                    tokens[target] = val
-                            if tokens:
-                                logging.info(f"  [{provider_id}] token file matched: {path}")
-                        except Exception as e:
-                            logging.debug(f"Error reading file {path}: {e}")
+                        for key_path, target in mapping.items():
+                            val = GenericCollector.get_nested(data, key_path)
+                            if val:
+                                tokens[target] = val
+                        if tokens:
+                            logging.info(f"  [{provider_id}] token file matched: {path}")
+                    except Exception as e:
+                        logging.debug(f"Error reading file {path}: {e}")
 
             # 3. macOS Keychain
             elif rule_type == "keychain" and platform.system() == "Darwin":

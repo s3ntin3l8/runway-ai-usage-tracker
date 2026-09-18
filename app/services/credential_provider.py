@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from typing import Any
 
 from app.core.config import get_platform_config_dir
@@ -12,6 +13,61 @@ try:
     import yaml
 except ImportError:
     yaml = None  # type: ignore
+
+
+def _has_unexpired_token(path: str) -> bool:
+    """Best-effort freshness probe: True when the file's JSON carries an
+    '*expires*' key with a numeric epoch value still in the future (+60s
+    skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+    """
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    now = time.time()
+    for key, val in data.items():
+        if "expires" in str(key).lower():
+            try:
+                if float(val) > now + 60:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def _expand_rule_paths(paths: list) -> list:
+    """Expand a file rule's path list to concrete existing files.
+
+    Plain entries resolve exactly (existing behavior). Entries containing glob
+    metacharacters (* ? [) are expanded against the filesystem — this applies
+    to ANY file rule, so a future rule with a literal metachar in a filename
+    would need escaping. Matches are sorted so files with an unexpired
+    '*expires*' token come first and mtime descending within each group — this
+    loop is first-match-wins per target key, so the freshest *valid*
+    credential wins. (The sidecar's scrape loop overwrites per file and sorts
+    ascending; both end with the freshest valid file's values.)
+    """
+    import glob as glob_module
+
+    out = []
+    for path_str in paths:
+        resolved = registry.resolve_path(path_str)
+        if any(c in resolved for c in "*?["):
+            try:
+                matches = sorted(
+                    (p for p in glob_module.glob(resolved) if os.path.isfile(p)),
+                    key=lambda p: (_has_unexpired_token(p), os.stat(p).st_mtime),
+                    reverse=True,
+                )
+                out.extend(matches)
+            except OSError:
+                logger.debug("File rule glob failed for %s", resolved, exc_info=True)
+        elif os.path.exists(resolved):
+            out.append(resolved)
+    return out
 
 
 # dict value-equality is intentional; the `sources` attribute is non-compared metadata.
@@ -93,37 +149,32 @@ class CredentialProvider:
 
             # 2. Local Files (JSON/YAML)
             elif rule_type == "file":
-                for path_str in rule.get("paths", []):
-                    path = registry.resolve_path(path_str)
+                for path in _expand_rule_paths(rule.get("paths", [])):
+                    try:
+                        fmt = rule.get("format", "json")
+                        with open(path) as f:
+                            if fmt == "yaml" and yaml:
+                                data = yaml.safe_load(f)
+                            else:
+                                data = json.load(f)
 
-                    if os.path.exists(path):
-                        try:
-                            fmt = rule.get("format", "json")
-                            with open(path) as f:
-                                if fmt == "yaml" and yaml:
-                                    data = yaml.safe_load(f)
-                                else:
-                                    data = json.load(f)
-
-                            for key_path_str, target in mapping.items():
-                                if target not in results:
-                                    # Strategy: Try to find the value by traversing the path.
-                                    # We handle keys that might contain dots (like "github.com")
-                                    # by checking if the prefix is a valid key.
-                                    val = CredentialProvider._resolve_mapping_value(
-                                        data, key_path_str
-                                    )
-                                    if val:
-                                        results[target] = val
-                                        if target not in sources:
-                                            # If the file is in our own internal config dir, it's UI-managed -> config.
-                                            # Otherwise it's discovered in the wild -> server.
-                                            is_internal = runway_config_dir and str(
-                                                path
-                                            ).startswith(str(runway_config_dir))
-                                            sources[target] = "config" if is_internal else "server"
-                        except Exception as e:
-                            logger.debug(f"Error reading file {path}: {e}")
+                        for key_path_str, target in mapping.items():
+                            if target not in results:
+                                # Strategy: Try to find the value by traversing the path.
+                                # We handle keys that might contain dots (like "github.com")
+                                # by checking if the prefix is a valid key.
+                                val = CredentialProvider._resolve_mapping_value(data, key_path_str)
+                                if val:
+                                    results[target] = val
+                                    if target not in sources:
+                                        # If the file is in our own internal config dir, it's UI-managed -> config.
+                                        # Otherwise it's discovered in the wild -> server.
+                                        is_internal = runway_config_dir and str(path).startswith(
+                                            str(runway_config_dir)
+                                        )
+                                        sources[target] = "config" if is_internal else "server"
+                    except Exception as e:
+                        logger.debug(f"Error reading file {path}: {e}")
 
             # 3. macOS Keychain rules are intentionally skipped on the server.
             # Keychain access has moved to the sidecar; rule_type == "keychain"
