@@ -210,13 +210,31 @@
     "kimi_coding": {
       "name": "Kimi Coding",
       "icon": "🌙",
+      "api_key_label": "API Key (Kimi Code Console)",
+      "api_key_help": "Kimi For Coding API key from kimi.com/code/console",
       "session_cookie_label": "Auth Token (web)",
-      "session_cookie_help": "Bearer token or session cookie for Kimi Coding web dashboard",
+      "session_cookie_help": "Legacy fallback: kimi-auth JWT cookie from browser DevTools",
       "rules": [
+        { "type": "env", "variable": "KIMI_CODE_API_KEY", "mapping": { "value": "api_key" } },
         {
           "type": "env",
           "variable": "KIMI_AUTH_TOKEN",
           "mapping": { "value": "session_cookie" }
+        },
+        {
+          "type": "file",
+          "paths": ["~/.kimi-code/credentials/kimi-code.json"],
+          "format": "json",
+          "mapping": {
+            "access_token": "cli_access_token",
+            "expires_at": "cli_expires_at"
+          }
+        },
+        {
+          "type": "cookie",
+          "domains": ["kimi.moonshot.cn", "kimi.com"],
+          "name": "kimi-auth",
+          "mapping": { "value": "cookie_kimi-auth" }
         }
       ]
     },

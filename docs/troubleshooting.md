@@ -48,7 +48,7 @@ For a config-first approach, set the session token directly. This also works in 
 | Claude (OAuth) | `CLAUDE_CODE_OAUTH_TOKEN` |
 | ChatGPT | `CHATGPT_OAUTH_TOKEN` |
 | Ollama | `OLLAMA_SESSION_TOKEN` |
-| Kimi | `KIMI_AUTH_TOKEN` |
+| Kimi Coding | `KIMI_CODE_API_KEY` (preferred) or `KIMI_AUTH_TOKEN` |
 
 To find your token: open DevTools in any browser → Application → Cookies → copy the
 relevant cookie value for the provider's domain.

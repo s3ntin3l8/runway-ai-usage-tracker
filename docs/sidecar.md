@@ -279,7 +279,7 @@ launchctl start com.runway.sidecar
 | **OpenCode** | SQLite DB | `~/.local/share/opencode/opencode.db`, `~/.opencode/opencode.db`, or Chrome cookie |
 | **zAI API/Plan** | API key | `ZAI_API_KEY` |
 | **Kimi API** | API key | `KIMI_API_KEY` |
-| **Kimi Coding** | JWT/cookie | `KIMI_AUTH_TOKEN` or Chrome cookie |
+| **Kimi Coding** | API key / CLI credential / cookie | `KIMI_CODE_API_KEY`, `~/.kimi-code/credentials/kimi-code.json` (access token + expiry only, never the refresh token), or `KIMI_AUTH_TOKEN` / Chrome cookie |
 | **OpenRouter** | API key | `OPENROUTER_API_KEY` |
 | **MiniMax** | API key | `MINIMAX_API_KEY` |
 | **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |

@@ -3138,101 +3138,462 @@ class TestKimiK2Collector:
 
 
 class TestKimiCodingCollector:
-    """Test suite for Kimi Coding (IDE) collector."""
+    """Test suite for Kimi Coding (IDE) collector (api + web strategies)."""
+
+    # Live-verified Pro plan response from GET api.kimi.com/coding/v1/usages.
+    CODE_API_PRO_RESPONSE = {
+        "limits": [
+            {
+                "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                "detail": {
+                    "limit": "100",
+                    "used": "41",
+                    "remaining": "59",
+                    "resetTime": "2026-09-18T18:52:05Z",
+                },
+            }
+        ],
+        "usages": {
+            "limit_5h": {"used_ratio": 0, "reset_time": "2026-09-18T18:52:04Z"},
+            "limit_month_total": {"used_ratio": 0.011, "reset_time": "2026-10-19T00:00:00Z"},
+            "limit_month_code": {"used_ratio": 0.0, "reset_time": "2026-10-19T00:00:00Z"},
+        },
+        "booster_wallet": {"status": "STATUS_DISABLED"},
+    }
+
+    # Live-verified web gateway responses (kimi-auth cookie auth).
+    WEB_USAGES_RESPONSE = {
+        "usages": [
+            {
+                "scope": "FEATURE_CODING",
+                "detail": {"limit": "100", "remaining": "100", "resetTime": "2026-09-25T13:52:05Z"},
+                "limits": [
+                    {
+                        "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                        "detail": {
+                            "limit": "100",
+                            "used": "47",
+                            "remaining": "53",
+                            "resetTime": "2026-09-18T18:52:05Z",
+                        },
+                    }
+                ],
+            }
+        ],
+        "totalQuota": {"limit": "100", "used": "1", "remaining": "99"},
+    }
+    WEB_STATS_RESPONSE = {
+        "ratelimitCode5h": {"ratio": 0.4703, "enabled": True, "resetTime": "2026-09-18T18:52:05Z"},
+        "ratelimitCode7d": {"ratio": 0.0038, "enabled": True, "resetTime": "2026-09-25T13:52:05Z"},
+        "subscriptionBalance": {
+            "amountUsedRatio": 0.0128,
+            "kimiCodeUsedRatio": 0.0128,
+            "expireTime": "2026-10-19T00:00:00Z",
+        },
+    }
+    WEB_SUBSCRIPTION_RESPONSE = {
+        "subscription": {
+            "active": True,
+            "status": "SUBSCRIPTION_STATUS_ACTIVE",
+            "goods": {"title": "Pro"},
+        }
+    }
+
+    @staticmethod
+    def _patch_credentials(api_key=None, session_cookie=None, creds=None):
+        """Patch the credential_provider seen by the kimi_coding module."""
+        patcher = patch("app.services.collectors.kimi_coding.credential_provider")
+        mock_cp = patcher.start()
+        mock_cp.get_provider_api_key.return_value = api_key
+        mock_cp.get_provider_session_cookie.return_value = session_cookie
+        mock_cp.get_credentials.return_value = creds if creds is not None else {}
+        return patcher
+
+    @staticmethod
+    def _mock_settings(**overrides):
+        """settings patch with sane kimi defaults (patched MagicMock attrs are truthy)."""
+        patcher = patch("app.services.collectors.kimi_coding.settings")
+        mock_settings = patcher.start()
+        mock_settings.KIMI_AUTH_TOKEN = ""
+        mock_settings.KIMI_CODE_API_KEY = ""
+        mock_settings.KIMI_CODE_BASE_URL = ""
+        for key, value in overrides.items():
+            setattr(mock_settings, key, value)
+        return patcher
+
+    def _http_router(self, mock_http_client, routes):
+        """Route mocked HTTP calls by URL substring; unmatched calls get a 200 {}."""
+
+        async def _request(method, url, **kwargs):
+            for needle, payload in routes:
+                if needle in str(url):
+                    resp = MagicMock(spec=httpx.Response)
+                    if isinstance(payload, int):
+                        resp.status_code = payload
+                    else:
+                        resp.status_code = 200
+                        resp.json.return_value = payload
+                    return resp
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {}
+            return resp
+
+        mock_http_client.request = AsyncMock(side_effect=_request)
 
     @pytest.mark.asyncio
-    async def test_collect_success_with_env_var(self, mock_http_client):
-        """Test successful Kimi Coding collection with env var auth."""
+    async def test_collect_web_success_with_env_cookie(self, mock_http_client):
+        """Web strategy standalone: cookie env + GetUsages counts (legacy shape)."""
         collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_token_here"),
+        ]
+        self._http_router(mock_http_client, [("GetUsages", self.WEB_USAGES_RESPONSE)])
 
-        response = MagicMock(spec=httpx.Response)
-        response.status_code = 200
-        response.json.return_value = {
-            "usages": [
-                {
-                    "scope": "FEATURE_CODING",
-                    "detail": {
-                        "limit": "2048",
-                        "used": "214",
-                        "remaining": "1834",
-                        "resetTime": "2026-01-09T15:23:13Z",
-                    },
-                    "limits": [
-                        {
-                            "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
-                            "detail": {
-                                "limit": "200",
-                                "used": "139",
-                                "remaining": "61",
-                                "resetTime": "2026-01-06T13:33:02Z",
-                            },
-                        }
-                    ],
-                }
-            ]
-        }
-
-        mock_http_client.request.return_value = response
-
-        with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
-            mock_settings.KIMI_AUTH_TOKEN = "jwt_token_here"
+        try:
             result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
 
         assert len(result) == 2
         assert any(card.get("window_type") == "weekly" for card in result)
-        assert any(card.get("window_type") == "session" for card in result)
-        assert any("Moderato" in card["detail"] for card in result)
+        session = next(c for c in result if c.get("window_type") == "session")
+        assert session["used_value"] == 47.0
+        assert session["data_source"] == "web"
+        weekly = next(c for c in result if c.get("window_type") == "weekly")
+        assert "Weekly quota" in weekly["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_api_key_success_pro_shape(self, mock_http_client):
+        """API strategy: Pro plan Code API response -> session counts + 2 monthly ratio cards."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        self._http_router(mock_http_client, [("/coding/v1/usages", self.CODE_API_PRO_RESPONSE)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 3
+        session = next(c for c in result if c.get("window_type") == "session")
+        # Real counts win over the (stale, 0%) limit_5h ratio.
+        assert session["used_value"] == 41.0
+        assert session["limit_value"] == 100.0
+        assert session["data_source"] == "api"
+        assert session["input_source"] == "config"
+        monthly_total = next(
+            c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "total"
+        )
+        assert monthly_total["pct_used"] == pytest.approx(1.1)
+        assert monthly_total["used_value"] is None
+        monthly_code = next(
+            c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "code"
+        )
+        assert monthly_code["pct_used"] == pytest.approx(0.0)
+        # Pro plan reports no weekly window via the Code API.
+        assert not any(c.get("window_type") == "weekly" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_key_401_error_card(self, mock_http_client):
+        """401 with an explicit API key -> invalid-key error card, no cookie fallthrough."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="bad_key", session_cookie="jwt_cookie"),
+            self._mock_settings(),
+        ]
+        self._http_router(mock_http_client, [("/coding/v1/usages", 401)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "auth_failed"
+
+    @pytest.mark.asyncio
+    async def test_collect_merge_api_first_web_enriches(self, mock_http_client):
+        """Default order: api is the base; web adds weekly + tier; counts stay authoritative."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_cookie"),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", self.CODE_API_PRO_RESPONSE),
+                ("GetSubscriptionStats", self.WEB_STATS_RESPONSE),
+                ("GetSubscription", self.WEB_SUBSCRIPTION_RESPONSE),
+                ("GetUsages", self.WEB_USAGES_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 4
+        session = next(c for c in result if c.get("window_type") == "session")
+        assert session["used_value"] == 41.0  # api counts, not web's 47
+        weekly = next(c for c in result if c.get("window_type") == "weekly")
+        assert weekly["pct_used"] == pytest.approx(0.38)  # web stats ratio, not detail counts
+        assert weekly["data_source"] == "web"
+        assert all(c.get("tier") == "Pro" for c in result)
+        monthly = next(
+            c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "total"
+        )
+        assert monthly["pct_used"] == pytest.approx(1.1)  # base (api) monthly kept
+
+    @pytest.mark.asyncio
+    async def test_collect_merge_web_first_when_reordered(self, mock_http_client):
+        """User reorders strategies: web becomes the base, api enriches (adds nothing new here)."""
+        collector = KimiCodingCollector()
+        collector.apply_strategy_config(
+            [{"id": "web", "enabled": True}, {"id": "api", "enabled": True}]
+        )
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_cookie"),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", self.CODE_API_PRO_RESPONSE),
+                ("GetSubscriptionStats", self.WEB_STATS_RESPONSE),
+                ("GetSubscription", self.WEB_SUBSCRIPTION_RESPONSE),
+                ("GetUsages", self.WEB_USAGES_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        session = next(c for c in result if c.get("window_type") == "session")
+        assert session["used_value"] == 47.0  # web base counts now win
+        assert session["data_source"] == "web"
+        assert len(result) == 4  # api's monthly variants also present (same keys -> kept web's)
+
+    @pytest.mark.asyncio
+    async def test_collect_cli_token_used_with_identity_headers(self, mock_http_client):
+        """No API key: fresh CLI access token is used with X-Msh-* identity headers."""
+        from app.services.credential_provider import CredentialMap
+
+        future = datetime.now(UTC).timestamp() + 3600
+        creds = CredentialMap(
+            {"cli_access_token": "cli_access_token_123", "cli_expires_at": future},
+            sources={"cli_access_token": "server"},
+        )
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(creds=creds),
+            self._mock_settings(),
+        ]
+        self._http_router(mock_http_client, [("/coding/v1/usages", self.CODE_API_PRO_RESPONSE)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        call = mock_http_client.request.call_args
+        headers = call.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer cli_access_token_123"
+        assert headers["X-Msh-Platform"] == "kimi_code_cli"
+        assert "X-Msh-Device-Id" in headers
+        assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_collect_stale_cli_token_falls_back_to_cookie(self, mock_http_client):
+        """Expired CLI token is skipped; the cookie path takes over."""
+        from app.services.credential_provider import CredentialMap
+
+        stale = datetime.now(UTC).timestamp() - 10
+        creds = CredentialMap(
+            {"cli_access_token": "cli_access_token_old", "cli_expires_at": stale},
+            sources={"cli_access_token": "server"},
+        )
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(creds=creds),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_cookie"),
+        ]
+        self._http_router(mock_http_client, [("GetUsages", self.WEB_USAGES_RESPONSE)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        urls = [str(c.args[1]) for c in mock_http_client.request.call_args_list]
+        assert not any("/coding/v1/usages" in u for u in urls)
+        assert any("GetUsages" in u for u in urls)
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_stale_cli_token_is_configured_with_relogin_hint(self, mock_http_client):
+        """An expired CLI token keeps the card alive with a re-login hint."""
+        from app.services.credential_provider import CredentialMap
+
+        stale = datetime.now(UTC).timestamp() - 10
+        creds = CredentialMap(
+            {"cli_access_token": "cli_access_token_old", "cli_expires_at": stale},
+            sources={"cli_access_token": "server"},
+        )
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(creds=creds),
+            self._mock_settings(),
+        ]
+
+        try:
+            assert await collector.is_configured() is True
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "auth_failed"
+        assert "CLI token expired" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_parse_reset_accepts_numeric_string_epoch(self, mock_http_client):
+        """Reset values arriving as numeric strings parse as epoch seconds."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        payload = {
+            "usages": {
+                "limit_month_total": {
+                    "used_ratio": 0.5,
+                    "reset_time": "1789742336",
+                }
+            }
+        }
+        self._http_router(mock_http_client, [("/coding/v1/usages", payload)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        monthly = next(c for c in result if c.get("window_type") == "monthly")
+        assert monthly["reset"] != "Unknown"
+        assert monthly["reset_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_membership_level_mapping_v1(self, mock_http_client):
+        """user.membership.level maps to tier names for GOODS_VERSION_V1 goods."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        payload = {
+            **self.CODE_API_PRO_RESPONSE,
+            "usage": {
+                "limit": "2048",
+                "used": "214",
+                "remaining": "1834",
+                "resetTime": "2026-01-09T15:23:13Z",
+            },
+            "user": {"membership": {"level": "LEVEL_BASIC"}},
+            "version": "GOODS_VERSION_V1",
+        }
+        self._http_router(mock_http_client, [("/coding/v1/usages", payload)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert all(c.get("tier") == "Moderato" for c in result)
+        weekly = next(c for c in result if c.get("window_type") == "weekly")
+        assert weekly["used_value"] == 214.0
 
     @pytest.mark.asyncio
     async def test_collect_empty_usage(self, mock_http_client):
         """Test Kimi Coding collection with empty usage response."""
         collector = KimiCodingCollector()
 
-        response = MagicMock(spec=httpx.Response)
-        response.status_code = 200
-        response.json.return_value = {}
+        patchers = [
+            self._patch_credentials(),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_token_here"),
+        ]
+        self._http_router(mock_http_client, [("GetUsages", {})])
 
-        mock_http_client.request.return_value = response
-
-        with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
-            mock_settings.KIMI_AUTH_TOKEN = "jwt_token_here"
+        try:
             result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
 
         assert len(result) == 1
         assert "No active plan" in result[0]["detail"]
         assert result[0]["remaining"] == "No active plan"
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_no_auth(self, mock_http_client):
-        """Test Kimi Coding collection without auth."""
+        """Test Kimi Coding collection without any credential."""
         collector = KimiCodingCollector()
 
-        with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
-            mock_settings.KIMI_AUTH_TOKEN = ""
-            with patch("app.services.collectors.kimi_coding.get_kimi_auth_cookie") as mock_cookie:
-                mock_cookie.return_value = None
-                result = await collector.collect(mock_http_client)
+        patchers = [
+            self._patch_credentials(),
+            self._mock_settings(),
+        ]
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
 
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "missing_config"
 
     @pytest.mark.asyncio
-    async def test_collect_api_error(self, mock_http_client):
-        """Test Kimi Coding collection with API error."""
+    async def test_collect_web_auth_error(self, mock_http_client):
+        """Test Kimi Coding web collection with an expired/invalid cookie."""
         collector = KimiCodingCollector()
 
-        response = MagicMock(spec=httpx.Response)
-        response.status_code = 401
+        patchers = [
+            self._patch_credentials(),
+            self._mock_settings(KIMI_AUTH_TOKEN="invalid_token"),
+        ]
+        self._http_router(mock_http_client, [("GetUsages", 401)])
 
-        mock_http_client.request.return_value = response
-
-        with patch("app.services.collectors.kimi_coding.settings") as mock_settings:
-            mock_settings.KIMI_AUTH_TOKEN = "invalid_token"
+        try:
             result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
 
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "auth_failed"
 
 
 class TestOpenRouterCollector:

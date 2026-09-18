@@ -363,10 +363,22 @@ __REGISTRY__: dict[str, Any] = {
             "name": "Kimi Coding",
             "icon": "🌙",
             "rules": [
+                {"type": "env", "variable": "KIMI_CODE_API_KEY", "mapping": {"value": "api_key"}},
                 {
                     "type": "env",
                     "variable": "KIMI_AUTH_TOKEN",
                     "mapping": {"value": "session_cookie"},
+                },
+                {
+                    # Kimi Code CLI OAuth credential — the access token is read-only
+                    # (never the refresh token); the server checks expires_at freshness.
+                    "type": "file",
+                    "paths": ["~/.kimi-code/credentials/kimi-code.json"],
+                    "format": "json",
+                    "mapping": {
+                        "access_token": "cli_access_token",
+                        "expires_at": "cli_expires_at",
+                    },
                 },
                 {
                     "type": "cookie",
