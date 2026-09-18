@@ -14,6 +14,36 @@ except ImportError:
     yaml = None  # type: ignore
 
 
+def _expand_rule_paths(paths: list) -> list:
+    """Expand a file rule's path list to concrete existing files.
+
+    Plain entries resolve exactly (existing behavior). Entries containing glob
+    metacharacters (* ? [) are expanded against the filesystem; matches are
+    sorted by mtime DESCENDING so the freshest file comes first — this loop is
+    first-match-wins per target key, so the freshest credential wins. (The
+    sidecar's scrape loop overwrites per file, so it sorts ascending; both end
+    with the freshest file's values.)
+    """
+    import glob as glob_module
+
+    out = []
+    for path_str in paths:
+        resolved = registry.resolve_path(path_str)
+        if any(c in resolved for c in "*?["):
+            try:
+                matches = sorted(
+                    (p for p in glob_module.glob(resolved) if os.path.isfile(p)),
+                    key=lambda p: os.stat(p).st_mtime,
+                    reverse=True,
+                )
+                out.extend(matches)
+            except OSError:
+                logger.debug("File rule glob failed for %s", resolved, exc_info=True)
+        elif os.path.exists(resolved):
+            out.append(resolved)
+    return out
+
+
 # dict value-equality is intentional; the `sources` attribute is non-compared metadata.
 class CredentialMap(dict):
     """A dictionary that tracks the source (config or server) for each key."""
@@ -93,37 +123,32 @@ class CredentialProvider:
 
             # 2. Local Files (JSON/YAML)
             elif rule_type == "file":
-                for path_str in rule.get("paths", []):
-                    path = registry.resolve_path(path_str)
+                for path in _expand_rule_paths(rule.get("paths", [])):
+                    try:
+                        fmt = rule.get("format", "json")
+                        with open(path) as f:
+                            if fmt == "yaml" and yaml:
+                                data = yaml.safe_load(f)
+                            else:
+                                data = json.load(f)
 
-                    if os.path.exists(path):
-                        try:
-                            fmt = rule.get("format", "json")
-                            with open(path) as f:
-                                if fmt == "yaml" and yaml:
-                                    data = yaml.safe_load(f)
-                                else:
-                                    data = json.load(f)
-
-                            for key_path_str, target in mapping.items():
-                                if target not in results:
-                                    # Strategy: Try to find the value by traversing the path.
-                                    # We handle keys that might contain dots (like "github.com")
-                                    # by checking if the prefix is a valid key.
-                                    val = CredentialProvider._resolve_mapping_value(
-                                        data, key_path_str
-                                    )
-                                    if val:
-                                        results[target] = val
-                                        if target not in sources:
-                                            # If the file is in our own internal config dir, it's UI-managed -> config.
-                                            # Otherwise it's discovered in the wild -> server.
-                                            is_internal = runway_config_dir and str(
-                                                path
-                                            ).startswith(str(runway_config_dir))
-                                            sources[target] = "config" if is_internal else "server"
-                        except Exception as e:
-                            logger.debug(f"Error reading file {path}: {e}")
+                        for key_path_str, target in mapping.items():
+                            if target not in results:
+                                # Strategy: Try to find the value by traversing the path.
+                                # We handle keys that might contain dots (like "github.com")
+                                # by checking if the prefix is a valid key.
+                                val = CredentialProvider._resolve_mapping_value(data, key_path_str)
+                                if val:
+                                    results[target] = val
+                                    if target not in sources:
+                                        # If the file is in our own internal config dir, it's UI-managed -> config.
+                                        # Otherwise it's discovered in the wild -> server.
+                                        is_internal = runway_config_dir and str(path).startswith(
+                                            str(runway_config_dir)
+                                        )
+                                        sources[target] = "config" if is_internal else "server"
+                    except Exception as e:
+                        logger.debug(f"Error reading file {path}: {e}")
 
             # 3. macOS Keychain rules are intentionally skipped on the server.
             # Keychain access has moved to the sidecar; rule_type == "keychain"

@@ -117,3 +117,30 @@ def test_db_read_failures_are_swallowed():
         assert (
             CredentialProvider.get_provider_session_cookie("provider-with-no-env-or-file") is None
         )
+
+
+def test_expand_rule_paths_glob_freshest_first(tmp_path):
+    """Glob matches sort by mtime descending — the file loop is first-match-wins
+    per target key, so the freshest credential must come first. (The sidecar's
+    loop overwrites per file and sorts ascending; both end with the freshest.)"""
+    from app.services.credential_provider import _expand_rule_paths
+
+    older = tmp_path / "kimi-code-env-aaa.json"
+    older.write_text("{}")
+    newer = tmp_path / "kimi-code-env-bbb.json"
+    newer.write_text("{}")
+    os.utime(older, (1000, 1000))
+    os.utime(newer, (2000, 2000))
+
+    matches = _expand_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+    assert matches == [str(newer), str(older)]
+
+
+def test_expand_rule_paths_plain_exact_match(tmp_path):
+    """Non-glob entries keep exact-match behavior; missing files are skipped."""
+    from app.services.credential_provider import _expand_rule_paths
+
+    existing = tmp_path / "kimi-code.json"
+    existing.write_text("{}")
+    assert _expand_rule_paths([str(existing)]) == [str(existing)]
+    assert _expand_rule_paths([str(tmp_path / "missing.json")]) == []
