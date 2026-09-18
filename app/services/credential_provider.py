@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from typing import Any
 
 from app.core.config import get_platform_config_dir
@@ -14,15 +15,40 @@ except ImportError:
     yaml = None  # type: ignore
 
 
+def _has_unexpired_token(path: str) -> bool:
+    """Best-effort freshness probe: True when the file's JSON carries an
+    '*expires*' key with a numeric epoch value still in the future (+60s
+    skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+    """
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    now = time.time()
+    for key, val in data.items():
+        if "expires" in str(key).lower():
+            try:
+                if float(val) > now + 60:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
 def _expand_rule_paths(paths: list) -> list:
     """Expand a file rule's path list to concrete existing files.
 
     Plain entries resolve exactly (existing behavior). Entries containing glob
-    metacharacters (* ? [) are expanded against the filesystem; matches are
-    sorted by mtime DESCENDING so the freshest file comes first — this loop is
-    first-match-wins per target key, so the freshest credential wins. (The
-    sidecar's scrape loop overwrites per file, so it sorts ascending; both end
-    with the freshest file's values.)
+    metacharacters (* ? [) are expanded against the filesystem — this applies
+    to ANY file rule, so a future rule with a literal metachar in a filename
+    would need escaping. Matches are sorted so files with an unexpired
+    '*expires*' token come first and mtime descending within each group — this
+    loop is first-match-wins per target key, so the freshest *valid*
+    credential wins. (The sidecar's scrape loop overwrites per file and sorts
+    ascending; both end with the freshest valid file's values.)
     """
     import glob as glob_module
 
@@ -33,7 +59,7 @@ def _expand_rule_paths(paths: list) -> list:
             try:
                 matches = sorted(
                     (p for p in glob_module.glob(resolved) if os.path.isfile(p)),
-                    key=lambda p: os.stat(p).st_mtime,
+                    key=lambda p: (_has_unexpired_token(p), os.stat(p).st_mtime),
                     reverse=True,
                 )
                 out.extend(matches)

@@ -136,6 +136,22 @@ def test_expand_rule_paths_glob_freshest_first(tmp_path):
     assert matches == [str(newer), str(older)]
 
 
+def test_expand_rule_paths_valid_token_beats_newer_expired(tmp_path):
+    """A stale-but-recently-touched file must not beat a valid token:
+    valid files sort first (first-match-wins), expired ones after."""
+    from app.services.credential_provider import _expand_rule_paths
+
+    valid = tmp_path / "kimi-code-env-valid.json"
+    valid.write_text(json.dumps({"access_token": "good", "expires_at": 9999999999}))
+    stale = tmp_path / "kimi-code-env-stale.json"
+    stale.write_text(json.dumps({"access_token": "bad", "expires_at": 1000}))
+    os.utime(valid, (1000, 1000))  # older mtime …
+    os.utime(stale, (2000, 2000))  # … but stale is the recently-touched one
+
+    matches = _expand_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+    assert matches == [str(valid), str(stale)]
+
+
 def test_expand_rule_paths_plain_exact_match(tmp_path):
     """Non-glob entries keep exact-match behavior; missing files are skipped."""
     from app.services.credential_provider import _expand_rule_paths

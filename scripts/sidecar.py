@@ -1126,13 +1126,39 @@ def resolve_path(path_str: str) -> Path:
     return Path(path_str)
 
 
+def has_unexpired_token(path: Path) -> bool:
+    """Best-effort freshness probe: True when the file's JSON carries an
+    '*expires*' key with a numeric epoch value still in the future (+60s
+    skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+    """
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    now = time.time()
+    for key, val in data.items():
+        if "expires" in str(key).lower():
+            try:
+                if float(val) > now + 60:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
 def expand_file_rule_paths(paths: list) -> list:
     """Expand a file rule's path list to concrete existing files.
 
     Plain entries resolve exactly (existing behavior). Entries containing glob
-    metacharacters (* ? [) are expanded against the filesystem; matches are
-    sorted by mtime ascending so the freshest file lands last — the scrape
-    loop applies each file in order and later matches overwrite earlier ones.
+    metacharacters (* ? [) are expanded against the filesystem — this applies
+    to ANY file rule, so a future rule with a literal metachar in a filename
+    would need escaping. Glob matches are sorted by (has_unexpired_token,
+    mtime) ascending — expired files first, valid ones last, mtime ascending
+    within each group. The scrape loop applies each file in order and later
+    matches overwrite earlier ones, so the last file is the freshest *valid*
+    credential (or the freshest expired one when nothing valid remains).
     """
     import glob as glob_module
 
@@ -1142,10 +1168,10 @@ def expand_file_rule_paths(paths: list) -> list:
         if any(c in str(resolved) for c in "*?["):
             try:
                 matches = sorted(
-                    (Path(p) for p in glob_module.glob(str(resolved))),
-                    key=lambda p: p.stat().st_mtime,
+                    (Path(p) for p in glob_module.glob(str(resolved)) if Path(p).is_file()),
+                    key=lambda p: (has_unexpired_token(p), p.stat().st_mtime),
                 )
-                out.extend(m for m in matches if m.is_file())
+                out.extend(matches)
             except OSError:
                 logging.debug("File rule glob failed for %s", resolved, exc_info=True)
         elif resolved.exists():

@@ -336,6 +336,19 @@ class TestKimiCliCredentialGlob:
         matches = sidecar.expand_file_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
         assert matches == [older, newer]
 
+    def test_valid_token_wins_over_newer_expired_file(self, tmp_path):
+        """A stale-but-recently-touched file must not beat a valid token:
+        expired files sort first, valid ones last (last file wins)."""
+        valid = tmp_path / "kimi-code-env-valid.json"
+        valid.write_text(json.dumps({"access_token": "good", "expires_at": 9999999999}))
+        stale = tmp_path / "kimi-code-env-stale.json"
+        stale.write_text(json.dumps({"access_token": "bad", "expires_at": 1000}))
+        os.utime(valid, (1000, 1000))  # older mtime …
+        os.utime(stale, (2000, 2000))  # … but stale is the recently-touched one
+
+        matches = sidecar.expand_file_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+        assert matches == [stale, valid]
+
     def test_expand_plain_path_exact_match(self, tmp_path):
         """Non-glob entries keep exact-match behavior; missing files are skipped."""
         existing = tmp_path / "kimi-code.json"
