@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.10...v2.12.0) (2026-09-18)
+
+
+### Features
+
+* **kimi_coding:** Kimi Code API key auth, CLI credential fallback, OpenCode event fold-in ([#265](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/265)) ([c763894](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c763894c0631fdf67b2f8002d6e9fd91feafac12))
+
 ## [2.11.10](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.9...v2.11.10) (2026-09-13)
 
 
