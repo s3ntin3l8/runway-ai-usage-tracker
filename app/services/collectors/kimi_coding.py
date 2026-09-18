@@ -446,20 +446,9 @@ class KimiCodingCollector(BaseCollector):
             if monthly_total:
                 cards.append(monthly_total)
 
-            monthly_code = self._card_from_ratio(
-                pools.get("limit_month_code"),
-                "monthly",
-                input_source,
-                label="Monthly Code",
-                variant="code",
+            monthly_code = self._monthly_code_card(
+                pools.get("limit_month_code"), pools.get("limit_month_total"), input_source
             )
-            if monthly_code and self._code_pool_vestigial(
-                self._ratio_value((pools.get("limit_month_total") or {}).get("used_ratio")),
-                self._ratio_value((pools.get("limit_month_code") or {}).get("used_ratio")),
-            ):
-                # V2 plans report the code pool but coding draws from the total
-                # pool — a permanently-0% card is noise. See module docstring.
-                monthly_code = None
             if monthly_code:
                 cards.append(monthly_code)
 
@@ -559,7 +548,9 @@ class KimiCodingCollector(BaseCollector):
             if resp.status_code == 200:
                 plan_title, goods_version = self._plan_info_from_subscription(resp.json())
         except (httpx.RequestError, ValueError, KeyError, TypeError):
-            # Enrichment only — cards render fine without the tier badge.
+            # Enrichment only — cards render fine without the tier badge. The
+            # weekly suppression is inactive on this fallback (goods_version is
+            # unknown), so a V2 plan may briefly show the vestigial weekly card.
             logger.debug("Kimi web GetSubscription failed", exc_info=True)
 
         cards = self._parse_web_response(usage_data, stats_data, input_source, goods_version)
@@ -675,22 +666,14 @@ class KimiCodingCollector(BaseCollector):
         if monthly_total:
             cards.append(monthly_total)
 
-        monthly_code = self._card_from_ratio(
+        monthly_code = self._monthly_code_card(
             {
                 "used_ratio": balance.get("kimiCodeUsedRatio"),
                 "reset_time": balance.get("expireTime"),
             },
-            "monthly",
+            {"used_ratio": balance.get("amountUsedRatio")},
             input_source,
-            label="Monthly Code",
-            variant="code",
         )
-        if monthly_code and self._code_pool_vestigial(
-            self._ratio_value(balance.get("amountUsedRatio")),
-            self._ratio_value(balance.get("kimiCodeUsedRatio")),
-        ):
-            # Same vestigial-pool rule as the Code API path — see module docstring.
-            monthly_code = None
         if monthly_code:
             cards.append(monthly_code)
 
@@ -703,6 +686,27 @@ class KimiCodingCollector(BaseCollector):
     # ------------------------------------------------------------------
     # Inactive-pool suppression helpers
     # ------------------------------------------------------------------
+
+    def _monthly_code_card(
+        self,
+        code_pool: dict[str, Any] | None,
+        total_pool: dict[str, Any] | None,
+        input_source: str,
+    ) -> dict[str, Any] | None:
+        """Monthly "code" variant card — shared by the api and web paths so the
+        vestigial-pool suppression can't diverge between them. Returns None
+        when the pool is absent or vestigial (see _code_pool_vestigial)."""
+        card = self._card_from_ratio(
+            code_pool, "monthly", input_source, label="Monthly Code", variant="code"
+        )
+        if card and self._code_pool_vestigial(
+            self._ratio_value((total_pool or {}).get("used_ratio")),
+            self._ratio_value((code_pool or {}).get("used_ratio")),
+        ):
+            # V2 plans report the code pool but coding draws from the total
+            # pool — a permanently-0% card is noise. See module docstring.
+            return None
+        return card
 
     @staticmethod
     def _ratio_value(raw: Any) -> float | None:
@@ -721,7 +725,11 @@ class KimiCodingCollector(BaseCollector):
         """True when the monthly "code" pool is vestigial: the total pool has
         accrued usage but the code pool sits at exactly 0 — proof coding draws
         from the total pool. Both at 0 (fresh month) is ambiguous, so the card
-        stays until usage disambiguates."""
+        stays until usage disambiguates.
+
+        Trade-off: on a plan with a REAL separate code pool, this misfires at
+        month boundaries — the moment the total pool accrues before any code
+        usage, the genuine code card hides until code usage appears."""
         return total_ratio is not None and total_ratio > 0 and code_ratio == 0
 
     # ------------------------------------------------------------------
