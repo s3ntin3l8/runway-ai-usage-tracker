@@ -3447,6 +3447,62 @@ class TestKimiCodingCollector:
         assert len(result) == 2
 
     @pytest.mark.asyncio
+    async def test_stale_cli_token_is_configured_with_relogin_hint(self, mock_http_client):
+        """An expired CLI token keeps the card alive with a re-login hint."""
+        from app.services.credential_provider import CredentialMap
+
+        stale = datetime.now(UTC).timestamp() - 10
+        creds = CredentialMap(
+            {"cli_access_token": "cli_access_token_old", "cli_expires_at": stale},
+            sources={"cli_access_token": "server"},
+        )
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(creds=creds),
+            self._mock_settings(),
+        ]
+
+        try:
+            assert await collector.is_configured() is True
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "auth_failed"
+        assert "CLI token expired" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_parse_reset_accepts_numeric_string_epoch(self, mock_http_client):
+        """Reset values arriving as numeric strings parse as epoch seconds."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        payload = {
+            "usages": {
+                "limit_month_total": {
+                    "used_ratio": 0.5,
+                    "reset_time": "1789742336",
+                }
+            }
+        }
+        self._http_router(mock_http_client, [("/coding/v1/usages", payload)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        monthly = next(c for c in result if c.get("window_type") == "monthly")
+        assert monthly["reset"] != "Unknown"
+        assert monthly["reset_at"] is not None
+
+    @pytest.mark.asyncio
     async def test_membership_level_mapping_v1(self, mock_http_client):
         """user.membership.level maps to tier names for GOODS_VERSION_V1 goods."""
         collector = KimiCodingCollector()

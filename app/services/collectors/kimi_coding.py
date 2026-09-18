@@ -97,11 +97,20 @@ class KimiCodingCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
         self._ephemeral_device_id: str | None = None
         self._api_key_auth_failed = False
+        # Set when a CLI credential file exists but its access token is past
+        # expires_at — surfaces a re-login hint instead of a silent no-card.
+        self._stale_cli_token = False
 
     async def is_configured(self) -> bool:
-        """True when any credential source is present (API key, CLI token, cookie)."""
+        """True when any credential source is present (API key, CLI token, cookie).
+
+        A stale (expired) CLI token counts as configured so SmartCollector does
+        not silently skip the card — collection runs and _error_handler emits a
+        re-login hint instead of the card disappearing.
+        """
         return (
             await self._resolve_code_bearer() is not None
+            or self._stale_cli_token
             or await self._resolve_cookie() is not None
         )
 
@@ -182,6 +191,15 @@ class KimiCodingCollector(BaseCollector):
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return fallback error when nothing could collect."""
         if not await self._resolve_code_bearer() and not await self._resolve_cookie():
+            if self._stale_cli_token:
+                return [
+                    error_card(
+                        "Kimi Coding",
+                        "🌙",
+                        "Kimi Code CLI token expired — re-login with the CLI or set KIMI_CODE_API_KEY",
+                        error_type="auth_failed",
+                    )
+                ]
             return [
                 error_card(
                     "Kimi Coding",
@@ -226,6 +244,7 @@ class KimiCodingCollector(BaseCollector):
         official CLI owns the refresh flow; when the token lapses, re-login).
         """
         candidates: list[tuple[str, Any, str]] = []
+        self._stale_cli_token = False
 
         # Local file (registry rule) — access_token + expires_at together.
         try:
@@ -257,6 +276,8 @@ class KimiCodingCollector(BaseCollector):
         for token, expires_at, source in candidates:
             if self._is_cli_token_fresh(expires_at):
                 return token, source
+        if candidates:
+            self._stale_cli_token = True
         return None
 
     @staticmethod
@@ -493,7 +514,9 @@ class KimiCodingCollector(BaseCollector):
             if resp.status_code == 200:
                 usage_data = resp.json()
         except (httpx.RequestError, ValueError, KeyError, TypeError):
-            pass
+            # Non-fatal: the strategy may still build cards from the other
+            # web calls, or degrade to an error card downstream.
+            logger.debug("Kimi web GetUsages failed", exc_info=True)
 
         # Enrichment: subscription stats (accurate 5h/weekly ratios, monthly pool).
         stats_data: dict[str, Any] = {}
@@ -504,7 +527,8 @@ class KimiCodingCollector(BaseCollector):
             if resp.status_code == 200:
                 stats_data = resp.json()
         except (httpx.RequestError, ValueError, KeyError, TypeError):
-            pass
+            # Enrichment only — GetUsages counts still stand on their own.
+            logger.debug("Kimi web GetSubscriptionStats failed", exc_info=True)
 
         # Enrichment: subscription (plan title -> tier). Never fatal.
         plan_title: str | None = None
@@ -515,7 +539,8 @@ class KimiCodingCollector(BaseCollector):
             if resp.status_code == 200:
                 plan_title = self._plan_title_from_subscription(resp.json())
         except (httpx.RequestError, ValueError, KeyError, TypeError):
-            pass
+            # Enrichment only — cards render fine without the tier badge.
+            logger.debug("Kimi web GetSubscription failed", exc_info=True)
 
         cards = self._parse_web_response(usage_data, stats_data, input_source)
         if plan_title:
@@ -772,8 +797,16 @@ class KimiCodingCollector(BaseCollector):
             except (OverflowError, OSError, ValueError):
                 return None, "Unknown"
             return dt, human_delta(dt)
+        raw_str = str(reset_raw)
+        # Numeric strings are epoch seconds too (e.g. "1750000000"); ISO
+        # strings never parse as float, so try epoch before ISO.
         try:
-            dt = parse_iso8601_utc(str(reset_raw))
+            dt = datetime.fromtimestamp(float(raw_str), tz=UTC)
+            return dt, human_delta(dt)
+        except (OverflowError, OSError, ValueError):
+            pass
+        try:
+            dt = parse_iso8601_utc(raw_str)
             return dt, human_delta(dt)
         except (ValueError, TypeError):
             logger.debug("Failed to parse Kimi reset time %r", reset_raw, exc_info=True)
