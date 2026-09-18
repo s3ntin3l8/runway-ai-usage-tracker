@@ -260,11 +260,14 @@ def test_map_opencode_canonical_unmapped_returns_none():
 
 
 def test_map_opencode_canonical_kimi():
-    """Kimi For Coding (kimi-code-plan-global backend) folds onto kimi_coding."""
-    assert map_opencode_canonical("kimi-code-plan-global") == ("kimi_coding", "default")
+    """Kimi For Coding (kimi-code-plan-global backend) folds onto kimi_coding.
+    The account override is None: events keep OpenCode's resolved account
+    (usually the user's email), matching the account a user-labeled kimi_coding
+    quota card resolves to via resolve_account_id."""
+    assert map_opencode_canonical("kimi-code-plan-global") == ("kimi_coding", None)
     assert map_opencode_canonical("KIMI-CODE-PLAN-GLOBAL") == (
         "kimi_coding",
-        "default",
+        None,
     )  # case-insensitive
 
 
@@ -370,9 +373,10 @@ def _kimi_message(msg_id: str, model_id: str = "k3-256k") -> dict:
 @pytest.mark.parametrize("model_id", ["k3-256k", "kimi-for-coding"])
 def test_kimi_code_plan_global_retagged_onto_canonical_card(model_id):
     """Events from OpenCode's kimi-code-plan-global backend (both the k3-256k
-    and the kimi-for-coding modelIDs) land on provider_id 'kimi_coding' /
-    account_id 'default' — the same key the kimi_coding collector's quota card
-    uses — and their $0 logged cost is dropped so the server prices them."""
+    and the kimi-for-coding modelIDs) land on provider_id 'kimi_coding' with
+    their own account_id kept (pass-through) — the same account the kimi_coding
+    collector's quota card resolves to when the user labeled it — and their $0
+    logged cost is dropped so the server prices them."""
     db_path = _build_db([_kimi_message("msg_kimi_001", model_id)])
     try:
         evts = parse_opencode_events(
@@ -380,11 +384,26 @@ def test_kimi_code_plan_global_retagged_onto_canonical_card(model_id):
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "kimi_coding"
-        assert evts[0].account_id == "default"
+        assert evts[0].account_id == "user@opencode.test"
         assert evts[0].model_id == model_id
         assert evts[0].cost_usd is None
         assert evts[0].tokens_input == 5000
         assert evts[0].tokens_cache_read == 12000
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_kimi_code_plan_global_without_identity_lands_on_default():
+    """With no OpenCode account identity the event keeps account_id 'default',
+    matching an unlabeled kimi_coding quota card."""
+    db_path = _build_db([_kimi_message("msg_kimi_001")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "kimi_coding"
+        assert evts[0].account_id == "default"
     finally:
         db_path.unlink(missing_ok=True)
 

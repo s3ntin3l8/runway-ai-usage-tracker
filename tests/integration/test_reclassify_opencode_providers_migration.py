@@ -266,8 +266,9 @@ def test_migration_retags_minimax_coding_plan_and_forces_account_id(engine):
 def test_migration_retags_kimi_code_plan_global_onto_kimi_coding(engine):
     """Events under 'opencode-kimi-code-plan-global' (the fallback id OpenCode's
     kimi-code-plan-global providerID mints) move to the canonical 'kimi_coding'
-    provider AND account_id 'default' — the identity the kimi_coding collector
-    uses — so they enrich the Kimi Coding quota card."""
+    provider, keeping their own account_id (pass-through) — the same account a
+    user-labeled kimi_coding quota card resolves to — so they enrich the Kimi
+    Coding quota card."""
     with Session(engine) as s:
         s.add(
             UsageEvent(
@@ -316,7 +317,7 @@ def test_migration_retags_kimi_code_plan_global_onto_kimi_coding(engine):
     with Session(engine) as s:
         ev = s.exec(select(UsageEvent)).one()
         assert ev.provider_id == "kimi_coding"
-        assert ev.account_id == "default"
+        assert ev.account_id == "user@opencode.test"  # pass-through, not forced
         assert ev.kind == "message"
         # cost_usd untouched here — reclassify only retags identity;
         # scripts/recost_events.py handles repricing.

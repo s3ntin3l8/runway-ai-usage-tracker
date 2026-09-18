@@ -9,17 +9,28 @@ Collection Strategies (both standalone-capable, UI-reorderable):
 Strategy merge semantics (see collect()): strategies run in their resolved
 (user-reorderable) order; the FIRST successful strategy provides the base
 cards and every later success enriches it — adding windows the base lacks
-(the Code API omits the weekly window and the plan title), filling the tier
-badge, and upgrading ratio-only cards to real counts when available.
+(the Code API omits the weekly window on legacy plans and the plan title),
+filling the tier badge, and upgrading ratio-only cards to real counts when
+available. Inactive windows are suppressed, not merged in (see below).
 
 Live response notes (verified 2026-09-18 against a Pro plan):
 - Code API returns `limits[]` (5h counts), ratio pools under `usages`
   (`limit_5h`, `limit_7d`, `limit_month_total`, `limit_month_code`) and
   `booster_wallet`. `limit_5h.used_ratio` demonstrably lags the counts
   (0% vs a real 47%) — counts always win for the 5h window.
-- Pro plan (GOODS_VERSION_V2): 5h session limit 100, weekly limit 100,
-  monthly credit pool. NO `usage` (weekly counts), `user`, or `version`
-  fields — tier only comes from the web GetSubscription goods.title.
+- Pro plan (GOODS_VERSION_V2): 5h session limit 100, monthly credit pool.
+  NO `usage` (weekly counts), `user`, or `version` fields — tier only comes
+  from the web GetSubscription goods.title. The web calls still report a
+  vestigial weekly window (ratelimitCode7d / GetUsages weekly detail) and a
+  `limit_month_code` pool that never accrues (coding draws from the total
+  pool); both are suppressed so Pro shows session + monthly total only:
+  - weekly: hidden when GetSubscription goods.version == GOODS_VERSION_V2
+    (V2 plans are session + monthly; the weekly window is a legacy V1-tier
+    quota). The Code API omits it entirely on V2.
+  - monthly "code" variant: hidden when the total pool has accrued usage
+    (>0) but the code pool sits at exactly 0 — proof the code pool isn't
+    the binding one. Both at 0 (fresh month) is ambiguous, so the card
+    stays until usage disambiguates.
 - CLI credential (~/.kimi-code/credentials/kimi-code.json) is read-only;
   the refresh token is never used. A token is fresh when
   expires_at > now + 60s (CodexBar parity).
@@ -435,12 +446,8 @@ class KimiCodingCollector(BaseCollector):
             if monthly_total:
                 cards.append(monthly_total)
 
-            monthly_code = self._card_from_ratio(
-                pools.get("limit_month_code"),
-                "monthly",
-                input_source,
-                label="Monthly Code",
-                variant="code",
+            monthly_code = self._monthly_code_card(
+                pools.get("limit_month_code"), pools.get("limit_month_total"), input_source
             )
             if monthly_code:
                 cards.append(monthly_code)
@@ -530,42 +537,54 @@ class KimiCodingCollector(BaseCollector):
             # Enrichment only — GetUsages counts still stand on their own.
             logger.debug("Kimi web GetSubscriptionStats failed", exc_info=True)
 
-        # Enrichment: subscription (plan title -> tier). Never fatal.
+        # Enrichment: subscription (plan title -> tier, goods version -> which
+        # windows are active). Never fatal.
         plan_title: str | None = None
+        goods_version: str | None = None
         try:
             resp = await http_request_with_retry(
                 client, "POST", _SUBSCRIPTION_URL, headers=headers, json={}, timeout=5.0
             )
             if resp.status_code == 200:
-                plan_title = self._plan_title_from_subscription(resp.json())
+                plan_title, goods_version = self._plan_info_from_subscription(resp.json())
         except (httpx.RequestError, ValueError, KeyError, TypeError):
-            # Enrichment only — cards render fine without the tier badge.
+            # Enrichment only — cards render fine without the tier badge. The
+            # weekly suppression is inactive on this fallback (goods_version is
+            # unknown), so a V2 plan may briefly show the vestigial weekly card.
             logger.debug("Kimi web GetSubscription failed", exc_info=True)
 
-        cards = self._parse_web_response(usage_data, stats_data, input_source)
+        cards = self._parse_web_response(usage_data, stats_data, input_source, goods_version)
         if plan_title:
             for card in cards:
                 card["tier"] = plan_title
         return cards
 
     @staticmethod
-    def _plan_title_from_subscription(data: dict[str, Any]) -> str | None:
+    def _plan_info_from_subscription(data: dict[str, Any]) -> tuple[str | None, str | None]:
+        """(plan title, goods version) from GetSubscription; (None, None) when
+        inactive. The goods version drives inactive-window suppression."""
         subscription = data.get("subscription") or {}
         if subscription.get("active") is not True:
-            return None
+            return None, None
         if subscription.get("status") != "SUBSCRIPTION_STATUS_ACTIVE":
-            return None
-        title = (subscription.get("goods") or {}).get("title")
-        title = str(title or "").strip()
-        return title or None
+            return None, None
+        goods = subscription.get("goods") or {}
+        title = str(goods.get("title") or "").strip() or None
+        version = str(goods.get("version") or "").strip() or None
+        return title, version
 
     def _parse_web_response(
         self,
         usage_data: dict[str, Any],
         stats_data: dict[str, Any],
         input_source: str,
+        goods_version: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Merge GetUsages counts with GetSubscriptionStats ratios into cards."""
+        """Merge GetUsages counts with GetSubscriptionStats ratios into cards.
+
+        `goods_version` comes from GetSubscription and gates inactive-window
+        suppression (V2 plans have no real weekly quota — see module docstring).
+        """
         cards: list[dict[str, Any]] = []
 
         usages = usage_data.get("usages") or []
@@ -610,16 +629,22 @@ class KimiCodingCollector(BaseCollector):
 
         # Weekly: prefer the dedicated ratelimitCode7d ratio (the GetUsages
         # weekly detail's `used` is often absent, showing a misleading 0%).
+        # V2 goods have no real weekly window — the API still reports a
+        # vestigial ratelimitCode7d, so suppress the card there.
         weekly_card = None
         rl7d = stats_data.get("ratelimitCode7d") or {}
-        if rl7d.get("enabled", True) and rl7d.get("ratio") is not None:
+        if (
+            goods_version != "GOODS_VERSION_V2"
+            and rl7d.get("enabled", True)
+            and rl7d.get("ratio") is not None
+        ):
             weekly_card = self._card_from_ratio(
                 {"used_ratio": rl7d.get("ratio"), "reset_time": rl7d.get("resetTime")},
                 "weekly",
                 input_source,
                 label="Weekly quota",
             )
-        if weekly_card is None and coding:
+        if weekly_card is None and coding and goods_version != "GOODS_VERSION_V2":
             weekly_card = self._card_from_detail(
                 coding.get("detail") or {}, "weekly", input_source, label="Weekly quota"
             )
@@ -641,15 +666,13 @@ class KimiCodingCollector(BaseCollector):
         if monthly_total:
             cards.append(monthly_total)
 
-        monthly_code = self._card_from_ratio(
+        monthly_code = self._monthly_code_card(
             {
                 "used_ratio": balance.get("kimiCodeUsedRatio"),
                 "reset_time": balance.get("expireTime"),
             },
-            "monthly",
+            {"used_ratio": balance.get("amountUsedRatio")},
             input_source,
-            label="Monthly Code",
-            variant="code",
         )
         if monthly_code:
             cards.append(monthly_code)
@@ -659,6 +682,55 @@ class KimiCodingCollector(BaseCollector):
             if cards
             else [error_card("Kimi Coding", "🌙", "No Quota Data", error_type="parse_error")]
         )
+
+    # ------------------------------------------------------------------
+    # Inactive-pool suppression helpers
+    # ------------------------------------------------------------------
+
+    def _monthly_code_card(
+        self,
+        code_pool: dict[str, Any] | None,
+        total_pool: dict[str, Any] | None,
+        input_source: str,
+    ) -> dict[str, Any] | None:
+        """Monthly "code" variant card — shared by the api and web paths so the
+        vestigial-pool suppression can't diverge between them. Returns None
+        when the pool is absent or vestigial (see _code_pool_vestigial)."""
+        card = self._card_from_ratio(
+            code_pool, "monthly", input_source, label="Monthly Code", variant="code"
+        )
+        if card and self._code_pool_vestigial(
+            self._ratio_value((total_pool or {}).get("used_ratio")),
+            self._ratio_value((code_pool or {}).get("used_ratio")),
+        ):
+            # V2 plans report the code pool but coding draws from the total
+            # pool — a permanently-0% card is noise. See module docstring.
+            return None
+        return card
+
+    @staticmethod
+    def _ratio_value(raw: Any) -> float | None:
+        """Coerce a used_ratio-ish value to a non-negative float; None when
+        absent, unparseable, or negative."""
+        if raw is None:
+            return None
+        try:
+            ratio = float(raw)
+        except (ValueError, TypeError):
+            return None
+        return ratio if ratio >= 0 else None
+
+    @staticmethod
+    def _code_pool_vestigial(total_ratio: float | None, code_ratio: float | None) -> bool:
+        """True when the monthly "code" pool is vestigial: the total pool has
+        accrued usage but the code pool sits at exactly 0 — proof coding draws
+        from the total pool. Both at 0 (fresh month) is ambiguous, so the card
+        stays until usage disambiguates.
+
+        Trade-off: on a plan with a REAL separate code pool, this misfires at
+        month boundaries — the moment the total pool accrues before any code
+        usage, the genuine code card hides until code usage appears."""
+        return total_ratio is not None and total_ratio > 0 and code_ratio == 0
 
     # ------------------------------------------------------------------
     # Card builders
