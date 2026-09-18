@@ -15,7 +15,8 @@ balance — those are separate providers (see *Related Files*).
      `GetSubscription`) with the `kimi-auth` cookie. Also the **enrichment**
      source: it sees windows the Code API omits.
 - **Cards**: up to 4 — 5h session (counts), weekly (ratio), monthly total
-  (ratio), monthly code (ratio).
+  (ratio), monthly code (ratio). **Inactive windows are suppressed**, so a
+  plan may show fewer (see *Plan realities* below).
 - **Merge semantics**: strategies run in their resolved (user-reorderable)
   order; the **first success is the base** and each later success enriches it
   — adding missing windows, the plan-title tier badge, and upgrading
@@ -39,8 +40,10 @@ browser cookie.
 
 > **Note:** OpenCode events served by its `kimi-code-plan-global` backend are
 > retagged onto this provider (`_OC_CANONICAL_MAP` in
-> `scripts/sidecar_pkg/event_extractors/opencode.py`), so their token counts
-> enrich these same cards.
+> `scripts/sidecar_pkg/event_extractors/opencode.py`) with their own account
+> kept (pass-through), so their token counts enrich the same account's quota
+> cards — set an account label on the Kimi Coding provider to match your
+> OpenCode login email if the cards split.
 
 ## Endpoints
 
@@ -67,13 +70,26 @@ collector never prefers it over `limits[]`.
 ## Plan realities (verified against Pro)
 
 - **Pro** (¥/$39/mo, `GOODS_VERSION_V2`, goods title "Pro"): 5h session limit
-  **100**, weekly limit **100** (weekly visible only via web), monthly credit
-  pool (ratios only). The Code API returns **no** `usage`, `user.membership`,
-  or `version` fields — the tier badge and weekly card come from the web
-  strategy's enrichment. With API-key-only auth those two are absent.
+  **100** and a monthly credit pool (ratios only). The web calls still report
+  a **vestigial weekly window** (`ratelimitCode7d` / GetUsages weekly detail)
+  and a **`limit_month_code` pool that never accrues** (coding draws from the
+  total pool) — both are suppressed so Pro renders session + monthly total
+  only:
+  - *Weekly*: hidden when `GetSubscription` reports `GOODS_VERSION_V2` (V2
+    plans are session + monthly; weekly is a legacy V1-tier quota). The Code
+    API omits it entirely on V2.
+  - *Monthly code*: hidden when the total pool has accrued usage (`>0`) but
+    the code pool sits at exactly `0` — proof the code pool isn't the binding
+    one. Both at `0` (fresh month) is ambiguous, so the card stays until
+    usage disambiguates.
+  The Code API returns **no** `usage`, `user.membership`, or `version` fields
+  — the tier badge comes from the web strategy's `GetSubscription` enrichment.
+  With API-key-only auth the tier badge is absent unless a cookie is also
+  configured.
 - Legacy China plans (`GOODS_VERSION_V1`) report `user.membership.level`
   (`LEVEL_FREE`/`TRIAL`/`BASIC`/`INTERMEDIATE`/`ADVANCED` → Adagio/Andante/
-  Moderato/Allegretto/Allegro) and weekly request counts.
+  Moderato/Allegretto/Allegro) and weekly request counts — the weekly card
+  stays for these.
 
 ## Output Format
 
@@ -149,9 +165,12 @@ and update the "API Key (Kimi Code Console)" field.
 cookie (or set an API key — the API key does not expire).
 
 ### No tier badge / no weekly card
-**Expected with API-key-only auth.** The Code API omits membership and weekly
-data; add a `kimi-auth` cookie (or sign in with the Kimi Code CLI plus browser
-session) so the web strategy can enrich.
+**No weekly card on a V2 plan (Pro) is expected** — V2 plans have no real
+weekly quota; the collector suppresses the vestigial window the web API still
+reports. **No tier badge with API-key-only auth is also expected** — the Code
+API omits membership data; add a `kimi-auth` cookie (or sign in with the Kimi
+Code CLI plus browser session) so the web strategy can enrich the tier badge.
+On V1-tier plans (cookie auth) the weekly card is the primary quota and stays.
 
 ## Related Files
 

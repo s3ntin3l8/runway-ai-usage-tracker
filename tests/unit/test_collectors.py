@@ -3267,7 +3267,11 @@ class TestKimiCodingCollector:
 
     @pytest.mark.asyncio
     async def test_collect_api_key_success_pro_shape(self, mock_http_client):
-        """API strategy: Pro plan Code API response -> session counts + 2 monthly ratio cards."""
+        """API strategy: Pro plan Code API response -> session counts + monthly total.
+
+        The Pro plan reports limit_month_code at 0 while limit_month_total has
+        accrued usage — the vestigial code pool is suppressed (coding draws
+        from the total pool), so no monthly "code" card."""
         collector = KimiCodingCollector()
         patchers = [
             self._patch_credentials(api_key="kimi_api_key"),
@@ -3281,7 +3285,7 @@ class TestKimiCodingCollector:
             for p in patchers:
                 p.stop()
 
-        assert len(result) == 3
+        assert len(result) == 2
         session = next(c for c in result if c.get("window_type") == "session")
         # Real counts win over the (stale, 0%) limit_5h ratio.
         assert session["used_value"] == 41.0
@@ -3293,12 +3297,66 @@ class TestKimiCodingCollector:
         )
         assert monthly_total["pct_used"] == pytest.approx(1.1)
         assert monthly_total["used_value"] is None
+        # Vestigial code pool: total > 0, code == 0 -> no "code" variant card.
+        assert not any(
+            c.get("window_type") == "monthly" and c.get("variant") == "code" for c in result
+        )
+        # Pro plan reports no weekly window via the Code API.
+        assert not any(c.get("window_type") == "weekly" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_monthly_code_kept_on_fresh_month(self, mock_http_client):
+        """Both pools at 0 (fresh month) is ambiguous — the code card stays."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        payload = {
+            "usages": {
+                "limit_month_total": {"used_ratio": 0.0, "reset_time": "2026-10-19T00:00:00Z"},
+                "limit_month_code": {"used_ratio": 0.0, "reset_time": "2026-10-19T00:00:00Z"},
+            }
+        }
+        self._http_router(mock_http_client, [("/coding/v1/usages", payload)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
         monthly_code = next(
             c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "code"
         )
         assert monthly_code["pct_used"] == pytest.approx(0.0)
-        # Pro plan reports no weekly window via the Code API.
-        assert not any(c.get("window_type") == "weekly" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_monthly_code_kept_when_pool_accrues(self, mock_http_client):
+        """A code pool that accrues its own usage is real — the card stays."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        payload = {
+            "usages": {
+                "limit_month_total": {"used_ratio": 0.5, "reset_time": "2026-10-19T00:00:00Z"},
+                "limit_month_code": {"used_ratio": 0.25, "reset_time": "2026-10-19T00:00:00Z"},
+            }
+        }
+        self._http_router(mock_http_client, [("/coding/v1/usages", payload)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        monthly_code = next(
+            c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "code"
+        )
+        assert monthly_code["pct_used"] == pytest.approx(25.0)
 
     @pytest.mark.asyncio
     async def test_collect_api_key_401_error_card(self, mock_http_client):
@@ -3389,6 +3447,95 @@ class TestKimiCodingCollector:
         assert len(result) == 4  # api's monthly variants also present (same keys -> kept web's)
 
     @pytest.mark.asyncio
+    async def test_collect_web_v2_goods_suppresses_inactive_windows(self, mock_http_client):
+        """V2 goods (Pro): the web calls still report a vestigial weekly window
+        (ratelimitCode7d) and a never-accruing code pool — both suppressed, so
+        only session + monthly total render."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_cookie"),
+        ]
+        v2_subscription = {
+            "subscription": {
+                "active": True,
+                "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                "goods": {"title": "Pro", "version": "GOODS_VERSION_V2"},
+            }
+        }
+        stats = {
+            "ratelimitCode7d": {
+                "ratio": 0.0038,
+                "enabled": True,
+                "resetTime": "2026-09-25T13:52:05Z",
+            },
+            "subscriptionBalance": {
+                "amountUsedRatio": 0.0128,
+                "kimiCodeUsedRatio": 0.0,
+                "expireTime": "2026-10-19T00:00:00Z",
+            },
+        }
+        self._http_router(
+            mock_http_client,
+            [
+                ("GetUsages", self.WEB_USAGES_RESPONSE),
+                ("GetSubscriptionStats", stats),
+                ("GetSubscription", v2_subscription),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 2
+        assert any(c.get("window_type") == "session" for c in result)
+        monthly_total = next(
+            c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "total"
+        )
+        assert monthly_total["pct_used"] == pytest.approx(1.28)
+        assert not any(c.get("window_type") == "weekly" for c in result)
+        assert not any(
+            c.get("window_type") == "monthly" and c.get("variant") == "code" for c in result
+        )
+        assert all(c.get("tier") == "Pro" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_web_v1_goods_keeps_weekly(self, mock_http_client):
+        """V1 goods (legacy tiers): weekly is the primary quota — the card stays."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(),
+            self._mock_settings(KIMI_AUTH_TOKEN="jwt_cookie"),
+        ]
+        v1_subscription = {
+            "subscription": {
+                "active": True,
+                "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                "goods": {"title": "Allegretto", "version": "GOODS_VERSION_V1"},
+            }
+        }
+        self._http_router(
+            mock_http_client,
+            [
+                ("GetUsages", self.WEB_USAGES_RESPONSE),
+                ("GetSubscriptionStats", self.WEB_STATS_RESPONSE),
+                ("GetSubscription", v1_subscription),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        weekly = next(c for c in result if c.get("window_type") == "weekly")
+        assert weekly["pct_used"] == pytest.approx(0.38)
+
+    @pytest.mark.asyncio
     async def test_collect_cli_token_used_with_identity_headers(self, mock_http_client):
         """No API key: fresh CLI access token is used with X-Msh-* identity headers."""
         from app.services.credential_provider import CredentialMap
@@ -3416,7 +3563,7 @@ class TestKimiCodingCollector:
         assert headers["Authorization"] == "Bearer cli_access_token_123"
         assert headers["X-Msh-Platform"] == "kimi_code_cli"
         assert "X-Msh-Device-Id" in headers
-        assert len(result) == 3
+        assert len(result) == 2  # vestigial monthly "code" pool suppressed
 
     @pytest.mark.asyncio
     async def test_collect_stale_cli_token_falls_back_to_cookie(self, mock_http_client):

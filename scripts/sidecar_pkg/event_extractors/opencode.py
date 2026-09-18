@@ -40,11 +40,14 @@ providerID -> runway provider_id mapping (see _OC_PROVIDER_MAP below):
 A second map, _OC_CANONICAL_MAP, catches providerIDs that front a provider
 Runway already collects directly (e.g. MiniMax's coding plan, reachable both
 through its own API key and through OpenCode). Those events are retagged onto
-the canonical provider_id *and* forced onto the account_id that provider's own
-collector uses, so they land on the same latest_usage card instead of a
-standalone opencode-<slug> entry. Their logged `cost` is dropped (cost_usd=
-None) so the server prices them from provider_pricing instead of trusting a
-subscription's $0 — see cost_calculator.compute_event_cost_breakdown.
+the canonical provider_id. The map value is (canonical provider_id,
+account_id override): a concrete account_id forces every event onto that
+account (e.g. MiniMax's API-key-only collector only ever emits
+account_id="default"); None keeps the event's own account_id — what OpenCode
+already resolved (usually the user's email) — which matches the account a
+user-labeled collector card resolves to. Their logged `cost` is dropped
+(cost_usd=None) so the server prices them from provider_pricing instead of
+trusting a subscription's $0 — see cost_calculator.compute_event_cost_breakdown.
 
 Messages whose `error` field is set are pushed with kind="error" (no tokens/
 cost were actually incurred) so they don't inflate usage totals on whichever
@@ -90,23 +93,28 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 
 
 # OpenCode providerIDs that front a provider Runway already collects directly
-# -> (canonical provider_id, account_id its own collector uses). Keep in sync
-# with scripts/reclassify_opencode_providers.py, which reapplies this mapping
-# to already-ingested events.
-_OC_CANONICAL_MAP: dict[str, tuple[str, str]] = {
+# -> (canonical provider_id, account_id override or None to keep the event's
+# own account). Keep in sync with scripts/reclassify_opencode_providers.py,
+# which reapplies this mapping to already-ingested events.
+_OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # MiniMax's coding-plan collector is API-key-only (no account email), so
     # every card it emits is account_id="default" — match that here.
     "minimax-coding-plan": ("minimax", "default"),
     # Kimi For Coding (kimi-code-plan-global backend in OpenCode; modelIDs
-    # "k3-256k" / "kimi-for-coding") — the kimi_coding collector is
-    # API-key-first, so its cards are account_id="default" too.
-    "kimi-code-plan-global": ("kimi_coding", "default"),
+    # "k3-256k" / "kimi-for-coding"). Pass the account through: OpenCode
+    # resolves the real account identity (usually the user's email), which
+    # lands on the same account a user-labeled kimi_coding quota card
+    # resolves to via resolve_account_id. Forcing "default" here split
+    # enrichment events and quota cards into two rows (issue: label-set
+    # account).
+    "kimi-code-plan-global": ("kimi_coding", None),
 }
 
 
-def map_opencode_canonical(oc_provider_id: str) -> tuple[str, str] | None:
+def map_opencode_canonical(oc_provider_id: str) -> tuple[str, str | None] | None:
     """If `oc_provider_id` fronts a provider Runway collects directly, return
-    the (provider_id, account_id) to retag onto. Otherwise None."""
+    the (provider_id, account_id override) to retag onto. A None account
+    override keeps the event's own account_id. Otherwise None."""
     return _OC_CANONICAL_MAP.get((oc_provider_id or "").strip().lower())
 
 
@@ -239,11 +247,15 @@ def parse_opencode_events(
 
         # Some OpenCode providerIDs front a provider Runway already collects
         # directly (e.g. MiniMax's coding plan) — retag onto that provider_id
-        # and its collector's account_id so this event lands on the same card,
-        # and drop the logged $0 subscription cost so the server prices it.
+        # (and its account_id when the map pins one) so this event lands on the
+        # same card, and drop the logged $0 subscription cost so the server
+        # prices it. A None account override keeps the event's own account.
         canonical = map_opencode_canonical(oc_provider_id)
         if canonical is not None:
-            runway_provider_id, event_account_id = canonical
+            canonical_provider_id, account_override = canonical
+            runway_provider_id = canonical_provider_id
+            if account_override is not None:
+                event_account_id = account_override
             cost_usd = None
 
         # A failed request (bad auth, no subscription, etc.) never actually
