@@ -821,9 +821,21 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     """Return all known providers merged with their DB configuration."""
     from app.core.registry import registry
 
-    # Load DB configs keyed by provider_id
+    # Load DB configs grouped by provider_id so the response can expose every
+    # row under the new `accounts` field without silently collapsing N rows
+    # to one (the multi-account hardening). The legacy top-level fields stay
+    # byte-identical for single-row users by sourcing from the canonical row
+    # (the `account_id="default"` row when present, else the first row).
     db_rows = session.exec(select(ProviderConfig)).all()
-    db_map: dict[str, ProviderConfig] = {r.provider_id: r for r in db_rows}
+    rows_by_provider: dict[str, list[ProviderConfig]] = {}
+    for r in db_rows:
+        rows_by_provider.setdefault(r.provider_id, []).append(r)
+
+    def _canonical_row(rows: list[ProviderConfig]) -> ProviderConfig | None:
+        for r in rows:
+            if r.account_id == "default":
+                return r
+        return rows[0] if rows else None
 
     # Fetch global default interval
     sys_cfg = session.exec(select(SystemConfig)).first()
@@ -833,7 +845,8 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     for p_id, (_, name, default_ttl) in manager.collector_registry.items():
         provider_def = registry.get_provider(p_id) or {}
         icon = provider_def.get("icon", _PROVIDER_ICONS.get(p_id, "🔌"))
-        db = db_map.get(p_id)
+        provider_rows = rows_by_provider.get(p_id, [])
+        db = _canonical_row(provider_rows)
         rules = provider_def.get("rules", [])
         supports_api_key = any(
             any(k in rule.get("mapping", {}).values() for k in ("api_key", "oauth_token"))
@@ -886,31 +899,122 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 # Strategy configuration
                 "supported_strategies": manager.get_supported_strategies(p_id),
                 "collection_strategies": db.strategies if db else None,
+                # Per-account breakdown (multi-account). Empty list when the
+                # provider has no rows; one entry per row when it does. The
+                # canonical row above is the first entry whose account_id is
+                # "default", or the first entry overall when no default exists.
+                "accounts": [
+                    {
+                        "account_id": r.account_id,
+                        "enabled": r.enabled,
+                        "api_key_set": bool(r.api_key_encrypted),
+                        "session_cookie_set": bool(r.session_cookie_encrypted),
+                        "account_label": r.account_label,
+                        "poll_interval_seconds": r.poll_interval_seconds,
+                        "collection_strategies": r.strategies,
+                    }
+                    for r in provider_rows
+                ],
+                "account_count": len(provider_rows),
             }
         )
 
     return {"providers": results}
 
 
+@router.put("/provider-config/{provider_id}/{account_id}")
+@limiter.limit("20/minute")
+async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
+    request: Request,
+    provider_id: str,
+    account_id: str,
+    body: _ProviderConfigUpdate,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Create or update provider configuration for a specific account.
+
+    Multi-account canonical endpoint. The path parameter ``account_id`` is the
+    authoritative identity under which credentials are stored and propagated to
+    the in-memory token cache; the body may include an ``account_label`` to set
+    a human-readable name. Use ``GET /provider-configs`` to discover existing
+    ``account_id`` values per provider.
+    """
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+
+    await _apply_provider_config_update(session, provider_id, account_id, body)
+    return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
+
+
 @router.put("/provider-config/{provider_id}")
 @limiter.limit("20/minute")
-async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
+async def upsert_provider_config(
     request: Request,
     provider_id: str,
     body: _ProviderConfigUpdate,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict:
-    """Create or update provider configuration."""
+    """Create or update provider configuration (single-account shortcut).
+
+    Kept permanently as a guarded shortcut for non-webapp callers (operator
+    scripts, the legacy ``make sidecar`` helper, third-party integrations).
+    Behavior:
+
+    - **0 rows** for this provider: creates a new row with ``account_id="default"``
+      — preserves the original "create via this route" behavior so a single-account
+      user never has to learn the new path.
+    - **1 row**: updates that row in place; ``account_id`` is preserved.
+    - **2+ rows**: returns **409 Conflict** with a body pointing at the
+      per-account endpoint ``PUT /api/v1/system/provider-config/{provider_id}/{account_id}``
+      so the caller can disambiguate.
+
+    For multi-account workflows, call the per-account endpoint directly.
+    """
     if provider_id not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
 
-    row = session.exec(
+    rows = session.exec(
         select(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+    ).all()
+    if len(rows) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Provider '{provider_id}' has {len(rows)} configured accounts; "
+                "use PUT /api/v1/system/provider-config/"
+                f"{provider_id}/{{account_id}} to disambiguate."
+            ),
+        )
+    target_account_id = rows[0].account_id if rows else "default"
+
+    await _apply_provider_config_update(session, provider_id, target_account_id, body)
+    return {"status": "saved"}
+
+
+async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
+    session: Session,
+    provider_id: str,
+    account_id: str,
+    body: _ProviderConfigUpdate,
+) -> None:
+    """Upsert the ``(provider_id, account_id)`` row and propagate credentials
+    to the in-memory token cache under the same ``account_id``.
+
+    Shared core of the two PUT endpoints. Callers are responsible for any
+    row-count / account_id guards before invoking this helper.
+    """
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == provider_id,
+            ProviderConfig.account_id == account_id,
+        )
     ).first()
     if row is None:
         row = ProviderConfig(
             provider_id=provider_id,
+            account_id=account_id,
             enabled=body.enabled if body.enabled is not None else True,
         )
         session.add(row)
@@ -950,7 +1054,9 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
 
         row.api_key = val if val else None
 
-        # Propagate to token_cache if this is also mapped as an OAuth token
+        # Propagate to token_cache if this is also mapped as an OAuth token.
+        # Stamp under the resolved account_id (no longer hard-coded "default")
+        # so the new per-account endpoint keeps credentials and identity aligned.
         if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini"):
             tokens = {"oauth_token": row.api_key}
 
@@ -969,7 +1075,7 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
                 tokens["session_cookie"] = row.api_key
                 tokens["cookie_sessionKey"] = row.api_key
 
-            await token_cache.store(provider_id, tokens, account_id="default", source="config")
+            await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
     if body.session_cookie is not None:
         val = body.session_cookie
@@ -1024,7 +1130,9 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
         if provider_id == "chatgpt":
             row.oai_sc_cookie = oai_sc_val  # None clears an existing value
 
-        # Propagate to token_cache so collectors can find it immediately
+        # Propagate to token_cache so collectors can find it immediately.
+        # Stamp under the resolved account_id so dashboard-saved credentials
+        # and the collector's resolved identity stay aligned in the cache.
         if row.session_cookie:
             # Map generic session_cookie to all common provider-specific keys
             # to ensure the manual override works across various collector implementations.
@@ -1037,7 +1145,7 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
             if provider_id == "chatgpt" and oai_sc_val:
                 tokens["cookie_oai-sc"] = oai_sc_val
 
-            await token_cache.store(provider_id, tokens, account_id="default", source="config")
+            await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
 
     session.commit()
     # Trigger immediate sync and collection to reflect changes in dashboard instantly
@@ -1053,8 +1161,6 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
     from app.services.poller import poller
 
     poller.wake()
-
-    return {"status": "saved"}
 
 
 @router.get("/app-config")

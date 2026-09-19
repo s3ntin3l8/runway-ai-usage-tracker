@@ -4,8 +4,13 @@ import os
 import time
 from typing import Any
 
+from sqlmodel import Session
+from sqlmodel import select as sqlselect
+
 from app.core.config import get_platform_config_dir
+from app.core.db import engine
 from app.core.registry import registry
+from app.models.db import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +18,129 @@ try:
     import yaml
 except ImportError:
     yaml = None  # type: ignore
+
+
+class AmbiguousProviderAccountError(ValueError):
+    """Raised when multiple `(provider_id, account_id)` rows exist and the caller
+    did not disambiguate by passing an explicit `account_id`.
+
+    The exception message points the operator at the per-account endpoint so
+    they can resolve the ambiguity by saving under the right identity.
+    """
+
+    def __init__(self, provider_id: str, account_count: int) -> None:
+        super().__init__(
+            f"Provider '{provider_id}' has {account_count} configured accounts; "
+            "pass an explicit account_id or use PUT /api/v1/system/provider-config/"
+            f"{provider_id}/{{account_id}} to disambiguate."
+        )
+        self.provider_id = provider_id
+        self.account_count = account_count
+
+
+def _resolve_provider_config(
+    provider_id: str,
+    account_id: str | None = None,
+    *,
+    require_enabled: bool = True,
+) -> ProviderConfig | None:
+    """Look up a `ProviderConfig` row, scoped by `(provider_id, account_id)`.
+
+    Args:
+        provider_id: The provider to look up (e.g. ``"anthropic"``).
+        account_id: When provided, filter on the full identity tuple. When
+            ``None``, pick the only row when exactly one exists; otherwise
+            raise :class:`AmbiguousProviderAccountError` so silent
+            last-writer-wins can't pick the wrong account.
+        require_enabled: When True, exclude disabled rows from the
+            single-row "only one" check (a disabled account is invisible to
+            the legacy single-account path).
+
+    Returns:
+        The matching ``ProviderConfig`` row, or ``None`` when no row exists.
+
+    Raises:
+        AmbiguousProviderAccountError: When ``account_id`` is None and more
+            than one row matches ``provider_id`` (after the ``enabled`` filter).
+    """
+    with Session(engine) as session:
+        if account_id is not None:
+            row = session.exec(
+                sqlselect(ProviderConfig).where(
+                    ProviderConfig.provider_id == provider_id,
+                    ProviderConfig.account_id == account_id,
+                )
+            ).first()
+            return row
+
+        stmt = sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+        if require_enabled:
+            stmt = stmt.where(ProviderConfig.enabled == True)  # noqa: E712
+        rows = session.exec(stmt).all()
+        if len(rows) > 1:
+            raise AmbiguousProviderAccountError(provider_id, len(rows))
+        return rows[0] if rows else None
+
+
+def _resolve_legacy_provider_config(
+    provider_id: str,
+    *,
+    require_enabled: bool = False,
+) -> ProviderConfig | None:
+    """Single-account-style lookup that tolerates multi-row state.
+
+    Used by the public :class:`CredentialProvider` methods to preserve
+    today's "give me the configured credential" behavior for legacy callers
+    that don't pass an explicit ``account_id``. Never raises.
+
+    Resolution rules:
+
+    - No rows for this provider → ``None``.
+    - ``require_enabled=True`` and zero enabled rows → ``None``.
+    - Exactly one enabled row at ``account_id="default"`` → that row.
+    - Multiple enabled rows but the ``"default"`` row is disabled → ``None``
+      (legacy callers should not silently fall back to a non-default
+      account's credential; that's a multi-account safety violation).
+    - Multiple rows with no ``"default"`` row in the result → ``None`` for
+      the same reason.
+    - Side effect: when the row count > 1, the drift is logged at WARNING
+      with the provider id (no credential value, no account_id hash —
+      provider_id is not credential material).
+
+    This is intentionally distinct from :func:`_resolve_provider_config`,
+    which is the strict helper that callers explicitly opt into (e.g. the
+    new per-account PUT endpoint and the multi-account wizard).
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+        ).all()
+        if not rows:
+            return None
+        if require_enabled:
+            rows = [r for r in rows if r.enabled]
+            if not rows:
+                return None
+        # Multi-account drift visibility — log when more than one row exists
+        # so operators see the state without waiting for a 500.
+        if len(rows) > 1:
+            # Strip CR/LF before logging (provider_id is operator-supplied).
+            safe = provider_id.replace("\r", "").replace("\n", "")
+            logger.warning(
+                "provider %s has %d configured accounts; legacy callers will "
+                'only see the account_id="default" row. Use the per-account '
+                "endpoint PUT /api/v1/system/provider-config/%s/{account_id} "
+                "to disambiguate.",
+                safe,
+                len(rows),
+                safe,
+            )
+        for r in rows:
+            if r.account_id == "default":
+                return r
+        # No enabled default row — refuse to leak another account's credential
+        # to legacy callers.
+        return None
 
 
 def _has_unexpired_token(path: str) -> bool:
@@ -100,30 +228,47 @@ class CredentialProvider:
         return current
 
     @staticmethod
-    def get_credentials(provider_id: str) -> "CredentialMap":
-        """Generic extraction based on registry rules for a provider."""
+    def get_credentials(provider_id: str, *, account_id: str | None = None) -> "CredentialMap":
+        """Generic extraction based on registry rules for a provider.
+
+        Args:
+            provider_id: The provider to look up.
+            account_id: When provided, only the matching ``(provider_id, account_id)``
+                row's API key is consulted. When ``None``, the legacy single-account
+                path is used: the ``account_id="default"`` row is preferred (and is
+                ``enabled``-checked, matching pre-PR semantics — a disabled
+                ``default`` row does NOT silently leak another account's key).
+                Returns ``None`` from the legacy path when the default row is
+                disabled or missing — legacy callers should not see another
+                account's credential.
+
+                For callers that must disambiguate explicitly, use
+                :func:`_resolve_provider_config` directly — it raises
+                :class:`AmbiguousProviderAccountError` for the same condition.
+        """
         results: dict[str, str] = {}
         sources: dict[str, str] = {}
         runway_config_dir = get_platform_config_dir("runway")
 
         # DB override: user-provided API key takes precedence over env/file/keychain
         try:
-            from sqlmodel import Session
-            from sqlmodel import select as sqlselect
-
-            from app.core.db import engine
-            from app.models.db import ProviderConfig
-
-            with Session(engine) as _s:
-                _cfg = _s.exec(
-                    sqlselect(ProviderConfig).where(
-                        ProviderConfig.provider_id == provider_id,
-                        ProviderConfig.enabled == True,  # noqa: E712
-                    )
-                ).first()
-                if _cfg and _cfg.api_key:
-                    results["api_key"] = _cfg.api_key
-                    sources["api_key"] = "config"
+            _cfg: ProviderConfig | None
+            if account_id is not None:
+                _cfg = _resolve_provider_config(provider_id, account_id=account_id)
+            else:
+                # Pre-PR `get_credentials` filtered by `enabled == True` so a
+                # disabled provider's stored key could not silently override
+                # env/file sources. Keep that filter on the legacy path. The
+                # helper additionally refuses to fall back to a non-default
+                # row when the default row is missing or disabled.
+                _cfg = _resolve_legacy_provider_config(provider_id, require_enabled=True)
+            if _cfg and _cfg.api_key:
+                results["api_key"] = _cfg.api_key
+                sources["api_key"] = "config"
+        except AmbiguousProviderAccountError:
+            # Surface strict multi-account ambiguity from the explicit-account
+            # path so the wizard can disambiguate; the legacy path never raises.
+            raise
         except Exception:
             # Strip CR/LF from the user-influenced provider_id before logging to
             # prevent log-forging via injected newlines (CodeQL py/log-injection).
@@ -270,45 +415,69 @@ class CredentialProvider:
         return creds
 
     @staticmethod
-    def get_provider_api_key(provider_id: str) -> str | None:
-        """Return the user-supplied API key stored in ProviderConfig for a provider."""
+    def get_provider_api_key(provider_id: str, *, account_id: str | None = None) -> str | None:
+        """Return the user-supplied API key stored in ProviderConfig for a provider.
+
+        Args:
+            provider_id: The provider to look up.
+            account_id: When provided, scope to that exact ``(provider_id, account_id)``
+                row. When ``None``, the legacy single-account path is used:
+                ``account_id="default"`` row when present, else first row. Never
+                raises for the legacy path; the strict path raises
+                :class:`AmbiguousProviderAccountError` only when an explicit
+                account_id is requested but does not exist.
+        """
         try:
-            from sqlmodel import Session
-            from sqlmodel import select as sqlselect
-
-            from app.core.db import engine
-            from app.models.db import ProviderConfig
-
-            with Session(engine) as _s:
-                cfg = _s.exec(
-                    sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
-                ).first()
-                if cfg and cfg.api_key:
-                    return cfg.api_key
+            cfg: ProviderConfig | None
+            if account_id is not None:
+                cfg = _resolve_provider_config(
+                    provider_id, account_id=account_id, require_enabled=False
+                )
+            else:
+                # Legacy (no account_id) path: deliberately keeps
+                # ``require_enabled=False`` — pre-PR ``get_provider_api_key``
+                # had no ``enabled`` filter at all, so a disabled provider's
+                # stored key was always served. ``get_credentials`` is the
+                # odd one out: it DID filter by ``enabled`` pre-PR, which is
+                # why it threads ``require_enabled=True`` explicitly above.
+                # Do NOT "normalize" this — the asymmetry is intentional and
+                # pinned by ``test_db_read_failures_are_swallowed`` (DB-failure
+                # behavior) and the multi-account tests above.
+                cfg = _resolve_legacy_provider_config(provider_id)
+            if cfg and cfg.api_key:
+                return cfg.api_key
+        except AmbiguousProviderAccountError:
+            raise
         except Exception:
             logger.debug("Failed to read API key from DB for %s", provider_id, exc_info=True)
         return None
 
     @staticmethod
-    def get_provider_session_cookie(provider_id: str) -> str | None:
+    def get_provider_session_cookie(
+        provider_id: str, *, account_id: str | None = None
+    ) -> str | None:
         """Return the user-supplied session cookie stored in ProviderConfig.
 
         Used by cookie-based collectors as a manual override that bypasses browser
-        cookie extraction.
+        cookie extraction. See :meth:`get_provider_api_key` for ``account_id`` semantics.
         """
         try:
-            from sqlmodel import Session
-            from sqlmodel import select as sqlselect
-
-            from app.core.db import engine
-            from app.models.db import ProviderConfig
-
-            with Session(engine) as _s:
-                cfg = _s.exec(
-                    sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
-                ).first()
-                if cfg and cfg.session_cookie:
-                    return cfg.session_cookie
+            cfg: ProviderConfig | None
+            if account_id is not None:
+                cfg = _resolve_provider_config(
+                    provider_id, account_id=account_id, require_enabled=False
+                )
+            else:
+                # Legacy (no account_id) path: deliberately keeps
+                # ``require_enabled=False`` to mirror pre-PR semantics (the
+                # pre-PR ``get_provider_session_cookie`` had no ``enabled``
+                # filter). ``get_credentials`` is the odd one out — see the
+                # matching comment in :meth:`get_provider_api_key` for why.
+                cfg = _resolve_legacy_provider_config(provider_id)
+            if cfg and cfg.session_cookie:
+                return cfg.session_cookie
+        except AmbiguousProviderAccountError:
+            raise
         except Exception:
             logger.debug("Failed to read session cookie from DB for %s", provider_id, exc_info=True)
         return None

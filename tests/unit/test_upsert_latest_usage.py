@@ -113,17 +113,37 @@ def test_error_suppressed_when_healthy_row_exists(session: Session):
     assert json.loads(rows[0].card_json).get("error_type") is None
 
 
-def test_default_error_suppressed_when_real_account_exists(session: Session):
-    """Success card under real account; default-orphan error card must be suppressed."""
-    upsert_latest_usage(session, _success_card())
+def test_default_error_suppressed_when_real_account_exists_same_slot(session: Session):
+    """Same-slot suppression: success card at (chatgpt, alice, weekly, default, "")
+    suppresses a default-tagged error card at the same slot."""
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="default"))
     session.commit()
 
-    upsert_latest_usage(session, _error_card())  # account_id="default"
+    upsert_latest_usage(session, _error_card())  # account_id="default", variant="default"
     session.commit()
 
     rows = session.exec(select(LatestUsage)).all()
     assert len(rows) == 1
     assert rows[0].account_id == "alice@example.com"
+
+
+def test_default_error_kept_when_real_account_is_different_slot(session: Session):
+    """Multi-account hardening: a default-tagged error card at one slot is
+    NOT suppressed just because a real-account success exists at a different
+    slot. Pre-fix code killed this legitimate card."""
+    # Real-account success at Codex variant
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="Codex"))
+    session.commit()
+
+    # Default-tagged error at the "default" variant — different slot.
+    upsert_latest_usage(session, _error_card())  # variant="default"
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    # Both rows survive: Codex real-account + default-variant error.
+    assert len(rows) == 2
+    by_variant = {r.variant: r.account_id for r in rows}
+    assert by_variant == {"Codex": "alice@example.com", "default": "default"}
 
 
 def test_error_allowed_when_no_healthy_row(session: Session):
@@ -151,18 +171,37 @@ def test_error_allowed_for_unrelated_provider(session: Session):
 # ── Orphan eviction tests ─────────────────────────────────────────────────────
 
 
-def test_success_evicts_default_orphan_on_write(session: Session):
-    """Writing a success card for a real account deletes an existing default-orphan error row."""
+def test_success_evicts_default_orphan_on_write_same_slot(session: Session):
+    """Writing a real-account success card deletes an existing default-tagged
+    error row in the same slot."""
     upsert_latest_usage(session, _error_card())  # persisted first (no healthy row yet)
     session.commit()
 
-    upsert_latest_usage(session, _success_card())
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="default"))
     session.commit()
 
     rows = session.exec(select(LatestUsage)).all()
     assert len(rows) == 1
     assert rows[0].account_id == "alice@example.com"
     assert json.loads(rows[0].card_json).get("error_type") is None
+
+
+def test_success_does_not_evict_default_orphan_in_different_slot(session: Session):
+    """Multi-account hardening: a real-account success at one slot must not
+    silently evict a default-tagged error card at a different slot."""
+    # Default-tagged error at the default variant
+    upsert_latest_usage(session, _error_card())
+    session.commit()
+
+    # Real-account success at the Codex variant — different slot
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="Codex"))
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    # Both rows survive: Codex real-account + default-variant default-tagged error
+    assert len(rows) == 2
+    by_variant = {r.variant: r.account_id for r in rows}
+    assert by_variant == {"Codex": "alice@example.com", "default": "default"}
 
 
 def test_success_evicts_cross_variant_error_on_write(session: Session):
@@ -200,10 +239,19 @@ def test_success_preserves_healthy_other_variant(session: Session):
 
 
 def test_evict_orphan_error_rows_cleans_existing_stale_rows(session: Session):
-    """evict_orphan_error_rows removes the three-row chatgpt scenario in one shot.
+    """evict_orphan_error_rows removes the legacy single-account error pattern.
+
+    Setup:
+      - Success at (chatgpt, alice, weekly, Codex, "")
+      - Same-account error at (chatgpt, alice, weekly, default, "")
+      - Default-tagged error at (chatgpt, default, weekly, default, "")
 
     Rows are inserted directly (bypassing upsert_latest_usage suppression) to
     simulate the pre-fix database state that already exists on disk.
+
+    Multi-account hardened: the same-account error row is evicted (its
+    account_id has a healthy row regardless of slot). The default-tagged
+    error survives because no real-account success covers its slot.
     """
     success_json = json.dumps(_success_card(variant="Codex"))
     error_same_account_json = json.dumps(
@@ -211,7 +259,7 @@ def test_evict_orphan_error_rows_cleans_existing_stale_rows(session: Session):
             account_id="alice@example.com", account_label="alice@example.com", variant="default"
         )
     )
-    error_default_json = json.dumps(_error_card(account_id="default"))
+    error_default_json = json.dumps(_error_card(account_id="default", variant="default"))
 
     session.add(
         LatestUsage(
@@ -251,11 +299,55 @@ def test_evict_orphan_error_rows_cleans_existing_stale_rows(session: Session):
     deleted = evict_orphan_error_rows(session)
     session.commit()
 
-    assert deleted == 2
+    # Same-account error (alice/default) evicted by the (pid, aid) rule.
+    # Default-tagged error at the "default" variant survives because no
+    # real-account success covers that slot (the only success is Codex).
+    assert deleted == 1
     rows_after = session.exec(select(LatestUsage)).all()
-    assert len(rows_after) == 1
-    assert rows_after[0].account_id == "alice@example.com"
-    assert json.loads(rows_after[0].card_json).get("error_type") is None
+    assert len(rows_after) == 2
+    by_variant = {r.variant: r.account_id for r in rows_after}
+    assert by_variant == {"Codex": "alice@example.com", "default": "default"}
+
+
+def test_evict_orphan_error_rows_evicts_same_slot_default_orphan(session: Session):
+    """Same-slot default-orphan eviction: when a real-account success covers
+    the same (provider_id, window_type, variant, model_id) slot as a
+    default-tagged error, the error row IS evicted."""
+    success_json = json.dumps(_success_card(variant="default"))
+    error_default_json = json.dumps(_error_card(account_id="default", variant="default"))
+
+    session.add(
+        LatestUsage(
+            provider_id="chatgpt",
+            account_id="alice@example.com",
+            window_type="weekly",
+            variant="default",
+            model_id="",
+            card_json=success_json,
+        )
+    )
+    session.add(
+        LatestUsage(
+            provider_id="chatgpt",
+            account_id="default",
+            window_type="weekly",
+            variant="default",
+            model_id="",
+            card_json=error_default_json,
+        )
+    )
+    session.commit()
+
+    deleted = evict_orphan_error_rows(session)
+    session.commit()
+
+    # Same-slot default-orphan evicted; real-account success survives.
+    assert deleted == 1
+    rows = session.exec(select(LatestUsage)).all()
+    assert len(rows) == 1
+    assert rows[0].account_id == "alice@example.com"
+    assert rows[0].variant == "default"
+    assert json.loads(rows[0].card_json).get("error_type") is None
 
 
 def test_evict_orphan_error_rows_noop_when_clean(session: Session):
