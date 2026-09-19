@@ -3401,6 +3401,31 @@ class TestKimiCodingCollector:
         assert all(c.get("tier") == "Pro" for c in result)
 
     @pytest.mark.asyncio
+    async def test_collect_api_me_does_not_clobber_user_label(self, mock_http_client):
+        """A user-configured account label wins over the /me email."""
+        collector = KimiCodingCollector(account_label="custom@example.com")
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", self.CODE_API_PRO_RESPONSE),
+                ("/coding/v1/me", self.CODE_API_ME_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert collector.account_label == "custom@example.com"
+        assert all(c.get("account_label") == "custom@example.com" for c in result)
+
+    @pytest.mark.asyncio
     async def test_collect_api_me_v2_drops_legacy_weekly_counts(self, mock_http_client):
         """Legacy-shape responses still carry a vestigial weekly window on V2
         plans — /me goods_version=2 drops it."""

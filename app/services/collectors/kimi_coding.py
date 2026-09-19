@@ -439,7 +439,12 @@ class KimiCodingCollector(BaseCollector):
         """
         email = str(me.get("email") or "").strip()
         if email and "@" in email:
-            self.account_label = email
+            # Adopt the email only when no explicit user label is set — same
+            # guard as BaseCollector._tag_results — and keep the cache in sync.
+            explicit = self._account_label_cache and self._account_label_cache.lower() != "default"
+            if not explicit:
+                self.account_label = email
+                self._account_label_cache = email
 
         tier = str(me.get("user_level_name") or "").strip()
         if tier:
@@ -447,7 +452,11 @@ class KimiCodingCollector(BaseCollector):
                 card.setdefault("tier", tier)
 
         if me.get("goods_version") == 2:
-            cards[:] = [c for c in cards if c.get("window_type") != "weekly"]
+            remaining = [c for c in cards if c.get("window_type") != "weekly"]
+            # Keep the vestigial weekly card rather than reducing a successful
+            # collect to zero cards (which would surface an error card).
+            if remaining:
+                cards[:] = remaining
 
     def _parse_code_api_response(
         self, data: dict[str, Any], input_source: str
