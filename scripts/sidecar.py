@@ -2324,33 +2324,31 @@ def run_collection(
         _watermark = None
         _events_enabled = False
 
-    # Fetch the server-known per-account list (issue #272). When the sidecar
-    # has cached a recent snapshot we skip the network call; otherwise we hit
-    # ``/fleet/config``. If the fetch fails (server unreachable, etc.) we
-    # silently fall back to the legacy single-account extraction — the
-    # sidecar must keep working before the first heartbeat.
-    cache = _get_credential_cache()
+    # Fetch the server-known per-account identity list (issue #272). The
+    # identity map is decoupled from credential_token issuance — rows
+    # without credentials and configurations with an empty INGEST_API_KEY
+    # still contribute their ``account_id`` here, so the per-account
+    # attribution fix isn't gated on those conditions (PR #283 review).
+    #
+    # The whole block (lazy import + cache init + network fetch) is
+    # wrapped in a single guarded ``try`` so a failure at any point —
+    # including missing credentials module on a frozen binary — falls
+    # back to the legacy single-account path without killing
+    # ``run_collection``.
     server_accounts_by_provider: dict[str, list[str]] = {}
     try:
-        from scripts.sidecar_pkg.credentials import (
-            fetch_credential_tokens,
-        )
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
+        cache = _get_credential_cache()
         if not cache.is_fresh():
             api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
-            api_key_for_tokens = (
-                os.environ.get("RUNWAY_API_KEY")
-                or os.environ.get("INGEST_API_KEY")
-                or config.get("api_key")
-            )
-            if api_url_for_tokens and api_key_for_tokens:
-                fetched = fetch_credential_tokens(api_url_for_tokens)
-                cache.replace_tokens(fetched)
-        # Build the per-provider account list from the cached tokens.
+            if api_url_for_tokens:
+                fetched = fetch_identity_hints(api_url_for_tokens)
+                cache.replace(fetched)
         server_accounts_by_provider = cache.provider_accounts()
     except Exception as _e:
-        # Defensive: never let token-fetch failures kill collection.
-        logging.debug(f"credential token fetch skipped: {_e}")
+        # Defensive: never let identity-fetch failures kill collection.
+        logging.debug(f"identity-hint fetch skipped: {_e}")
 
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
@@ -2397,57 +2395,59 @@ def run_collection(
                 logging.info(f"  [{provider_id}] no data")
             all_metrics.extend(metrics)
 
-            # Events block. Per-account iteration (issue #272): when the
-            # server has told us about multiple accounts for this provider,
-            # extract events once per account and stamp them with the
-            # resolved identity. Falls back to single-pass with the
-            # locally-discovered account_id when the server has nothing
-            # for this provider (legacy single-account path).
+            # Events block. Per-account iteration (issue #272). Resolve the host's
+            # local identity first, then intersect with the server's per-
+            # account list. We never iterate a server-side account that
+            # doesn't match our local discovery — those belong to other
+            # sidecar hosts, and stamping events under them would leak
+            # another user's account_id into our event stream.
             if _events_enabled and _watermark is not None and provider_id in _EVENT_PROVIDERS:
-                provider_accounts = server_accounts_by_provider.get(provider_id)
-                if provider_accounts:
-                    # A sidecar host represents a single user account. When
-                    # the server reports multiple accounts for this provider,
-                    # they belong to *other* sidecars on other hosts — not to
-                    # this one. Iterating all of them would re-stamp the same
-                    # log/SQLite events N times with different ``account_id``s,
-                    # inflating token counts. We intersect with the local
-                    # identity this sidecar already discovered; if the local
-                    # match is missing, we still iterate one account rather
-                    # than zero (preserves cold-start attribution — the
-                    # server may have re-named the row between discovery and
-                    # fetch). See PR #283 review.
-                    local_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
-                    if local_account_id and local_account_id in provider_accounts:
-                        scoped_accounts = [local_account_id]
-                    else:
-                        # Local discovery didn't find a match in the server's
-                        # per-account list (e.g. local has "default" but the
-                        # server registered a renamed row, or the row was just
-                        # added and we haven't refreshed). Take the first
-                        # server-side account rather than dropping the events
-                        # — better than the leak from #272 even if it
-                        # misattributes to the rename.
-                        scoped_accounts = [provider_accounts[0]]
-                    _extract_events_for_provider(
-                        provider_id=provider_id,
-                        account_ids=scoped_accounts,
-                        watermark=_watermark,
-                        bootstrap_days=bootstrap_days,
-                        out_events=all_events,
+                local_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
+                provider_accounts = server_accounts_by_provider.get(provider_id) or []
+
+                if provider_accounts and local_account_id and local_account_id in provider_accounts:
+                    # Best case: server knows about us, and our local
+                    # identity matches one of its rows.
+                    scoped_accounts = [local_account_id]
+                elif local_account_id:
+                    # Server has rows, none of which are us (e.g. local
+                    # is "default" but the server registered
+                    # ``alice@example.com`` only). Falling back to
+                    # ``provider_accounts[0]`` would attribute our
+                    # events to someone else's account (PR #283 review).
+                    # Stamp with our local identity instead — better
+                    # than the original #272 leak even if it ends up
+                    # under "default".
+                    if provider_accounts:
+                        logging.debug(
+                            "  [%s] local identity %r not in server accounts %r; "
+                            "falling back to local identity rather than cross-host attribution",
+                            provider_id,
+                            local_account_id,
+                            provider_accounts,
+                        )
+                    scoped_accounts = [local_account_id]
+                elif provider_accounts:
+                    # Local discovery returned nothing usable. Stay with
+                    # legacy single-account behavior: stamp with
+                    # "default" so events don't disappear.
+                    logging.debug(
+                        "  [%s] no local identity; using legacy 'default'",
+                        provider_id,
                     )
+                    scoped_accounts = ["default"]
                 else:
-                    # Legacy single-account fallback. Today's local discovery
-                    # (JWT claims, local DB emails, etc.) all default to
-                    # ``account_id="default"`` for anonymous providers.
-                    legacy_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
-                    _extract_events_for_provider(
-                        provider_id=provider_id,
-                        account_ids=[legacy_account_id],
-                        watermark=_watermark,
-                        bootstrap_days=bootstrap_days,
-                        out_events=all_events,
-                    )
+                    # Server has nothing and local discovery returned
+                    # nothing — same as the previous branch.
+                    scoped_accounts = ["default"]
+
+                _extract_events_for_provider(
+                    provider_id=provider_id,
+                    account_ids=scoped_accounts,
+                    watermark=_watermark,
+                    bootstrap_days=bootstrap_days,
+                    out_events=all_events,
+                )
 
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")

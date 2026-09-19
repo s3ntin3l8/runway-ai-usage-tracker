@@ -102,10 +102,12 @@ class Settings(BaseSettings):
     INGEST_API_KEY: str = ""  # Default empty = disabled; set to non-empty to enable ingestion
     ADMIN_API_KEY: str | None = None
 
-    # TTL for short-lived credential tokens issued in /fleet/config and redeemed
-    # via POST /api/v1/fleet/credentials/redeem. See app/services/credential_token.py.
-    # The sidecar is expected to refetch tokens on its normal heartbeat cadence;
-    # tokens intentionally cap blast radius if leaked from a sidecar log/tempfile.
+    # TTL for short-lived credential tokens issued in /fleet/config. See
+    # app/services/credential_token.py for the wire format. The companion
+    # redeem endpoint (POST /api/v1/fleet/credentials/redeem) lands in the
+    # follow-up PR alongside its first production caller — see PR #283.
+    # The sidecar is expected to refetch tokens on its normal heartbeat
+    # cadence; the TTL intentionally caps blast radius if a token leaks.
     CREDENTIAL_TOKEN_TTL_SECONDS: int = 3600
 
     # Comma-separated list of reverse-proxy IPs allowed to assert auth via

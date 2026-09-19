@@ -1,12 +1,13 @@
 """Tests for the sidecar identity cache (issue #272, deferred redeem).
 
 Covers:
-- ``scripts/sidecar_pkg/credentials.py``: ``fetch_credential_tokens``
-  HTTP plumbing, plus the ``CredentialCache`` staleness / replacement
-  semantics.
+- ``scripts/sidecar_pkg/credentials.py``: ``fetch_identity_hints`` and
+  ``fetch_credential_tokens`` HTTP plumbing, plus the ``CredentialCache``
+  staleness / replacement / decoupled-identity semantics.
 - The per-account event-extraction loop wired into ``run_collection`` —
-  the dispatch table, the legacy fallback when the server has no per-account
-  config, the partial-failure tolerance.
+  the dispatch table, the local-identity intersect (one account per
+  host), the legacy fallback when the server has no per-account config,
+  the partial-failure tolerance.
 
 The redeem side (``redeem_credential`` / HMAC headers / decrypted body)
 intentionally is NOT exercised here — that endpoint ships with the first
@@ -17,6 +18,7 @@ implementation has been deferred to keep public surface tight.
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -45,16 +47,23 @@ def _ok_response(status: int = 200, body: bytes | None = None) -> MagicMock:
     return resp
 
 
-class TestFetchCredentialTokens:
+class TestFetchIdentityHints:
+    """``fetch_identity_hints`` is the identity-only view decoupled from
+    credential-token issuance. Rows without a token still contribute their
+    ``account_id`` here — gating identity discovery on token presence
+    would silently no-op the #272 attribution fix in any configuration
+    where the row has no credentials or INGEST_API_KEY is empty
+    (PR #283 review)."""
+
     def test_returns_empty_when_urlopen_raises(self):
-        from scripts.sidecar_pkg.credentials import fetch_credential_tokens
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
             with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
-                assert fetch_credential_tokens("https://api.example.com") == {}
+                assert fetch_identity_hints("https://api.example.com") == {}
 
     def test_returns_empty_on_non_200(self):
-        from scripts.sidecar_pkg.credentials import fetch_credential_tokens
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
             with patch("urllib.request.urlopen") as mock_urlopen:
@@ -64,10 +73,10 @@ class TestFetchCredentialTokens:
                 )
                 ctx.__exit__ = MagicMock(return_value=False)
                 mock_urlopen.return_value = ctx
-                assert fetch_credential_tokens("https://api.example.com") == {}
+                assert fetch_identity_hints("https://api.example.com") == {}
 
-    def test_parses_per_account_tokens(self):
-        from scripts.sidecar_pkg.credentials import fetch_credential_tokens
+    def test_parses_per_account_ids_independent_of_token(self):
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         payload = json.dumps(
             {
@@ -80,6 +89,9 @@ class TestFetchCredentialTokens:
                                     "account_id": "alice@example.com",
                                     "credential_token": "tok-alice",
                                 },
+                                # Token-less row — must STILL appear in the
+                                # identity hints.
+                                {"account_id": "bob@example.com"},
                             ]
                         },
                         "chatgpt": {
@@ -102,32 +114,46 @@ class TestFetchCredentialTokens:
                 )
                 ctx.__exit__ = MagicMock(return_value=False)
                 mock_urlopen.return_value = ctx
-                result = fetch_credential_tokens("https://api.example.com")
+                result = fetch_identity_hints("https://api.example.com")
 
         assert result == {
-            ("anthropic", "default"): "tok-default",
-            ("anthropic", "alice@example.com"): "tok-alice",
-            ("chatgpt", "default"): "tok-chatgpt",
+            "anthropic": ["default", "alice@example.com", "bob@example.com"],
+            "chatgpt": ["default"],
         }
         # Provider with no accounts is absent.
-        assert ("empty", "default") not in result
+        assert "empty" not in result
 
-    def test_skips_rows_without_token(self):
+
+class TestFetchCredentialTokens:
+    """``fetch_credential_tokens`` is the supplementary token map. It's a
+    subset of the identity hints — rows where the server didn't issue a
+    token (no credentials, or empty INGEST_API_KEY) are simply absent."""
+
+    def test_parses_per_account_tokens(self):
         from scripts.sidecar_pkg.credentials import fetch_credential_tokens
 
         payload = json.dumps(
             {
                 "config": {
                     "providers": {
-                        "openrouter": {
+                        "anthropic": {
                             "accounts": [
-                                {"account_id": "default"},
+                                {"account_id": "default", "credential_token": "tok-default"},
                                 {
                                     "account_id": "alice@example.com",
                                     "credential_token": "tok-alice",
                                 },
+                                # Row without a token — dropped here (the
+                                # identity view keeps it; this view is the
+                                # subset of issued tokens only).
+                                {"account_id": "bob@example.com"},
                             ]
-                        }
+                        },
+                        "chatgpt": {
+                            "accounts": [
+                                {"account_id": "default", "credential_token": "tok-chatgpt"}
+                            ]
+                        },
                     }
                 }
             }
@@ -145,41 +171,62 @@ class TestFetchCredentialTokens:
                 result = fetch_credential_tokens("https://api.example.com")
 
         # Row without a token is dropped.
-        assert result == {("openrouter", "alice@example.com"): "tok-alice"}
+        assert result == {
+            ("anthropic", "default"): "tok-default",
+            ("anthropic", "alice@example.com"): "tok-alice",
+            ("chatgpt", "default"): "tok-chatgpt",
+        }
 
 
 class TestCredentialCache:
-    def test_provider_accounts_groups_by_provider(self):
+    def test_provider_accounts_includes_rows_without_tokens(self):
+        """The cache's provider_accounts() returns the identity view —
+        every server-known row regardless of whether a token was issued.
+        This is the core of the #272 fix (PR #283 review)."""
         from scripts.sidecar_pkg.credentials import CredentialCache
 
         cache = CredentialCache()
-        cache.replace_tokens(
-            {
-                ("anthropic", "default"): "t1",
-                ("anthropic", "alice@example.com"): "t2",
-                ("chatgpt", "default"): "t3",
-            }
+        # Identity map populated; token map deliberately empty (simulates
+        # INGEST_API_KEY-empty config where no tokens are issued).
+        cache.replace(
+            accounts={
+                "anthropic": ["default", "alice@example.com"],
+                "chatgpt": ["default"],
+            },
         )
+        # provider_accounts still works.
         result = cache.provider_accounts()
         assert result == {
             "anthropic": ["default", "alice@example.com"],
             "chatgpt": ["default"],
         }
+        # And the token map is empty — proves identity was decoupled.
+        assert cache.tokens == {}
 
-    def test_replace_tokens_replaces_prior_token_map(self):
+    def test_replace_replaces_prior_state(self):
         from scripts.sidecar_pkg.credentials import CredentialCache
 
         cache = CredentialCache()
-        cache.replace_tokens(
-            {("anthropic", "default"): "t1", ("anthropic", "alice@example.com"): "t2"}
-        )
-        assert set(cache.tokens) == {
-            ("anthropic", "default"),
-            ("anthropic", "alice@example.com"),
-        }
-        # Re-fetching with a different pair set drops the removed ones.
-        cache.replace_tokens({("anthropic", "bob@example.com"): "t3"})
-        assert cache.tokens == {("anthropic", "bob@example.com"): "t3"}
+        cache.replace(accounts={"anthropic": ["default", "alice@example.com"]})
+        assert cache.provider_accounts() == {"anthropic": ["default", "alice@example.com"]}
+        # Re-replacing drops the prior set.
+        cache.replace(accounts={"anthropic": ["bob@example.com"]})
+        assert cache.provider_accounts() == {"anthropic": ["bob@example.com"]}
+
+    def test_provider_accounts_order_is_arbitrary(self):
+        """Explicit guardrail: the order mirrors JSON serialization and
+        must not be relied on for positional lookup. Callers that pick
+        ``provider_accounts[provider_id][0]`` will fail (PR #283 review)."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        cache.replace(accounts={"anthropic": ["alice@example.com", "default"]})
+        # The order is whatever the server returned; we don't reorder.
+        accounts = cache.provider_accounts()["anthropic"]
+        assert accounts == ["alice@example.com", "default"]
+        # And consumers (run_collection) must use ``in`` checks, not
+        # ``[0]`` indexing. This test simply pins the current behavior
+        # so a future "sort for determinism" change is intentional.
 
     def test_is_fresh(self):
         import time as _t
@@ -189,7 +236,7 @@ class TestCredentialCache:
         cache = CredentialCache(ttl_seconds=60)
         # No fetch yet → not fresh
         assert not cache.is_fresh()
-        cache.replace_tokens({})
+        cache.replace(accounts={})
         baseline = _t.time()
         # Fresh immediately after fetch (delta 0 < 60)
         assert cache.is_fresh(now=baseline)
@@ -310,11 +357,12 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
-    cache.replace_tokens(
-        {
+    cache.replace(
+        accounts={"anthropic": ["default", "alice@example.com"]},
+        tokens={
             ("anthropic", "default"): "tok-default",
             ("anthropic", "alice@example.com"): "tok-alice",
-        }
+        },
     )
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", cache)
 
@@ -362,19 +410,26 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
     assert [e["account_id"] for e in emitted] == ["alice@example.com"]
 
 
-def test_run_collection_falls_back_to_first_server_account_when_local_match_missing(
-    monkeypatch, tmp_path
-):
-    """If local discovery returns ``"default"`` but the server has renamed
-    rows (e.g. ``alice@example.com`` is the only Anthropic account in the
-    server config), the sidecar still iterates — over the *first* server
-    account — rather than dropping events (which would silently leak the
-    attribution bug #272 was meant to fix)."""
+def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, tmp_path):
+    """If local discovery returns ``"default"`` but the server has only
+    other hosts' accounts for this provider (e.g. ``alice@example.com``
+    is registered but lives on a different sidecar), we MUST NOT pick
+    someone else's account (PR #283 review).
+
+    Falling back to ``provider_accounts[0]`` would attribute this
+    sidecar's events to another user's account — even more destructive
+    than the original leak from #272. Instead we stamp with the
+    locally-discovered id (``"default"``) and log a debug line about
+    the mismatch.
+    """
     import scripts.sidecar as sc
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
-    cache.replace_tokens({("anthropic", "alice@example.com"): "tok-alice"})
+    cache.replace(
+        accounts={"anthropic": ["alice@example.com"]},
+        tokens={("anthropic", "alice@example.com"): "tok-alice"},
+    )
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", cache)
 
     monkeypatch.setattr(
@@ -405,37 +460,45 @@ def test_run_collection_falls_back_to_first_server_account_when_local_match_miss
 
     _, _, errors = sc.run_collection(config=config, providers=["anthropic"])
     assert errors == 0
-    # One event over the first (and only) server account.
-    assert emitted == ["alice@example.com"]
+    # Cross-host fallback was rejected: we stamped with the local
+    # identity ("default"), NOT with server's "alice@example.com" (which
+    # belongs to another sidecar).
+    assert emitted == ["default"]
 
 
-def test_run_collection_lazy_inits_credential_cache(monkeypatch, tmp_path):
+def test_run_collection_uses_get_credential_cache_factory(monkeypatch, tmp_path):
     """Production-wiring regression: ``run_collection`` must lazy-init the
     credential cache via ``_get_credential_cache()`` — never access the
-    bare module global directly. If we ever regress and reach for
-    ``_CREDENTIAL_CACHE`` before init, this test catches it (PR #283 review).
+    bare ``_CREDENTIAL_CACHE`` module global directly (PR #283 review).
 
-    We exercise the real init path with no monkeypatch on
-    ``_CREDENTIAL_CACHE``: ``_get_credential_cache()`` builds the
-    singleton the first time it's called, and the run continues.
+    We can't just assert ``errors == 0`` because the wide ``except``
+    around the cache call would swallow a regression's ``AttributeError``
+    silently at DEBUG. Instead we spy on the factory itself: a regression
+    that bypasses the lazy init and reads ``sc._CREDENTIAL_CACHE``
+    directly will fail this test before any exception can be swallowed.
     """
     import scripts.sidecar as sc
 
-    # Reset the lazy singleton to simulate a cold start, then run.
+    # Reset the lazy singleton to simulate a cold start.
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", None)
 
-    # Make the cache fresh enough that we don't actually hit the network.
+    # Spy: every call to the factory records an entry. We return a fresh
+    # empty cache so the run completes without touching the network.
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     real_cache = CredentialCache()
-    real_cache.replace_tokens({})
-    # Pre-populate AFTER resetting the global; the production code reaches
-    # for the cache via ``_get_credential_cache()`` which rebuilds on
-    # first call. Stub ONLY the inner method that builds the singleton.
-    monkeypatch.setattr(sc, "_get_credential_cache", lambda: real_cache)
+    real_cache.replace(accounts={}, tokens={})
+    real_cache._identities_fetched_at = 1.0  # mark "fresh" so we skip the HTTP fetch
 
-    # No per-account server config → legacy fallback path runs, which still
-    # exercises the cache init.
+    calls: list[Any] = []
+
+    def _spy_factory() -> Any:
+        calls.append(1)
+        return real_cache
+
+    monkeypatch.setattr(sc, "_get_credential_cache", _spy_factory)
+
+    # Stub the legacy discovery to return "default".
     monkeypatch.setattr(
         sc,
         "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
@@ -447,22 +510,65 @@ def test_run_collection_lazy_inits_credential_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
 
     _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
-    # No crashes means ``_get_credential_cache()`` was used (NoneType
-    # AttributeError would have surfaced here).
     assert errors == 0
+    # The production code MUST go through the factory; reaching for the
+    # module-global directly would skip ``_get_credential_cache()`` and
+    # leave ``calls`` empty.
+    assert calls, (
+        "run_collection did not invoke _get_credential_cache() — "
+        "the bare module global was reached for directly, regressing the "
+        "production wiring fix from PR #283"
+    )
+
+
+def test_run_collection_swallows_lazy_init_failure(monkeypatch):
+    """If ``_get_credential_cache()`` itself raises (lazy import failure
+    on a frozen binary, missing dependency, anything), ``run_collection``
+    keeps going and the legacy single-account path runs (PR #283 review).
+
+    We can't reach for ``sc._CREDENTIAL_CACHE`` to detect the failure
+    because the lazy init is the whole point — so we assert that the
+    legacy event extractor IS called even when the factory raises.
+    """
+    import scripts.sidecar as sc
+
+    def _boom() -> Any:
+        raise ImportError("simulated missing credentials module")
+
+    monkeypatch.setattr(sc, "_get_credential_cache", _boom)
+
+    emitted: list[str] = []
+
+    monkeypatch.setattr(
+        sc,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"anthropic": lambda: "default"},
+    )
+
+    def _fake_extractor(account_id: str, watermark, bootstrap_days: int) -> list:
+        emitted.append(account_id)
+        return []
+
+    monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: _fake_extractor)
+    monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: _fake_extractor)
+    monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: _fake_extractor)
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+
+    _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
+    assert errors == 0
+    # Even with the cache factory blowing up, the legacy path still ran.
+    assert emitted == ["default"]
 
 
 def test_run_collection_falls_back_to_legacy_when_no_server_accounts(monkeypatch):
-    """When the server's /fleet/config has no per-account tokens for the
-    provider, ``run_collection`` falls back to the legacy single-account
-    path (local discovery + ``account_id="default"``)."""
+    """When the server's /fleet/config has no per-account entries for
+    the provider, ``run_collection`` falls back to the legacy
+    single-account path (local discovery + ``account_id="default"``)."""
     import scripts.sidecar as sc
-
-    # Empty cache → no per-account tokens.
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
-    cache.replace_tokens({})
+    cache.replace(accounts={}, tokens={})
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", cache)
 
     # Stub the legacy discovery to return "default".
