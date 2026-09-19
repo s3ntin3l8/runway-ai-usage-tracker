@@ -3199,6 +3199,21 @@ class TestKimiCodingCollector:
         }
     }
 
+    # Live-verified GET /coding/v1/me response (API key auth).
+    CODE_API_ME_RESPONSE = {
+        "user_id": "d78kbuol3dc8u30k4q6g",
+        "global_id": "d78kbuol3dc8u30k4q6g",
+        "nickname": "Test User",
+        "status": "USER_STATUS_NORMAL",
+        "region": "REGION_OVERSEA",
+        "user_level": 25,
+        "user_level_name": "Pro",
+        "goods_version": 2,
+        "email": "user@kimi.test",
+        "created_time": "2026-04-04T17:10:19.275499Z",
+        "last_login_time": "2026-09-18T13:48:11.736784Z",
+    }
+
     @staticmethod
     def _patch_credentials(api_key=None, session_cookie=None, creds=None):
         """Patch the credential_provider seen by the kimi_coding module."""
@@ -3357,6 +3372,118 @@ class TestKimiCodingCollector:
             c for c in result if c.get("window_type") == "monthly" and c.get("variant") == "code"
         )
         assert monthly_code["pct_used"] == pytest.approx(25.0)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_me_enriches_identity_and_tier(self, mock_http_client):
+        """GET /coding/v1/me provides email (account label), tier, and V2 gating:
+        quota cards canonicalize onto the email account with no manual label."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", self.CODE_API_PRO_RESPONSE),
+                ("/coding/v1/me", self.CODE_API_ME_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert collector.account_label == "user@kimi.test"
+        assert all(c.get("account_label") == "user@kimi.test" for c in result)
+        assert all(c.get("tier") == "Pro" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_me_does_not_clobber_user_label(self, mock_http_client):
+        """A user-configured account label wins over the /me email."""
+        collector = KimiCodingCollector(account_label="custom@example.com")
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", self.CODE_API_PRO_RESPONSE),
+                ("/coding/v1/me", self.CODE_API_ME_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert collector.account_label == "custom@example.com"
+        assert all(c.get("account_label") == "custom@example.com" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_me_v2_drops_legacy_weekly_counts(self, mock_http_client):
+        """Legacy-shape responses still carry a vestigial weekly window on V2
+        plans — /me goods_version=2 drops it."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        payload = {
+            **self.CODE_API_PRO_RESPONSE,
+            "usage": {
+                "limit": "100",
+                "used": "3",
+                "remaining": "97",
+                "resetTime": "2026-09-25T13:52:05Z",
+            },
+        }
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", payload),
+                ("/coding/v1/me", self.CODE_API_ME_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert not any(c.get("window_type") == "weekly" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_me_failure_is_non_fatal(self, mock_http_client):
+        """A /me failure (404) must not break quota collection."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="kimi_api_key"),
+            self._mock_settings(),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", self.CODE_API_PRO_RESPONSE),
+                ("/coding/v1/me", 404),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 2  # same as without /me: session + monthly total
+        # No email identity leaked through (fallback label only).
+        assert all("@" not in str(c.get("account_label") or "") for c in result)
 
     @pytest.mark.asyncio
     async def test_collect_api_key_401_error_card(self, mock_http_client):

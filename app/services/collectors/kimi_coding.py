@@ -9,15 +9,22 @@ Collection Strategies (both standalone-capable, UI-reorderable):
 Strategy merge semantics (see collect()): strategies run in their resolved
 (user-reorderable) order; the FIRST successful strategy provides the base
 cards and every later success enriches it — adding windows the base lacks
-(the Code API omits the weekly window on legacy plans and the plan title),
-filling the tier badge, and upgrading ratio-only cards to real counts when
-available. Inactive windows are suppressed, not merged in (see below).
+(the Code API omits the weekly window on legacy plans), filling the tier
+badge and account identity (the api strategy's /me call provides both on its
+own), and upgrading ratio-only cards to real counts when available.
+Inactive windows are suppressed, not merged in (see below).
 
 Live response notes (verified 2026-09-18 against a Pro plan):
 - Code API returns `limits[]` (5h counts), ratio pools under `usages`
   (`limit_5h`, `limit_7d`, `limit_month_total`, `limit_month_code`) and
   `booster_wallet`. `limit_5h.used_ratio` demonstrably lags the counts
   (0% vs a real 47%) — counts always win for the 5h window.
+- `GET {base}/coding/v1/me` (enrichment, non-fatal) returns the account
+  identity: `email` (-> account_label, so quota cards canonicalize onto the
+  email account with no manual label), `user_level_name` (tier badge without
+  the web cookie), and `goods_version` (2 = V2: weekly window suppressed).
+  The `sub`/`user_id` claim of every kimi JWT (CLI token, web cookie) equals
+  this `user_id` — one stable identity across all credential types.
 - Pro plan (GOODS_VERSION_V2): 5h session limit 100, monthly credit pool.
   NO `usage` (weekly counts), `user`, or `version` fields — tier only comes
   from the web GetSubscription goods.title. The web calls still report a
@@ -390,7 +397,66 @@ class KimiCodingCollector(BaseCollector):
             data = resp.json()
         except ValueError:
             return []
-        return self._parse_code_api_response(data, input_source)
+        cards = self._parse_code_api_response(data, input_source)
+        me = await self._fetch_code_api_me(client, base, headers)
+        if me:
+            self._apply_me_enrichment(cards, me)
+        return cards
+
+    async def _fetch_code_api_me(
+        self, client: httpx.AsyncClient, base: str, headers: dict[str, str]
+    ) -> dict[str, Any] | None:
+        """GET {base}/coding/v1/me — account identity (email), tier, goods version.
+
+        Enrichment only: any failure (network, 401/404, bad JSON) returns None
+        and the quota cards stand on their own. Works with the API key; the
+        CLI access token uses the same Bearer pattern (unverified live).
+        """
+        try:
+            resp = await http_request_with_retry(
+                client, "GET", f"{base}/coding/v1/me", headers=headers, timeout=5.0
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+        except (httpx.RequestError, ValueError):
+            logger.debug("Kimi Code API /me enrichment failed", exc_info=True)
+            return None
+
+    def _apply_me_enrichment(self, cards: list[dict[str, Any]], me: dict[str, Any]) -> None:
+        """Apply /me identity data to the parsed cards.
+
+        - email -> self.account_label: _tag_results propagates it to every card
+          and resolve_account_id canonicalizes the card onto the email account —
+          no manual account label needed for the quota cards to merge with
+          pass-through OpenCode events.
+        - user_level_name -> tier, only on cards without one (the legacy V1
+          membership mapping wins when both exist).
+        - goods_version == 2 -> drop weekly cards: V2 plans have no real weekly
+          quota (belt-and-braces for legacy-shape responses that still carry a
+          vestigial weekly window).
+        """
+        email = str(me.get("email") or "").strip()
+        if email and "@" in email:
+            # Adopt the email only when no explicit user label is set — same
+            # guard as BaseCollector._tag_results — and keep the cache in sync.
+            explicit = self._account_label_cache and self._account_label_cache.lower() != "default"
+            if not explicit:
+                self.account_label = email
+                self._account_label_cache = email
+
+        tier = str(me.get("user_level_name") or "").strip()
+        if tier:
+            for card in cards:
+                card.setdefault("tier", tier)
+
+        if me.get("goods_version") == 2:
+            remaining = [c for c in cards if c.get("window_type") != "weekly"]
+            # Keep the vestigial weekly card rather than reducing a successful
+            # collect to zero cards (which would surface an error card).
+            if remaining:
+                cards[:] = remaining
 
     def _parse_code_api_response(
         self, data: dict[str, Any], input_source: str
