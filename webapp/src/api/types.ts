@@ -274,6 +274,10 @@ export interface TopProjectEntry {
   tokens_reasoning: number;
   cost_usd: number;
   cost_cache: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
   providers: string[];
 }
 
@@ -424,18 +428,45 @@ export interface HistoryWindowRow {
   limit_value?: number | null;
   unit_type?: string | null;
   tokens_total?: number | null;
+  tokens_input?: number | null;
+  tokens_output?: number | null;
+  tokens_cache_read?: number | null;
+  tokens_cache_create?: number | null;
+  tokens_reasoning?: number | null;
   cost_usd?: number | null;
   msgs?: number | null;
   top_model?: string | null;
 }
 
+export interface WindowDetailModelEntry {
+  model_id: string;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
+  msgs: number;
+}
+
 export interface WindowDetailResponse {
   fill_series: ChartSeriesPoint[];
   fill_by_model: { model_id: string; series: ChartSeriesPoint[] }[];
+  by_model: WindowDetailModelEntry[];
 }
 
 export interface HistoryDeltas {
   token_delta_total?: number;
+  token_input_total?: number;
+  token_output_total?: number;
+  token_reasoning_total?: number;
+  token_cache_read_total?: number;
+  token_cache_create_total?: number;
   token_cache_total?: number;
   cost_delta_total?: number;
   cost_cache_total?: number;
@@ -603,6 +634,10 @@ export interface TopModelEntry {
   tokens_reasoning: number;
   cost_usd: number;
   cost_cache: number; // cache_read + cache_create cost, for exclude-cache
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
   providers: string[];
 }
 

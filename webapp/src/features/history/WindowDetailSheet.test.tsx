@@ -38,6 +38,7 @@ describe('WindowDetailSheet', () => {
       fill_by_model: [
         { model_id: 'opus', series: [{ ts: '2026-06-02T00:00:00Z', pct_used: 20 }] },
       ],
+      by_model: [],
     });
     renderWithProviders(<WindowDetailSheet row={row()} onClose={vi.fn()} />);
     expect(await screen.findByTestId('echart')).toBeInTheDocument();
@@ -48,6 +49,7 @@ describe('WindowDetailSheet', () => {
     vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
       fill_series: [],
       fill_by_model: [],
+      by_model: [],
     });
     renderWithProviders(<WindowDetailSheet row={row()} onClose={vi.fn()} />);
     expect(await screen.findByText(/no fill data recorded/i)).toBeInTheDocument();

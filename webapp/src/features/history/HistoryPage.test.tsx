@@ -97,6 +97,7 @@ function primeDefaults() {
   vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
     fill_series: [],
     fill_by_model: [],
+    by_model: [],
   });
 }
 

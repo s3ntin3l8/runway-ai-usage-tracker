@@ -6,36 +6,80 @@ import {
   fetchHistoryWindows,
 } from '@/api/endpoints';
 import type { HistoryWindowRow } from '@/api/types';
+import type { DateRangeValue } from '@/components/ui/DateRangeTabs';
 
 export type Metric = 'percent' | 'tokens' | 'cost';
+
+type RangeInput = DateRangeValue | number;
+
+function toDateRange(v: RangeInput): DateRangeValue {
+  return typeof v === 'number' ? { days: v } : v;
+}
+
+function dateRangeParams(range: DateRangeValue): Record<string, unknown> {
+  if (range.since && range.until) {
+    return { since: range.since, until: range.until };
+  }
+  return { days: range.days ?? 7 };
+}
 
 export const useHistoryChart = (
   providerId: string | null,
   accountId: string | null,
-  days: number,
+  range: RangeInput,
   metric: Metric,
-) =>
-  useQuery({
-    queryKey: ['usage', 'history-chart', providerId, accountId, days, metric],
+) => {
+  const dr = toDateRange(range);
+  return useQuery({
+    queryKey: ['usage', 'history-chart', providerId, accountId, dr, metric],
     queryFn: () =>
-      fetchHistoryChart({ provider_id: providerId, account_id: accountId, days, metric }),
+      fetchHistoryChart({
+        provider_id: providerId,
+        account_id: accountId,
+        ...dateRangeParams(dr),
+        metric,
+      }),
     enabled: !!providerId && !!accountId,
     refetchInterval: 120_000,
   });
+};
 
-export const useHistoryDeltas = (days: number) =>
-  useQuery({
-    queryKey: ['usage', 'history-deltas', days],
-    queryFn: () => fetchHistoryDeltas({ days }),
+export const useHistoryDeltas = (
+  range: RangeInput,
+  providerId?: string | null,
+  accountId?: string | null,
+) => {
+  const dr = toDateRange(range);
+  return useQuery({
+    queryKey: ['usage', 'history-deltas', dr, providerId, accountId],
+    queryFn: () =>
+      fetchHistoryDeltas({
+        ...dateRangeParams(dr),
+        provider_id: providerId,
+        account_id: accountId,
+      }),
     refetchInterval: 120_000,
   });
+};
 
-export const useHistoryWindows = (providerId: string | null, days: number) =>
-  useQuery({
-    queryKey: ['usage', 'history-windows', providerId, days],
-    queryFn: () => fetchHistoryWindows({ provider_id: providerId, days, limit: 50 }),
+export const useHistoryWindows = (
+  providerId: string | null,
+  accountId: string | null,
+  range: RangeInput,
+) => {
+  const dr = toDateRange(range);
+  return useQuery({
+    queryKey: ['usage', 'history-windows', providerId, accountId, dr],
+    queryFn: () =>
+      fetchHistoryWindows({
+        provider_id: providerId,
+        account_id: accountId,
+        ...dateRangeParams(dr),
+        limit: 50,
+      }),
     refetchInterval: 300_000,
   });
+};
 
 export const useWindowDetail = (row: HistoryWindowRow | null) =>
   useQuery({
