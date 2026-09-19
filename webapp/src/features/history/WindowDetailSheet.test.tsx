@@ -61,4 +61,58 @@ describe('WindowDetailSheet', () => {
     );
     expect(screen.getByText(/no boundaries for this window/i)).toBeInTheDocument();
   });
+
+  it('renders token breakdown when tokens_total > 0', async () => {
+    vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
+      fill_series: [],
+      fill_by_model: [],
+      by_model: [],
+    });
+    renderWithProviders(
+      <WindowDetailSheet
+        row={row({
+          tokens_total: 10000,
+          tokens_input: 5000,
+          tokens_output: 3000,
+          tokens_reasoning: 500,
+          tokens_cache_read: 1000,
+          tokens_cache_create: 500,
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText(/Token breakdown/);
+    expect(screen.getByText(/Input/)).toBeInTheDocument();
+    expect(screen.getByText(/Output/)).toBeInTheDocument();
+    expect(screen.getByText(/Cache read/)).toBeInTheDocument();
+    expect(screen.getByText(/Cache create/)).toBeInTheDocument();
+    expect(screen.getByText(/Reasoning/)).toBeInTheDocument();
+  });
+
+  it('renders per-model table when by_model has entries', async () => {
+    vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
+      fill_series: [],
+      fill_by_model: [],
+      by_model: [
+        {
+          model_id: 'claude-opus',
+          tokens_total: 8000,
+          tokens_input: 4000,
+          tokens_output: 2000,
+          tokens_cache_read: 1500,
+          tokens_cache_create: 500,
+          tokens_reasoning: 0,
+          cost_usd: 0.5,
+          cost_input: 0.3,
+          cost_output: 0.15,
+          cost_cache_read: 0.05,
+          cost_cache_create: 0,
+          msgs: 10,
+        },
+      ],
+    });
+    renderWithProviders(<WindowDetailSheet row={row()} onClose={vi.fn()} />);
+    await screen.findByText(/Per-model breakdown/);
+    expect(screen.getByText('claude-opus')).toBeInTheDocument();
+  });
 });

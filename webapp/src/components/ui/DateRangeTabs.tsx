@@ -28,7 +28,10 @@ interface DateRangeTabsProps {
 }
 
 function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function daysAgo(n: number): Date {
@@ -55,7 +58,10 @@ export function DateRangeTabs({ value, onChange, className }: DateRangeTabsProps
 
   const applyCustom = () => {
     if (!customFrom || !customTo) return;
-    onChange({ since: customFrom, until: customTo });
+    const [from, to] = customFrom <= customTo
+      ? [customFrom, customTo]
+      : [customTo, customFrom];
+    onChange({ since: from, until: to });
     setOpen(false);
   };
 

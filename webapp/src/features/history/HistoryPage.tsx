@@ -14,6 +14,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
 import { formatLocalDate } from '@/lib/tz';
 import { HistoryChart } from './HistoryChart';
@@ -26,6 +27,7 @@ import {
 } from './queries';
 
 export function HistoryPage() {
+  const { excludeCache } = useExcludeCache();
   const fleet = useFleet();
   const providerConfigs = useProviderConfigs();
   const anomalies = useAnomalies();
@@ -122,7 +124,7 @@ export function HistoryPage() {
                 No data points in this range.
               </p>
             ) : (
-              <HistoryChart data={chart.data!} metric={metric} />
+              <HistoryChart data={chart.data!} metric={metric} excludeCache={excludeCache} />
             )}
           </CardContent>
         </Card>
@@ -130,12 +132,18 @@ export function HistoryPage() {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile
             label={`Tokens (${rangeLabel})`}
-            value={formatTokens(deltas.data?.token_delta_total ?? 0)}
+            value={formatTokens(
+              (deltas.data?.token_delta_total ?? 0) -
+                (excludeCache ? (deltas.data?.token_cache_total ?? 0) : 0),
+            )}
             loading={deltas.isPending}
           />
           <StatTile
             label={`Cost (${rangeLabel})`}
-            value={formatCost(deltas.data?.cost_delta_total)}
+            value={formatCost(
+              (deltas.data?.cost_delta_total ?? 0) -
+                (excludeCache ? (deltas.data?.cost_cache_total ?? 0) : 0),
+            )}
             loading={deltas.isPending}
           />
           <StatTile
