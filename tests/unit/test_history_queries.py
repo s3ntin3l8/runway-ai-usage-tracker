@@ -360,6 +360,8 @@ class TestQueryHistoryDeltas:
         cutoff = now - timedelta(hours=1)
         # Event 2h ago — should be included
         _make_event(db_session, ts=now - timedelta(hours=2), event_id="ev_before")
+        # Event exactly at the cutoff — should be excluded (< is exclusive)
+        _make_event(db_session, ts=cutoff, tokens_input=999, event_id="ev_at_boundary")
         # Event 30min ago — should be excluded (after cutoff)
         _make_event(db_session, ts=now - timedelta(minutes=30), event_id="ev_after")
 
@@ -367,7 +369,7 @@ class TestQueryHistoryDeltas:
         result = query_history_deltas(
             db_session, days=1.0, since=(now - timedelta(hours=3)).isoformat(), until=until
         )
-        # Only the 2h-old event
+        # Only the 2h-old event — boundary event is excluded by strict <
         assert result["token_delta_total"] == 15000.0
 
     def test_per_type_token_fields(self, db_session):

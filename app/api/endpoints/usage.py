@@ -58,6 +58,15 @@ WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session":
 router = APIRouter()
 
 
+def _validate_iso_param(name: str, value: str | None) -> None:
+    """Validate an ISO-8601 query parameter, raising 422 on malformed input."""
+    if value:
+        try:
+            parse_iso8601_utc(value)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"{name} must be a valid ISO-8601 datetime")
+
+
 def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[str, Any]:
     """Current month/year boundaries in `tz`, as UTC instants + key strings.
 
@@ -813,20 +822,8 @@ async def get_history_windows(
     adds an exclusive upper bound. Per-type token breakdowns
     (input/output/reasoning/cache_read/cache_create) are included in each row.
     """
-    if since:
-        try:
-            from app.core.date_utils import parse_iso8601_utc
-
-            parse_iso8601_utc(since)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="since must be a valid ISO-8601 datetime")
-    if until:
-        try:
-            from app.core.date_utils import parse_iso8601_utc
-
-            parse_iso8601_utc(until)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="until must be a valid ISO-8601 datetime")
+    _validate_iso_param("since", since)
+    _validate_iso_param("until", until)
     return query_windows(
         session,
         provider_id=provider_id,
@@ -1027,20 +1024,8 @@ async def get_usage_history_deltas(
     An explicit ``since`` (ISO-8601 datetime) overrides ``days``; ``until``
     adds an exclusive upper bound.
     """
-    if since:
-        try:
-            from app.core.date_utils import parse_iso8601_utc
-
-            parse_iso8601_utc(since)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="since must be a valid ISO-8601 datetime")
-    if until:
-        try:
-            from app.core.date_utils import parse_iso8601_utc
-
-            parse_iso8601_utc(until)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="until must be a valid ISO-8601 datetime")
+    _validate_iso_param("since", since)
+    _validate_iso_param("until", until)
     return query_history_deltas(
         session,
         provider_id=provider_id,
