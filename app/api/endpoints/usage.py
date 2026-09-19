@@ -813,6 +813,20 @@ async def get_history_windows(
     adds an exclusive upper bound. Per-type token breakdowns
     (input/output/reasoning/cache_read/cache_create) are included in each row.
     """
+    if since:
+        try:
+            from app.core.date_utils import parse_iso8601_utc
+
+            parse_iso8601_utc(since)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="since must be a valid ISO-8601 datetime")
+    if until:
+        try:
+            from app.core.date_utils import parse_iso8601_utc
+
+            parse_iso8601_utc(until)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="until must be a valid ISO-8601 datetime")
     return query_windows(
         session,
         provider_id=provider_id,
@@ -1013,6 +1027,20 @@ async def get_usage_history_deltas(
     An explicit ``since`` (ISO-8601 datetime) overrides ``days``; ``until``
     adds an exclusive upper bound.
     """
+    if since:
+        try:
+            from app.core.date_utils import parse_iso8601_utc
+
+            parse_iso8601_utc(since)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="since must be a valid ISO-8601 datetime")
+    if until:
+        try:
+            from app.core.date_utils import parse_iso8601_utc
+
+            parse_iso8601_utc(until)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="until must be a valid ISO-8601 datetime")
     return query_history_deltas(
         session,
         provider_id=provider_id,

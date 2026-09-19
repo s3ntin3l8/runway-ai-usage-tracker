@@ -1039,4 +1039,7 @@ def query_window_detail(
         model_agg[m]["msgs"] += r.msgs
 
     by_model = sorted(model_agg.values(), key=lambda x: x["tokens_total"], reverse=True)
+    # Add backwards-compat "tokens" alias alongside "tokens_total"
+    for entry in by_model:
+        entry["tokens"] = entry["tokens_total"]
     return {"fill_series": fill_series, "fill_by_model": fill_by_model, "by_model": by_model}

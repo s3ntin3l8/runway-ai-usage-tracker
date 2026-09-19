@@ -447,16 +447,16 @@ def query_history_deltas(
     filtering), the event-sourced model makes this trivial: just sum the events.
 
     ``since``/``until`` are optional ISO-8601 datetime strings. When ``since`` is
-    provided it overrides ``days``; ``until`` adds an inclusive upper bound.
+    provided it overrides ``days``; ``until`` adds an exclusive upper bound.
     """
     now = datetime.now(UTC)
     if since:
         since_dt = parse_iso8601_utc(since)
     else:
         since_dt = now - timedelta(days=days)
-    since_str = since_dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+    since_str = since_dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
     now_str = (
-        parse_iso8601_utc(until).strftime("%Y-%m-%d %H:%M:%S.%f")
+        parse_iso8601_utc(until).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         if until
         else now.strftime("%Y-%m-%d %H:%M:%S.%f")
     )
@@ -492,7 +492,7 @@ def query_history_deltas(
         FROM usage_events
         WHERE {where}
           AND ts >= :since
-          AND ts <= :now
+          AND ts < :now
         GROUP BY provider_id
     """
     )
