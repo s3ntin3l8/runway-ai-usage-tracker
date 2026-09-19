@@ -210,6 +210,10 @@ class TopModelEntry(BaseModel):
     tokens_reasoning: int
     cost_usd: float
     cost_cache: float  # cache_read + cache_create cost, for exclude-cache
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    cost_cache_read: float = 0.0
+    cost_cache_create: float = 0.0
     providers: list[str]  # distinct providers that contributed this model
 
 
@@ -273,6 +277,10 @@ class TopProjectEntry(BaseModel):
     tokens_reasoning: int
     cost_usd: float
     cost_cache: float
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    cost_cache_read: float = 0.0
+    cost_cache_create: float = 0.0
     providers: list[str]  # distinct providers that touched this project
 
 

@@ -340,3 +340,55 @@ class TestQueryHistoryDeltas:
 
         result = query_history_deltas(db_session, days=1.0)
         assert result["critical_series_count"] == 1  # only anthropic at 95%
+
+    def test_since_overrides_days(self, db_session):
+        """Explicit since overrides the days parameter."""
+        now = datetime.now(UTC)
+        # Event 5h ago — inside a 1d window but outside a 2h since window
+        _make_event(db_session, ts=now - timedelta(hours=5), event_id="ev_old")
+        # Event 30min ago — inside both windows
+        _make_event(db_session, ts=now - timedelta(minutes=30), event_id="ev_new")
+
+        since = (now - timedelta(hours=2)).isoformat()
+        result = query_history_deltas(db_session, days=1.0, since=since)
+        # Only the 30min-old event should be included
+        assert result["token_delta_total"] == 15000.0  # 10000+5000 from ev_new only
+
+    def test_until_excludes_events_at_boundary(self, db_session):
+        """until acts as an exclusive upper bound — events at until are excluded."""
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(hours=1)
+        # Event 2h ago — should be included
+        _make_event(db_session, ts=now - timedelta(hours=2), event_id="ev_before")
+        # Event exactly at the cutoff — should be excluded (< is exclusive)
+        _make_event(db_session, ts=cutoff, tokens_input=999, event_id="ev_at_boundary")
+        # Event 30min ago — should be excluded (after cutoff)
+        _make_event(db_session, ts=now - timedelta(minutes=30), event_id="ev_after")
+
+        until = cutoff.isoformat()
+        result = query_history_deltas(
+            db_session, days=1.0, since=(now - timedelta(hours=3)).isoformat(), until=until
+        )
+        # Only the 2h-old event — boundary event is excluded by strict <
+        assert result["token_delta_total"] == 15000.0
+
+    def test_per_type_token_fields(self, db_session):
+        """Returned dict includes per-type token breakdown fields."""
+        now = datetime.now(UTC)
+        _make_event(
+            db_session,
+            ts=now - timedelta(hours=1),
+            tokens_input=2000,
+            tokens_output=1000,
+            tokens_reasoning=500,
+            tokens_cache_read=3000,
+            tokens_cache_create=200,
+            event_id="ev_types",
+        )
+
+        result = query_history_deltas(db_session, days=1.0)
+        assert result["token_input_total"] == 2000
+        assert result["token_output_total"] == 1000
+        assert result["token_reasoning_total"] == 500
+        assert result["token_cache_read_total"] == 3000
+        assert result["token_cache_create_total"] == 200

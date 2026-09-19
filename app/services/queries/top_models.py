@@ -72,6 +72,10 @@ def query_top_models(
             SUM(tokens_reasoning)                               AS tokens_reasoning,
             SUM(cost_usd)                                       AS cost_usd,
             SUM(cost_cache_read + cost_cache_create)            AS cost_cache,
+            SUM(cost_input)                                     AS cost_input,
+            SUM(cost_output)                                    AS cost_output,
+            SUM(cost_cache_read)                                AS cost_cache_read,
+            SUM(cost_cache_create)                              AS cost_cache_create,
             GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv
         FROM usage_events
         WHERE kind = 'message'
@@ -105,6 +109,10 @@ def query_top_models(
                 "tokens_reasoning": int(row.tokens_reasoning or 0),
                 "cost_usd": float(row.cost_usd or 0.0),
                 "cost_cache": float(row.cost_cache or 0.0),
+                "cost_input": float(row.cost_input or 0.0),
+                "cost_output": float(row.cost_output or 0.0),
+                "cost_cache_read": float(row.cost_cache_read or 0.0),
+                "cost_cache_create": float(row.cost_cache_create or 0.0),
                 "providers": providers,
             }
         )

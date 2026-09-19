@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
+from app.core.date_utils import parse_iso8601_utc
+
 logger = logging.getLogger(__name__)
 
 
@@ -263,11 +265,7 @@ def upsert_latest_usage(  # noqa: PLR0915
             # just-closed window before overwriting.
             if existing and card.reset_at:
                 try:
-                    new_reset_dt = datetime.fromisoformat(
-                        card.reset_at.replace("Z", "+00:00")
-                        if isinstance(card.reset_at, str)
-                        else card.reset_at.isoformat()
-                    )
+                    new_reset_dt = parse_iso8601_utc(card.reset_at)
                     _maybe_close_previous_window(
                         session,
                         existing=existing,
@@ -405,11 +403,7 @@ def upsert_latest_usage(  # noqa: PLR0915
         reset_at_dt = None
         if card.reset_at:
             try:
-                reset_at_dt = datetime.fromisoformat(
-                    card.reset_at.replace("Z", "+00:00")
-                    if isinstance(card.reset_at, str)
-                    else card.reset_at.isoformat()
-                )
+                reset_at_dt = parse_iso8601_utc(card.reset_at)
             except Exception:
                 logger.debug("Failed to parse reset_at for snapshot", exc_info=True)
         record_quota_snapshot(
@@ -474,11 +468,7 @@ def prune_stale_latest_usage(
                 if not raw_reset:
                     continue
                 try:
-                    reset_dt = datetime.fromisoformat(
-                        raw_reset.replace("Z", "+00:00")
-                        if isinstance(raw_reset, str)
-                        else raw_reset.isoformat()
-                    )
+                    reset_dt = parse_iso8601_utc(raw_reset)
                 except (ValueError, AttributeError, TypeError):
                     continue
                 if reset_dt >= now:

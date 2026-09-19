@@ -58,6 +58,15 @@ WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session":
 router = APIRouter()
 
 
+def _validate_iso_param(name: str, value: str | None) -> None:
+    """Validate an ISO-8601 query parameter, raising 422 on malformed input."""
+    if value:
+        try:
+            parse_iso8601_utc(value)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"{name} must be a valid ISO-8601 datetime")
+
+
 def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[str, Any]:
     """Current month/year boundaries in `tz`, as UTC instants + key strings.
 
@@ -800,17 +809,28 @@ async def get_history_windows(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = Query(default=30.0, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     window_type: str | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Paginated list of quota windows (closed + open), newest first."""
+    """Paginated list of quota windows (closed + open), newest first.
+
+    An explicit ``since`` (ISO-8601 datetime) overrides ``days``; ``until``
+    adds an exclusive upper bound. Per-type token breakdowns
+    (input/output/reasoning/cache_read/cache_create) are included in each row.
+    """
+    _validate_iso_param("since", since)
+    _validate_iso_param("until", until)
     return query_windows(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
+        since=since,
+        until=until,
         window_type=window_type,
         page=page,
         limit=limit,
@@ -989,6 +1009,8 @@ async def get_usage_history_deltas(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = Query(default=1.0, ge=0.01, le=90.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Compute actual consumption deltas from usage_events.
@@ -996,14 +1018,21 @@ async def get_usage_history_deltas(
     Returns token_delta_total (cache-inclusive), token_cache_total (the cache
     split so callers can honor the exclude-cache toggle), cost_delta_total,
     cost_cache_total (the cost cache split), provider_token_deltas,
-    critical_series_count, and series_sampled. Since this
-    uses event-sourced data (not gauge readings), no glitch filtering is needed.
+    critical_series_count, and series_sampled. Per-type token breakdowns
+    (input/output/reasoning/cache_read/cache_create) are also returned.
+
+    An explicit ``since`` (ISO-8601 datetime) overrides ``days``; ``until``
+    adds an exclusive upper bound.
     """
+    _validate_iso_param("since", since)
+    _validate_iso_param("until", until)
     return query_history_deltas(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
+        since=since,
+        until=until,
     )
 
 

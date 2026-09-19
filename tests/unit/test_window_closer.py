@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.core.date_utils import parse_iso8601_utc
 from app.models.db import LatestUsage, UsageEvent, UsageWindow
 from app.services.pricing_seed import seed_pricing_table
 from app.services.window_closer import _maybe_close_previous_window, close_window
@@ -626,3 +627,33 @@ def test_close_window_excludes_events_outside_range():
     assert rollup.tokens_input == 100
     assert rollup.tokens_output == 200
     assert abs(rollup.cost_usd - 0.01) < 1e-9
+
+
+def test_maybe_close_handles_naive_new_reset_at():
+    """Offset-less reset_at (from parse_iso8601_utc) must not crash.
+
+    Before the fix, accumulator passed a naive datetime from
+    datetime.fromisoformat() while existing_reset_dt was always UTC-aware.
+    Python raises TypeError on mixed-awareness subtraction at line 192,
+    silently swallowed by the broad except.  Now parse_iso8601_utc normalises
+    offset-less input to UTC, so both operands are always aware.
+    """
+    s = _seeded_session()
+    _add_event(s, "e1", _mid_window(), model_id="sonnet")
+
+    existing = _existing_card(_WINDOW_END)
+    # Simulate parse_iso8601_utc("2026-05-19T18:00:00") → offset-less input
+    # that now gets normalised to UTC by the helper.
+    rolled_over_naive = datetime(2026, 5, 19, 18, 0, 0)  # no tzinfo
+    rolled_over = parse_iso8601_utc(rolled_over_naive)
+    assert rolled_over.tzinfo is UTC
+
+    inserted = _maybe_close_previous_window(
+        s,
+        existing=existing,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        new_reset_at=rolled_over,
+    )
+    assert inserted > 0, "Offset-less reset_at normalised to UTC must still close the window"
