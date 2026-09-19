@@ -570,3 +570,27 @@ def test_window_detail_endpoint_returns_200(session):
     body = r.json()
     assert "fill_series" in body
     assert "by_model" in body
+
+
+def test_deltas_endpoint_rejects_malformed_since(session):
+    r = _client().get("/api/v1/usage/history/deltas?since=not-a-date")
+    assert r.status_code == 422
+    assert "since must be" in r.json()["detail"]
+
+
+def test_deltas_endpoint_rejects_malformed_until(session):
+    r = _client().get("/api/v1/usage/history/deltas?until=2026-13-99")
+    assert r.status_code == 422
+    assert "until must be" in r.json()["detail"]
+
+
+def test_windows_endpoint_rejects_malformed_since(session):
+    r = _client().get("/api/v1/usage/history/windows?since=not-a-date")
+    assert r.status_code == 422
+    assert "since must be" in r.json()["detail"]
+
+
+def test_windows_endpoint_rejects_malformed_until(session):
+    r = _client().get("/api/v1/usage/history/windows?until=2026-13-99")
+    assert r.status_code == 422
+    assert "until must be" in r.json()["detail"]
