@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.12.0...v2.13.0) (2026-09-19)
+
+
+### Features
+
+* **backend:** add per-type token breakdown and since/until date range to history/insights endpoints ([#278](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/278)) ([26a9b3e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/26a9b3e373744eb1be69ad39daeadc0027bf0ca1))
+* **backend:** multi-account hardening for existing single-account APIs ([#281](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/281)) ([b753fd6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b753fd63c500283dc81766622b5ac96ff97092bb))
+* **frontend:** DateRangeTabs, history account scoping, WindowDetail token breakdown ([#279](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/279)) ([6959497](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6959497880962351ac3093e1820113d87be3bf64))
+* **frontend:** stacked bars for Top Models and Top Projects with token/cost breakdown ([#280](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/280)) ([38ba5af](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/38ba5af7b8054a4f73987d9a19da8758a718ae83))
+* **kimi_coding:** /me identity enrichment — email account label, tier, V2 gating ([#271](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/271)) ([1bfd1a4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1bfd1a475c4dc902a17abf0751def7c1f9e69c7a))
+
+
+### Bug Fixes
+
+* **backend:** normalise accumulator reset_at parsing to prevent mixed-awareness crash ([26a9b3e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/26a9b3e373744eb1be69ad39daeadc0027bf0ca1))
+* **kimi_coding:** suppress inactive weekly/code pools on V2 plans; pass-through OpenCode account ([#267](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/267)) ([0058039](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/005803961b495304ceff2547fd2a54214f1c55d2))
+* **opencode:** set account_id from discovered email, not just account_label ([#282](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/282)) ([b8e5d67](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b8e5d673c3ae624088df3f1a695ef264041f95d0))
+* **sidecar:** glob kimi-cli credential file (per-install env-&lt;hash&gt; name) ([#270](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/270)) ([c35a126](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c35a126add2c7e9e438624155e00095d35091367))
+
 ## [2.12.0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.10...v2.12.0) (2026-09-18)
 
 
