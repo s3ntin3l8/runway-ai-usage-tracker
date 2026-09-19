@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session, select
 
+from app.core.date_utils import parse_iso8601_utc
 from app.models._datetime import iso_utc
 from app.models.db import UsagePeriodRollup
 from app.services.queries._shared import _parse_period_key
@@ -437,16 +438,28 @@ def query_history_deltas(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = 1.0,
+    since: str | None = None,
+    until: str | None = None,
 ) -> dict[str, Any]:
     """Compute actual consumption deltas from usage_events within the time range.
 
     Unlike the old gauge-based approach (tracking counter resets with glitch
     filtering), the event-sourced model makes this trivial: just sum the events.
+
+    ``since``/``until`` are optional ISO-8601 datetime strings. When ``since`` is
+    provided it overrides ``days``; ``until`` adds an inclusive upper bound.
     """
     now = datetime.now(UTC)
-    since = now - timedelta(days=days)
-    since_str = since.strftime("%Y-%m-%d %H:%M:%S.%f")
-    now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
+    if since:
+        since_dt = parse_iso8601_utc(since)
+    else:
+        since_dt = now - timedelta(days=days)
+    since_str = since_dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+    now_str = (
+        parse_iso8601_utc(until).strftime("%Y-%m-%d %H:%M:%S.%f")
+        if until
+        else now.strftime("%Y-%m-%d %H:%M:%S.%f")
+    )
 
     params: dict[str, Any] = {"since": since_str, "now": now_str}
     filters = ["kind = 'message'"]
@@ -458,18 +471,24 @@ def query_history_deltas(
         params["account_id"] = account_id
     where = " AND ".join(filters)
 
-    # Token totals — cache-inclusive to match global-stats / top-models / chart
-    # bars / cumulative. cache_tokens is returned as a separate split so the UI
-    # can honor the exclude-cache toggle.
+    # Token + cost totals — cache-inclusive to match global-stats / top-models
+    # / chart bars / cumulative. cache_tokens and per-component cost fields
+    # are returned so the UI can honor the exclude-cache toggle and show cost
+    # breakdowns in tooltips.
     sql = text(
         f"""
         SELECT
             provider_id,
             SUM(tokens_input + tokens_output + tokens_reasoning
                 + tokens_cache_read + tokens_cache_create) AS total_tokens,
-            SUM(tokens_cache_read + tokens_cache_create) AS cache_tokens,
-            SUM(cost_usd) AS total_cost,
-            SUM(cost_cache_read + cost_cache_create) AS cache_cost
+            SUM(tokens_input)                              AS tokens_input,
+            SUM(tokens_output)                             AS tokens_output,
+            SUM(tokens_reasoning)                          AS tokens_reasoning,
+            SUM(tokens_cache_read)                         AS tokens_cache_read,
+            SUM(tokens_cache_create)                       AS tokens_cache_create,
+            SUM(tokens_cache_read + tokens_cache_create)   AS cache_tokens,
+            SUM(cost_usd)                                  AS total_cost,
+            SUM(cost_cache_read + cost_cache_create)       AS cache_cost
         FROM usage_events
         WHERE {where}
           AND ts >= :since
@@ -480,18 +499,33 @@ def query_history_deltas(
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
 
     token_delta_total = 0
+    token_input_total = 0
+    token_output_total = 0
+    token_reasoning_total = 0
+    token_cache_read_total = 0
+    token_cache_create_total = 0
     token_cache_total = 0
     cost_delta_total = 0.0
     cost_cache_total = 0.0
     provider_token_deltas: dict[str, float] = {}
 
     for r in rows:
-        pid, tokens, cache_tokens, cost, cache_cost = r
-        t = int(tokens or 0)
-        cache = int(cache_tokens or 0)
-        c = float(cost or 0.0)
-        cc = float(cache_cost or 0.0)
+        pid = r.provider_id
+        t = int(r.total_tokens or 0)
+        ti = int(r.tokens_input or 0)
+        to = int(r.tokens_output or 0)
+        tr = int(r.tokens_reasoning or 0)
+        tcr = int(r.tokens_cache_read or 0)
+        tcc = int(r.tokens_cache_create or 0)
+        cache = int(r.cache_tokens or 0)
+        c = float(r.total_cost or 0.0)
+        cc = float(r.cache_cost or 0.0)
         token_delta_total += t
+        token_input_total += ti
+        token_output_total += to
+        token_reasoning_total += tr
+        token_cache_read_total += tcr
+        token_cache_create_total += tcc
         token_cache_total += cache
         cost_delta_total += c
         cost_cache_total += cc
@@ -524,6 +558,11 @@ def query_history_deltas(
 
     return {
         "token_delta_total": float(token_delta_total),
+        "token_input_total": float(token_input_total),
+        "token_output_total": float(token_output_total),
+        "token_reasoning_total": float(token_reasoning_total),
+        "token_cache_read_total": float(token_cache_read_total),
+        "token_cache_create_total": float(token_cache_create_total),
         "token_cache_total": float(token_cache_total),
         "cost_delta_total": round(cost_delta_total, 6),
         "cost_cache_total": round(cost_cache_total, 6),

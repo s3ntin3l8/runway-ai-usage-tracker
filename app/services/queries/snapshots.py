@@ -93,16 +93,28 @@ def _live_open_window_totals(
     reset_dt: datetime | None,
     tokens_total: float | None,
     cost_usd: float | None,
-) -> tuple[float | None, float | None, str | None]:
-    """Fill in tokens_total/cost_usd/top_model for an open window row from a
-    live aggregation over usage_events, when the card itself didn't carry
-    them (e.g. the percent-only Anthropic quota card). Guarded because
-    WINDOW_DURATION only covers session/daily/weekly/monthly — provider-
-    specific window types (e.g. weekly_opus) would otherwise KeyError.
+) -> tuple[float | None, float | None, str | None, dict[str, int]]:
+    """Fill in tokens_total/cost_usd/top_model + per-type tokens for an open
+    window row from a live aggregation over usage_events, when the card itself
+    didn't carry them (e.g. the percent-only Anthropic quota card). Guarded
+    because WINDOW_DURATION only covers session/daily/weekly/monthly —
+    provider-specific window types (e.g. weekly_opus) would otherwise KeyError.
+
+    Returns (tokens_total, cost_usd, top_model, token_usage_dict) where
+    token_usage_dict has keys: input, output, cache_read, cache_create,
+    reasoning, total.
     """
+    token_usage: dict[str, int] = {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_create": 0,
+        "reasoning": 0,
+        "total": 0,
+    }
     top_model: str | None = None
     if reset_dt is None or window_type not in WINDOW_DURATION:
-        return tokens_total, cost_usd, top_model
+        return tokens_total, cost_usd, top_model, token_usage
     try:
         agg = query_window_aggregation(
             session,
@@ -113,12 +125,13 @@ def _live_open_window_totals(
         )
     except (KeyError, ValueError):
         logger.debug("Failed to compute live window aggregation for open window", exc_info=True)
-        return tokens_total, cost_usd, top_model
+        return tokens_total, cost_usd, top_model, token_usage
 
     if tokens_total is None:
         tokens_total = agg["token_usage"]["total"]
     if cost_usd is None:
         cost_usd = agg["cost_usd"]
+    token_usage = agg["token_usage"]
     by_model = agg["by_model"]
     if by_model:
         top_model = max(
@@ -131,7 +144,7 @@ def _live_open_window_totals(
                 + by_model[mid]["tokens_reasoning"]
             ),
         )
-    return tokens_total, cost_usd, top_model
+    return tokens_total, cost_usd, top_model, token_usage
 
 
 def query_windows(
@@ -140,6 +153,8 @@ def query_windows(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = 30.0,
+    since: str | None = None,
+    until: str | None = None,
     window_type: str | None = None,
     page: int = 1,
     limit: int = 50,
@@ -156,13 +171,19 @@ def query_windows(
 
     from app.models.db import LatestUsage
 
-    since = datetime.now(UTC) - timedelta(days=days)
+    if since:
+        since_dt = parse_iso8601_utc(since)
+    else:
+        since_dt = datetime.now(UTC) - timedelta(days=days)
+    until_dt = parse_iso8601_utc(until) if until else None
 
     stmt = select(UsageWindow).where(
-        UsageWindow.window_end >= since,
+        UsageWindow.window_end >= since_dt,
         UsageWindow.model_id == "",
         UsageWindow.sidecar_id == "",
     )
+    if until_dt:
+        stmt = stmt.where(UsageWindow.window_end < until_dt)
     if provider_id:
         stmt = stmt.where(UsageWindow.provider_id == provider_id)
     if account_id:
@@ -228,6 +249,11 @@ def query_windows(
                 "limit_value": w.limit_value,
                 "unit_type": "tokens",
                 "tokens_total": total_toks,
+                "tokens_input": w.tokens_input,
+                "tokens_output": w.tokens_output,
+                "tokens_cache_read": w.tokens_cache_read,
+                "tokens_cache_create": w.tokens_cache_create,
+                "tokens_reasoning": w.tokens_reasoning,
                 "cost_usd": w.cost_usd,
                 "msgs": w.msgs,
                 "top_model": None,
@@ -251,12 +277,12 @@ def query_windows(
         reset_at = card.get("reset_at")
         reset_dt: datetime | None = None
 
-        # Apply the days filter to open windows: skip if reset_at is older than `since`.
+        # Apply the since filter to open windows: skip if reset_at is older than `since_dt`.
         # Windows with no reset_at are always current (e.g. session-scoped).
         if reset_at:
             try:
                 reset_dt = parse_iso8601_utc(reset_at)
-                if reset_dt < since:
+                if reset_dt < since_dt:
                     continue
             except Exception:
                 logger.debug("Failed to parse reset_at in snapshot window filter", exc_info=True)
@@ -266,7 +292,7 @@ def query_windows(
         variant = lu.variant if lu.variant and lu.variant != "default" else None
         service_name = f"{base_name} · {variant}" if variant else base_name
 
-        tokens_total, cost_usd, top_model = _live_open_window_totals(
+        tokens_total, cost_usd, top_model, token_usage_dict = _live_open_window_totals(
             session,
             provider_id=lu.provider_id,
             account_id=lu.account_id,
@@ -290,6 +316,11 @@ def query_windows(
                 "limit_value": card.get("limit_value"),
                 "unit_type": card.get("unit_type", "tokens"),
                 "tokens_total": tokens_total,
+                "tokens_input": token_usage_dict.get("input", 0),
+                "tokens_output": token_usage_dict.get("output", 0),
+                "tokens_cache_read": token_usage_dict.get("cache_read", 0),
+                "tokens_cache_create": token_usage_dict.get("cache_create", 0),
+                "tokens_reasoning": token_usage_dict.get("reasoning", 0),
                 "cost_usd": cost_usd,
                 "msgs": card.get("msgs"),
                 "top_model": top_model,
@@ -973,8 +1004,27 @@ def query_window_detail(
     for r in rollup_rows:
         m = r.model_id
         if m not in model_agg:
-            model_agg[m] = {"model_id": m, "tokens": 0, "cost_usd": 0.0, "msgs": 0}
-        model_agg[m]["tokens"] += (
+            model_agg[m] = {
+                "model_id": m,
+                "tokens_input": 0,
+                "tokens_output": 0,
+                "tokens_cache_read": 0,
+                "tokens_cache_create": 0,
+                "tokens_reasoning": 0,
+                "tokens_total": 0,
+                "cost_usd": 0.0,
+                "cost_input": 0.0,
+                "cost_output": 0.0,
+                "cost_cache_read": 0.0,
+                "cost_cache_create": 0.0,
+                "msgs": 0,
+            }
+        model_agg[m]["tokens_input"] += r.tokens_input
+        model_agg[m]["tokens_output"] += r.tokens_output
+        model_agg[m]["tokens_cache_read"] += r.tokens_cache_read
+        model_agg[m]["tokens_cache_create"] += r.tokens_cache_create
+        model_agg[m]["tokens_reasoning"] += r.tokens_reasoning
+        model_agg[m]["tokens_total"] += (
             r.tokens_input
             + r.tokens_output
             + r.tokens_cache_read
@@ -982,7 +1032,11 @@ def query_window_detail(
             + r.tokens_reasoning
         )
         model_agg[m]["cost_usd"] += r.cost_usd
+        model_agg[m]["cost_input"] += r.cost_input
+        model_agg[m]["cost_output"] += r.cost_output
+        model_agg[m]["cost_cache_read"] += r.cost_cache_read
+        model_agg[m]["cost_cache_create"] += r.cost_cache_create
         model_agg[m]["msgs"] += r.msgs
 
-    by_model = sorted(model_agg.values(), key=lambda x: x["tokens"], reverse=True)
+    by_model = sorted(model_agg.values(), key=lambda x: x["tokens_total"], reverse=True)
     return {"fill_series": fill_series, "fill_by_model": fill_by_model, "by_model": by_model}
