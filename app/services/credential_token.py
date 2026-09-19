@@ -147,6 +147,16 @@ def verify_credential_token(
     encoded_payload, _, provided_signature = token.rpartition(".")
     if not encoded_payload or not provided_signature:
         raise CredentialTokenError("token is malformed (empty payload or signature)")
+    # Tokens are ASCII on the wire. Reject non-ASCII up front so we don't
+    # feed ``str`` into ``hmac.compare_digest`` (which raises ``TypeError``
+    # rather than returning False, leaking 500s where callers expect
+    # ``CredentialTokenError``).
+    try:
+        provided_signature.encode("ascii")
+        encoded_payload.encode("ascii")
+        secret.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise CredentialTokenError("token contains non-ASCII characters") from exc
 
     try:
         payload_bytes = _b64url_decode(encoded_payload)

@@ -2329,13 +2329,14 @@ def run_collection(
     # ``/fleet/config``. If the fetch fails (server unreachable, etc.) we
     # silently fall back to the legacy single-account extraction — the
     # sidecar must keep working before the first heartbeat.
+    cache = _get_credential_cache()
     server_accounts_by_provider: dict[str, list[str]] = {}
     try:
         from scripts.sidecar_pkg.credentials import (
             fetch_credential_tokens,
         )
 
-        if not _CREDENTIAL_CACHE.is_fresh():
+        if not cache.is_fresh():
             api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
             api_key_for_tokens = (
                 os.environ.get("RUNWAY_API_KEY")
@@ -2344,9 +2345,9 @@ def run_collection(
             )
             if api_url_for_tokens and api_key_for_tokens:
                 fetched = fetch_credential_tokens(api_url_for_tokens)
-                _CREDENTIAL_CACHE.replace_tokens(fetched)
+                cache.replace_tokens(fetched)
         # Build the per-provider account list from the cached tokens.
-        server_accounts_by_provider = _CREDENTIAL_CACHE.provider_accounts()
+        server_accounts_by_provider = cache.provider_accounts()
     except Exception as _e:
         # Defensive: never let token-fetch failures kill collection.
         logging.debug(f"credential token fetch skipped: {_e}")
@@ -2405,9 +2406,32 @@ def run_collection(
             if _events_enabled and _watermark is not None and provider_id in _EVENT_PROVIDERS:
                 provider_accounts = server_accounts_by_provider.get(provider_id)
                 if provider_accounts:
+                    # A sidecar host represents a single user account. When
+                    # the server reports multiple accounts for this provider,
+                    # they belong to *other* sidecars on other hosts — not to
+                    # this one. Iterating all of them would re-stamp the same
+                    # log/SQLite events N times with different ``account_id``s,
+                    # inflating token counts. We intersect with the local
+                    # identity this sidecar already discovered; if the local
+                    # match is missing, we still iterate one account rather
+                    # than zero (preserves cold-start attribution — the
+                    # server may have re-named the row between discovery and
+                    # fetch). See PR #283 review.
+                    local_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
+                    if local_account_id and local_account_id in provider_accounts:
+                        scoped_accounts = [local_account_id]
+                    else:
+                        # Local discovery didn't find a match in the server's
+                        # per-account list (e.g. local has "default" but the
+                        # server registered a renamed row, or the row was just
+                        # added and we haven't refreshed). Take the first
+                        # server-side account rather than dropping the events
+                        # — better than the leak from #272 even if it
+                        # misattributes to the rename.
+                        scoped_accounts = [provider_accounts[0]]
                     _extract_events_for_provider(
                         provider_id=provider_id,
-                        account_ids=provider_accounts,
+                        account_ids=scoped_accounts,
                         watermark=_watermark,
                         bootstrap_days=bootstrap_days,
                         out_events=all_events,

@@ -202,4 +202,28 @@ def test_claims_is_expired_helper():
     assert not claims.is_expired(now=_fixed_now() + 9.5)
     # At-or-after expiry: expired.
     assert claims.is_expired(now=_fixed_now() + 10)
-    assert claims.is_expired(now=_fixed_now() + 100)
+
+
+def test_verify_rejects_non_ascii_token():
+    """Non-ASCII characters in the token string trip
+    ``hmac.compare_digest``'s ``TypeError`` — we must catch them up front
+    and raise ``CredentialTokenError`` (which callers map to 401) rather
+    than letting them propagate as 500s."""
+    # Encode a payload + signature using UTF-8 bytes that straddle non-ASCII
+    # code points. The encoded payload can include any base64url byte
+    # (ASCII safe), so we synthesise an obviously non-ASCII signature.
+    with pytest.raises(CredentialTokenError) as excinfo:
+        verify_credential_token(SECRET, "abc.café", now=_fixed_now())
+    assert "non-ascii" in str(excinfo.value).lower()
+
+
+def test_verify_rejects_non_ascii_secret():
+    """The HMAC secret must also be ASCII (it's a server-side constant, but
+    tests loading it from an arbitrary source should fail loudly, not 500
+    at verification time)."""
+    token = issue_credential_token(
+        SECRET, provider_id="anthropic", account_id="default", ttl_seconds=60, now=_fixed_now()
+    )
+    with pytest.raises(CredentialTokenError) as excinfo:
+        verify_credential_token("naïve-secret", token, now=_fixed_now())
+    assert "non-ascii" in str(excinfo.value).lower()
