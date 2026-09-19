@@ -1,11 +1,13 @@
-// Drill-down for one quota window: fill-up curve + per-model fill series.
+// Drill-down for one quota window: fill-up curve + token breakdown + per-model table.
 
 import { useMemo } from 'react';
-import type { HistoryWindowRow } from '@/api/types';
+import type { HistoryWindowRow, WindowDetailModelEntry } from '@/api/types';
 import { EChart } from '@/components/charts/EChart';
 import { baseAxisStyle, baseTooltip, useChartTokens } from '@/components/charts/theme';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
+import { formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDate } from '@/lib/tz';
 import { useWindowDetail } from './queries';
 
@@ -98,8 +100,94 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
       </p>
     );
   }
-  if (!option || detail.data!.fill_series.length === 0) {
-    return <p className="py-6 text-center text-xs text-fg-subtle">No fill data recorded.</p>;
-  }
-  return <EChart option={option} className="h-64" />;
+
+  const byModel = detail.data!.by_model ?? [];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {option && detail.data!.fill_series.length > 0 ? (
+        <EChart option={option} className="h-64" />
+      ) : (
+        <p className="py-6 text-center text-xs text-fg-subtle">No fill data recorded.</p>
+      )}
+
+      {row.tokens_total != null && row.tokens_total > 0 ? (
+        <TokenBreakdown row={row} />
+      ) : null}
+
+      {byModel.length > 0 ? <ModelTable models={byModel} /> : null}
+    </div>
+  );
+}
+
+function TokenBreakdown({ row }: { row: HistoryWindowRow }) {
+  return (
+    <div className="flex flex-wrap gap-4 rounded-lg border border-edge p-3">
+      <span className="text-xs font-medium text-fg">Token breakdown</span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        <span className="text-fg-muted">
+          Input: <span className="font-mono tabular text-fg">{formatTokens(row.tokens_input)}</span>
+        </span>
+        <span className="text-fg-muted">
+          Output:{' '}
+          <span className="font-mono tabular text-fg">{formatTokens(row.tokens_output)}</span>
+        </span>
+        <span className="text-fg-muted">
+          Reasoning:{' '}
+          <span className="font-mono tabular text-fg">{formatTokens(row.tokens_reasoning)}</span>
+        </span>
+        <span className="text-fg-muted">
+          Cache read:{' '}
+          <span className="font-mono tabular text-fg">{formatTokens(row.tokens_cache_read)}</span>
+        </span>
+        <span className="text-fg-muted">
+          Cache create:{' '}
+          <span className="font-mono tabular text-fg">{formatTokens(row.tokens_cache_create)}</span>
+        </span>
+        <span className="font-medium text-fg">
+          Total: <span className="font-mono tabular">{formatTokens(row.tokens_total)}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ModelTable({ models }: { models: WindowDetailModelEntry[] }) {
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium text-fg">Per-model breakdown</p>
+      <Table>
+        <THead>
+          <TR>
+            <TH>Model</TH>
+            <TH className="text-right">Tokens</TH>
+            <TH className="hidden text-right sm:table-cell">Input</TH>
+            <TH className="hidden text-right sm:table-cell">Output</TH>
+            <TH className="hidden text-right md:table-cell">Cache</TH>
+            <TH className="text-right">Cost</TH>
+          </TR>
+        </THead>
+        <TBody>
+          {models.map((m) => (
+            <TR key={m.model_id}>
+              <TD className="max-w-[140px] truncate text-xs" title={m.model_id}>
+                {m.model_id}
+              </TD>
+              <TD className="text-right font-mono text-xs tabular">{formatTokens(m.tokens_total)}</TD>
+              <TD className="hidden text-right font-mono text-xs tabular sm:table-cell">
+                {formatTokens(m.tokens_input)}
+              </TD>
+              <TD className="hidden text-right font-mono text-xs tabular sm:table-cell">
+                {formatTokens(m.tokens_output)}
+              </TD>
+              <TD className="hidden text-right font-mono text-xs tabular md:table-cell">
+                {formatTokens(m.tokens_cache_read + m.tokens_cache_create)}
+              </TD>
+              <TD className="text-right font-mono text-xs tabular">{formatCost(m.cost_usd)}</TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+    </div>
+  );
 }

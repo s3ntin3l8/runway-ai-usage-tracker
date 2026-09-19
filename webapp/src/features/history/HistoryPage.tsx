@@ -1,17 +1,20 @@
 // History: fill curves / token / cost chart for one account, range deltas,
 // the window archive (open + closed), and anomaly diagnostics.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { HistoryWindowRow } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DateRangeTabs, type DateRangeValue } from '@/components/ui/DateRangeTabs';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
 import { formatLocalDate } from '@/lib/tz';
 import { HistoryChart } from './HistoryChart';
@@ -23,18 +26,12 @@ import {
   type Metric,
 } from './queries';
 
-const RANGES = [
-  { days: 7, label: '7d' },
-  { days: 14, label: '14d' },
-  { days: 30, label: '30d' },
-  { days: 90, label: '90d' },
-];
-
 export function HistoryPage() {
+  const { excludeCache } = useExcludeCache();
   const fleet = useFleet();
   const providerConfigs = useProviderConfigs();
   const anomalies = useAnomalies();
-  const [days, setDays] = useState(7);
+  const [range, setRange] = useState<DateRangeValue>({ days: 7 });
   const [metric, setMetric] = useState<Metric>('percent');
   const [accountKey, setAccountKey] = useState<string | null>(null);
   const [detailRow, setDetailRow] = useState<HistoryWindowRow | null>(null);
@@ -54,18 +51,35 @@ export function HistoryPage() {
   }, [fleet.data, providerConfigs.data]);
 
   const selected = accounts.find((a) => a.key === accountKey) ?? accounts[0] ?? null;
+
+  useEffect(() => {
+    if (accounts.length > 0 && !accounts.find((a) => a.key === accountKey)) {
+      setAccountKey(null);
+    }
+  }, [accounts, accountKey]);
   const chart = useHistoryChart(
     selected?.providerId ?? null,
     selected?.accountId ?? null,
-    days,
+    range,
     metric,
   );
-  const deltas = useHistoryDeltas(days);
-  const windows = useHistoryWindows(selected?.providerId ?? null, days);
+  const deltas = useHistoryDeltas(range, selected?.providerId, selected?.accountId);
+  const windows = useHistoryWindows(
+    selected?.providerId ?? null,
+    selected?.accountId ?? null,
+    range,
+  );
 
   const hasChartData =
     (chart.data?.series?.some((s) => s.points.length > 0) ?? false) ||
     (chart.data?.bars?.length ?? 0) > 0;
+
+  const rangeLabel =
+    range.days != null
+      ? `${range.days}d`
+      : range.since && range.until
+        ? `${range.since} – ${range.until}`
+        : '';
 
   return (
     <>
@@ -84,16 +98,9 @@ export function HistoryPage() {
               ))}
             </SelectContent>
           </Select>
-          <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))}>
-            <TabsList className="border-0">
-              {RANGES.map((r) => (
-                <TabsTrigger key={r.days} value={String(r.days)} className="h-9 px-2.5">
-                  {r.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-          <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)} className="ml-auto">
+          <DateRangeTabs value={range} onChange={setRange} />
+          <ExcludeCacheToggle className="ml-auto" />
+          <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
             <TabsList className="border-0" aria-label="Chart metric">
               <TabsTrigger value="percent" className="h-9 px-2.5">
                 % used
@@ -117,20 +124,26 @@ export function HistoryPage() {
                 No data points in this range.
               </p>
             ) : (
-              <HistoryChart data={chart.data!} metric={metric} />
+              <HistoryChart data={chart.data!} metric={metric} excludeCache={excludeCache} />
             )}
           </CardContent>
         </Card>
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile
-            label={`Tokens (${days}d)`}
-            value={formatTokens(deltas.data?.token_delta_total ?? 0)}
+            label={`Tokens (${rangeLabel})`}
+            value={formatTokens(
+              (deltas.data?.token_delta_total ?? 0) -
+                (excludeCache ? (deltas.data?.token_cache_total ?? 0) : 0),
+            )}
             loading={deltas.isPending}
           />
           <StatTile
-            label={`Cost (${days}d)`}
-            value={formatCost(deltas.data?.cost_delta_total)}
+            label={`Cost (${rangeLabel})`}
+            value={formatCost(
+              (deltas.data?.cost_delta_total ?? 0) -
+                (excludeCache ? (deltas.data?.cost_cache_total ?? 0) : 0),
+            )}
             loading={deltas.isPending}
           />
           <StatTile
@@ -149,7 +162,7 @@ export function HistoryPage() {
           <CardHeader>
             <CardTitle>Quota windows</CardTitle>
             <span className="text-[11px] text-fg-subtle">
-              {selected ? selected.label : ''} · last {days}d
+              {selected ? selected.label : ''} · {rangeLabel}
             </span>
           </CardHeader>
           {windows.isPending ? (

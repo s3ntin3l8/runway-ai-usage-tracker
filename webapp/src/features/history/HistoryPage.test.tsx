@@ -97,6 +97,7 @@ function primeDefaults() {
   vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
     fill_series: [],
     fill_by_model: [],
+    by_model: [],
   });
 }
 
@@ -186,5 +187,35 @@ describe('HistoryPage', () => {
     const heading = await screen.findByText(/anomalies \(today vs/i);
     const table = heading.closest('div')!.parentElement!;
     expect(within(table).getByText(/5\.4σ/)).toBeInTheDocument();
+  });
+
+  it('subtracts cache totals from stat tiles when exclude-cache is toggled', async () => {
+    vi.mocked(api.fetchHistoryDeltas).mockResolvedValue({
+      token_delta_total: 10000,
+      token_cache_total: 3000,
+      cost_delta_total: 10.0,
+      cost_cache_total: 2.5,
+      critical_series_count: 1,
+      series_sampled: 1,
+      provider_token_deltas: {},
+      token_input_total: 4000,
+      token_output_total: 2000,
+      token_reasoning_total: 500,
+      token_cache_read_total: 2000,
+      token_cache_create_total: 1000,
+    });
+    renderWithProviders(<HistoryPage />);
+    // Wait for the chart to load (indicates async data has arrived)
+    await screen.findByTestId('echart');
+    // Wait a tick for React to flush
+    await new Promise((r) => setTimeout(r, 10));
+    // Before toggle: tiles show cache-inclusive totals (10K tokens, $10.00)
+    expect(screen.getByText('10K')).toBeInTheDocument();
+    expect(screen.getByText('$10.00')).toBeInTheDocument();
+    // Toggle exclude cache (Radix Switch has role="switch")
+    await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
+    // After toggle: tiles subtract cache (7K tokens, $7.50)
+    expect(screen.getByText('7K')).toBeInTheDocument();
+    expect(screen.getByText('$7.50')).toBeInTheDocument();
   });
 });
