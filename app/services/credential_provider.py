@@ -434,6 +434,15 @@ class CredentialProvider:
                     provider_id, account_id=account_id, require_enabled=False
                 )
             else:
+                # Legacy (no account_id) path: deliberately keeps
+                # ``require_enabled=False`` — pre-PR ``get_provider_api_key``
+                # had no ``enabled`` filter at all, so a disabled provider's
+                # stored key was always served. ``get_credentials`` is the
+                # odd one out: it DID filter by ``enabled`` pre-PR, which is
+                # why it threads ``require_enabled=True`` explicitly above.
+                # Do NOT "normalize" this — the asymmetry is intentional and
+                # pinned by ``test_db_read_failures_are_swallowed`` (DB-failure
+                # behavior) and the multi-account tests above.
                 cfg = _resolve_legacy_provider_config(provider_id)
             if cfg and cfg.api_key:
                 return cfg.api_key
@@ -459,6 +468,11 @@ class CredentialProvider:
                     provider_id, account_id=account_id, require_enabled=False
                 )
             else:
+                # Legacy (no account_id) path: deliberately keeps
+                # ``require_enabled=False`` to mirror pre-PR semantics (the
+                # pre-PR ``get_provider_session_cookie`` had no ``enabled``
+                # filter). ``get_credentials`` is the odd one out — see the
+                # matching comment in :meth:`get_provider_api_key` for why.
                 cfg = _resolve_legacy_provider_config(provider_id)
             if cfg and cfg.session_cookie:
                 return cfg.session_cookie
