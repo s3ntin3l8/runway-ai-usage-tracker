@@ -82,6 +82,43 @@ def _resolve_provider_config(
         return rows[0] if rows else None
 
 
+def _resolve_legacy_provider_config(
+    provider_id: str,
+    *,
+    require_enabled: bool = False,
+) -> ProviderConfig | None:
+    """Single-account-style lookup that tolerates multi-row state.
+
+    Returns the row at ``account_id="default"`` when present (any number of
+    other rows allowed), otherwise the first row, otherwise ``None``. Never
+    raises. Used by the public ``CredentialProvider`` methods to preserve
+    today's "give me the configured credential" behavior for legacy callers
+    that don't pass an explicit ``account_id`` — those callers see "no
+    credential" semantics rather than a stack trace when an operator has
+    drifted into multi-account territory. The drift is logged at WARNING
+    inside ``get_credentials`` / ``get_provider_api_key`` / etc. so the
+    situation is visible.
+
+    Note: this is intentionally distinct from :func:`_resolve_provider_config`,
+    which is the strict helper that callers explicitly opt into (e.g. the
+    new per-account PUT endpoint and the multi-account wizard).
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+        ).all()
+        if not rows:
+            return None
+        if require_enabled:
+            rows = [r for r in rows if r.enabled]
+            if not rows:
+                return None
+        for r in rows:
+            if r.account_id == "default":
+                return r
+        return rows[0]
+
+
 def _has_unexpired_token(path: str) -> bool:
     """Best-effort freshness probe: True when the file's JSON carries an
     '*expires*' key with a numeric epoch value still in the future (+60s
@@ -173,10 +210,15 @@ class CredentialProvider:
         Args:
             provider_id: The provider to look up.
             account_id: When provided, only the matching ``(provider_id, account_id)``
-                row's API key is consulted. When ``None``, the row is selected
-                by ``provider_id`` alone — multiple rows raise
-                :class:`AmbiguousProviderAccountError` to prevent the wrong
-                account's credentials from being served.
+                row's API key is consulted. When ``None``, the legacy single-account
+                path is used: the row at ``account_id="default"`` is preferred when
+                present, falling back to the first row. Multi-account drift is
+                logged at WARNING when the legacy path returns no row but other
+                accounts exist.
+
+                For callers that must disambiguate explicitly, use
+                :func:`_resolve_provider_config` directly — it raises
+                :class:`AmbiguousProviderAccountError` for the same condition.
         """
         results: dict[str, str] = {}
         sources: dict[str, str] = {}
@@ -184,11 +226,17 @@ class CredentialProvider:
 
         # DB override: user-provided API key takes precedence over env/file/keychain
         try:
-            _cfg = _resolve_provider_config(provider_id, account_id=account_id)
+            _cfg: ProviderConfig | None
+            if account_id is not None:
+                _cfg = _resolve_provider_config(provider_id, account_id=account_id)
+            else:
+                _cfg = _resolve_legacy_provider_config(provider_id)
             if _cfg and _cfg.api_key:
                 results["api_key"] = _cfg.api_key
                 sources["api_key"] = "config"
         except AmbiguousProviderAccountError:
+            # Surface strict multi-account ambiguity from the explicit-account
+            # path so the wizard can disambiguate; the legacy path never raises.
             raise
         except Exception:
             # Strip CR/LF from the user-influenced provider_id before logging to
@@ -342,14 +390,20 @@ class CredentialProvider:
         Args:
             provider_id: The provider to look up.
             account_id: When provided, scope to that exact ``(provider_id, account_id)``
-                row. When ``None``, the row is selected by ``provider_id`` alone —
-                multiple rows raise :class:`AmbiguousProviderAccountError` so the
-                wrong account's key can't be served silently.
+                row. When ``None``, the legacy single-account path is used:
+                ``account_id="default"`` row when present, else first row. Never
+                raises for the legacy path; the strict path raises
+                :class:`AmbiguousProviderAccountError` only when an explicit
+                account_id is requested but does not exist.
         """
         try:
-            cfg = _resolve_provider_config(
-                provider_id, account_id=account_id, require_enabled=False
-            )
+            cfg: ProviderConfig | None
+            if account_id is not None:
+                cfg = _resolve_provider_config(
+                    provider_id, account_id=account_id, require_enabled=False
+                )
+            else:
+                cfg = _resolve_legacy_provider_config(provider_id)
             if cfg and cfg.api_key:
                 return cfg.api_key
         except AmbiguousProviderAccountError:
@@ -368,9 +422,13 @@ class CredentialProvider:
         cookie extraction. See :meth:`get_provider_api_key` for ``account_id`` semantics.
         """
         try:
-            cfg = _resolve_provider_config(
-                provider_id, account_id=account_id, require_enabled=False
-            )
+            cfg: ProviderConfig | None
+            if account_id is not None:
+                cfg = _resolve_provider_config(
+                    provider_id, account_id=account_id, require_enabled=False
+                )
+            else:
+                cfg = _resolve_legacy_provider_config(provider_id)
             if cfg and cfg.session_cookie:
                 return cfg.session_cookie
         except AmbiguousProviderAccountError:

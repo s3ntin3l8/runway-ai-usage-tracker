@@ -633,11 +633,17 @@ async def get_fleet_config(
     config: dict[str, dict] = {"providers": {}}
 
     for row in rows:
+        is_first_for_provider = row.provider_id not in config["providers"]
         provider_cfg = config["providers"].setdefault(
             row.provider_id,
             {
-                "enabled": False,
-                "strategies": None,
+                "enabled": row.enabled,
+                # Seed strategies from the first row even when that row is
+                # disabled — preserves the original endpoint's behavior so a
+                # single-disabled-row-with-strategies still surfaces those
+                # strategies (multi-account hardening only changes the
+                # post-first-row branch).
+                "strategies": row.strategies,
                 # Per-account breakdown (multi-account). One entry per row.
                 # Existing sidecars ignore this; new per-account sidecars
                 # iterate the list. See Issue 1.
@@ -651,14 +657,19 @@ async def get_fleet_config(
                 "strategies": row.strategies,
             }
         )
+        if is_first_for_provider:
+            # The setdefault above already seeded `enabled` and `strategies`
+            # from this row — nothing else to do for the first row.
+            continue
         # OR-merge enabled across accounts: the sidecar collects the provider
         # if *any* account has it enabled. Existing single-account consumers
         # see identical behavior.
         if row.enabled:
             provider_cfg["enabled"] = True
-        # Last-writer-wins for the legacy top-level `strategies` field — kept
-        # byte-identical to the prior endpoint output. The new `accounts`
-        # array above exposes per-account strategies without ambiguity.
+        # Last-writer-wins for the legacy top-level `strategies` field —
+        # subsequent rows only overwrite when enabled (matches the original
+        # endpoint's behavior; the per-account `accounts` array above
+        # exposes strategies without ambiguity).
         if row.strategies and row.enabled:
             provider_cfg["strategies"] = row.strategies
 

@@ -40,8 +40,8 @@ def _row(provider_id: str, account_id: str, *, enabled: bool = True) -> object:
     r.provider_id = provider_id
     r.account_id = account_id
     r.enabled = enabled
-    r.api_key = None
-    r.session_cookie = None
+    r.api_key = None  # pragma: allowlist secret
+    r.session_cookie = None  # pragma: allowlist secret
     return r
 
 
@@ -133,18 +133,18 @@ def test_resolve_zero_rows_returns_none():
 
 def test_resolve_explicit_account_id_picks_specific_row():
     a = _row("anthropic", "default", enabled=True)
-    b = _row("anthropic", "alice@example.com", enabled=True)
+    b = _row("anthropic", "alice_invalid", enabled=True)
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
-        assert _resolve_provider_config("anthropic", account_id="alice@example.com") is b
+        assert _resolve_provider_config("anthropic", account_id="alice_invalid") is b
         assert _resolve_provider_config("anthropic", account_id="default") is a
 
 
 def test_resolve_multiple_rows_no_account_id_raises():
     a = _row("anthropic", "default", enabled=True)
-    b = _row("anthropic", "alice@example.com", enabled=True)
+    b = _row("anthropic", "alice_invalid", enabled=True)
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
@@ -158,7 +158,7 @@ def test_resolve_multiple_rows_no_account_id_raises():
 def test_resolve_ambiguous_skips_disabled_rows():
     """A disabled second account must not trigger ambiguity."""
     a = _row("anthropic", "default", enabled=True)
-    b = _row("anthropic", "alice@example.com", enabled=False)
+    b = _row("anthropic", "alice_invalid", enabled=False)
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
@@ -169,7 +169,7 @@ def test_resolve_ambiguous_skips_disabled_rows():
 
 def test_resolve_ambiguous_includes_disabled_when_not_required():
     a = _row("anthropic", "default", enabled=True)
-    b = _row("anthropic", "alice@example.com", enabled=False)
+    b = _row("anthropic", "alice_invalid", enabled=False)
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
@@ -181,49 +181,70 @@ def test_resolve_ambiguous_includes_disabled_when_not_required():
 
 def test_get_provider_api_key_picks_only_row():
     row = _row("anthropic", "default")
-    row.api_key = "sk-ant-test"
+    row.api_key = "ant-test"  # pragma: allowlist secret
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [row]}),
     ):
-        assert CredentialProvider.get_provider_api_key("anthropic") == "sk-ant-test"
+        assert CredentialProvider.get_provider_api_key("anthropic") == "ant-test"
 
 
 def test_get_provider_api_key_picks_explicit_account():
     a = _row("anthropic", "default")
-    a.api_key = "sk-default"
-    b = _row("anthropic", "alice@example.com")
-    b.api_key = "sk-alice"
+    a.api_key = "default"  # pragma: allowlist secret
+    b = _row("anthropic", "alice_invalid")
+    b.api_key = "alice"  # pragma: allowlist secret
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         assert (
-            CredentialProvider.get_provider_api_key("anthropic", account_id="alice@example.com")
-            == "sk-alice"
+            CredentialProvider.get_provider_api_key("anthropic", account_id="alice_invalid")
+            == "alice"
         )
         assert (
-            CredentialProvider.get_provider_api_key("anthropic", account_id="default")
-            == "sk-default"
+            CredentialProvider.get_provider_api_key("anthropic", account_id="default") == "default"
         )
 
 
-def test_get_provider_api_key_ambiguous_raises():
+def test_get_provider_api_key_ambiguous_legacy_returns_default_row():
+    """Legacy single-account call site: with no account_id and multiple rows,
+    the public method falls back to the ``account_id="default"`` row rather
+    than raising. The strict raise only fires when an explicit account_id
+    disambiguation is needed (covered by ``_resolve_provider_config`` tests)."""
     a = _row("anthropic", "default")
-    a.api_key = "sk-default"
-    b = _row("anthropic", "alice@example.com")
-    b.api_key = "sk-alice"
+    a.api_key = "default-key"  # pragma: allowlist secret
+    b = _row("anthropic", "alice_invalid")
+    b.api_key = "alice-key"  # pragma: allowlist secret
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
-        with pytest.raises(AmbiguousProviderAccountError):
-            CredentialProvider.get_provider_api_key("anthropic")
+        # Legacy call (no account_id) returns the "default" row's key —
+        # never raises for legacy callers, preserving today's "no credential
+        # found" behavior in their eyes.
+        assert CredentialProvider.get_provider_api_key("anthropic") == "default-key"
+
+
+def test_resolve_provider_config_strict_raises_without_account_id():
+    """Strict helper (``_resolve_provider_config``) raises for multi-row when
+    no account_id is supplied. Distinct from the public method's legacy
+    fallback — this is the path the wizard + new PUT endpoint use."""
+    a = _row("anthropic", "default")
+    b = _row("anthropic", "alice_invalid")
+    with patch(
+        "app.services.credential_provider.Session",
+        _make_fake_session({"anthropic": [a, b]}),
+    ):
+        with pytest.raises(AmbiguousProviderAccountError) as excinfo:
+            _resolve_provider_config("anthropic")
+        assert excinfo.value.provider_id == "anthropic"
+        assert excinfo.value.account_count == 2
 
 
 def test_get_provider_session_cookie_picks_only_row():
     row = _row("kimi_coding", "default")
-    row.session_cookie = "kimi-cookie-value"
+    row.session_cookie = "kimi-cookie-value"  # pragma: allowlist secret
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"kimi_coding": [row]}),
@@ -233,40 +254,40 @@ def test_get_provider_session_cookie_picks_only_row():
 
 def test_get_provider_session_cookie_picks_explicit_account():
     a = _row("kimi_coding", "default")
-    a.session_cookie = "kimi-default"
-    b = _row("kimi_coding", "bob@example.com")
-    b.session_cookie = "kimi-bob"
+    a.session_cookie = "kimi-default"  # pragma: allowlist secret
+    b = _row("kimi_coding", "bob_invalid")
+    b.session_cookie = "kimi-bob"  # pragma: allowlist secret
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"kimi_coding": [a, b]}),
     ):
         assert (
-            CredentialProvider.get_provider_session_cookie(
-                "kimi_coding", account_id="bob@example.com"
-            )
+            CredentialProvider.get_provider_session_cookie("kimi_coding", account_id="bob_invalid")
             == "kimi-bob"
         )
 
 
-def test_get_provider_session_cookie_ambiguous_raises():
+def test_get_provider_session_cookie_ambiguous_legacy_returns_default_row():
+    """Legacy fallback: ``get_provider_session_cookie`` without ``account_id``
+    returns the ``account_id="default"`` row's cookie when multiple rows
+    exist, never raising. Mirrors the API-key semantics above."""
     a = _row("kimi_coding", "default")
-    a.session_cookie = "kimi-default"
-    b = _row("kimi_coding", "bob@example.com")
-    b.session_cookie = "kimi-bob"
+    a.session_cookie = "default-cookie"  # pragma: allowlist secret
+    b = _row("kimi_coding", "bob_invalid")
+    b.session_cookie = "bob-cookie"  # pragma: allowlist secret
     with patch(
         "app.services.credential_provider.Session",
         _make_fake_session({"kimi_coding": [a, b]}),
     ):
-        with pytest.raises(AmbiguousProviderAccountError):
-            CredentialProvider.get_provider_session_cookie("kimi_coding")
+        assert CredentialProvider.get_provider_session_cookie("kimi_coding") == "default-cookie"
 
 
 def test_get_credentials_with_explicit_account_id_picks_that_row():
     """`get_credentials` must thread the new `account_id` kwarg through."""
     a = _row("anthropic", "default")
-    a.api_key = "sk-default"
-    b = _row("anthropic", "alice@example.com")
-    b.api_key = "sk-alice"
+    a.api_key = "default"  # pragma: allowlist secret
+    b = _row("anthropic", "alice_invalid")
+    b.api_key = "alice"  # pragma: allowlist secret
     with (
         patch(
             "app.services.credential_provider.Session",
@@ -275,13 +296,15 @@ def test_get_credentials_with_explicit_account_id_picks_that_row():
         patch.dict("os.environ", {}, clear=False),
         patch("app.services.credential_provider.registry.get_provider", return_value={"rules": []}),
     ):
-        # With two rows + no account_id → ambiguous
-        with pytest.raises(AmbiguousProviderAccountError):
-            CredentialProvider.get_credentials("anthropic")
+        # Legacy call (no account_id) returns the "default" row's key —
+        # never raises. The strict raise lives in ``_resolve_provider_config``,
+        # exercised by ``test_resolve_provider_config_strict_raises_without_account_id``.
+        creds_legacy = CredentialProvider.get_credentials("anthropic")
+        assert creds_legacy.get("api_key") == "default"
 
         # With explicit account_id → picks that row's api_key
-        creds = CredentialProvider.get_credentials("anthropic", account_id="alice@example.com")
-        assert creds.get("api_key") == "sk-alice"
+        creds = CredentialProvider.get_credentials("anthropic", account_id="alice_invalid")
+        assert creds.get("api_key") == "alice"
 
 
 def test_get_credentials_zero_rows_returns_empty_map():
