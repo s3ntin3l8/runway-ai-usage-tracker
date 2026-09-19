@@ -351,6 +351,67 @@ def test_query_windows_open_row_unknown_window_type_does_not_error(session):
     assert row["top_model"] is None
 
 
+def test_query_windows_open_row_excluded_by_until(session):
+    """An open window whose reset_at is >= until_dt should be excluded."""
+    import json
+
+    from app.models.db import LatestUsage
+    from app.services.event_query import query_windows
+
+    now = datetime.now(UTC)
+    # Open window that started 2 days ago — should be visible without until
+    reset_at_recent = now - timedelta(days=2)
+    card_recent = {
+        "provider_id": "anthropic",
+        "account_id": "user@example.com",
+        "window_type": "weekly",
+        "model_id": "",
+        "pct_used": 60.0,
+        "reset_at": reset_at_recent.isoformat(),
+    }
+    session.add(
+        LatestUsage(
+            provider_id="anthropic",
+            account_id="user@example.com",
+            window_type="weekly",
+            model_id="",
+            card_json=json.dumps(card_recent),
+        )
+    )
+    # Open window that started 10 days ago — should be excluded by until=5d ago
+    reset_at_old = now - timedelta(days=10)
+    card_old = {
+        "provider_id": "openai",
+        "account_id": "user@example.com",
+        "window_type": "weekly",
+        "model_id": "",
+        "pct_used": 30.0,
+        "reset_at": reset_at_old.isoformat(),
+    }
+    session.add(
+        LatestUsage(
+            provider_id="openai",
+            account_id="user@example.com",
+            window_type="weekly",
+            model_id="",
+            card_json=json.dumps(card_old),
+        )
+    )
+    session.commit()
+
+    # Without until: both open windows appear
+    result_all = query_windows(session, days=30)
+    open_all = [r for r in result_all["windows"] if r["is_open"]]
+    assert len(open_all) == 2
+
+    # With until=5 days ago: only the old window appears (recent one started after cutoff)
+    until_dt = (now - timedelta(days=5)).isoformat()
+    result_until = query_windows(session, days=30, until=until_dt)
+    open_until = [r for r in result_until["windows"] if r["is_open"]]
+    assert len(open_until) == 1
+    assert open_until[0]["provider_id"] == "openai"
+
+
 # ---------------------------------------------------------------------------
 # Task 4: query_chart
 # ---------------------------------------------------------------------------

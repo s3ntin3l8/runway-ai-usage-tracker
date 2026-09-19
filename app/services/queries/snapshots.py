@@ -277,12 +277,16 @@ def query_windows(
         reset_at = card.get("reset_at")
         reset_dt: datetime | None = None
 
-        # Apply the since filter to open windows: skip if reset_at is older than `since_dt`.
-        # Windows with no reset_at are always current (e.g. session-scoped).
+        # Apply the since/until filters to open windows: skip if reset_at is
+        # older than `since_dt` (window expired before the range) or newer than
+        # `until_dt` (window started after the range).  Windows with no
+        # reset_at are always current (e.g. session-scoped) and always included.
         if reset_at:
             try:
                 reset_dt = parse_iso8601_utc(reset_at)
                 if reset_dt < since_dt:
+                    continue
+                if until_dt and reset_dt >= until_dt:
                     continue
             except Exception:
                 logger.debug("Failed to parse reset_at in snapshot window filter", exc_info=True)
