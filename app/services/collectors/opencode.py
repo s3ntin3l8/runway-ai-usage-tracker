@@ -28,7 +28,7 @@ import httpx
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import PaceCalculator, http_request_with_retry
-from app.services.collectors.base import BaseCollector, format_token_details
+from app.services.collectors.base import BaseCollector, format_token_details, normalize_account_id
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -273,7 +273,21 @@ class OpenCodeCollector(BaseCollector):
             # Try to capture email here too
             email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
             if email_match:
-                self.account_label = email_match.group(1)
+                email = email_match.group(1)
+                self.account_label = email
+                # Pin account_id to the discovered email so cards and events
+                # land under a stable identity rather than the collector's
+                # default "default" bucket. Mirrors the github collector
+                # pattern (`app/services/collectors/github.py`). Without this,
+                # events stream into `account_id="default"` even when the
+                # real user identity is discoverable — see issue #276.
+                #
+                # TODO(#272): prefer the credential's `token_cache` identity
+                # as the pin source — when two opencode accounts are cached,
+                # the workspace HTML's email can disagree with the cookie
+                # owner, and the cookie is the more authoritative signal.
+                if not self.account_id or self.account_id == "default":
+                    self.account_id = normalize_account_id(email)
 
             # Look for workspace ID pattern: id:"wrk_..."
             match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
@@ -605,6 +619,16 @@ class OpenCodeCollector(BaseCollector):
         if email_match:
             email = email_match.group(1)
             self.account_label = email
+            # Pin account_id to the discovered email — sister site to the
+            # workspace-discovery block at `_get_workspace_id` above. Without
+            # this, the collector emits cards/events under `account_id="default"`
+            # even when the user is signed in (see issue #276).
+            #
+            # TODO(#272): prefer the credential's `token_cache` identity as
+            # the pin source when that workstream lands — see the matching
+            # note in `_get_workspace_id` for the rationale.
+            if not self.account_id or self.account_id == "default":
+                self.account_id = normalize_account_id(email)
 
         identity_suffix = f" | {email}" if email else ""
 
