@@ -22,6 +22,7 @@ import pytest
 from app.services.credential_provider import (
     AmbiguousProviderAccountError,
     CredentialProvider,
+    _resolve_legacy_provider_config,
     _resolve_provider_config,
 )
 
@@ -318,4 +319,89 @@ def test_get_credentials_zero_rows_returns_empty_map():
     ):
         creds = CredentialProvider.get_credentials("anthropic")
         # No api_key because no row; no env/file either
+        assert creds.get("api_key") is None
+
+
+def test_legacy_helper_returns_none_when_default_disabled_and_other_enabled():
+    """Multi-account safety: a disabled ``default`` row MUST NOT leak a
+    different account's key to legacy callers (collectors + diagnostics).
+    Even when the ``default`` row exists, if it is ``enabled=False`` the
+    helper returns ``None`` rather than falling back to a non-default
+    enabled row — that would be a silent wrong-account credential leak."""
+    disabled_default = _row("anthropic", "default", enabled=False)
+    enabled_other = _row("anthropic", "alice_invalid", enabled=True)
+    enabled_other.api_key = "alice-key"  # pragma: allowlist secret
+    with patch(
+        "app.services.credential_provider.Session",
+        _make_fake_session({"anthropic": [disabled_default, enabled_other]}),
+    ):
+        cfg = _resolve_legacy_provider_config("anthropic", require_enabled=True)
+        assert cfg is None
+
+
+def test_legacy_helper_logs_warning_on_multi_row(caplog):
+    """The legacy helper logs at WARNING when more than one row exists,
+    so multi-account drift is visible without waiting for a 500. No
+    credential material (provider_id only) is in the log."""
+    a = _row("anthropic", "default")
+    b = _row("anthropic", "alice_invalid")
+    with patch(
+        "app.services.credential_provider.Session",
+        _make_fake_session({"anthropic": [a, b]}),
+    ):
+        with caplog.at_level("WARNING", logger="app.services.credential_provider"):
+            _resolve_legacy_provider_config("anthropic")
+        assert any(
+            "anthropic" in rec.message and "configured accounts" in rec.message
+            for rec in caplog.records
+        )
+
+
+def test_get_credentials_does_not_override_env_when_db_row_disabled(caplog):
+    """Regression coverage for the byte-identical-for-single-account-users
+    guarantee: pre-PR ``get_credentials`` filtered by ``enabled == True`` so
+    a disabled DB row could not silently override env/file sources. The
+    legacy path here threads ``require_enabled=True`` so a single-row user
+    who flips ``enabled=False`` falls back to env/file (matching the
+    pre-PR semantics), and the multi-row case is byte-identical too because
+    the only row is the enabled ``default`` row."""
+    # Enabled default row at anthropic with a stored key — the normal
+    # single-row case (today's user setup).
+    enabled_default = _row("anthropic", "default", enabled=True)
+    enabled_default.api_key = "stored-key"  # pragma: allowlist secret
+    with (
+        patch(
+            "app.services.credential_provider.Session",
+            _make_fake_session({"anthropic": [enabled_default]}),
+        ),
+        patch.dict("os.environ", {}, clear=False),
+        patch(
+            "app.services.credential_provider.registry.get_provider",
+            return_value={"rules": []},
+        ),
+    ):
+        creds = CredentialProvider.get_credentials("anthropic")
+        # Stored key wins when default row is enabled.
+        assert creds.get("api_key") == "stored-key"
+
+    # Now disable the default row — pre-PR and post-PR both fall through
+    # to env/file (no override). We verify by checking no api_key surfaces
+    # when no env/file rules are configured and the only row is disabled.
+    disabled_default = _row("anthropic", "default", enabled=False)
+    disabled_default.api_key = "leaked-key"  # pragma: allowlist secret
+    with (
+        patch(
+            "app.services.credential_provider.Session",
+            _make_fake_session({"anthropic": [disabled_default]}),
+        ),
+        patch.dict("os.environ", {}, clear=False),
+        patch(
+            "app.services.credential_provider.registry.get_provider",
+            return_value={"rules": []},
+        ),
+    ):
+        creds = CredentialProvider.get_credentials("anthropic")
+        # Disabled single-row setup → no api_key surfaced (env/file also
+        # empty in this stub), confirming the ``enabled`` filter still
+        # gates the DB override.
         assert creds.get("api_key") is None

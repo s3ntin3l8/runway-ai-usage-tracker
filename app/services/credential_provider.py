@@ -89,17 +89,25 @@ def _resolve_legacy_provider_config(
 ) -> ProviderConfig | None:
     """Single-account-style lookup that tolerates multi-row state.
 
-    Returns the row at ``account_id="default"`` when present (any number of
-    other rows allowed), otherwise the first row, otherwise ``None``. Never
-    raises. Used by the public ``CredentialProvider`` methods to preserve
+    Used by the public :class:`CredentialProvider` methods to preserve
     today's "give me the configured credential" behavior for legacy callers
-    that don't pass an explicit ``account_id`` — those callers see "no
-    credential" semantics rather than a stack trace when an operator has
-    drifted into multi-account territory. The drift is logged at WARNING
-    inside ``get_credentials`` / ``get_provider_api_key`` / etc. so the
-    situation is visible.
+    that don't pass an explicit ``account_id``. Never raises.
 
-    Note: this is intentionally distinct from :func:`_resolve_provider_config`,
+    Resolution rules:
+
+    - No rows for this provider → ``None``.
+    - ``require_enabled=True`` and zero enabled rows → ``None``.
+    - Exactly one enabled row at ``account_id="default"`` → that row.
+    - Multiple enabled rows but the ``"default"`` row is disabled → ``None``
+      (legacy callers should not silently fall back to a non-default
+      account's credential; that's a multi-account safety violation).
+    - Multiple rows with no ``"default"`` row in the result → ``None`` for
+      the same reason.
+    - Side effect: when the row count > 1, the drift is logged at WARNING
+      with the provider id (no credential value, no account_id hash —
+      provider_id is not credential material).
+
+    This is intentionally distinct from :func:`_resolve_provider_config`,
     which is the strict helper that callers explicitly opt into (e.g. the
     new per-account PUT endpoint and the multi-account wizard).
     """
@@ -113,10 +121,26 @@ def _resolve_legacy_provider_config(
             rows = [r for r in rows if r.enabled]
             if not rows:
                 return None
+        # Multi-account drift visibility — log when more than one row exists
+        # so operators see the state without waiting for a 500.
+        if len(rows) > 1:
+            # Strip CR/LF before logging (provider_id is operator-supplied).
+            safe = provider_id.replace("\r", "").replace("\n", "")
+            logger.warning(
+                "provider %s has %d configured accounts; legacy callers will "
+                'only see the account_id="default" row. Use the per-account '
+                "endpoint PUT /api/v1/system/provider-config/%s/{account_id} "
+                "to disambiguate.",
+                safe,
+                len(rows),
+                safe,
+            )
         for r in rows:
             if r.account_id == "default":
                 return r
-        return rows[0]
+        # No enabled default row — refuse to leak another account's credential
+        # to legacy callers.
+        return None
 
 
 def _has_unexpired_token(path: str) -> bool:
@@ -211,10 +235,12 @@ class CredentialProvider:
             provider_id: The provider to look up.
             account_id: When provided, only the matching ``(provider_id, account_id)``
                 row's API key is consulted. When ``None``, the legacy single-account
-                path is used: the row at ``account_id="default"`` is preferred when
-                present, falling back to the first row. Multi-account drift is
-                logged at WARNING when the legacy path returns no row but other
-                accounts exist.
+                path is used: the ``account_id="default"`` row is preferred (and is
+                ``enabled``-checked, matching pre-PR semantics — a disabled
+                ``default`` row does NOT silently leak another account's key).
+                Returns ``None`` from the legacy path when the default row is
+                disabled or missing — legacy callers should not see another
+                account's credential.
 
                 For callers that must disambiguate explicitly, use
                 :func:`_resolve_provider_config` directly — it raises
@@ -230,7 +256,12 @@ class CredentialProvider:
             if account_id is not None:
                 _cfg = _resolve_provider_config(provider_id, account_id=account_id)
             else:
-                _cfg = _resolve_legacy_provider_config(provider_id)
+                # Pre-PR `get_credentials` filtered by `enabled == True` so a
+                # disabled provider's stored key could not silently override
+                # env/file sources. Keep that filter on the legacy path. The
+                # helper additionally refuses to fall back to a non-default
+                # row when the default row is missing or disabled.
+                _cfg = _resolve_legacy_provider_config(provider_id, require_enabled=True)
             if _cfg and _cfg.api_key:
                 results["api_key"] = _cfg.api_key
                 sources["api_key"] = "config"
