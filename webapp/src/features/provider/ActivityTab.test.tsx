@@ -26,6 +26,9 @@ vi.mock('@/components/charts/UsageHeatmap', () => ({
 vi.mock('@/features/history/HistoryChart', () => ({
   HistoryChart: () => <div data-testid="history-chart" />,
 }));
+vi.mock('@/features/insights/TopProjectsCard', () => ({
+  TopProjectsCard: () => <div data-testid="top-projects-card" />,
+}));
 
 describe('ActivityTab', () => {
   beforeEach(() => {
