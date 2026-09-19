@@ -345,7 +345,12 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "poll_providers": poll_providers,
         "trigger": trigger,
         "collection_enabled": collection_enabled,
-        "identities": _get_active_identities(session),  # For sidecar identity propagation
+        "identities": _get_active_identities(
+            session
+        ),  # For sidecar identity propagation (legacy single-value)
+        "account_identities": _get_active_identity_lists(
+            session
+        ),  # Per-provider list of real account_ids (multi-account)
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
         # Update channel the sidecar should track for its "update available"
         # check ("stable" | "edge"). The dashboard owns this setting.
@@ -361,21 +366,51 @@ def _get_active_identities(session: Session) -> dict[str, str]:
     """Map provider_id to the most recent 'real' account_id seen in LatestUsage.
 
     Used by sidecars to discover their identity when local logs are anonymous.
+    Kept as a single-value-per-provider dict for backward compat with existing
+    sidecars. Multi-account consumers should read ``_get_active_identity_lists``
+    (the new field) for the full per-provider list.
     """
-    from app.models.db import LatestUsage
-
-    rows = session.exec(
-        select(LatestUsage.provider_id, LatestUsage.account_id)
-        .where(LatestUsage.account_id != "default")
-        .where(col(LatestUsage.account_id).is_not(None))
-        .order_by(col(LatestUsage.updated_at).desc())
-    ).all()
-
-    identities = {}
+    rows = _active_identity_rows(session)
+    identities: dict[str, str] = {}
     for pid, aid in rows:
         if pid not in identities:
             identities[pid] = aid
     return identities
+
+
+def _get_active_identity_lists(session: Session) -> dict[str, list[str]]:
+    """Map provider_id to every distinct 'real' account_id seen in LatestUsage.
+
+    New shape that ships alongside the legacy single-value ``identities`` so
+    future per-account sidecars (Issue 1) can pick the right one. Empty list
+    for a provider means "no real-account rows exist yet".
+    """
+    rows = _active_identity_rows(session)
+    out: dict[str, list[str]] = {}
+    for pid, aid in rows:
+        # Preserve recency order (rows are already ordered by LatestUsage.updated_at desc).
+        if aid not in out.setdefault(pid, []):
+            out[pid].append(aid)
+    return out
+
+
+def _active_identity_rows(session: Session) -> list[tuple[str, str]]:
+    """Distinct ``(provider_id, account_id)`` pairs from LatestUsage, real accounts only.
+
+    Ordered by LatestUsage.updated_at descending so the most recently active
+    identity surfaces first. Used by both the legacy single-value
+    ``identities`` map and the new per-provider list.
+    """
+    from app.models.db import LatestUsage
+
+    return list(
+        session.exec(
+            select(LatestUsage.provider_id, LatestUsage.account_id)
+            .where(LatestUsage.account_id != "default")
+            .where(col(LatestUsage.account_id).is_not(None))
+            .order_by(col(LatestUsage.updated_at).desc())
+        ).all()
+    )
 
 
 def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
@@ -583,6 +618,13 @@ async def get_fleet_config(
     This endpoint does not require the admin key (as sidecars do not have it)
     but relies on rate limiting. It returns only the logical state (enabled/disabled
     providers and strategies), no sensitive keys or tokens.
+
+    The response carries two parallel shapes for backward compatibility:
+
+    - ``enabled`` + ``strategies`` (legacy top-level): OR-merged across accounts
+      so today's single-sidecar / single-account consumer keeps working unchanged.
+    - ``accounts`` (new): per-account ``{account_id, enabled, strategies}`` so a
+      future per-account sidecar (Issue 1) can iterate without guessing.
     """
     from app.models.db import ProviderConfig
 
@@ -591,26 +633,44 @@ async def get_fleet_config(
     config: dict[str, dict] = {"providers": {}}
 
     for row in rows:
-        # We only care about global defaults for sidecars, or merge all account settings
-        # To keep it simple, if *any* account has a provider enabled, the sidecar collects it.
-        if row.provider_id not in config["providers"]:
-            config["providers"][row.provider_id] = {
+        provider_cfg = config["providers"].setdefault(
+            row.provider_id,
+            {
+                "enabled": False,
+                "strategies": None,
+                # Per-account breakdown (multi-account). One entry per row.
+                # Existing sidecars ignore this; new per-account sidecars
+                # iterate the list. See Issue 1.
+                "accounts": [],
+            },
+        )
+        provider_cfg["accounts"].append(
+            {
+                "account_id": row.account_id,
                 "enabled": row.enabled,
                 "strategies": row.strategies,
             }
-        # If we already have it, but this row is enabled, we mark it enabled overall
-        elif row.enabled:
-            config["providers"][row.provider_id]["enabled"] = True
-
-        # Merge strategies if present
+        )
+        # OR-merge enabled across accounts: the sidecar collects the provider
+        # if *any* account has it enabled. Existing single-account consumers
+        # see identical behavior.
+        if row.enabled:
+            provider_cfg["enabled"] = True
+        # Last-writer-wins for the legacy top-level `strategies` field — kept
+        # byte-identical to the prior endpoint output. The new `accounts`
+        # array above exposes per-account strategies without ambiguity.
         if row.strategies and row.enabled:
-            config["providers"][row.provider_id]["strategies"] = row.strategies
+            provider_cfg["strategies"] = row.strategies
 
     from app.services.collector_manager import collector_manager
 
     # Ensure all registered providers have a default entry if not in DB
     for p_id in collector_manager.collector_registry:
         if p_id not in config["providers"]:
-            config["providers"][p_id] = {"enabled": True, "strategies": None}
+            config["providers"][p_id] = {
+                "enabled": True,
+                "strategies": None,
+                "accounts": [],
+            }
 
     return {"status": "ok", "config": config}

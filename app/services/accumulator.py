@@ -208,16 +208,28 @@ def upsert_latest_usage(  # noqa: PLR0915
                 )
                 return
             if canonical_account_id == "default":
-                real_row = session.exec(
+                # Multi-account hardening: only suppress when a real-account
+                # row already exists for the SAME (provider_id, window_type,
+                # variant, model_id) slot. Pre-fix logic checked provider-level
+                # only, which would silently kill a legitimate default-account
+                # error card for a slot that no real-account row covers.
+                slot_real_row = session.exec(
                     select(LatestUsage).where(
                         LatestUsage.provider_id == card.provider_id,
                         LatestUsage.account_id != "default",
+                        LatestUsage.window_type == card.window_type,
+                        LatestUsage.variant == variant,
+                        LatestUsage.model_id == model_id,
                     )
                 ).first()
-                if real_row:
+                if slot_real_row:
                     logger.debug(
-                        "Skipping default-account error card for %s — real account row exists",
+                        "Skipping default-account error card for %s/%s/%s/%s — "
+                        "same-slot real account row exists",
                         card.provider_id,
+                        card.window_type,
+                        variant,
+                        model_id,
                     )
                     return
         except Exception as e:
@@ -333,13 +345,22 @@ def upsert_latest_usage(  # noqa: PLR0915
     if not is_error and canonical_account_id != "default":
         try:
             with session.begin_nested():
-                orphan_defaults = session.exec(
+                # Multi-account hardening: evict the default-orphan ONLY for the
+                # same (provider_id, window_type, variant, model_id) slot the
+                # incoming real-account card is filling. Pre-fix logic swept
+                # every default-tagged error row for the provider — wrong for
+                # multi-account because a real-account card for slot A must
+                # not kill a legitimate default-tagged error row at slot B.
+                slot_default_errors = session.exec(
                     select(LatestUsage).where(
                         LatestUsage.provider_id == card.provider_id,
                         LatestUsage.account_id == "default",
+                        LatestUsage.window_type == card.window_type,
+                        LatestUsage.variant == variant,
+                        LatestUsage.model_id == model_id,
                     )
                 ).all()
-                for row in orphan_defaults:
+                for row in slot_default_errors:
                     if _is_error_card(row.card_json):
                         session.delete(row)
                 cross_variant_errors = session.exec(
@@ -498,6 +519,12 @@ def evict_orphan_error_rows(session: Session) -> int:
 
     Run once at startup so existing stale rows from before the suppression
     logic was added are removed without waiting for the next collect cycle.
+
+    Multi-account hardened: a default-tagged error row is only evicted when
+    a non-default healthy row already covers the SAME `(provider_id,
+    window_type, variant, model_id)` slot. Pre-fix logic checked
+    provider-level only and would silently kill a legitimate default-tagged
+    error card at a slot no real-account row covers.
     Returns the number of rows deleted.
     """
     from app.models.db import LatestUsage
@@ -505,25 +532,32 @@ def evict_orphan_error_rows(session: Session) -> int:
     deleted = 0
     try:
         all_rows = session.exec(select(LatestUsage)).all()
-        # Index non-error rows by provider_id and (provider_id, account_id)
+        # Index non-error rows by (provider_id, account_id) for same-account
+        # eviction, and by full slot tuple for the default-orphan case. Only
+        # default-tagged error rows whose slot already has a real-account
+        # counterpart are eligible for default-orphan eviction.
         healthy_accounts: set[tuple[str, str]] = set()
-        providers_with_real_account: set[str] = set()
+        slot_has_real_account: set[tuple[str, str, str, str]] = set()
         for row in all_rows:
             if not _is_error_card(row.card_json):
                 healthy_accounts.add((row.provider_id, row.account_id))
                 if row.account_id != "default":
-                    providers_with_real_account.add(row.provider_id)
+                    slot_has_real_account.add(
+                        (row.provider_id, row.window_type, row.variant, row.model_id)
+                    )
 
         to_delete = []
         for row in all_rows:
             if not _is_error_card(row.card_json):
                 continue
             pid, aid = row.provider_id, row.account_id
+            slot = (pid, row.window_type, row.variant, row.model_id)
             if (pid, aid) in healthy_accounts:
                 # A healthy row for the same account supersedes this error row
                 to_delete.append(row)
-            elif aid == "default" and pid in providers_with_real_account:
-                # A real-account row for this provider supersedes the default-orphan
+            elif aid == "default" and slot in slot_has_real_account:
+                # A real-account row covers this slot — the default-tagged
+                # error card is redundant and safe to drop.
                 to_delete.append(row)
 
         for row in to_delete:
