@@ -59,6 +59,26 @@ counts; `usages` carries ratio pools (`limit_5h`, `limit_7d`,
 `limit_5h` ratio demonstrably lags the counts (0% vs a real 47%) — the
 collector never prefers it over `limits[]`.
 
+**Identity enrichment:** after a successful `/usages`, the collector makes a
+non-fatal `GET {base}/coding/v1/me` (verified 2026-09-18 with an API key).
+The response carries the account identity end-to-end:
+
+```json
+{
+  "user_id": "d78kbuol3dc8u30k4q6g",   // == the `sub` claim of every kimi JWT
+  "email": "user@example.com",          // -> account_label (no manual label)
+  "user_level_name": "Pro",             // -> tier badge, no cookie needed
+  "goods_version": 2,                   // 2 = V2: weekly window suppressed
+  "region": "REGION_OVERSEA", "user_level": 25, "status": "USER_STATUS_NORMAL"
+}
+```
+
+`email` becomes the collector's account label, so `resolve_account_id`
+canonicalizes the quota cards onto the email account automatically — the same
+account pass-through OpenCode events land on, with no manual labeling.
+`goods_version: 2` additionally drops a vestigial weekly card from
+legacy-shape `/usages` responses.
+
 ### Web gateway (web strategy)
 **Endpoints:**
 - `POST .../BillingService/GetUsages` — 5h counts + weekly counts
@@ -168,10 +188,11 @@ cookie (or set an API key — the API key does not expire).
 ### No tier badge / no weekly card
 **No weekly card on a V2 plan (Pro) is expected** — V2 plans have no real
 weekly quota; the collector suppresses the vestigial window the web API still
-reports. **No tier badge with API-key-only auth is also expected** — the Code
-API omits membership data; add a `kimi-auth` cookie (or sign in with the Kimi
-Code CLI plus browser session) so the web strategy can enrich the tier badge.
-On V1-tier plans (cookie auth) the weekly card is the primary quota and stays.
+reports. The **tier badge and account identity come from the api strategy's
+`/coding/v1/me` call** — if it's missing, check that the call isn't being
+blocked (it needs the same Bearer credential as `/usages`); the web
+`GetSubscription` goods title remains the fallback. On V1-tier plans (cookie
+auth) the weekly card is the primary quota and stays.
 
 ## Related Files
 
