@@ -105,7 +105,6 @@ export function RankBar({
         color: seg.color,
         borderRadius: i === segmentDefs.length - 1 ? [0, 3, 3, 0] : 0,
       },
-      emphasis: { itemStyle: { color: seg.color } },
     }));
 
     return {

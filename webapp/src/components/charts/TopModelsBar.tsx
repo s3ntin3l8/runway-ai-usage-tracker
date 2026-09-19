@@ -42,7 +42,11 @@ function getSegments(t: ReturnType<typeof useChartTokens>, metric: TopMetric): S
 
 function totalValue(m: TopModelEntry, metric: TopMetric, excludeCache: boolean): number {
   if (metric === 'cost') {
-    return m.cost_usd - (excludeCache ? m.cost_cache : 0);
+    return (
+      m.cost_input +
+      m.cost_output +
+      (excludeCache ? 0 : m.cost_cache_read + m.cost_cache_create)
+    );
   }
   return (
     m.tokens_input +
@@ -91,7 +95,6 @@ export function TopModelsBar({
         // Round only the end-cap segment's right corners.
         borderRadius: i === rawSegments.length - 1 ? [0, 3, 3, 0] : 0,
       },
-      emphasis: { itemStyle: { color: seg.color } },
     }));
 
     return {
@@ -114,6 +117,9 @@ export function TopModelsBar({
             }
           }
           lines.push(`<span style="opacity:.6">Total: ${fmt(totalValue(m, metric, excludeCache))}</span>`);
+          if (metric === 'cost' && Math.abs(m.cost_usd - totalValue(m, metric, excludeCache)) > 0.001) {
+            lines.push(`<span style="opacity:.6">Reported: ${fmt(m.cost_usd)}</span>`);
+          }
           if (m.providers.length) {
             lines.push(`<span style="opacity:.6">via ${m.providers.join(', ')}</span>`);
           }

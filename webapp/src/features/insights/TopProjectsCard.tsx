@@ -14,6 +14,21 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatTokens } from '@/lib/format';
 import { useTopProjects, type ProjectMetric } from './queries';
 
+const COST_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
+  cost_input: (p) => p.cost_input,
+  cost_output: (p) => p.cost_output,
+  cost_cache_read: (p) => p.cost_cache_read,
+  cost_cache_create: (p) => p.cost_cache_create,
+};
+
+const TOKEN_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
+  tokens_input: (p) => p.tokens_input,
+  tokens_output: (p) => p.tokens_output,
+  tokens_reasoning: (p) => p.tokens_reasoning,
+  tokens_cache_read: (p) => p.tokens_cache_read,
+  tokens_cache_create: (p) => p.tokens_cache_create,
+};
+
 function projectRow(
   p: TopProjectEntry,
   metric: ProjectMetric,
@@ -27,11 +42,12 @@ function projectRow(
   }
 
   if (metric === 'cost') {
+    const accessors = COST_ACCESSORS;
     const segments: RankSegment[] = COST_SEGMENT_KEYS.map((k, i) => ({
       key: k.key,
       label: k.label,
       color: series[i],
-      value: (p as unknown as Record<string, number>)[k.key] ?? 0,
+      value: accessors[k.key]?.(p) ?? 0,
     }));
     if (excludeCache) {
       for (const s of segments) {
@@ -47,11 +63,12 @@ function projectRow(
   }
 
   // tokens
+  const accessors = TOKEN_ACCESSORS;
   const segments: RankSegment[] = TOKEN_SEGMENT_KEYS.map((k, i) => ({
     key: k.key,
     label: k.label,
     color: series[i],
-    value: (p as unknown as Record<string, number>)[k.key] ?? 0,
+    value: accessors[k.key]?.(p) ?? 0,
   }));
   if (excludeCache) {
     for (const s of segments) {
