@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     INGEST_API_KEY: str = ""  # Default empty = disabled; set to non-empty to enable ingestion
     ADMIN_API_KEY: str | None = None
 
+    # TTL for short-lived credential tokens issued in /fleet/config and redeemed
+    # via POST /api/v1/fleet/credentials/redeem. See app/services/credential_token.py.
+    # The sidecar is expected to refetch tokens on its normal heartbeat cadence;
+    # tokens intentionally cap blast radius if leaked from a sidecar log/tempfile.
+    CREDENTIAL_TOKEN_TTL_SECONDS: int = 3600
+
     # Comma-separated list of reverse-proxy IPs allowed to assert auth via
     # X-Forwarded-User / Remote-User headers. Empty = proxy-header auth
     # disabled (default). Without this, anyone could forge the header.

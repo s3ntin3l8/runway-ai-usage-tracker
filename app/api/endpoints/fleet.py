@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Any
@@ -19,6 +20,12 @@ from app.models.schemas import IngestRequest
 from app.services import audit_log
 from app.services.account_identity import normalize_sidecar_id, resolve_account_id
 from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
+from app.services.credential_token import (
+    CredentialTokenClaims,
+    CredentialTokenError,
+    issue_credential_token,
+    verify_credential_token,
+)
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
 
@@ -623,14 +630,28 @@ async def get_fleet_config(
 
     - ``enabled`` + ``strategies`` (legacy top-level): OR-merged across accounts
       so today's single-sidecar / single-account consumer keeps working unchanged.
-    - ``accounts`` (new): per-account ``{account_id, enabled, strategies}`` so a
-      future per-account sidecar (Issue 1) can iterate without guessing.
+    - ``accounts`` (new): per-account ``{account_id, enabled, strategies,
+      credential_token}`` so a future per-account sidecar (Issue #272) can
+      iterate without guessing and redeem credentials per account.
+
+    Tokens are short-lived (TTL = ``CREDENTIAL_TOKEN_TTL_SECONDS``, default
+    1 hour) and scoped to a single ``(provider_id, account_id)`` pair.
+    They reveal nothing on the wire; the sidecar redeems them via
+    ``POST /api/v1/fleet/credentials/redeem`` to fetch the actual decrypted
+    credentials.
     """
     from app.models.db import ProviderConfig
 
     rows = session.exec(select(ProviderConfig)).all()
 
     config: dict[str, dict] = {"providers": {}}
+    token_ttl = max(60, int(settings.CREDENTIAL_TOKEN_TTL_SECONDS))
+    # Tokens are only issued when ingest is configured — the redeem endpoint
+    # requires INGEST_API_KEY to authenticate, so issuing tokens without it
+    # would just produce tokens no one can redeem.
+    can_issue_tokens = (
+        bool(settings.INGEST_API_KEY) and not settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
+    )
 
     for row in rows:
         is_first_for_provider = row.provider_id not in config["providers"]
@@ -646,17 +667,42 @@ async def get_fleet_config(
                 "strategies": row.strategies,
                 # Per-account breakdown (multi-account). One entry per row.
                 # Existing sidecars ignore this; new per-account sidecars
-                # iterate the list. See Issue 1.
+                # iterate the list. See Issue #272.
                 "accounts": [],
             },
         )
-        provider_cfg["accounts"].append(
-            {
-                "account_id": row.account_id,
-                "enabled": row.enabled,
-                "strategies": row.strategies,
-            }
+        # Issue a per-account credential token. Tokens are issued only for
+        # accounts that actually have a credential field set (api_key,
+        # session_cookie, oai_sc_cookie) — there's no point handing a
+        # sidecar a token for an empty row.
+        has_credential = bool(
+            row.api_key_encrypted or row.session_cookie_encrypted or row.oai_sc_cookie_encrypted
         )
+        account_entry: dict[str, Any] = {
+            "account_id": row.account_id,
+            "enabled": row.enabled,
+            "strategies": row.strategies,
+        }
+        if can_issue_tokens and has_credential and row.enabled:
+            try:
+                account_entry["credential_token"] = issue_credential_token(
+                    settings.INGEST_API_KEY,
+                    provider_id=row.provider_id,
+                    account_id=row.account_id,
+                    ttl_seconds=token_ttl,
+                )
+            except Exception as exc:  # noqa: BLE001 — token issuance must never fail /config
+                # Defensive: if token issuance raises (e.g. INGEST_API_KEY races
+                # with a config reload), don't break /fleet/config — just omit
+                # the token. The sidecar's existing local-credential path keeps
+                # working until the next heartbeat can retry.
+                logger.warning(
+                    "Failed to issue credential token for %s/%s: %s",
+                    scrub_log(row.provider_id),
+                    scrub_log(row.account_id),
+                    exc,
+                )
+        provider_cfg["accounts"].append(account_entry)
         if is_first_for_provider:
             # The setdefault above already seeded `enabled` and `strategies`
             # from this row — nothing else to do for the first row.
@@ -685,3 +731,204 @@ async def get_fleet_config(
             }
 
     return {"status": "ok", "config": config}
+
+
+class CredentialRedeemRequest(BaseModel):
+    """Request body for the credential redemption endpoint.
+
+    The ``token`` is the compact ``base64url(json).hex_hmac`` string issued
+    in ``/fleet/config`` (see ``app/services/credential_token.py``).
+    """
+
+    token: str
+
+
+def _validate_redeem_request(
+    body_bytes: bytes, x_signature: str | None, x_timestamp: str | None
+) -> tuple[CredentialTokenClaims | None, HTTPException | None]:
+    """Validate HMAC + token for the redeem endpoint. Returns either the
+    decoded claims or an HTTPException (never raises).
+    """
+    if not x_signature or not x_timestamp:
+        return None, HTTPException(status_code=401, detail="Missing HMAC signature or timestamp")
+
+    try:
+        ts = float(x_timestamp)
+    except ValueError:
+        return None, HTTPException(status_code=401, detail="Invalid X-Timestamp format")
+
+    skew = time.time() - ts
+    if skew < -60 or skew > 300:
+        return None, HTTPException(
+            status_code=400,
+            detail={
+                "error": "timestamp_expired" if skew > 0 else "timestamp_future",
+                "skew_seconds": round(skew, 1),
+                "message": "Clock skew detected. Please check NTP sync on the sidecar machine.",
+            },
+        )
+
+    expected_sig = hmac.new(
+        settings.INGEST_API_KEY.encode(),
+        f"{x_timestamp}".encode() + body_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(x_signature, expected_sig):
+        return None, HTTPException(status_code=401, detail="Invalid HMAC signature")
+
+    try:
+        body = json.loads(body_bytes)
+    except Exception as exc:
+        return None, HTTPException(status_code=400, detail=f"Invalid JSON body: {exc}")
+
+    token = body.get("token") if isinstance(body, dict) else None
+    if not isinstance(token, str) or not token:
+        return None, HTTPException(
+            status_code=400,
+            detail={"error": "invalid_body", "message": "missing 'token' field"},
+        )
+
+    try:
+        claims = verify_credential_token(settings.INGEST_API_KEY, token)
+    except CredentialTokenError as exc:
+        return None, HTTPException(
+            status_code=401,
+            detail={"error": "invalid_token", "message": str(exc)},
+        )
+
+    return claims, None
+
+
+@router.post("/credentials/redeem")
+@limiter.limit("60/minute")
+async def redeem_credential_token(
+    request: Request,
+    x_signature: str | None = Header(None, alias="X-Signature"),
+    x_timestamp: str | None = Header(None, alias="X-Timestamp"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Redeem a server-issued credential token and return the decrypted
+    credentials for the ``(provider_id, account_id)`` pair it scopes.
+
+    HMAC-SHA256 authentication (same scheme as ``/fleet/ingest``):
+        ``X-Signature = HMAC(INGEST_API_KEY, x_timestamp + raw_body)``
+
+    The body is ``{"token": "..."}``. The endpoint verifies both the HMAC
+    and the token's own signature + expiry; the HMAC authenticates the
+    caller (must hold ``INGEST_API_KEY``), the token binds the redemption
+    to a specific ``(provider_id, account_id)``.
+
+    Returns:
+        ``{"provider_id", "account_id", "credentials": {...}}`` where
+        ``credentials`` carries only the fields the row actually has
+        (``api_key``, ``session_cookie``, ``oai_sc_cookie``). No claim
+        surface is exposed for fields that weren't set.
+
+    Audited: ``action="sidecar.credential.redeem"``,
+    ``target_id="{provider_id}/{account_id}"``.
+
+    Rate limit: 60/minute per source IP. At one redeem per (provider,
+    account) per heartbeat cycle (typical 60s), a fleet of 100 sidecars
+    × 10 providers × 5 accounts = 5000 potential redemptions/hour
+    would still stay under the limit. The bound is there to keep a
+    flooding caller from saturating the HMAC + decrypt path, not to
+    throttle legitimate operators.
+    """
+    # 1. Same pre-flight as /fleet/ingest: refuse the default insecure key.
+    if not settings.INGEST_API_KEY:
+        logger.error("INGEST_API_KEY is empty — credentials/redeem endpoint is disabled")
+        raise HTTPException(
+            status_code=503,
+            detail="Redeem endpoint not configured: INGEST_API_KEY is empty",
+        )
+    if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
+        logger.error(
+            "INGEST_API_KEY is the default insecure value — credentials/redeem endpoint is disabled"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Redeem endpoint not configured: INGEST_API_KEY must be changed from default",
+        )
+
+    # 2. Read body bytes and validate size BEFORE HMAC. A flooded large
+    # request shouldn't waste cycles on a full HMAC verify. 4 KB is far
+    # above any legitimate body (a single token string).
+    body_bytes = await request.body()
+    if len(body_bytes) > 4 * 1024:
+        raise HTTPException(status_code=413, detail="Request body too large")
+    if not body_bytes:
+        raise HTTPException(status_code=400, detail="Missing request body")
+
+    # 3. Validate HMAC + token. Done outside the body-validation layer so
+    # missing/malformed inputs surface as our 401/400, not FastAPI's 422.
+    claims, exc = _validate_redeem_request(body_bytes, x_signature, x_timestamp)
+    if exc is not None:
+        if exc.status_code == 401:
+            logger.warning(
+                "Credential redeem rejected (HMAC): sig=%s ts=%s",
+                scrub_log((x_signature or "")[:8]),
+                scrub_log(x_timestamp or ""),
+            )
+        raise exc
+    assert claims is not None
+    assert isinstance(claims, CredentialTokenClaims)
+
+    # 4. Load the row and return its decrypted credentials. Use the injected
+    # session so test fixtures that override ``get_session`` (see
+    # ``tests/integration/conftest.py``) see the same rows the test inserted —
+    # the helper ``_resolve_provider_config`` opens its own
+    # ``Session(engine)`` from ``app.core.db.engine`` and bypasses the
+    # override, which would make integration tests flaky.
+    row = (
+        session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == claims.provider_id,
+                ProviderConfig.account_id == claims.account_id,
+            )
+        )
+        .unique()
+        .one_or_none()
+    )
+
+    if row is None:
+        # The token carried a valid signature, but the row it points to no
+        # longer exists (deleted between issuance and redemption). Refuse
+        # with a 401 rather than 404 so we don't leak whether the token's
+        # tuple ever existed.
+        logger.warning(
+            "Credential redeem for missing row: %s/%s",
+            scrub_log(claims.provider_id),
+            scrub_log(claims.account_id),
+        )
+        raise HTTPException(status_code=401, detail="invalid_token")
+
+    credentials: dict[str, str] = {}
+    api_key = row.api_key
+    if row.api_key_encrypted and api_key is not None:
+        credentials["api_key"] = api_key
+    session_cookie = row.session_cookie
+    if row.session_cookie_encrypted and session_cookie is not None:
+        credentials["session_cookie"] = session_cookie
+    oai_sc_cookie = row.oai_sc_cookie
+    if row.oai_sc_cookie_encrypted and oai_sc_cookie is not None:
+        credentials["oai_sc_cookie"] = oai_sc_cookie
+
+    audit_log.record(
+        session,
+        request,
+        action="sidecar.credential.redeem",
+        target_id=f"{claims.provider_id}/{claims.account_id}",
+        payload={
+            # Never log the credentials themselves or the token. Just record
+            # the (provider, account) pair that was redeemed and the field
+            # names that were surfaced — useful for auditing how often each
+            # provider is read, useless to an attacker reading the log.
+            "fields": sorted(credentials.keys()),
+        },
+    )
+
+    return {
+        "provider_id": claims.provider_id,
+        "account_id": claims.account_id,
+        "credentials": credentials,
+    }

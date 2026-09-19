@@ -1643,6 +1643,161 @@ def _codex_account_email() -> str:
 _ACCOUNT_IDENTITIES: dict[str, str] = {}
 _GLOBAL_RESET_ANCHORS: dict[str, dict[str, str]] = {}
 
+# Module-level credential cache (issue #272). Populated lazily by
+# ``run_collection`` from ``GET /api/v1/fleet/config``; cleared on restart.
+# Lives at module scope so ``run_collection`` (which is the only writer)
+# can share it with the ``DaemonRunner``-level fetch in the heartbeat path.
+_CREDENTIAL_CACHE: Any = None
+
+
+def _get_credential_cache() -> Any:
+    """Lazily build the singleton CredentialCache (defers the import to
+    keep the metrics-only path free of new deps)."""
+    global _CREDENTIAL_CACHE
+    if _CREDENTIAL_CACHE is None:
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        _CREDENTIAL_CACHE = CredentialCache(ttl_seconds=600)
+    return _CREDENTIAL_CACHE
+
+
+# Provider IDs that have event extractors. Per-account iteration loops over
+# each of these and stamps events with the resolved ``account_id``.
+_EVENT_PROVIDERS: frozenset[str] = frozenset(
+    {"anthropic", "chatgpt", "gemini", "opencode", "antigravity"}
+)
+
+# Legacy single-account identity discovery, used when the server has no
+# per-account config for a provider (back-compat for older servers and the
+# fallback path). Each entry returns the ``account_id`` to use.
+_LEGACY_EVENT_ACCOUNT_DISCOVERY: dict[str, Any] = {
+    "anthropic": lambda: globals()["discover_anthropic_email"]() or "default",
+    "chatgpt": lambda: globals()["_codex_account_email"]() or "default",
+    "gemini": lambda: globals()["_gemini_account_email"]() or "default",
+    # OpenCode's legacy helper requires a DB path argument, so wrap it.
+    "opencode": (
+        lambda: globals()["_opencode_account_email"](globals()["_discover_opencode_db_path"]())
+    ),
+    "antigravity": lambda: globals()["_ag_account_email"]() or "default",
+}
+
+
+def _extract_events_for_provider(
+    provider_id: str,
+    account_ids: list[str],
+    *,
+    watermark: Any,
+    bootstrap_days: int,
+    out_events: list[dict[str, Any]],
+) -> None:
+    """Run the event extractor for ``provider_id`` once per ``account_ids``,
+    stamping each event with the resolved identity. Errors on one account
+    don't block the others (issue #272 acceptance: "Handle partial
+    failure: if one account's credentials fail to fetch / decrypt, others
+    continue.").
+    """
+    if not account_ids:
+        return
+    # Lazy import — these are only needed in the events branch.
+    from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+    from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
+    from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
+    from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
+    from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
+
+    dispatch: dict[str, Any] = {
+        "anthropic": _make_account_extractor(parse_anthropic_events, _discover_anthropic_log_paths),
+        "chatgpt": _make_account_extractor(parse_chatgpt_events, _discover_codex_log_paths),
+        "gemini": _make_account_extractor(parse_gemini_events, _discover_gemini_log_paths),
+        "opencode": _make_account_extractor_opencode(parse_opencode_events),
+        "antigravity": _make_account_extractor_antigravity(parse_antigravity_events),
+    }
+
+    extractor = dispatch.get(provider_id)
+    if extractor is None:
+        return
+    for account_id in account_ids:
+        try:
+            evts = extractor(account_id, watermark, bootstrap_days)
+        except Exception as e:
+            logging.warning(f"  [{provider_id}/{account_id}] event extraction error: {e}")
+            continue
+        if evts:
+            logging.info(f"  [{provider_id}/{account_id}] {len(evts)} new event(s)")
+            out_events.extend(e.model_dump(mode="json") for e in evts)
+
+
+def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
+    """Bind a parser to a path-discovery callable so we can pass ``account_id``."""
+
+    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+        paths = paths_finder()
+        if not paths:
+            return []
+        if isinstance(paths, list):
+            paths_iter = paths  # antigravity returns a list
+        else:
+            paths_iter = [paths]
+        all_evts = []
+        for p in paths_iter:
+            since = watermark.last_pushed(__extract_provider_id(parser), account_id) or (
+                datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+            )
+            all_evts.extend(parser(p, account_id=account_id, since=since))
+        # Deduplicate by event_id across paths (antigravity emits one event
+        # per DB file; if a user has multiple we may double-count).
+        seen: set[str] = set()
+        deduped = []
+        for ev in all_evts:
+            eid = ev.event_id
+            if eid in seen:
+                continue
+            seen.add(eid)
+            deduped.append(ev)
+        return deduped
+
+    return _extract
+
+
+def _make_account_extractor_opencode(parser: Any) -> Any:
+    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+        db_path = _discover_opencode_db_path()
+        if db_path is None:
+            return []
+        since = watermark.last_pushed("opencode", account_id) or (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+        )
+        return parser(db_path, account_id=account_id, since=since)
+
+    return _extract
+
+
+def _make_account_extractor_antigravity(parser: Any) -> Any:
+    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+        db_paths = _discover_antigravity_db_paths()
+        if not db_paths:
+            return []
+        since = watermark.last_pushed("antigravity", account_id) or (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+        )
+        return parser(db_paths, account_id=account_id, since=since)
+
+    return _extract
+
+
+def __extract_provider_id(parser: Any) -> str:
+    """Return the provider_id a parser corresponds to. Used by the per-account
+    watermark lookup so events from multiple accounts don't stomp on each
+    other in the watermark file."""
+    name = getattr(parser, "__module__", "")
+    if "anthropic" in name:
+        return "anthropic"
+    if "chatgpt" in name:
+        return "chatgpt"
+    if "gemini" in name:
+        return "gemini"
+    return "unknown"
+
 
 def _opencode_account_email(db_path: Path | None) -> str:
     """Read email from the OpenCode SQLite `account` table; returns 'default' if unavailable.
@@ -2158,11 +2313,6 @@ def run_collection(
     """
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
-        from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
-        from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
-        from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
-        from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
-        from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
         from scripts.sidecar_pkg.event_watermark import EventWatermark
 
         _watermark = EventWatermark(
@@ -2173,6 +2323,33 @@ def run_collection(
         logging.warning(f"Event extraction unavailable: {_e}")
         _watermark = None
         _events_enabled = False
+
+    # Fetch the server-known per-account list (issue #272). When the sidecar
+    # has cached a recent snapshot we skip the network call; otherwise we hit
+    # ``/fleet/config``. If the fetch fails (server unreachable, etc.) we
+    # silently fall back to the legacy single-account extraction — the
+    # sidecar must keep working before the first heartbeat.
+    server_accounts_by_provider: dict[str, list[str]] = {}
+    try:
+        from scripts.sidecar_pkg.credentials import (
+            fetch_credential_tokens,
+        )
+
+        if not _CREDENTIAL_CACHE.is_fresh():
+            api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
+            api_key_for_tokens = (
+                os.environ.get("RUNWAY_API_KEY")
+                or os.environ.get("INGEST_API_KEY")
+                or config.get("api_key")
+            )
+            if api_url_for_tokens and api_key_for_tokens:
+                fetched = fetch_credential_tokens(api_url_for_tokens)
+                _CREDENTIAL_CACHE.replace_tokens(fetched)
+        # Build the per-provider account list from the cached tokens.
+        server_accounts_by_provider = _CREDENTIAL_CACHE.provider_accounts()
+    except Exception as _e:
+        # Defensive: never let token-fetch failures kill collection.
+        logging.debug(f"credential token fetch skipped: {_e}")
 
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
@@ -2219,102 +2396,34 @@ def run_collection(
                 logging.info(f"  [{provider_id}] no data")
             all_metrics.extend(metrics)
 
-            # --- Anthropic event extraction ---
-            if provider_id == "anthropic" and _events_enabled and _watermark is not None:
-                try:
-                    account_id = discover_anthropic_email() or "default"
-                    since = _watermark.last_pushed("anthropic", account_id) or (
-                        datetime.datetime.now(datetime.UTC)
-                        - datetime.timedelta(days=bootstrap_days)
+            # Events block. Per-account iteration (issue #272): when the
+            # server has told us about multiple accounts for this provider,
+            # extract events once per account and stamp them with the
+            # resolved identity. Falls back to single-pass with the
+            # locally-discovered account_id when the server has nothing
+            # for this provider (legacy single-account path).
+            if _events_enabled and _watermark is not None and provider_id in _EVENT_PROVIDERS:
+                provider_accounts = server_accounts_by_provider.get(provider_id)
+                if provider_accounts:
+                    _extract_events_for_provider(
+                        provider_id=provider_id,
+                        account_ids=provider_accounts,
+                        watermark=_watermark,
+                        bootstrap_days=bootstrap_days,
+                        out_events=all_events,
                     )
-                    log_paths = _discover_anthropic_log_paths()
-                    if log_paths:
-                        evts = parse_anthropic_events(log_paths, account_id=account_id, since=since)
-                        if evts:
-                            logging.info(
-                                f"  [anthropic] {len(evts)} new event(s) since {since.isoformat()}"
-                            )
-                            all_events.extend(e.model_dump(mode="json") for e in evts)
-                except Exception as e:
-                    logging.warning(f"  [anthropic] event extraction error: {e}")
-
-            # --- ChatGPT/Codex event extraction ---
-            if provider_id == "chatgpt" and _events_enabled and _watermark is not None:
-                try:
-                    account_id = _codex_account_email() or "default"
-                    since = _watermark.last_pushed("chatgpt", account_id) or (
-                        datetime.datetime.now(datetime.UTC)
-                        - datetime.timedelta(days=bootstrap_days)
+                else:
+                    # Legacy single-account fallback. Today's local discovery
+                    # (JWT claims, local DB emails, etc.) all default to
+                    # ``account_id="default"`` for anonymous providers.
+                    legacy_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
+                    _extract_events_for_provider(
+                        provider_id=provider_id,
+                        account_ids=[legacy_account_id],
+                        watermark=_watermark,
+                        bootstrap_days=bootstrap_days,
+                        out_events=all_events,
                     )
-                    log_paths = _discover_codex_log_paths()
-                    if log_paths:
-                        evts = parse_chatgpt_events(log_paths, account_id=account_id, since=since)
-                        if evts:
-                            logging.info(
-                                f"  [chatgpt] {len(evts)} new event(s) since {since.isoformat()}"
-                            )
-                            all_events.extend(e.model_dump(mode="json") for e in evts)
-                except Exception as e:
-                    logging.warning(f"  [chatgpt] event extraction error: {e}")
-
-            # --- Gemini event extraction ---
-            if provider_id == "gemini" and _events_enabled and _watermark is not None:
-                try:
-                    account_id = _gemini_account_email() or "default"
-                    since = _watermark.last_pushed("gemini", account_id) or (
-                        datetime.datetime.now(datetime.UTC)
-                        - datetime.timedelta(days=bootstrap_days)
-                    )
-                    log_paths = _discover_gemini_log_paths()
-                    if log_paths:
-                        evts = parse_gemini_events(log_paths, account_id=account_id, since=since)
-                        if evts:
-                            logging.info(
-                                f"  [gemini] {len(evts)} new event(s) since {since.isoformat()}"
-                            )
-                            all_events.extend(e.model_dump(mode="json") for e in evts)
-                except Exception as e:
-                    logging.warning(f"  [gemini] event extraction error: {e}")
-
-            # --- OpenCode event extraction ---
-            if provider_id == "opencode" and _events_enabled and _watermark is not None:
-                try:
-                    db_path = _discover_opencode_db_path()
-                    account_id = _opencode_account_email(db_path)
-                    if db_path is not None:
-                        since = _watermark.last_pushed("opencode", account_id) or (
-                            datetime.datetime.now(datetime.UTC)
-                            - datetime.timedelta(days=bootstrap_days)
-                        )
-                        evts = parse_opencode_events(db_path, account_id=account_id, since=since)
-                        if evts:
-                            logging.info(
-                                f"  [opencode] {len(evts)} new event(s) since {since.isoformat()}"
-                            )
-                            all_events.extend(e.model_dump(mode="json") for e in evts)
-                except Exception as e:
-                    logging.warning(f"  [opencode] event extraction error: {e}")
-
-            # --- Antigravity event extraction ---
-            if provider_id == "antigravity" and _events_enabled and _watermark is not None:
-                try:
-                    account_id = _ag_account_email() or "default"
-                    db_paths = _discover_antigravity_db_paths()
-                    if db_paths:
-                        since = _watermark.last_pushed("antigravity", account_id) or (
-                            datetime.datetime.now(datetime.UTC)
-                            - datetime.timedelta(days=bootstrap_days)
-                        )
-                        evts = parse_antigravity_events(
-                            db_paths, account_id=account_id, since=since
-                        )
-                        if evts:
-                            logging.info(
-                                f"  [antigravity] {len(evts)} new event(s) since {since.isoformat()}"
-                            )
-                            all_events.extend(e.model_dump(mode="json") for e in evts)
-                except Exception as e:
-                    logging.warning(f"  [antigravity] event extraction error: {e}")
 
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")
