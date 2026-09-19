@@ -10,143 +10,163 @@ The fix mirrors the github collector pattern at
 ``app/services/collectors/github.py``: after discovering an email, also
 stamp ``self.account_id`` (via ``normalize_account_id``) when the collector
 is still on its default / unset identity.
+
+These tests call the real collector methods (``_get_workspace_id`` and
+``_parse_usage_data``) with mocked HTTP — same pattern as
+``tests/unit/test_collectors.py:2553``. A regression that reverts
+``opencode.py`` to the pre-fix behaviour fails them.
 """
 
 from __future__ import annotations
 
-import re
-from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.services.collectors.opencode import OpenCodeCollector
 
 
-def _make_workspace_response_html(email: str, workspace_id: str = "wrk_test") -> str:
-    """A minimal opencode /_server response carrying an email + workspace id.
+def _workspace_response(email: str, workspace_id: str = "wrk_test") -> httpx.Response:
+    """Minimal ``opencode.ai/_server`` response carrying an email + workspace id."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.text = f'someJS({{id:"{workspace_id}",name:"Test"}}); {email} '
+    return resp
 
-    Mirrors the regex patterns in OpenCodeCollector._get_workspace_id and
-    OpenCodeCollector._parse_usage_data — enough for both code paths to
-    find the email without us mocking the full HTTP layer.
-    """
-    # Pattern from _get_workspace_id: id:"wrk_..."
-    # Pattern from email capture: bare email regex.
+
+def _subscription_text(email: str) -> str:
+    """Minimal ``/workspace/<id>/go`` page text that includes a discovered email."""
     return (
-        f'random_garbage_then id:"{workspace_id}"\n'
-        f"account_panel: {{user: '{email}', tier: 'go'}}\n"
+        f"{email} "
+        "rollingUsage:{usagePercent:50,resetInSec:3600} "
+        "weeklyUsage:{usagePercent:30,resetInSec:86400} "
+        "monthlyUsage:{usagePercent:20,resetInSec:2592000}"
     )
 
 
-class TestOpenCodeAccountIdDiscovery:
-    """Pin the two email-discovery sites: ``_get_workspace_id`` and the main
-    ``_parse_usage_data`` path. Both must stamp ``account_id`` from the
-    discovered email so events stop leaking into ``"default"``."""
+class TestWorkspaceDiscoveryPinsAccountId:
+    """``_get_workspace_id`` is the first email-discovery site."""
 
     @pytest.mark.asyncio
-    async def test_workspace_discovery_pins_account_id_from_email(self):
-        """The first email-discovery site (inside ``_get_workspace_id``)
-        stamps ``account_id`` once a real email is found."""
-        collector = OpenCodeCollector()  # starts with account_id=None
+    async def test_pins_account_id_from_email(self, mock_http_client):
+        """Fresh collector (account_id=None) gets the email pinned after
+        the workspace HTML is scraped."""
+        collector = OpenCodeCollector()
         assert collector.account_id is None
 
-        # Simulate the regex match that would happen against a real
-        # ``opencode.ai/_server`` response — no HTTP, no fs.
-        html = _make_workspace_response_html("alice@example.com")
-        email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", html)
-        assert email_match is not None
-        email = email_match.group(1)
-        collector.account_label = email
-        if not collector.account_id or collector.account_id == "default":
-            from app.services.collectors.base import normalize_account_id
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_workspace_response("alice@example.com"),
+            ),
+        ):
+            workspace_id = await collector._get_workspace_id(mock_http_client, {})
 
-            collector.account_id = normalize_account_id(email)
-
+        assert workspace_id == "wrk_test"
         assert collector.account_label == "alice@example.com"
         assert collector.account_id == "alice@example.com"
 
     @pytest.mark.asyncio
-    async def test_parse_usage_data_pins_account_id_from_email(self):
-        """The second email-discovery site (in ``_parse_usage_data``) also
-        stamps ``account_id`` once a real email is found."""
-        collector = OpenCodeCollector()
-        assert collector.account_id is None
+    async def test_pins_account_id_from_default_state(self, mock_http_client):
+        """``account_id="default"`` (the bug-report state) is upgraded to
+        the discovered email. Covers the ``or self.account_id == "default"``
+        half of the guard — the original test never exercised this path."""
+        collector = OpenCodeCollector(account_id="default")
+        assert collector.account_id == "default"
 
-        # Simulate a subscription-page response that contains the email.
-        html = _make_workspace_response_html("bob@example.com", workspace_id="wrk_other")
-        email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", html)
-        assert email_match is not None
-        email = email_match.group(1)
-        collector.account_label = email
-        if not collector.account_id or collector.account_id == "default":
-            from app.services.collectors.base import normalize_account_id
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_workspace_response("bob@example.com"),
+            ),
+        ):
+            await collector._get_workspace_id(mock_http_client, {})
 
-            collector.account_id = normalize_account_id(email)
-
-        assert collector.account_label == "bob@example.com"
         assert collector.account_id == "bob@example.com"
 
     @pytest.mark.asyncio
-    async def test_existing_account_id_is_not_overwritten(self):
-        """If the collector was constructed with an explicit account_id,
-        the email-discovery path must not clobber it. Mirrors the github
-        collector's ``if not self.account_id or self.account_id == "default"``
-        guard."""
+    async def test_explicit_account_id_is_preserved(self, mock_http_client):
+        """An explicit ``account_id`` set at construction is never overwritten
+        by the email-discovery guard — avoids aliasing two distinct identities
+        when a user has multiple opencode accounts cached."""
         collector = OpenCodeCollector(account_id="alice@example.com")
 
-        # Simulate the email-discovery branch (the real fix runs the same
-        # guard inline; this test just verifies the *behavior* the guard
-        # preserves).
-        html = _make_workspace_response_html("bob@example.com")
-        email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", html)
-        assert email_match is not None
-        email = email_match.group(1)
-        # The guard: only stamp when current is None or "default".
-        if not collector.account_id or collector.account_id == "default":
-            from app.services.collectors.base import normalize_account_id
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_workspace_response("bob@example.com"),
+            ),
+        ):
+            await collector._get_workspace_id(mock_http_client, {})
 
-            collector.account_id = normalize_account_id(email)
-
-        # Explicit account_id is preserved — never overwritten by email
-        # discovery (avoids aliasing two distinct identities into one).
+        # account_label still picks up the discovered email (that's the
+        # pre-fix behaviour — left alone here).
+        assert collector.account_label == "bob@example.com"
+        # but account_id is preserved.
         assert collector.account_id == "alice@example.com"
 
     @pytest.mark.asyncio
-    async def test_account_id_updates_after_workspace_discovery(self, tmp_path):
-        """End-to-end: instantiate a collector, simulate the workspace
-        discovery path (via the regex + the inline guard), and confirm the
-        ``account_id`` lands on the discovered email. Exercises the same
-        code path that was leaving 2,219 events in ``default`` for the
-        bug reporter (issue #276)."""
-        # Fresh state dir so the state-file load doesn't trip.
-        data_dir = tmp_path / "oc_state"
-        data_dir.mkdir()
-        with patch("app.services.collectors.opencode.settings") as mock_settings:
-            mock_settings.data_dir = str(data_dir)
-            collector = OpenCodeCollector()  # account_id=None
+    async def test_no_email_no_account_id_change(self, mock_http_client):
+        """When the workspace HTML carries no email, ``account_id`` stays
+        unchanged — the guard is a no-op, not a regression."""
+        collector = OpenCodeCollector(account_id="default")
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = 'id:"wrk_no_email"; no email here'
 
-        # Pin reset window state so `_save_persisted_state` (which the
-        # workspace-discovery code path triggers) writes to a deterministic
-        # timestamp and doesn't race the test cleanup.
-        fixed_reset = datetime.now(UTC) + timedelta(days=5)
-        collector._last_window_info = {
-            "weeklyUsage": {
-                "cutoff": (fixed_reset - timedelta(days=7)),
-                "is_fixed": True,
-            }
-        }
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            await collector._get_workspace_id(mock_http_client, {})
 
-        # Simulate the regex extraction + the guard from the fix.
-        html = _make_workspace_response_html("carol@example.com")
-        email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", html)
-        assert email_match is not None
-        email = email_match.group(1)
-        collector.account_label = email
-        if not collector.account_id or collector.account_id == "default":
-            from app.services.collectors.base import normalize_account_id
+        # identity is still the default — no email to stamp from.
+        assert collector.account_label is None
+        assert collector.account_id == "default"
 
-            collector.account_id = normalize_account_id(email)
 
-        # Before the fix this asserted `collector.account_id == "default"` or
-        # `None`. After the fix it's pinned to the discovered email.
-        assert collector.account_id == "carol@example.com"
+class TestParseUsageDataPinsAccountId:
+    """``_parse_usage_data`` is the second email-discovery site (sister
+    site to the workspace-discovery path)."""
+
+    def test_pins_account_id_from_email(self):
+        """Fresh collector gets the email pinned after the subscription
+        page is parsed."""
+        collector = OpenCodeCollector()
+        assert collector.account_id is None
+
+        cards = collector._parse_usage_data(_subscription_text("alice@example.com"), "wrk_TEST")
+
+        # Verify the parsing produced the expected cards and pinned the identity.
+        assert cards  # at least one card emitted
+        assert collector.account_label == "alice@example.com"
+        assert collector.account_id == "alice@example.com"
+
+    def test_pins_account_id_from_default_state(self):
+        """``account_id="default"`` gets upgraded to the discovered email."""
+        collector = OpenCodeCollector(account_id="default")
+
+        collector._parse_usage_data(_subscription_text("bob@example.com"), "wrk_TEST")
+
+        assert collector.account_id == "bob@example.com"
+
+    def test_explicit_account_id_is_preserved(self):
+        """An explicit ``account_id`` set at construction is never overwritten."""
+        collector = OpenCodeCollector(account_id="alice@example.com")
+
+        collector._parse_usage_data(_subscription_text("bob@example.com"), "wrk_TEST")
+
+        assert collector.account_label == "bob@example.com"
+        assert collector.account_id == "alice@example.com"

@@ -281,6 +281,11 @@ class OpenCodeCollector(BaseCollector):
                 # pattern (`app/services/collectors/github.py`). Without this,
                 # events stream into `account_id="default"` even when the
                 # real user identity is discoverable — see issue #276.
+                #
+                # TODO(#272): prefer the credential's `token_cache` identity
+                # as the pin source — when two opencode accounts are cached,
+                # the workspace HTML's email can disagree with the cookie
+                # owner, and the cookie is the more authoritative signal.
                 if not self.account_id or self.account_id == "default":
                     self.account_id = normalize_account_id(email)
 
@@ -618,6 +623,10 @@ class OpenCodeCollector(BaseCollector):
             # workspace-discovery block at `_get_workspace_id` above. Without
             # this, the collector emits cards/events under `account_id="default"`
             # even when the user is signed in (see issue #276).
+            #
+            # TODO(#272): prefer the credential's `token_cache` identity as
+            # the pin source when that workstream lands — see the matching
+            # note in `_get_workspace_id` for the rationale.
             if not self.account_id or self.account_id == "default":
                 self.account_id = normalize_account_id(email)
 
