@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 import type { TopModelEntry } from '@/api/types';
 import { formatCost, formatTokens } from '@/lib/format';
+import { COST_SEGMENT_KEYS, TOKEN_SEGMENT_KEYS } from './segmentDefs';
 import { EChart } from './EChart';
 import { baseAxisStyle, baseTooltip, useChartTokens } from './theme';
 
@@ -17,47 +18,26 @@ interface Segment {
   get: (m: TopModelEntry) => number;
 }
 
+const ACCESSORS: Record<string, (m: TopModelEntry) => number> = {
+  tokens_input: (m) => m.tokens_input,
+  tokens_output: (m) => m.tokens_output,
+  tokens_reasoning: (m) => m.tokens_reasoning,
+  tokens_cache_read: (m) => m.tokens_cache_read,
+  tokens_cache_create: (m) => m.tokens_cache_create,
+  cost_input: (m) => m.cost_input,
+  cost_output: (m) => m.cost_output,
+  cost_cache_read: (m) => m.cost_cache_read,
+  cost_cache_create: (m) => m.cost_cache_create,
+};
+
 function getSegments(t: ReturnType<typeof useChartTokens>, metric: TopMetric): Segment[] {
-  if (metric === 'cost') {
-    return [
-      { key: 'cost_input', label: 'Input', color: t.series[0], get: (m) => m.cost_input },
-      { key: 'cost_output', label: 'Output', color: t.series[1], get: (m) => m.cost_output },
-      {
-        key: 'cost_cache_read',
-        label: 'Cache read',
-        color: t.series[2],
-        get: (m) => m.cost_cache_read,
-      },
-      {
-        key: 'cost_cache_create',
-        label: 'Cache create',
-        color: t.series[3],
-        get: (m) => m.cost_cache_create,
-      },
-    ];
-  }
-  return [
-    { key: 'tokens_input', label: 'Input', color: t.series[0], get: (m) => m.tokens_input },
-    { key: 'tokens_output', label: 'Output', color: t.series[1], get: (m) => m.tokens_output },
-    {
-      key: 'tokens_reasoning',
-      label: 'Reasoning',
-      color: t.series[2],
-      get: (m) => m.tokens_reasoning,
-    },
-    {
-      key: 'tokens_cache_read',
-      label: 'Cache read',
-      color: t.series[3],
-      get: (m) => m.tokens_cache_read,
-    },
-    {
-      key: 'tokens_cache_create',
-      label: 'Cache create',
-      color: t.series[4],
-      get: (m) => m.tokens_cache_create,
-    },
-  ];
+  const keys = metric === 'cost' ? COST_SEGMENT_KEYS : TOKEN_SEGMENT_KEYS;
+  return keys.map((k, i) => ({
+    key: k.key,
+    label: k.label,
+    color: t.series[i],
+    get: ACCESSORS[k.key],
+  }));
 }
 
 function totalValue(m: TopModelEntry, metric: TopMetric, excludeCache: boolean): number {

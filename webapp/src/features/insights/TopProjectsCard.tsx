@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import type { TopProjectEntry } from '@/api/types';
 import { RankBar, type RankRow, type RankSegment } from '@/components/charts/RankBar';
+import { COST_SEGMENT_KEYS, TOKEN_SEGMENT_KEYS } from '@/components/charts/segmentDefs';
 import { useChartTokens } from '@/components/charts/theme';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -26,12 +27,12 @@ function projectRow(
   }
 
   if (metric === 'cost') {
-    const segments: RankSegment[] = [
-      { key: 'cost_input', label: 'Input', color: series[0], value: p.cost_input },
-      { key: 'cost_output', label: 'Output', color: series[1], value: p.cost_output },
-      { key: 'cost_cache_read', label: 'Cache read', color: series[2], value: p.cost_cache_read },
-      { key: 'cost_cache_create', label: 'Cache create', color: series[3], value: p.cost_cache_create },
-    ];
+    const segments: RankSegment[] = COST_SEGMENT_KEYS.map((k, i) => ({
+      key: k.key,
+      label: k.label,
+      color: series[i],
+      value: (p as unknown as Record<string, number>)[k.key] ?? 0,
+    }));
     if (excludeCache) {
       for (const s of segments) {
         if (s.key.startsWith('cost_cache')) s.value = 0;
@@ -46,13 +47,12 @@ function projectRow(
   }
 
   // tokens
-  const segments: RankSegment[] = [
-    { key: 'tokens_input', label: 'Input', color: series[0], value: p.tokens_input },
-    { key: 'tokens_output', label: 'Output', color: series[1], value: p.tokens_output },
-    { key: 'tokens_reasoning', label: 'Reasoning', color: series[2], value: p.tokens_reasoning },
-    { key: 'tokens_cache_read', label: 'Cache read', color: series[3], value: p.tokens_cache_read },
-    { key: 'tokens_cache_create', label: 'Cache create', color: series[4], value: p.tokens_cache_create },
-  ];
+  const segments: RankSegment[] = TOKEN_SEGMENT_KEYS.map((k, i) => ({
+    key: k.key,
+    label: k.label,
+    color: series[i],
+    value: (p as unknown as Record<string, number>)[k.key] ?? 0,
+  }));
   if (excludeCache) {
     for (const s of segments) {
       if (s.key.startsWith('tokens_cache')) s.value = 0;

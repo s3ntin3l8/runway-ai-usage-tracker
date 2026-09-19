@@ -15,6 +15,7 @@ export interface RankSegment {
 
 export interface RankRow {
   label: string;
+  /** Bar length and sort key. In stacked mode, should equal sum(segments[].value) for correct alignment. */
   value: number;
   sub?: string; // optional dim line in the tooltip
   segments?: RankSegment[]; // when present, renders stacked bars
