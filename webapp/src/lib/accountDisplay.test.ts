@@ -37,25 +37,25 @@ describe('accountSubtitle', () => {
     );
   });
 
-  it('returns the account_id when it looks like an email and there is no label', () => {
-    expect(accountSubtitle({ account_id: 'bob@example.com', account_label: null })).toBe(
-      'bob@example.com',
-    );
+  it('returns null when no label AND displayAccountName already shows the account_id (no duplicate)', () => {
+    // Both the title and the subtitle would render "bob@example.com" — that's a
+    // duplicate. Suppress the subtitle so the row isn't visually busy.
+    expect(accountSubtitle({ account_id: 'bob@example.com', account_label: null })).toBeNull();
   });
 
-  it('returns the account_id when it looks like a UUID', () => {
+  it('returns null when no label AND account_id looks like a UUID (display name already covers it)', () => {
     expect(
       accountSubtitle({ account_id: '58235613-1234-1234-1234-123456789012', account_label: null }),
-    ).toBe('58235613-1234-1234-1234-123456789012');
+    ).toBeNull();
   });
 
-  it('returns the account_id when it looks like a SHA hash', () => {
+  it('returns null when no label AND account_id looks like a SHA hash (display name already covers it)', () => {
     expect(
       accountSubtitle({
         account_id: 'e5e9fa1ba31ecd1ae84f75caaa474f3a663f05f4',
         account_label: null,
       }),
-    ).toBe('e5e9fa1ba31ecd1ae84f75caaa474f3a663f05f4');
+    ).toBeNull();
   });
 
   it('returns null when label equals account_id (no useful secondary line)', () => {

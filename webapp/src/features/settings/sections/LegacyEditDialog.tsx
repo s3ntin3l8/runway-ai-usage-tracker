@@ -1,14 +1,19 @@
 // Legacy single-account edit dialog. Used only when `?providers=v2` is
-// absent — kept byte-identical to the previous build so rollback is
-// trivial. The form renders the legacy single-account shape (one row per
-// provider keyed by `account_id="default"`) using the new multi-account PUT
-// endpoint with `account_id="default"` for the URL.
+// absent — the rollback path. The form renders the legacy single-account
+// shape (one row per provider keyed by `account_id="default"`) using the
+// new multi-account PUT endpoint with `account_id="default"` for the URL.
+//
+// Deltas vs. the previous build (`ProvidersSection.tsx` before this PR):
+//   1. `useCallback` wrappers around `invalidateAfterAuth` / `startPolling`
+//      dropped (callers don't memoize on the references).
+//   2. The save path now calls `putProviderConfig(pid, "default", body)`
+//      instead of `putProviderConfig(pid, body)` — the new endpoint
+//      requires `account_id` in the URL.
 //
 // The new v2 dialog shell uses `ProviderDetailDialog` + `ProviderAccountDialog`
 // instead; this file is the rollback target only.
 
 import { useEffect, useRef, useState } from 'react';
-// (useState/useEffect used by GitHubLoginSection + Countdown)
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
@@ -503,5 +508,3 @@ function GitHubLoginSection() {
   );
 }
 
-// Lightweight inline countdown removed — using the Countdown UI primitive from
-// `@/components/ui/Countdown` instead (matches the previous production code).

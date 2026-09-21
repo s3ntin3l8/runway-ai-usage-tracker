@@ -258,7 +258,7 @@ export const fetchArchivedProviders = () =>
 export const getDashboardLayout = () => api<DashboardLayout>('/api/v1/system/dashboard-layout');
 
 export const putDashboardLayout = (layout: DashboardLayout) =>
-  api<DashboardLayout>('/api/v1/system/dashboard-layout', {
+  api<{ status: string }>('/api/v1/system/dashboard-layout', {
     method: 'PUT',
     body: JSON.stringify(layout),
   });

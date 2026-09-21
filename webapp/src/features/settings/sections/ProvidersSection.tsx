@@ -60,11 +60,11 @@ interface UseV2ProvidersResult {
   enabled: boolean;
   configs: ReturnType<typeof useProviderConfigs>;
   layout: ReturnType<typeof useDashboardLayout>;
-  saveOrder: ReturnType<typeof useMutation<DashboardLayout, Error, string[]>>;
+  saveOrder: ReturnType<typeof useMutation<{ status: string }, Error, string[]>>;
 }
 
 /** Hook that wraps `?providers=v2` gating + the providers/layout queries. */
-export function useV2Providers(): UseV2ProvidersResult {
+function useV2Providers(): UseV2ProvidersResult {
   const [searchParams] = useSearchParams();
   const enabled = searchParams.get('providers') === 'v2';
   const configs = useProviderConfigs();
@@ -103,9 +103,9 @@ export function ProvidersSection() {
 
 // ---------------------------------------------------------------------------
 // Legacy single-account form (unchanged behaviour, kept for the rollback path).
-// The dialog / form internals are isolated in `ProviderDetailDialog` and
-// `ProviderAccountDialog` for the v2 UI; this path keeps the original
-// `ProviderForm` rendering a single row keyed by `account_id="default"`.
+// The dialog / form internals are isolated in `LegacyEditDialog` for the v1
+// shell; `ProviderDetailDialog` + `ProviderAccountDialog` are the v2 UI. The
+// legacy path renders one row keyed by `account_id="default"`.
 // ---------------------------------------------------------------------------
 
 function ProvidersSectionLegacy({
@@ -188,13 +188,6 @@ function ProvidersSectionV2({
 
   // Filter strip
   const [search, setSearch] = useState('');
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return providers;
-    return providers.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q),
-    );
-  }, [providers, search]);
 
   // Apply persisted provider_order from dashboard_layout, falling back to
   // server order. Memoized to keep the dnd-kit sensors stable across renders.
@@ -214,6 +207,17 @@ function ProvidersSectionV2({
     for (const p of byId.values()) result.push(p);
     return result;
   }, [providers, layout.data]);
+
+  // Apply the search filter to the *ordered* list so SortableContext.items
+  // and the rendered children stay aligned (otherwise dnd-kit considers the
+  // search-hidden rows as drop targets while the user is typing).
+  const orderedAndFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return ordered;
+    return ordered.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q),
+    );
+  }, [ordered, search]);
 
   // Sensors for drag-to-reorder on the provider cards.
   const sensors = useSensors(
@@ -269,7 +273,7 @@ function ProvidersSectionV2({
           </div>
         )}
 
-        {filtered.length === 0 ? (
+        {orderedAndFiltered.length === 0 ? (
           <Card className="py-2">
             {providers.length === 0 ? (
               <EmptyState
@@ -302,16 +306,14 @@ function ProvidersSectionV2({
             onDragEnd={handleDragEnd}
             onDragCancel={() => setPullToRefreshSuspended(false)}
           >
-            <SortableContext items={ordered.map((p) => p.provider_id)} strategy={verticalListSortingStrategy}>
-              {ordered
-                .filter((p) => filtered.includes(p))
-                .map((p) => (
-                  <SortableProviderCard
-                    key={p.provider_id}
-                    provider={p}
-                    onOpen={() => setDetailProvider(p)}
-                  />
-                ))}
+            <SortableContext items={orderedAndFiltered.map((p) => p.provider_id)} strategy={verticalListSortingStrategy}>
+              {orderedAndFiltered.map((p) => (
+                <SortableProviderCard
+                  key={p.provider_id}
+                  provider={p}
+                  onOpen={() => setDetailProvider(p)}
+                />
+              ))}
             </SortableContext>
           </DndContext>
         )}
@@ -336,11 +338,9 @@ function ProvidersSectionV2({
       <ProviderDetailDialog
         provider={detailProvider}
         onClose={() => setDetailProvider(null)}
-        onAccountDeleted={(providerId) => {
-          if (detailProvider?.provider_id === providerId) {
-            // Refresh so the dialog's account list reflects the deletion.
-            configs.refetch();
-          }
+        onAccountDeleted={() => {
+          // Child invalidates the ['system', 'provider-configs'] query on
+          // success; no refetch needed here.
         }}
       />
     </>
@@ -376,7 +376,6 @@ function SortableProviderCard({
         aria-label={`Reorder ${provider.name}`}
         className="touch-none text-fg-muted hover:text-fg"
       >
-        <span className="sr-only">Drag to reorder</span>
         <svg
           width="14"
           height="14"
@@ -439,4 +438,4 @@ function SortableProviderCard({
 
 // Re-exported here so legacy tests that imported the old `reorderStrategies`
 // keep working without churning the test file along with the section rewrite.
-export { reorderItems as reorderStrategies } from './ProvidersSection';
+export { reorderItems as reorderStrategies };

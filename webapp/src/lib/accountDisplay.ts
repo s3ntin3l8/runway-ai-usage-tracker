@@ -21,10 +21,9 @@ export function displayAccountName(account: AccountLike): string {
 
 /**
  * Subtitle (account_id) shown below the display name when the label is
- * distinct from the account_id (otherwise the label already covers the
- * identity and a subtitle would be a duplicate). Returns null when no
- * label is set AND the account_id doesn't look meaningful (e.g. "default"
- * or an opaque identifier).
+ * distinct from the identity the display name already shows. Returns null
+ * when the subtitle would duplicate the title (label === account_id, or no
+ * label AND displayAccountName falls through to account_id).
  */
 export function accountSubtitle(account: AccountLike): string | null {
   if (!account.account_id || account.account_id === 'default') return null;
@@ -36,6 +35,9 @@ export function accountSubtitle(account: AccountLike): string | null {
     // Label already covers the identity; a subtitle would be a duplicate.
     return null;
   }
+  // No label. Skip the subtitle when displayAccountName would also fall
+  // through to account_id — otherwise the row shows the same string twice.
+  if (displayAccountName(account) === account.account_id) return null;
   if (
     EMAIL_RE.test(account.account_id) ||
     UUID_RE.test(account.account_id) ||

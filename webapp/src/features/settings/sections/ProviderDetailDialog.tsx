@@ -54,13 +54,17 @@ export function ProviderDetailDialog({
         );
       await Promise.all(updates);
     },
-    onSuccess: () => {
+    onSuccess: (_data, next) => {
+      // Capture `next` from the mutation variables — by the time onSuccess
+      // fires, the parent state may have updated and `masterEnabled` reflects
+      // the post-toggle value, not the user's intent. (Variable form of
+      // useMutation's onSuccess callback.)
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       if (provider) {
         toast.success(
           provider.accounts.length === 0
             ? 'No accounts to update'
-            : `${provider.name} · all accounts ${masterEnabled ? 'disabled' : 'enabled'}`,
+            : `${provider.name} · all accounts ${next ? 'enabled' : 'disabled'}`,
         );
       }
     },
@@ -97,9 +101,11 @@ export function ProviderDetailDialog({
         title={provider?.name ?? ''}
         description={
           provider
-            ? `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
-                provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
-              }s`
+            ? provider.account_count === 0
+              ? 'Not configured'
+              : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
+                  provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
+                }s`
             : ''
         }
         width="max-w-xl"

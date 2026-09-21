@@ -602,6 +602,62 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
     expect(within(dialog).getByText(/no usage data — safe to remove/i)).toBeInTheDocument();
   });
 
+  it('does not show the orphan hint for default rows that have live data', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          accounts: [
+            {
+              account_id: 'default',
+              account_label: null,
+              enabled: true,
+              api_key_set: true,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              has_live_data: true, // <-- live data present
+              is_orphaned: false,  // <-- server flipped the flag accordingly
+            },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText(/no usage data — safe to remove/i)).not.toBeInTheDocument();
+  });
+
+  it('does not show the orphan hint for non-default rows without live data', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          accounts: [
+            {
+              account_id: 'alice@example.com', // not "default"
+              account_label: 'New account',
+              enabled: true,
+              api_key_set: true,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              has_live_data: false, // no data yet (just-configured)
+              is_orphaned: false,  // <-- only `default` rows can be orphaned
+            },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText(/no usage data — safe to remove/i)).not.toBeInTheDocument();
+  });
+
   it('removes an account when the user confirms', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.deleteProviderConfig).mockResolvedValue({ status: 'ok' });
