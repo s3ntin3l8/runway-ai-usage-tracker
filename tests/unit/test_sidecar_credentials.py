@@ -1,18 +1,22 @@
 """Tests for the sidecar identity cache (issue #272, deferred redeem).
 
 Covers:
-- ``scripts/sidecar_pkg/credentials.py``: ``fetch_identity_hints``,
-  ``fetch_credential_tokens``, ``fetch_account_tag_hints`` HTTP plumbing,
-  plus the ``CredentialCache`` staleness / replacement /
-  decoupled-identity semantics.
+- ``scripts/sidecar_pkg/credentials.py``: ``fetch_identity_hints`` (now
+  single round-trip returning both identity + tag-hint views, PR #290
+  round-2 review) and ``fetch_credential_tokens`` HTTP plumbing, plus
+  the ``CredentialCache`` staleness / replacement / decoupled-identity
+  semantics.
 - The per-account event-extraction loop wired into ``run_collection`` —
   the dispatch table, the local-identity intersect (one account per
   host), the legacy fallback when the server has no per-account config,
   the partial-failure tolerance.
-- The silent-listener block guard (PR #288): a token card whose
-  ``account_id`` cannot be resolved via local discovery or a server
-  hint is dropped from the result list, the credential's origin is
-  captured for the next ``/fleet/credentials/manifest`` POST.
+- The silent-listener block guard (PR #288, fixed in PR #290): a token
+  card whose ``account_id`` cannot be resolved via local discovery or
+  a server hint is dropped from the result list, the credential's
+  origin is captured for the next ``/fleet/credentials/manifest`` POST.
+  The hint-fallback path is the headline behaviour: a server-supplied
+  tag *unblocks* the card on the same cycle instead of waiting for
+  the next ``/fleet/config`` round-trip.
 """
 
 from __future__ import annotations
@@ -48,15 +52,17 @@ def _ok_response(status: int = 200, body: bytes | None = None) -> MagicMock:
 
 
 class TestFetchIdentityHints:
-    """``fetch_identity_hints`` is the identity-only view decoupled from
-    credential-token issuance. Rows without a token still contribute their
-    ``account_id`` here — gating identity discovery on token presence
-    would silently no-op the #272 attribution fix in any configuration
-    where the row has no credentials or INGEST_API_KEY is empty
-    (PR #283 review).
+    """``fetch_identity_hints`` returns both decoupled views from a single
+    ``/fleet/config`` round-trip (PR #290 round-2 review): the
+    per-account identity hints for the #272 attribution fix AND the
+    operator-resolved tag-hint map for the silent-listener block guard.
 
-    The function returns ``None`` on fetch failures (outage) to distinguish
-    that from a successful empty response (PR #283 round-3 review).
+    The function returns ``None`` on fetch failures (outage) to
+    distinguish that from a successful empty response. When the
+    payload omits the ``account_tag_hints`` field (older server
+    versions pre-PR #288), the tuple's tag-hint slot is ``None`` so
+    the caller can preserve its prior hint map instead of clobbering
+    it with an empty dict (PR #290 round-2 review).
     """
 
     def test_returns_none_when_urlopen_raises(self):
@@ -131,12 +137,16 @@ class TestFetchIdentityHints:
                 mock_urlopen.return_value = ctx
                 result = fetch_identity_hints("https://api.example.com")
 
-        assert result == {
-            "anthropic": ["default", "alice@example.com", "bob@example.com"],
-            "chatgpt": ["default"],
-        }
+        # Tag hints absent in payload → ``None`` slot (PR #290 round-2).
+        assert result == (
+            {
+                "anthropic": ["default", "alice@example.com", "bob@example.com"],
+                "chatgpt": ["default"],
+            },
+            None,
+        )
         # Provider with no accounts is absent.
-        assert "empty" not in result
+        assert "empty" not in result[0]
 
     def test_skips_disabled_rows(self):
         """Disabled rows (the per-account enable toggle) must NOT appear in
@@ -179,50 +189,13 @@ class TestFetchIdentityHints:
                 result = fetch_identity_hints("https://api.example.com")
 
         # Disabled row is filtered out.
-        assert result == {"anthropic": ["default"]}
+        assert result == ({"anthropic": ["default"]}, None)
 
-
-class TestFetchAccountTagHints:
-    """``fetch_account_tag_hints`` consumes the operator-set mapping the
-    server emits via ``/fleet/config``. See PR #288.
-
-    The shape is ``{provider_id: {credential_origin: account_id, ...}}``
-    — fetched once per sidecar cycle and passed to
-    :meth:`GenericCollector.collect_provider` as the silent-listener
-    fallback when local credential discovery fails.
-    """
-
-    def test_returns_none_when_urlopen_raises(self):
-        from scripts.sidecar_pkg.credentials import fetch_account_tag_hints
-
-        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
-                assert fetch_account_tag_hints("https://api.example.com") is None
-
-    def test_returns_none_when_payload_omits_account_tag_hints(self):
-        """Older server versions (pre-PR #288) won't carry ``account_tag_hints``.
-
-        The fetcher returns ``None`` so the sidecar stays on the prior
-        cached snapshot — never echoes back ``{}`` and overwrites a
-        previously good hint map with an empty one.
-        """
-        from scripts.sidecar_pkg.credentials import fetch_account_tag_hints
-
-        payload = json.dumps({"config": {"providers": {}}}).encode()
-        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                ctx = MagicMock()
-                ctx.__enter__ = MagicMock(
-                    return_value=MagicMock(
-                        getcode=MagicMock(return_value=200), read=MagicMock(return_value=payload)
-                    )
-                )
-                ctx.__exit__ = MagicMock(return_value=False)
-                mock_urlopen.return_value = ctx
-                assert fetch_account_tag_hints("https://api.example.com") is None
-
-    def test_parses_hint_map(self):
-        from scripts.sidecar_pkg.credentials import fetch_account_tag_hints
+    def test_parses_tag_hints_when_payload_carries_them(self):
+        """PR #288 / #290: the operator-resolved tag-hint map comes back
+        in the same payload as ``account_tag_hints``. The fetcher
+        returns it as the second tuple slot."""
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         payload = json.dumps(
             {
@@ -233,7 +206,7 @@ class TestFetchAccountTagHints:
                     },
                     "chatgpt": {
                         "path:/home/alice/.codex/auth.json": "alice@example.com",
-                        # Filters out non-string entries defensively.
+                        # Defensive: non-string entries are dropped.
                         "broken_entry": 42,
                     },
                 },
@@ -249,12 +222,60 @@ class TestFetchAccountTagHints:
                 )
                 ctx.__exit__ = MagicMock(return_value=False)
                 mock_urlopen.return_value = ctx
-                result = fetch_account_tag_hints("https://api.example.com")
+                result = fetch_identity_hints("https://api.example.com")
 
-        assert result == {
-            "anthropic": {"path:/home/alice/.claude/.credentials.json": "alice@example.com"},
-            "chatgpt": {"path:/home/alice/.codex/auth.json": "alice@example.com"},
-        }
+        assert result == (
+            {},
+            {
+                "anthropic": {"path:/home/alice/.claude/.credentials.json": "alice@example.com"},
+                "chatgpt": {"path:/home/alice/.codex/auth.json": "alice@example.com"},
+            },
+        )
+
+    def test_single_round_trip_parses_both_views(self):
+        """``fetch_identity_hints`` issues exactly one HTTP GET and parses
+        both views from the same payload (PR #290 round-2 review —
+        earlier code split this across two fetchers, doubling the
+        request load on every heartbeat)."""
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
+
+        payload = json.dumps(
+            {
+                "config": {
+                    "providers": {
+                        "anthropic": {
+                            "accounts": [{"account_id": "default", "enabled": True}],
+                        }
+                    }
+                },
+                "account_tag_hints": {
+                    "anthropic": {"provider:anthropic": "default"},
+                },
+            }
+        ).encode()
+
+        call_count = {"n": 0}
+
+        def _counted(*args, **kwargs):
+            call_count["n"] += 1
+            return MagicMock(
+                __enter__=MagicMock(
+                    return_value=MagicMock(
+                        getcode=MagicMock(return_value=200),
+                        read=MagicMock(return_value=payload),
+                    )
+                ),
+                __exit__=MagicMock(return_value=False),
+            )
+
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen", side_effect=_counted):
+                fetch_identity_hints("https://api.example.com")
+
+        assert call_count["n"] == 1, (
+            f"fetch_identity_hints should hit /fleet/config once, "
+            f"not {call_count['n']} times — both views must share the response."
+        )
 
 
 class TestFetchCredentialTokens:
@@ -517,6 +538,122 @@ class TestCollectProviderBlockGuard:
             )
         assert any("blocked" in r.message for r in caplog.records)
 
+    def test_hint_unblocks_card_when_local_discovery_fails(self, monkeypatch):
+        """PR #290 critical (Hermes): the server-supplied tag-hint map
+        MUST unblock a card whose ``account_id`` could not be resolved
+        via local discovery. Without this fallback the silent-listener
+        loop never closes — the operator tags, the server ships the
+        hint, the sidecar drops the card again, the operator sees the
+        entry forever.
+
+        This is Hermes's exact probe from the review:
+            collect_provider("antigravity", env_rule_cfg,
+                account_label_hints={"antigravity": {"provider:antigravity": "alice@example.com"}})
+            → must ship with account_id="alice@example.com", NOT drop.
+        """
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
+        monkeypatch.setattr(sc, "_codex_account_email", lambda: None)
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "antigravity",
+            {
+                "name": "Anthropic",
+                "icon": "🅰️",
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "ANTHROPIC_API_KEY",
+                        "mapping": {"value": "api_key"},
+                    },
+                ],
+            },
+            account_label_hints={
+                "antigravity": {"provider:antigravity": "alice@example.com"},
+            },
+        )
+        assert len(cards) == 1, (
+            "hint must unblock the card; PR #290 critical — without this "
+            "the silent-listener loop never closes."
+        )
+        assert blocked == [], "no blocked origin expected when hint resolves the card"
+        assert cards[0]["metadata"]["account_id"] == "alice@example.com", (
+            "the hint-supplied account_id must be written into tokens so the "
+            "card's metadata carries it through to /fleet/ingest"
+        )
+
+    def test_hint_does_not_overwrite_local_discovery(self, monkeypatch):
+        """When local discovery yields an ``account_id`` AND a server
+        hint exists, the locally-discovered value wins. The hint is the
+        fallback, not the override — local discovery has tighter scope
+        (the host's own file/env/keychain) and is the more authoritative
+        identity."""
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+        # Simulate a chatgpt-style local discovery returning "default".
+        # The antigravity provider chain sets account_id via the
+        # _codex_account_email / _ag_account_email helpers; if those
+        # were non-None they'd win. Patch them to None and use chatgpt
+        # provider so the codex path stamps account_id.
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
+        monkeypatch.setattr(sc, "_codex_account_email", lambda: "alice-from-local@example.com")
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "chatgpt",
+            {
+                "name": "ChatGPT",
+                "icon": "💬",
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "ANTHROPIC_API_KEY",
+                        "mapping": {"value": "api_key"},
+                    },
+                ],
+            },
+            account_label_hints={
+                "chatgpt": {"provider:chatgpt": "should-be-ignored@example.com"},
+            },
+        )
+        assert len(cards) == 1
+        assert cards[0]["metadata"]["account_id"] == "alice-from-local@example.com", (
+            "local discovery must win over a server hint"
+        )
+
+    def test_hint_for_wrong_provider_does_not_unblock(self, monkeypatch):
+        """A hint that targets a *different* provider doesn't fall through
+        to this provider's block guard. The lookup is
+        ``provider_hints.get(f"provider:{provider_id}")`` — must match
+        the provider_id of the collector, not bleed across providers."""
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
+        monkeypatch.setattr(sc, "_codex_account_email", lambda: None)
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "antigravity",
+            {
+                "name": "Anthropic",
+                "icon": "🅰️",
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "ANTHROPIC_API_KEY",
+                        "mapping": {"value": "api_key"},
+                    },
+                ],
+            },
+            account_label_hints={
+                # Hint is for "anthropic", not "antigravity". Must NOT
+                # unblock the antigravity card.
+                "anthropic": {"provider:antigravity": "leaked@example.com"},
+            },
+        )
+        assert cards == []
+        assert len(blocked) == 1
+        assert blocked[0]["provider_id"] == "antigravity"
+
 
 class TestCredentialCache:
     def test_provider_accounts_includes_rows_without_tokens(self):
@@ -587,18 +724,36 @@ class TestCredentialCache:
         """``replace(accounts=None, tokens=X)`` keeps the existing
         identity view, and vice versa. Lets ``run_collection`` skip
         either side independently when its fetch returned None (PR #283
-        round-3 review)."""
+        round-3 review). ``tag_hints=None`` preserves the prior hint map
+        — used by ``run_collection`` when the server omits the
+        ``account_tag_hints`` field (older server pre-PR #288), so a
+        downgrade doesn't silently wipe cached hints (PR #290
+        round-2 review)."""
         from scripts.sidecar_pkg.credentials import CredentialCache
 
         cache = CredentialCache()
         cache.replace(
             accounts={"anthropic": ["default"]},
             tokens={("anthropic", "default"): "tok"},
+            tag_hints={
+                "anthropic": {"provider:anthropic": "default"},
+            },
         )
-        # Replace only tokens → identity view intact.
+        # Replace only tokens → identity + hint views intact.
         cache.replace(tokens={("anthropic", "default"): "tok2"})
         assert cache.provider_accounts() == {"anthropic": ["default"]}
         assert cache.tokens == {("anthropic", "default"): "tok2"}
+        assert cache.provider_tag_hints() == {
+            "anthropic": {"provider:anthropic": "default"},
+        }
+        # And ``tag_hints=None`` keeps the prior hint map.
+        cache.replace(tag_hints=None)
+        assert cache.provider_tag_hints() == {
+            "anthropic": {"provider:anthropic": "default"},
+        }, "tag_hints=None must preserve the prior hint map"
+        # But ``tag_hints={}`` clears it.
+        cache.replace(tag_hints={})
+        assert cache.provider_tag_hints() == {}, "tag_hints={} must clear the hint map"
 
     def test_refresh_from_config_keeps_prior_snapshot_on_outage(self):
         """When the server is unreachable, ``refresh_from_config`` must
@@ -708,6 +863,93 @@ class TestCredentialCache:
             "not the network call."
         )
         assert cache.tokens == {("anthropic", "default"): "tok-old"}
+
+    def test_provider_tag_hints_empty_by_default(self):
+        """A freshly-constructed cache exposes an empty tag-hint view.
+        ``GenericCollector.collect_provider`` consults this as a
+        fallback before blocking a card (PR #288 / #290)."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        assert cache.provider_tag_hints() == {}
+
+    def test_refresh_from_config_populates_tag_hints(self):
+        """``refresh_from_config`` now picks up the operator-resolved
+        tag-hint map from the same payload (PR #290 round-2 review —
+        earlier code only refreshed identity + tokens)."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        payload = {
+            "config": {
+                "providers": {
+                    "anthropic": {
+                        "accounts": [{"account_id": "default", "enabled": True}],
+                    }
+                }
+            },
+            "account_tag_hints": {
+                "anthropic": {"provider:anthropic": "alice@example.com"},
+            },
+        }
+
+        cache = CredentialCache()
+        with patch(
+            "scripts.sidecar_pkg.credentials._fetch_config_payload",
+            return_value=payload,
+        ):
+            cache.refresh_from_config("https://api.example.com", fetch_tokens=False)
+
+        assert cache.provider_tag_hints() == {
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+        }
+
+    def test_refresh_from_config_keeps_prior_tag_hints_when_field_absent(self):
+        """Older server (pre-PR #288) omits ``account_tag_hints``. The
+        cache's prior hint map survives that round-trip — a downgrade
+        doesn't silently wipe previously-cached hints (PR #290 round-2
+        review)."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        cache.replace(
+            tag_hints={"anthropic": {"provider:anthropic": "alice@example.com"}},
+        )
+
+        payload = {
+            "config": {
+                "providers": {
+                    "anthropic": {"accounts": [{"account_id": "default", "enabled": True}]}
+                }
+            }
+            # no ``account_tag_hints`` key — older server
+        }
+
+        with patch(
+            "scripts.sidecar_pkg.credentials._fetch_config_payload",
+            return_value=payload,
+        ):
+            cache.refresh_from_config("https://api.example.com", fetch_tokens=False)
+
+        assert cache.provider_tag_hints() == {
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+        }, "missing field must preserve the prior hint map, not clear it"
+
+    def test_provider_tag_hints_returns_defensive_copy(self):
+        """Mutating the returned map must NOT mutate the cache's
+        internal state — same contract as ``provider_accounts``."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        cache.replace(
+            tag_hints={"anthropic": {"provider:anthropic": "alice@example.com"}},
+        )
+        result = cache.provider_tag_hints()
+        result["anthropic"]["provider:anthropic"] = "tampered@example.com"
+        result["new_provider"] = {"provider:new": "evil@example.com"}
+        # Re-fetch proves the cache is unchanged.
+        assert cache.provider_tag_hints() == {
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+        }
 
 
 # ---------------------------------------------------------------------------

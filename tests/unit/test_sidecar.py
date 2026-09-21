@@ -7,7 +7,8 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -984,3 +985,288 @@ class TestOpencodeDbPath:
         flat.touch()
         self._candidates(monkeypatch, missing_xdg, str(flat))
         assert sidecar._discover_opencode_db_path() == flat
+
+
+# ---------------------------------------------------------------------------
+# _post_credential_manifest (PR #288 / #290)
+# ---------------------------------------------------------------------------
+
+
+class TestPostCredentialManifest:
+    """The silent-listener manifest POST. PR #288 shipped the endpoint;
+    PR #290 round-2 review added (a) the ``resolved``-field consumption
+    callback so the loop closes on the same cycle, and (b) the gate on
+    completed cycle so ``error_count > 0`` doesn't prune still-unresolved
+    pending rows.
+    """
+
+    def _mock_response(self, payload: dict, status: int = 200) -> MagicMock:
+        body = json.dumps(payload).encode("utf-8")
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(
+            return_value=MagicMock(
+                getcode=MagicMock(return_value=status), read=MagicMock(return_value=body)
+            )
+        )
+        ctx.__exit__ = MagicMock(return_value=False)
+        return ctx
+
+    def test_consumes_resolved_field_into_callback(self, monkeypatch):
+        """The server's ``resolved`` map is delivered to ``on_resolved``
+        so the local hint cache merges operator tags on the same cycle
+        (PR #290 round-2 review, Hermes suggestion #9)."""
+        captured: dict[str, dict[str, str]] = {}
+
+        def _capture(resolved):
+            captured.update(resolved)
+
+        ctx = self._mock_response(
+            {
+                "status": "ok",
+                "sidecar_id": "alpha-host",
+                "entries_received": 1,
+                "entries_pruned": 0,
+                "resolved": {
+                    "anthropic": {"provider:anthropic": "alice@example.com"},
+                    "chatgpt": {
+                        "provider:chatgpt": "alice@example.com",
+                    },
+                },
+            }
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[{"provider_id": "anthropic", "credential_origin": "provider:anthropic"}],
+                on_resolved=_capture,
+            )
+
+        assert captured == {
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+            "chatgpt": {"provider:chatgpt": "alice@example.com"},
+        }
+
+    def test_skips_callback_when_resolved_is_empty(self):
+        """An empty ``resolved`` map (operator hasn't tagged anything
+        new) is a no-op — no callback invocation, no log noise."""
+        callback = MagicMock()
+        ctx = self._mock_response(
+            {
+                "status": "ok",
+                "sidecar_id": "alpha-host",
+                "entries_received": 1,
+                "entries_pruned": 0,
+                "resolved": {},
+            }
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_not_called()
+
+    def test_skips_callback_on_non_200(self):
+        """A non-200 response is treated like an outage — the callback
+        is NOT invoked. The next cycle retries."""
+        callback = MagicMock()
+        ctx = self._mock_response({"error": "boom"}, status=500)
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_not_called()
+
+    def test_skips_callback_when_resolved_field_missing(self):
+        """Older server versions (pre-PR #288) won't carry ``resolved``.
+        The callback is silently skipped — the next cycle retries."""
+        callback = MagicMock()
+        ctx = self._mock_response(
+            {"status": "ok", "sidecar_id": "alpha-host", "entries_received": 0}
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_not_called()
+
+    def test_callback_exception_is_swallowed(self):
+        """A buggy ``on_resolved`` callback must NOT take down the
+        manifest POST path. Log and move on (defensive — the next
+        ``/fleet/config`` will eventually heal any stale state)."""
+        callback = MagicMock(side_effect=RuntimeError("callback boom"))
+        ctx = self._mock_response(
+            {
+                "status": "ok",
+                "sidecar_id": "alpha-host",
+                "entries_received": 1,
+                "resolved": {"anthropic": {"provider:anthropic": "a"}},
+            }
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            # Must not raise.
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_called_once()
+
+
+def test_run_collection_manifest_post_skipped_when_error_count_positive(monkeypatch):
+    """PR #290 round-2 review: when ``error_count > 0`` the manifest
+    POST is suppressed — a provider whose ``collect_provider`` raised
+    contributed nothing to ``blocked_origins_this_cycle``, so the
+    server's ``delete_stale`` would prune its pending row. The
+    operator's "Untagged" entry would silently disappear while the
+    credential is still unresolved. Skip the prune until the next
+    clean cycle."""
+    import scripts.sidecar as sc
+
+    posted = {"called": False}
+
+    def _should_not_post(*args, **kwargs):
+        posted["called"] = True
+
+    monkeypatch.setattr(sc, "_post_credential_manifest", _should_not_post)
+
+    # Empty the events providers list so the events loop is skipped —
+    # it would otherwise raise KeyError on
+    # ``_LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]`` since we don't
+    # populate it. We're testing the manifest gate, not the events loop.
+    monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
+
+    # Patch collect_provider so it raises. We pick a real registry
+    # provider ("anthropic") so the loop actually enters.
+    def _boom(*args, **kwargs):
+        raise RuntimeError("provider exploded")
+
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", _boom)
+
+    # Stub cache so the fetch path is a no-op.
+    monkeypatch.setattr(sc, "_get_credential_cache", lambda: _StubCache())
+
+    sc.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["anthropic"],
+    )
+
+    assert posted["called"] is False, (
+        "manifest POST must be suppressed when error_count > 0 — otherwise "
+        "delete_stale prunes pending rows for providers that raised, "
+        "silently hiding credentials that are still unresolved."
+    )
+
+
+def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, tmp_path):
+    """End-to-end: the manifest POST's ``resolved`` payload is merged
+    into the persistent cache. The next ``run_collection`` cycle
+    consults that cache to unblock the now-tagged card (PR #290
+    round-2 review, Hermes suggestion #9 — same-cycle loop closure)."""
+    import scripts.sidecar as sc
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        accounts={"anthropic": ["alice@example.com"]},
+        tokens={},
+        tag_hints={},  # No hints yet — first time the operator tags.
+    )
+    monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sc, "_get_credential_cache", lambda: cache)
+
+    # Empty the events providers list — the events loop isn't the
+    # subject of this test and would otherwise raise on missing
+    # ``_LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]``.
+    monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+        # Simulate the server returning the operator's just-set tag.
+        on_resolved({"anthropic": {"provider:anthropic": "alice@example.com"}})
+
+    monkeypatch.setattr(sc, "_post_credential_manifest", _capture_manifest)
+
+    # collect_provider returns a blocked origin (no local discovery).
+    monkeypatch.setattr(
+        sc.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: (
+            [],
+            [{"provider_id": "anthropic", "credential_origin": "provider:anthropic"}],
+        ),
+    )
+
+    sc.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["anthropic"],
+    )
+
+    # The manifest fired with the blocked origin.
+    assert posted["entries"] == [
+        {"provider_id": "anthropic", "credential_origin": "provider:anthropic"}
+    ]
+    # And the cache now carries the operator's tag — the next cycle's
+    # block-guard will see this and unblock the card without waiting
+    # on the next /fleet/config round-trip.
+    assert cache.provider_tag_hints() == {
+        "anthropic": {"provider:anthropic": "alice@example.com"},
+    }
+
+
+class _StubCache:
+    """Minimal stand-in for ``CredentialCache`` so the test can stub
+    ``_get_credential_cache`` without dragging in the full cache.
+
+    Only ``is_fresh()`` and ``provider_accounts()`` / ``provider_tag_hints()``
+    are exercised by ``run_collection`` in this test path."""
+
+    def is_fresh(self, *, now=None):
+        return True  # Skip the fetch path; the test supplies its own.
+
+    def provider_accounts(self):
+        return {}
+
+    def provider_tag_hints(self):
+        return {}
