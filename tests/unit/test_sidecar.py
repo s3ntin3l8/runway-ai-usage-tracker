@@ -1023,10 +1023,7 @@ class TestCredentialOriginForProvider:
         # call the helper, so any change to one shows up in both.
         # We assert the helper's return value is consistent — the
         # call-site equality is exercised by the integration tests.
-        assert (
-            credential_origin_for_provider("antigravity")
-            == "provider:antigravity"
-        )
+        assert credential_origin_for_provider("antigravity") == "provider:antigravity"
         # And the helper is importable / accessible at module scope.
         assert hasattr(sc, "credential_origin_for_provider")
 
