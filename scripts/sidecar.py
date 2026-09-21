@@ -2472,11 +2472,6 @@ def run_collection(
     Returns (metrics, events, error_count) where events is a list of
     serialised UsageEventPush dicts ready for the wire payload.
     """
-    """Run collection for specified or enabled providers.
-
-    Returns (metrics, events, error_count) where events is a list of
-    serialised UsageEventPush dicts ready for the wire payload.
-    """
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_watermark import EventWatermark

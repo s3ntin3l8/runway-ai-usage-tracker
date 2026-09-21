@@ -13,7 +13,6 @@ from app.core.rate_limit import limiter
 from app.core.security import require_admin_key, validate_ingest_auth
 from app.core.utils import scrub_log
 from app.models.db import (
-    CredentialTag,
     LatestUsage,
     ProviderConfig,
     SidecarRegistry,
@@ -333,24 +332,15 @@ def _account_tag_hints_for_providers(
 ) -> dict[str, dict[str, str]]:
     """Return ``{provider_id: {credential_origin: account_id, ...}}`` for the
     requested providers. Powers both ``/fleet/config`` and the ``/fleet/ingest``
-    response, so the sidecar can stamp cards it couldn't resolve locally."""
-    if not providers:
-        return {}
-    from sqlmodel import or_, select
+    response, so the sidecar can stamp cards it couldn't resolve locally.
 
-    rows = list(
-        session.exec(
-            select(
-                CredentialTag.provider_id,
-                CredentialTag.credential_origin,
-                CredentialTag.account_id,
-            ).where(or_(*(CredentialTag.provider_id == pid for pid in providers)))
-        ).all()
-    )
-    out: dict[str, dict[str, str]] = {}
-    for pid, origin, aid in rows:
-        out.setdefault(pid, {})[origin] = aid
-    return out
+    Thin wrapper over :meth:`CredentialTagRepo.list_pending_payload` —
+    the lookup key lives in the repo so future callers (and the
+    sidecar's ``GenericCollector.collect_provider`` block-guard unit
+    tests) all read through the same SQL shape (PR #290 round-2
+    review, Hermes suggestion #6).
+    """
+    return CredentialTagRepo.list_pending_payload(session, providers=providers)
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +390,14 @@ async def post_credential_manifest(
 
     if not payload.sidecar_id:
         raise HTTPException(status_code=400, detail="sidecar_id is required")
+
+    # Mirror /fleet/ingest: normalize the sidecar_id so a reporter that
+    # sends an FQDN doesn't get a pending row keyed on a string no
+    # card can surface in the per-sidecar badge query
+    # (?sidecar_id=<registry id>). Defensive — today's sidecar normalizes
+    # client-side, but a future reporter (custom integration, scripted
+    # curl) might not (PR #290 round-2 review, Hermes suggestion #7).
+    payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
 
     keep_by_provider: dict[str, set[str]] = {}
     for entry in payload.entries:

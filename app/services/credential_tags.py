@@ -16,7 +16,6 @@ goes through this surface so the lookup key stays in one place.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlmodel import Session, select
 
@@ -126,37 +125,42 @@ class CredentialTagRepo:
     def list_pending_payload(
         session: Session,
         *,
-        manifests: list[dict[str, Any]],
+        providers: list[str],
     ) -> dict[str, dict[str, str]]:
-        """Return ``{provider_id: {credential_origin: account_label, ...}}`` for the
-        union of ``credential_origins`` across the supplied manifests.
+        """Return ``{provider_id: {credential_origin: account_id, ...}}`` for
+        every stored tag whose provider is in ``providers``.
 
-        ``manifests`` shape: ``[{"provider_id": ..., "credential_origins": [...]} ...]``.
-        Used by ``/fleet/credentials/manifest`` to enrich its response with the
-        hints the sidecar will persist in its next ``/fleet/config`` cycle.
+        The single source of truth for the ``/fleet/config`` /
+        ``/fleet/ingest`` ``account_tag_hints`` shape (PR #288 / #290).
+        Production callers — ``_account_tag_hints_for_providers`` in
+        ``app/api/endpoints/fleet.py`` — invoke this method so the
+        lookup key lives in one place (the repo). Origins without a
+        stored tag are silently omitted — the sidecar's silent-listener
+        block guard treats missing hints the same way as no hints at
+        all (the card stays blocked until the operator resolves it).
 
-        Origins without a stored tag are silently omitted — the sidecar is
-        expected to re-query for unresolved entries via the dedicated
-        ``/api/v1/fleet/credentials/tags?credential_origin=...`` endpoint
-        the webapp's "Untagged credentials" panel uses.
+        Empty ``providers`` returns an empty map. Empty ``account_id``
+        values are filtered out defensively.
         """
-        pairs = {
-            (m["provider_id"], orig) for m in manifests for orig in m.get("credential_origins", [])
-        }
-        if not pairs:
+        if not providers:
             return {}
-        # Bulk-fetch in one query; SQLModel's IN-translator doesn't compose
-        # tuples directly, so we OR over per-pair predicates.
         from sqlmodel import or_  # local import keeps the noop-import lint happy
 
-        predicates = [
-            (CredentialTag.provider_id == pid) & (CredentialTag.credential_origin == orig)
-            for pid, orig in pairs
-        ]
-        rows = list(session.exec(select(CredentialTag).where(or_(*predicates))).all())
+        predicates = [CredentialTag.provider_id == pid for pid in providers]
+        rows = list(
+            session.exec(
+                select(
+                    CredentialTag.provider_id,
+                    CredentialTag.credential_origin,
+                    CredentialTag.account_id,
+                ).where(or_(*predicates))
+            ).all()
+        )
         out: dict[str, dict[str, str]] = {}
-        for row in rows:
-            out.setdefault(row.provider_id, {})[row.credential_origin] = row.account_id
+        for pid, origin, account_id in rows:
+            if isinstance(pid, str) and isinstance(origin, str) and isinstance(account_id, str):
+                if pid and origin and account_id:
+                    out.setdefault(pid, {})[origin] = account_id
         return out
 
 

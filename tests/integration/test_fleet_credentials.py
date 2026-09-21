@@ -362,6 +362,38 @@ def test_manifest_does_not_prune_other_sidecar(client: TestClient, session: Sess
     ] == [("beta", "path:/shared")]
 
 
+def test_manifest_normalizes_fqdn_sidecar_id(client: TestClient, session: Session):
+    """PR #290 round-2 review (Hermes suggestion #7): the manifest
+    endpoint must mirror /fleet/ingest's ``normalize_sidecar_id`` so a
+    reporter that sends ``alpha.example.com`` doesn't get a pending row
+    keyed on a string no card can surface in the per-sidecar badge
+    query (``?sidecar_id=<registry id>``). The row's
+    ``sidecar_id`` column should be the normalized form.
+
+    Today's sidecar normalizes client-side (so this is defensive), but
+    a future scripted reporter (custom integration, curl) might not.
+    """
+    from app.services.account_identity import normalize_sidecar_id
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        # FQDN — must normalize to its short hostname before storage.
+        "sidecar_id": "alpha.example.com",
+        "entries": [
+            {"provider_id": "anthropic", "credential_origin": "path:/x"},
+        ],
+    }
+    r = _post_manifest(client, body)
+    assert r.status_code == 200, r.text
+    assert r.json()["sidecar_id"] == normalize_sidecar_id("alpha.example.com")
+
+    # The pending row uses the normalized sidecar_id — same string the
+    # client will pass in ``?sidecar_id=`` to surface it.
+    rows = PendingCredentialTagRepo.list_all(session)
+    assert len(rows) == 1
+    assert rows[0].sidecar_id == normalize_sidecar_id("alpha.example.com")
+
+
 def test_tag_endpoint_creates_tag_and_clears_pending(client: TestClient, session: Session):
     """Operator's POST creates a CredentialTag and deletes the matching pending row."""
     from app.services.credential_tags import (

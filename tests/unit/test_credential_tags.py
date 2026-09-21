@@ -206,7 +206,12 @@ def test_list_all_orders_by_provider_then_origin(session: Session):
 
 
 def test_list_pending_payload_returns_map_for_known_origins(session: Session):
-    """``list_pending_payload`` is the manifest-endpoint response shape."""
+    """``list_pending_payload`` is the production read path used by
+    ``_account_tag_hints_for_providers`` in ``app/api/endpoints/fleet.py``
+    — the canonical ``account_tag_hints`` shape that ships in both
+    ``/fleet/config`` and ``/fleet/ingest`` responses (PR #290 round-2
+    review, Hermes suggestion #6: make the repo the canonical read
+    path)."""
     CredentialTagRepo.set_tag(
         session,
         provider_id="anthropic",
@@ -219,25 +224,21 @@ def test_list_pending_payload_returns_map_for_known_origins(session: Session):
         credential_origin="path:/home/alice/.codex/auth.json",
         account_id="alice@example.com",
     )
+    # An untagged provider is requested too — must NOT appear in the
+    # output (the silent-listener block guard treats missing hints the
+    # same as no hints, blocking the card until the operator resolves
+    # it).
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="not-requested",
+        credential_origin="path:/never-asked",
+        account_id="ghost@example.com",
+    )
     session.commit()
 
-    manifests = [
-        {
-            "provider_id": "anthropic",
-            "credential_origins": [
-                "path:/home/alice/.claude/.credentials.json",
-                "path:/home/alice/.claude-work/.credentials.json",  # not tagged
-            ],
-        },
-        {
-            "provider_id": "chatgpt",
-            "credential_origins": [
-                "path:/home/alice/.codex/auth.json",
-            ],
-        },
-    ]
-
-    out = CredentialTagRepo.list_pending_payload(session, manifests=manifests)
+    out = CredentialTagRepo.list_pending_payload(
+        session, providers=["anthropic", "chatgpt"]
+    )
 
     assert out == {
         "anthropic": {
@@ -247,18 +248,29 @@ def test_list_pending_payload_returns_map_for_known_origins(session: Session):
             "path:/home/alice/.codex/auth.json": "alice@example.com",
         },
     }
+    assert "not-requested" not in out, (
+        "untagged provider scope — must NOT leak other providers' tags "
+        "into a scoped read"
+    )
 
 
 def test_list_pending_payload_handles_empty_input(session: Session):
-    assert CredentialTagRepo.list_pending_payload(session, manifests=[]) == {}
+    assert CredentialTagRepo.list_pending_payload(session, providers=[]) == {}
 
 
-def test_list_pending_payload_handles_manifests_with_no_origins(session: Session):
-    """Defensive: a manifest that lists no origins for a provider is a no-op for that provider."""
-    out = CredentialTagRepo.list_pending_payload(
+def test_list_pending_payload_handles_unknown_provider_only(session: Session):
+    """Defensive: requesting only providers that have no stored tags
+    returns an empty map (the caller should treat missing hints the
+    same way as no hints at all)."""
+    CredentialTagRepo.set_tag(
         session,
-        manifests=[{"provider_id": "anthropic", "credential_origins": []}],
+        provider_id="anthropic",
+        credential_origin="path:/never-asked",
+        account_id="alice@example.com",
     )
+    session.commit()
+
+    out = CredentialTagRepo.list_pending_payload(session, providers=["openai"])
     assert out == {}
 
 
@@ -417,22 +429,22 @@ def test_pending_delete_returns_true_when_present_false_when_absent(session: Ses
     )
     session.commit()
 
-    assert (
-        PendingCredentialTagRepo.delete(
-            session,
-            sidecar_id="alpha",
-            provider_id="anthropic",
-            credential_origin="path:/x",
-        )
-        is True
+    # PR #290 round-2 review (CodeQL): separate the side-effecting
+    # delete() call from the assert. CodeQL flagged the original
+    # ``assert (...delete(...) is True)`` pattern because the function
+    # call mutates DB state inside the assert expression.
+    first_delete = PendingCredentialTagRepo.delete(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/x",
     )
+    assert first_delete is True
     session.commit()
-    assert (
-        PendingCredentialTagRepo.delete(
-            session,
-            sidecar_id="alpha",
-            provider_id="anthropic",
-            credential_origin="path:/x",
-        )
-        is False
+    second_delete = PendingCredentialTagRepo.delete(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/x",
     )
+    assert second_delete is False
