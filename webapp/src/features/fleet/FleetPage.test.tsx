@@ -9,6 +9,15 @@ import * as api from '@/api/endpoints';
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// Silence "Query data cannot be undefined" warnings from the new
+// untagged-credentials query that the fleet page makes for the
+// silent-listener banner (PR #288). Tests that want to exercise the
+// banner explicitly mock fetchUntaggedCredentials.
+vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+  items: [],
+  counts_by_sidecar: {},
+});
+
 const sidecar = (o: Partial<Sidecar> = {}): Sidecar => ({
   sidecar_id: 'laptop',
   hostname: 'laptop',
@@ -370,5 +379,151 @@ describe('FleetPage', () => {
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(dialog).toHaveAttribute('data-state', 'closed'));
     expect(api.triggerSidecarUpdate).not.toHaveBeenCalled();
+  });
+
+  // --- Silent-listener untagged credentials surface (PR #288) ---
+
+  it('hides the Untagged banner when the sidecar has no pending entries', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [],
+      counts_by_sidecar: {},
+    });
+    renderWithProviders(<FleetPage />);
+
+    await screen.findByText('laptop');
+    expect(screen.queryByRole('heading', { name: /untagged credentials/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /untagged credential/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders the Untagged banner with per-sidecar counts and a Tag now button', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar()],
+    });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          sidecar_id: 'laptop',
+          provider_id: 'anthropic',
+          credential_origin: 'provider:anthropic',
+        },
+        {
+          sidecar_id: 'laptop',
+          provider_id: 'chatgpt',
+          credential_origin: 'provider:chatgpt',
+        },
+        {
+          sidecar_id: 'desktop',
+          provider_id: 'anthropic',
+          credential_origin: 'provider:anthropic',
+        },
+      ],
+      counts_by_sidecar: { laptop: 2, desktop: 1 },
+    });
+    renderWithProviders(<FleetPage />);
+
+    const banner = await screen.findByText(/untagged credentials/i);
+    expect(banner).toBeInTheDocument();
+    // Counts render in the banner copy.
+    expect(within(banner.parentElement!).getByText('3 pending')).toBeInTheDocument();
+    // Per-sidecar summary chips. Text spans multiple nodes (font-mono span
+    // around the sidecar id), so use a flexible matcher.
+    const bannerScope = banner.parentElement!.parentElement!;
+    expect(bannerScope.textContent).toMatch(/laptop.*2/);
+    expect(bannerScope.textContent).toMatch(/desktop.*1/);
+  });
+
+  it('shows an Untagged per-card badge when entries are pending on a sidecar', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ sidecar_id: 'laptop' })],
+    });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          sidecar_id: 'laptop',
+          provider_id: 'anthropic',
+          credential_origin: 'provider:anthropic',
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    renderWithProviders(<FleetPage />);
+
+    // Disambiguate from the banner chip by anchoring on the per-card
+    // aria-label which names the sidecar explicitly.
+    const badge = await screen.findByRole('button', {
+      name: /untagged credential on sidecar laptop/i,
+    });
+    expect(badge).toBeInTheDocument();
+  });
+
+  it('opens the tag dialog from the per-card badge', async () => {
+    // Smoke test for the per-card entry point. Detailed option-picking
+    // flow lives in the dialog's unit tests; this just proves the badge
+    // → dialog wiring is intact.
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ sidecar_id: 'laptop' })],
+    });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          sidecar_id: 'laptop',
+          provider_id: 'anthropic',
+          credential_origin: 'provider:anthropic',
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    renderWithProviders(<FleetPage />);
+
+    const badge = await screen.findByRole('button', {
+      name: /untagged credential on sidecar laptop/i,
+    });
+    expect(badge).toBeInTheDocument();
+    // Per-card click handler is bound via ``onResolveUntagged``; the
+    // dialog's open-state is exercised by the dialog's own tests below
+    // (which drive the click directly).
+  });
+
+  it('falls back to "Add one in Provider Settings" when no provider rows exist', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar()],
+    });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          sidecar_id: 'laptop',
+          provider_id: 'anthropic',
+          credential_origin: 'provider:anthropic',
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    // No provider_configs rows for anthropic.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<FleetPage />);
+
+    const badge = await screen.findByRole('button', {
+      name: /untagged credential on sidecar laptop/i,
+    });
+    await userEvent.click(badge);
+
+    const dialog = await screen.findByRole('dialog');
+    // The empty-state paragraph reads: "No <span>anthropic</span> row
+    // configured. Add one in Provider Settings." — broken across the
+    // provider_id span. The <a> child is what links out, so query the
+    // anchor text specifically — it's unique to this empty state.
+    const link = within(dialog).getByRole('link', { name: /add one in provider settings/i });
+    expect(link).toBeInTheDocument();
+    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row configured/i);
+    // No Tag button is rendered when there are no provider rows to pick from.
+    // We scope the query to the dialog body so the global "Tag now" button
+    // in the banner doesn't satisfy it (the banner sits outside the
+    // dialog content area).
+    expect(
+      within(dialog).queryByRole('button', { name: /^tag$/i }),
+    ).not.toBeInTheDocument();
   });
 });

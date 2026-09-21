@@ -8,6 +8,7 @@ import type {
   AuditEntry,
   CollectorStatus,
   CostForecastResponse,
+  CredentialTagRequest,
   CumulativeResponse,
   DashboardLayout,
   EventRangeResponse,
@@ -30,6 +31,7 @@ import type {
   TopModelsResponse,
   TopProjectsResponse,
   TopToolsResponse,
+  UntaggedCredentialsList,
   UpdateCheckResult,
   Webhook,
   DebugRawResponse,
@@ -118,6 +120,21 @@ export const resetProvider = (providerId: string, accountId?: string) =>
 // --- Fleet (sidecars) ------------------------------------------------------
 
 export const fetchSidecars = () => api<{ sidecars: Sidecar[] }>('/api/v1/fleet/sidecars');
+
+// --- Fleet (silent-listener pending credential tags) ------------------
+
+export const fetchUntaggedCredentials = (sidecarId?: string) => {
+  const qs = sidecarId ? `?sidecar_id=${encodeURIComponent(sidecarId)}` : '';
+  return api<UntaggedCredentialsList>(
+    `/api/v1/fleet/credentials/tags/pending${qs}`,
+  );
+};
+
+export const tagCredential = (body: CredentialTagRequest) =>
+  api<{ status: string }>('/api/v1/fleet/credentials/tags', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 
 export const patchSidecar = (sidecarId: string, body: { custom_name?: string; tags?: string[] }) =>
   api<Sidecar>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {

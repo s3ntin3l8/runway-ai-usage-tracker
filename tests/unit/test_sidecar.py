@@ -7,7 +7,8 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -98,7 +99,7 @@ class TestAntigravityTokenStamp:
         with patch.dict(
             sidecar._ACCOUNT_IDENTITIES, {"antigravity": "user@example.com"}, clear=True
         ):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
         assert token_cards[0]["account_id"] == "user@example.com"
@@ -107,7 +108,7 @@ class TestAntigravityTokenStamp:
         tok = self._write_token_file(tmp_path)
         config = self._ag_config(tok)
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
         assert token_cards[0]["account_id"] == "default"
@@ -163,7 +164,7 @@ class TestChatGPTTokenStamp:
         )
         config = self._codex_config(auth_file)
         with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
-            cards = sidecar.GenericCollector.collect_provider("chatgpt", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("chatgpt", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
@@ -184,7 +185,7 @@ class TestChatGPTTokenStamp:
         )
         config = self._codex_config(auth_file)
         with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
-            cards = sidecar.GenericCollector.collect_provider("chatgpt", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("chatgpt", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
@@ -235,7 +236,7 @@ class TestAntigravityTokenExpiry:
         config = self._config(tok)
 
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
@@ -258,7 +259,7 @@ class TestAntigravityTokenExpiry:
         config = self._config(tok)
 
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
 
         # No oauth_token/refresh_token survives → no token card is emitted.
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
@@ -984,3 +985,329 @@ class TestOpencodeDbPath:
         flat.touch()
         self._candidates(monkeypatch, missing_xdg, str(flat))
         assert sidecar._discover_opencode_db_path() == flat
+
+
+# ---------------------------------------------------------------------------
+# _post_credential_manifest (PR #288 / #290)
+# ---------------------------------------------------------------------------
+
+
+class TestCredentialOriginForProvider:
+    """The ``credential_origin_for_provider`` helper is the seam between
+    the silent-listener block guard (looks up the operator's hint) and
+    the manifest ``blocked_origins`` entry (reports the unresolved
+    origin). PR #290 round-2 review (Hermes thread Vha6): a #289
+    widening changes the helper, not the two call sites — so the
+    guard and the manifest can't drift apart silently.
+
+    Phase 1 returns ``f"provider:{provider_id}"``. The shape is
+    pinned here so a future widening is intentional, not accidental.
+    """
+
+    def test_returns_phase1_coarse_descriptor(self):
+        from scripts.sidecar import credential_origin_for_provider
+
+        assert credential_origin_for_provider("anthropic") == "provider:anthropic"
+        assert credential_origin_for_provider("chatgpt") == "provider:chatgpt"
+
+    def test_descriptor_is_stable_across_call_sites(self):
+        """Guard-lookup and manifest-report must use the same string
+        for the same provider_id — that's the whole point of the
+        seam (PR #290 round-2 Hermes thread Vha6)."""
+        # Use the top-level ``sidecar`` binding (resolved via
+        # ``sys.path.insert`` at module top) instead of a local
+        # ``import scripts.sidecar as sc`` — CodeQL flags the
+        # dual-style import when the file already has a top-level
+        # ``import sidecar``.
+        assert sidecar.credential_origin_for_provider("antigravity") == "provider:antigravity"
+        # And the helper is importable / accessible at module scope.
+        assert hasattr(sidecar, "credential_origin_for_provider")
+
+
+class TestPostCredentialManifest:
+    """The silent-listener manifest POST. PR #288 shipped the endpoint;
+    PR #290 round-2 review added (a) the ``resolved``-field consumption
+    callback so the loop closes on the same cycle, and (b) the gate on
+    completed cycle so ``error_count > 0`` doesn't prune still-unresolved
+    pending rows.
+    """
+
+    def _mock_response(self, payload: dict, status: int = 200) -> MagicMock:
+        body = json.dumps(payload).encode("utf-8")
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(
+            return_value=MagicMock(
+                getcode=MagicMock(return_value=status), read=MagicMock(return_value=body)
+            )
+        )
+        ctx.__exit__ = MagicMock(return_value=False)
+        return ctx
+
+    def test_consumes_resolved_field_into_callback(self, monkeypatch):
+        """The server's ``resolved`` map is delivered to ``on_resolved``
+        so the local hint cache merges operator tags on the same cycle
+        (PR #290 round-2 review, Hermes suggestion #9)."""
+        captured: dict[str, dict[str, str]] = {}
+
+        def _capture(resolved):
+            captured.update(resolved)
+
+        ctx = self._mock_response(
+            {
+                "status": "ok",
+                "sidecar_id": "alpha-host",
+                "entries_received": 1,
+                "entries_pruned": 0,
+                "resolved": {
+                    "anthropic": {"provider:anthropic": "alice@example.com"},
+                    "chatgpt": {
+                        "provider:chatgpt": "alice@example.com",
+                    },
+                },
+            }
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[{"provider_id": "anthropic", "credential_origin": "provider:anthropic"}],
+                on_resolved=_capture,
+            )
+
+        assert captured == {
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+            "chatgpt": {"provider:chatgpt": "alice@example.com"},
+        }
+
+    def test_skips_callback_when_resolved_is_empty(self):
+        """An empty ``resolved`` map (operator hasn't tagged anything
+        new) is a no-op — no callback invocation, no log noise."""
+        callback = MagicMock()
+        ctx = self._mock_response(
+            {
+                "status": "ok",
+                "sidecar_id": "alpha-host",
+                "entries_received": 1,
+                "entries_pruned": 0,
+                "resolved": {},
+            }
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_not_called()
+
+    def test_skips_callback_on_non_200(self):
+        """A non-200 response is treated like an outage — the callback
+        is NOT invoked. The next cycle retries."""
+        callback = MagicMock()
+        ctx = self._mock_response({"error": "boom"}, status=500)
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_not_called()
+
+    def test_skips_callback_when_resolved_field_missing(self):
+        """Older server versions (pre-PR #288) won't carry ``resolved``.
+        The callback is silently skipped — the next cycle retries."""
+        callback = MagicMock()
+        ctx = self._mock_response(
+            {"status": "ok", "sidecar_id": "alpha-host", "entries_received": 0}
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_not_called()
+
+    def test_callback_exception_is_swallowed(self):
+        """A buggy ``on_resolved`` callback must NOT take down the
+        manifest POST path. Log and move on (defensive — the next
+        ``/fleet/config`` will eventually heal any stale state)."""
+        callback = MagicMock(side_effect=RuntimeError("callback boom"))
+        ctx = self._mock_response(
+            {
+                "status": "ok",
+                "sidecar_id": "alpha-host",
+                "entries_received": 1,
+                "resolved": {"anthropic": {"provider:anthropic": "a"}},
+            }
+        )
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch("urllib.request.urlopen", return_value=ctx),
+        ):
+            # Must not raise.
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                on_resolved=callback,
+            )
+
+        callback.assert_called_once()
+
+
+def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monkeypatch):
+    """PR #290 round-2 review (Hermes thread Vha0): the round-1
+    ``if error_count > 0`` gate suppressed the WHOLE manifest, so a
+    healthy provider's blocked origin was dropped while any single
+    provider kept raising — the operator's Untagged surface went
+    blind until that provider recovered. The fix scopes the prune
+    per-provider via the existing ``try/except``: providers whose
+    ``collect_provider`` raised contribute no entries to the
+    manifest, so the server's ``delete_stale`` never sees their keys.
+    The manifest POST must fire on a partial cycle so healthy
+    providers' blocked origins still ship."""
+
+    posted = {"called": False, "entries": []}
+
+    def _capture(*args, **kwargs):
+        posted["called"] = True
+        posted["entries"] = kwargs.get("entries", [])
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture)
+
+    # Empty the events providers list so the events loop is skipped.
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset())
+
+    # Two providers in the registry, two different collect_provider
+    # behaviors: one raises, one returns a blocked origin. The
+    # manifest must still ship the healthy provider's blocked origin.
+    def _by_provider(provider_id, *args, **kwargs):
+        if provider_id == "anthropic":
+            raise RuntimeError("anthropic exploded")
+        return (
+            [],
+            [{"provider_id": provider_id, "credential_origin": f"provider:{provider_id}"}],
+        )
+
+    monkeypatch.setattr(sidecar.GenericCollector, "collect_provider", _by_provider)
+
+    # Stub cache so the fetch path is a no-op.
+    monkeypatch.setattr(sidecar, "_get_credential_cache", _StubCache)
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["anthropic", "chatgpt"],
+    )
+
+    assert posted["called"], (
+        "manifest POST must fire on partial cycles so healthy providers' "
+        "blocked origins still ship (PR #290 round-2 Hermes thread Vha0)"
+    )
+    # The healthy provider's blocked origin made it through; the
+    # raised provider's did not.
+    assert posted["entries"] == [
+        {"provider_id": "chatgpt", "credential_origin": "provider:chatgpt"}
+    ]
+
+
+def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, tmp_path):
+    """End-to-end: the manifest POST's ``resolved`` payload is merged
+    into the persistent cache. The next ``run_collection`` cycle
+    consults that cache to unblock the now-tagged card (PR #290
+    round-2 review, Hermes suggestion #9 — same-cycle loop closure)."""
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        accounts={"anthropic": ["alice@example.com"]},
+        tokens={},
+        tag_hints={},  # No hints yet — first time the operator tags.
+    )
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    # Empty the events providers list — the events loop isn't the
+    # subject of this test and would otherwise raise on missing
+    # ``_LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]``.
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset())
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+        # Simulate the server returning the operator's just-set tag.
+        on_resolved({"anthropic": {"provider:anthropic": "alice@example.com"}})
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+    # collect_provider returns a blocked origin (no local discovery).
+    monkeypatch.setattr(
+        sidecar.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: (
+            [],
+            [{"provider_id": "anthropic", "credential_origin": "provider:anthropic"}],
+        ),
+    )
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["anthropic"],
+    )
+
+    # The manifest fired with the blocked origin.
+    assert posted["entries"] == [
+        {"provider_id": "anthropic", "credential_origin": "provider:anthropic"}
+    ]
+    # And the cache now carries the operator's tag — the next cycle's
+    # block-guard will see this and unblock the card without waiting
+    # on the next /fleet/config round-trip.
+    assert cache.provider_tag_hints() == {
+        "anthropic": {"provider:anthropic": "alice@example.com"},
+    }
+
+
+class _StubCache:
+    """Minimal stand-in for ``CredentialCache`` so the test can stub
+    ``_get_credential_cache`` without dragging in the full cache.
+
+    Only ``is_fresh()`` and ``provider_accounts()`` / ``provider_tag_hints()``
+    are exercised by ``run_collection`` in this test path."""
+
+    def is_fresh(self, *, now=None):
+        return True  # Skip the fetch path; the test supplies its own.
+
+    def provider_accounts(self):
+        return {}
+
+    def provider_tag_hints(self):
+        return {}

@@ -483,3 +483,81 @@ class AuditLog(SQLModel, table=True):  # type: ignore[call-arg]
     target_id: str | None = Field(default=None, index=True)
     # Optional structured detail (old vs new values, etc.); JSON-encoded.
     payload_json: str | None = None
+
+
+class CredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
+    """Operator-set mapping from a host-side credential origin to a server-side identity.
+
+    Phase-1 silent-listener storage. The sidecar reads ``/fleet/config`` to
+    discover tag hints (one per ``credential_origin``); if no tag exists,
+    the matching credential card is blocked from the ingest queue and the
+    sidecar reports the origin via ``POST /fleet/credentials/manifest`` so
+    the operator can resolve it in the fleet UI. Resolutions persist here
+    keyed on ``(provider_id, credential_origin)``. See PR #288.
+
+    ``credential_origin`` is a stable host-side descriptor like
+    ``"path:/home/user/.claude/.credentials.json"`` or ``"env:ANTHROPIC_API_KEY"`` —
+    never a credential value, never a hash of one. Two sidecars sharing
+    the same origin (e.g. NFS-shared home dir) intentionally resolve to
+    one tag, since the credential itself is genuinely one identity.
+
+    Phase-2 widens with an optional ``sidecar_id`` column for hosts that
+    hold the same logical origin but want different per-host tags.
+    """
+
+    __tablename__ = "credential_tags"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "credential_origin", name="uq_credential_tag_identity"),
+        Index("ix_credential_tags_provider", "provider_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    credential_origin: str
+    account_id: str  # matches provider_configs.account_id
+    set_by: str = "operator"
+    set_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
+    """Origin the sidecar is currently reporting but no operator tag exists yet.
+
+    Maintained by ``POST /fleet/credentials/manifest``: the sidecar sends
+    the set of origins it found this cycle, the server upserts each row,
+    then deletes any row for that ``sidecar_id`` whose origin is absent
+    from the new list (silent disappearance of a local credential).
+
+    Powers the "Untagged credentials" surface on the fleet view: the
+    webapp reads these via ``GET /fleet/credentials/tags/pending`` and
+    offers a tag action that creates a :class:`CredentialTag` and deletes
+    the pending row.
+
+    ``pending_credential_tags`` is the only place where the per-sidecar
+    identity matters in phase-1 — a CredentialTag is global (resolved
+    per origin, not per sidecar), but the pending state needs to know
+    which sidecar reported it so the operator can answer "which host is
+    this credential from?" before resolving.
+    """
+
+    __tablename__ = "pending_credential_tags"
+    __table_args__ = (
+        UniqueConstraint(
+            "sidecar_id",
+            "provider_id",
+            "credential_origin",
+            name="uq_pending_credential_tag_identity",
+        ),
+        Index("ix_pending_credential_tags_sidecar", "sidecar_id"),
+        Index(
+            "ix_pending_credential_tags_unresolved",
+            "provider_id",
+            "credential_origin",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    sidecar_id: str = Field(index=True)
+    provider_id: str
+    credential_origin: str
+    first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))

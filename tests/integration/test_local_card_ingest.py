@@ -82,7 +82,7 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -136,7 +136,7 @@ def test_sidecar_pushed_card_merges_on_second_push(session):
     updated_card = {**base_card, "used_value": 55.0, "pct_used": 55.0, "detail": "Updated push"}
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -201,7 +201,7 @@ def test_sidecar_pushed_card_skipped_without_provider_id(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -248,7 +248,7 @@ def test_two_sidecars_different_accounts_produce_separate_rows(session):
         }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -320,7 +320,7 @@ def test_ingest_prunes_ghost_model_rows_with_past_reset_at(session):
         }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -402,7 +402,7 @@ def test_ingest_does_not_prune_other_provider_rows(session):
         }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -479,7 +479,7 @@ def test_passive_provider_added_to_poll_providers(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -542,7 +542,7 @@ def test_sidecar_quota_guard_rejects_non_lsp(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -565,4 +565,55 @@ def test_sidecar_quota_guard_rejects_non_lsp(session):
     model_ids_and_variants = {(r.model_id, r.variant) for r in rows}
     assert ("", "gemini") not in model_ids_and_variants, (
         "Non-LSP quota card (gemini) must be rejected by the guard"
+    )
+
+
+def test_hmac_mismatch_log_is_crlf_clean(session, caplog):
+    """PR #290 round-2 review (Hermes warning #4 + CodeQL log-injection):
+    the HMAC-mismatch log line previously interpolated attacker-controlled
+    ``x_signature`` raw. A malicious client could inject CR/LF and forge
+    extra log lines ("FAKE: root login"). After the fix, ``scrub_log``
+    collapses CR/LF so the captured log record carries no embedded
+    newlines.
+    """
+    import logging
+
+    body = b"{}"
+    ts = str(time.time())
+    # The CR/LF payload is the "signature" — it never matches the real
+    # computed signature, so we land in the mismatch branch.
+    bad_signature = "abc\nFAKE_LOG_LINE: root login\ndeadbeefdeadbeefdeadbeefdeadbeef"
+
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+
+        with caplog.at_level(logging.WARNING, logger="app.core.security"):
+            r = client.post(
+                "/api/v1/fleet/ingest",
+                content=body,
+                headers={"X-Signature": bad_signature, "X-Timestamp": ts},
+            )
+
+    assert r.status_code == 401, r.text
+    mismatch_logs = [rec for rec in caplog.records if "HMAC mismatch" in rec.getMessage()]
+    assert mismatch_logs, "expected an HMAC mismatch log line"
+    rendered = mismatch_logs[-1].getMessage()
+    # ``scrub_log`` collapses CR/LF to spaces; no embedded newlines should
+    # remain in the formatted message.
+    assert "\n" not in rendered, (
+        f"HMAC mismatch log contains embedded newline (log-injection): {rendered!r}"
+    )
+    assert "\r" not in rendered
+    # The first 8 chars of the sanitized signature are echoed — ``"abc\nFAKE_"``
+    # becomes ``"abc FAKE_"`` after scrub_log, which is what we expect to
+    # see. Crucially, no CR/LF survives that the attacker could use to forge
+    # a second log line.
+    assert "abc FAKE" in rendered, (
+        f"sanitized signature prefix should appear (CR/LF collapsed to space): {rendered!r}"
     )

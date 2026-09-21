@@ -32,6 +32,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1837,6 +1839,24 @@ def _opencode_account_email(db_path: Path | None) -> str:
 # --- Generic Collector Engine ---
 
 
+def credential_origin_for_provider(provider_id: str) -> str:
+    """Return the stable credential-origin descriptor the sidecar
+    reports for a provider's blocked card.
+
+    Phase 1 (PR #288 / #290): one origin per provider per cycle,
+    ``f"provider:{provider_id}"``. The hint lookup in
+    ``GenericCollector.collect_provider``'s block guard and the
+    ``credential_origin`` field of the manifest ``blocked_origins``
+    entry both go through this helper so the guard and the manifest
+    can't drift apart.
+
+    Phase 2 (#289): widens to a per-rule origin list. The two call
+    sites stay the same; only this helper changes — that's the
+    seam.
+    """
+    return f"provider:{provider_id}"
+
+
 class GenericCollector:
     """Orchestrates data collection based on registry rules."""
 
@@ -1866,14 +1886,38 @@ class GenericCollector:
         return current
 
     @staticmethod
-    def collect_provider(provider_id: str, config: dict[str, Any]) -> list[dict[str, Any]]:
-        """Run all rules for a single provider and return metrics."""
-        results = []
-        tokens = {}
+    def collect_provider(
+        provider_id: str,
+        config: dict[str, Any],
+        *,
+        account_label_hints: dict[str, dict[str, str]] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        """Run all rules for a single provider and return ``(results, blocked_origins)``.
+
+        ``results`` is the list of metric cards (token cards + quota cards)
+        suitable for shipping to ``/fleet/ingest``. ``blocked_origins`` is a
+        list of ``{"provider_id": str, "credential_origin": str}`` entries
+        describing the credentials whose ``account_id`` could not be
+        resolved via local discovery or the ``account_label_hints`` hint
+        map. Those cards were extracted but not shipped - the sidecar
+        reports them via ``POST /fleet/credentials/manifest`` so the
+        operator can resolve them in the fleet UI (silent-listener model;
+        see PR #288).
+
+        ``account_label_hints`` is ``{provider_id: {credential_origin: account_id, ...}}``,
+        forwarded by ``run_collection`` from the server's most recent
+        ``/fleet/config`` response. When a rule's ``origin_descriptor``
+        matches a hint, the hinted ``account_id`` is used as the fallback
+        before the block triggers.
+        """
+        results: list[dict[str, Any]] = []
+        blocked_origins: list[dict[str, str]] = []
+        tokens: dict[str, Any] = {}
 
         name = config.get("name", provider_id)
         icon = config.get("icon", "❓")
         rules = config.get("rules", [])
+        provider_hints = (account_label_hints or {}).get(provider_id, {})
 
         for rule in rules:
             rule_type = rule.get("type")
@@ -2188,22 +2232,77 @@ class GenericCollector:
                 unit = "oauth"
                 data_source = "api"
 
-            results.append(
-                {
-                    "service_name": name,
-                    "icon": icon,
-                    "remaining": "Token",
-                    "unit": unit,
-                    "reset": "—",
-                    "health": "good",
-                    "pace": "Token",
-                    "detail": "[Token Extracted] [Sidecar]",
-                    "data_source": data_source,
-                    "metadata": {**tokens, "provider_id": provider_id},
-                }
-            )
+            # Apply the silent-listener block guard (PR #288, fixed in
+            # PR #290): if no ``account_id`` is resolvable for this
+            # provider's tokens, the card must not ship. The card never
+            # sees a server-side ``account_id`` of "default" or None —
+            # operators see the unresolved origin in the fleet UI's
+            # "Untagged credentials" panel and resolve it by selecting
+            # a configured ``provider_configs`` row. Resolutions flow
+            # back via ``/fleet/config``'s ``account_tag_hints`` on the
+            # next cycle, OR via the ``resolved`` field of the manifest
+            # response on the *same* cycle (PR #290 round-2 review).
+            #
+            # Phase-1 simplification: emit ONE credential origin per
+            # provider per cycle (``provider:<provider_id>``). Per-rule
+            # origin expansion is the follow-up issue.
+            local_account_id = tokens.get("account_id")
+            hint_account_id = provider_hints.get(credential_origin_for_provider(provider_id))
+            if local_account_id is not None:
+                resolved_account_id = local_account_id
+            elif hint_account_id is not None:
+                resolved_account_id = hint_account_id
+                # Stamp the hint into ``tokens`` so the card's metadata
+                # carries the operator-resolved ``account_id`` (the
+                # server's ingest endpoint reads it from
+                # ``metadata.account_id``).
+                tokens["account_id"] = hint_account_id
+                logging.info(
+                    f"  [{provider_id}] token card stamped via server hint → "
+                    f"account_id={hint_account_id}"
+                )
+            else:
+                resolved_account_id = None
 
-        # Post-process: propagate discovered account identity to all cards
+            if resolved_account_id is None:
+                origin = credential_origin_for_provider(provider_id)
+                logging.warning(
+                    f"  [{provider_id}] token card blocked (origin={origin}) — "
+                    "no account_id resolved (local discovery + server hint both empty); "
+                    "not shipping. Operator will see this in the fleet view's "
+                    "Untagged Credentials panel."
+                )
+                blocked_origins.append(
+                    {
+                        "provider_id": provider_id,
+                        # Coarse per-provider descriptor — phase 2 will
+                        # subdivide per-rule. Operators keying off this
+                        # today get a single row per provider regardless
+                        # of how many credentials the host has on disk.
+                        "credential_origin": origin,
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "service_name": name,
+                        "icon": icon,
+                        "remaining": "Token",
+                        "unit": unit,
+                        "reset": "—",
+                        "health": "good",
+                        "pace": "Token",
+                        "detail": "[Token Extracted] [Sidecar]",
+                        "data_source": data_source,
+                        "metadata": {**tokens, "provider_id": provider_id},
+                    }
+                )
+
+        # Post-process: propagate discovered account identity to all cards.
+        # When the token card was blocked above, ``tokens["account_id"]`` is
+        # still useful for the quota cards this provider emits (none today —
+        # quota cards don't come from the sidecar, see fleet.py:178), so the
+        # propagation continues as before.
         acc_id = tokens.get("account_id")
         acc_label = tokens.get("account_label")
         if acc_id or acc_label:
@@ -2213,7 +2312,7 @@ class GenericCollector:
                 if acc_label and not card.get("account_label"):
                     card["account_label"] = acc_label
 
-        return results
+        return results, blocked_origins
 
 
 # --- Main Loop ---
@@ -2302,6 +2401,87 @@ def _discover_opencode_db_path() -> Path | None:
     return None
 
 
+def _post_credential_manifest(
+    *,
+    api_url: str | None,
+    api_key: str,
+    sidecar_id: str,
+    entries: list[dict[str, str]],
+    on_resolved: Callable[[dict[str, dict[str, str]]], None] | None = None,
+) -> None:
+    """Send the silent-listener manifest POST (PR #288, PR #290 round-2 review).
+
+    Gated on the same INGEST_API_KEY HMAC scheme as ``/fleet/ingest``.
+    Returns ``None`` on any failure — the next cycle retries (the server
+    retains the prior ``pending_credential_tags`` snapshot). The
+    ``manifest`` endpoint itself returns 503 when INGEST_API_KEY is
+    unset, which we just pass through silently.
+
+    When the response is 200, the server's ``resolved`` field carries
+    ``{provider_id: {credential_origin: account_id}}`` for any tag the
+    operator set since the sidecar last refreshed its hint cache. The
+    caller passes ``on_resolved`` to merge those hints into its cache
+    immediately — that closes the silent-listener loop on the *same*
+    cycle instead of waiting on the next ``/fleet/config`` round-trip
+    (Hermes suggestion #9 in PR #290 review).
+    """
+    if not api_url or not api_key:
+        return
+    # Empty entries still ship: the server prunes any pending rows for our
+    # sidecar_id that aren't re-reported, keeping the fleet UI in sync with
+    # what the sidecar actually has on disk this cycle.
+    body = json.dumps({"sidecar_id": sidecar_id, "entries": entries}).encode("utf-8")
+    ts = str(int(time.time()))
+    sig = hmac.new(
+        api_key.encode("utf-8"),
+        ts.encode() + body,
+        hashlib.sha256,
+    ).hexdigest()
+    url = f"{api_url.rstrip('/')}/api/v1/fleet/credentials/manifest"
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Timestamp": ts,
+            "X-Signature": sig,
+        },
+    )
+    from scripts.sidecar_pkg.tls import build_context  # late import keeps
+    # stdlib-heavy sidecar slim when TLS is unused.
+
+    try:
+        with urllib.request.urlopen(req, timeout=5, context=build_context(url)) as resp:
+            if resp.getcode() != 200:
+                logging.debug(f"manifest: server returned {resp.getcode()}")
+                return
+            try:
+                payload = json.loads(resp.read().decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                logging.debug(f"manifest: response not JSON ({exc})")
+                return
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+        logging.debug(f"manifest: skipped ({exc})")
+        return
+
+    if on_resolved is None:
+        return
+    resolved = payload.get("resolved") if isinstance(payload, dict) else None
+    if not isinstance(resolved, dict) or not resolved:
+        return
+    resolved_count = sum(len(v) for v in resolved.values() if isinstance(v, dict))
+    if resolved_count:
+        logging.info(
+            f"  manifest: server resolved {resolved_count} origin(s) on this cycle "
+            f"(consuming into local hint cache)"
+        )
+    try:
+        on_resolved(resolved)
+    except Exception as exc:  # pragma: no cover — defensive only
+        logging.debug(f"manifest: on_resolved callback raised ({exc})")
+
+
 def run_collection(
     config: dict[str, Any],
     providers: list[str] | None = None,
@@ -2324,14 +2504,20 @@ def run_collection(
         _watermark = None
         _events_enabled = False
 
-    # Fetch the server-known per-account identity list (issue #272). The
-    # identity map is decoupled from credential_token issuance — rows
-    # without credentials and configurations with an empty INGEST_API_KEY
-    # still contribute their ``account_id`` here, so the per-account
-    # attribution fix isn't gated on those conditions (PR #283 review).
+    # Fetch the server-known per-account identity list (issue #272) and
+    # the operator-resolved tag-hint map (PR #288 silent-listener). Both
+    # views come from a single ``GET /api/v1/fleet/config`` round-trip
+    # (PR #290 round-2 review — earlier code issued a second GET for
+    # tag hints, doubling the request load on every heartbeat).
     #
-    # On a fetch failure the cache retains its prior snapshot — the next
-    # cycle retries; a transient outage shouldn't suppress identity hints
+    # The identity map is decoupled from credential_token issuance —
+    # rows without credentials and configurations with an empty
+    # INGEST_API_KEY still contribute their ``account_id`` here, so the
+    # per-account attribution fix isn't gated on those conditions
+    # (PR #283 review).
+    #
+    # On a fetch failure the cache retains its prior snapshot — the
+    # next cycle retries; a transient outage shouldn't suppress hints
     # for the whole 10-min TTL (PR #283 round-3 review).
     #
     # The whole block (lazy import + cache init + network fetch) is
@@ -2340,24 +2526,36 @@ def run_collection(
     # back to the legacy single-account path without killing
     # ``run_collection``.
     server_accounts_by_provider: dict[str, list[str]] = {}
+    server_account_tag_hints: dict[str, dict[str, str]] = {}
     try:
         from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         cache = _get_credential_cache()
-        if not cache.is_fresh():
-            api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
-            if api_url_for_tokens:
-                fetched = fetch_identity_hints(api_url_for_tokens)
-                # ``fetched is None`` distinguishes outage from a valid
-                # empty response. The cache skips the update on None, so
-                # the prior snapshot survives and ``is_fresh()`` returns
-                # False at the next call.
-                if fetched is not None:
-                    cache.replace(accounts=fetched)
+        api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
+        if api_url_for_tokens and not cache.is_fresh():
+            fetched = fetch_identity_hints(api_url_for_tokens)
+            # ``fetched is None`` distinguishes outage from a valid
+            # empty response. The cache skips the update on None, so
+            # the prior snapshot survives and ``is_fresh()`` returns
+            # False at the next call.
+            if fetched is not None:
+                accounts, tag_hints = fetched
+                # ``tag_hints is None`` when the payload omits the
+                # field (older server pre-PR #288) — pass-through to
+                # ``replace`` keeps the prior hint map intact instead
+                # of clobbering it with an empty dict (PR #290
+                # round-2 review).
+                cache.replace(accounts=accounts, tag_hints=tag_hints)
         server_accounts_by_provider = cache.provider_accounts()
+        server_account_tag_hints = cache.provider_tag_hints()
     except Exception as _e:
         # Defensive: never let identity-fetch failures kill collection.
         logging.debug(f"identity-hint fetch skipped: {_e}")
+
+    # Per-sidecar block-counter for the next /fleet/credentials/manifest
+    # call (PR #288). Reset at the start of each ``run_collection`` so
+    # the counter reflects "this cycle's block queue" only.
+    blocked_origins_this_cycle: list[dict[str, str]] = []
 
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
@@ -2381,7 +2579,10 @@ def run_collection(
             continue
         try:
             logging.info(f"  [{provider_id}] collecting...")
-            metrics = GenericCollector.collect_provider(provider_id, provider_config)
+            metrics, blocked = GenericCollector.collect_provider(
+                provider_id, provider_config, account_label_hints=server_account_tag_hints
+            )
+            blocked_origins_this_cycle.extend(blocked)
             # Mirror the server's token-only predicate (fleet.py:118) so the
             # log lines line up with what the ingest endpoint actually does.
             token_cards = sum(
@@ -2453,6 +2654,93 @@ def run_collection(
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")
             error_count += 1
+
+    # Silent-listener manifest (PR #288): report every credential the
+    # sidecar couldn't resolve this cycle, even if zero — silent cycles
+    # let the server prune stale pending entries. The POST is gated on
+    # the same INGEST_API_KEY HMAC scheme as /fleet/ingest.
+    #
+    # Gate on completed cycle (PR #290 round-2 review): when
+    # ``error_count > 0`` a provider whose ``collect_provider`` raised
+    # contributed nothing to ``blocked_origins_this_cycle``, so the
+    # server's ``delete_stale`` would prune its pending row — the
+    # operator's "Untagged" entry would silently disappear while the
+    # credential is still unresolved. Skip the prune until the next
+    # clean cycle.
+    if blocked_origins_this_cycle:
+        logging.info(
+            f"  manifest: posting {len(blocked_origins_this_cycle)} blocked "
+            f"credential origin(s) to /fleet/credentials/manifest"
+        )
+
+    def _consume_resolved_into_cache(
+        resolved: dict[str, dict[str, str]],
+    ) -> None:
+        """Merge the server's just-returned tag map into the local cache.
+
+        Lets the silent-listener loop close on the *same* cycle instead
+        of waiting on the next ``/fleet/config`` round-trip — the
+        operator's tag decision lands on the sidecar within seconds, not
+        up to 10 minutes later (PR #290 round-2 review, Hermes
+        suggestion #9).
+        """
+        nonlocal server_account_tag_hints
+        # Merge into the live map so the *current* run's downstream
+        # callers — if any — see the freshly-resolved tags without
+        # needing to wait for the next ``/fleet/config``. The next
+        # ``run_collection`` cycle's cache refresh will overwrite this
+        # with whatever the server says at that point.
+        merged: dict[str, dict[str, str]] = {
+            k: dict(v) for k, v in server_account_tag_hints.items()
+        }
+        for pid, by_origin in resolved.items():
+            if not isinstance(pid, str) or not isinstance(by_origin, dict):
+                continue
+            bucket = merged.setdefault(pid, {})
+            for origin, account_id in by_origin.items():
+                if (
+                    isinstance(origin, str)
+                    and isinstance(account_id, str)
+                    and origin
+                    and account_id
+                ):
+                    bucket[origin] = account_id
+        server_account_tag_hints = merged
+        # Also update the persistent cache so the next cycle doesn't
+        # re-fetch what we just learned.
+        try:
+            cache = _get_credential_cache()
+            cache.replace(tag_hints=server_account_tag_hints)
+        except Exception as _cache_exc:  # pragma: no cover — defensive only
+            logging.debug(f"manifest: cache.replace skipped ({_cache_exc})")
+
+    if error_count > 0:
+        logging.debug(
+            f"manifest: posting on a partial cycle (error_count={error_count}); "
+            "blocked origins from healthy providers still ship, "
+            "providers that raised are absent from the manifest so their "
+            "pending rows are NOT pruned"
+        )
+    # PR #290 round-2 review (Hermes thread Vha0): the prune is scoped
+    # per-provider by what the manifest reports. The ``try/except``
+    # above already filters ``blocked_origins_this_cycle`` to providers
+    # whose ``collect_provider`` completed cleanly — so providers
+    # that raised contribute no entries, and the server's
+    # ``delete_stale`` never sees their keys. The ``if error_count > 0``
+    # gate from round-1 was over-broad: it dropped healthy providers'
+    # blocked origins while a single bad provider kept raising, leaving
+    # the operator's Untagged surface blind. Post unconditionally so
+    # the loop stays closed on every cycle.
+    try:
+        _post_credential_manifest(
+            api_url=(os.environ.get("RUNWAY_API_URL") or config.get("api_url")),
+            api_key=(os.environ.get("RUNWAY_API_KEY") or config.get("api_key") or ""),
+            sidecar_id=get_hostname(),
+            entries=blocked_origins_this_cycle,
+            on_resolved=_consume_resolved_into_cache,
+        )
+    except Exception as _e:
+        logging.debug(f"manifest: skipped ({_e})")
 
     return all_metrics, all_events, error_count
 

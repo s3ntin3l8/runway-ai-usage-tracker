@@ -1,6 +1,6 @@
 """Sidecar identity cache (issue #272).
 
-Reads the server's ``/fleet/config`` and exposes two decoupled views:
+Reads the server's ``/fleet/config`` and exposes three views:
 
 - ``provider_accounts()`` returns ``{provider_id: [account_id, ...]}`` for
   every **enabled** account the server has registered, **independent of
@@ -12,6 +12,12 @@ Reads the server's ``/fleet/config`` and exposes two decoupled views:
   that doesn't have a token yet — see PR #283 review.
 - The token map (``tokens`` property) is the supplementary view that
   the future redeem endpoint will consume. Until then it's unused.
+- ``provider_tag_hints()`` returns ``{provider_id: {credential_origin:
+  account_id}}`` for every operator-resolved silent-listener tag the
+  server has shipped via ``account_tag_hints`` (PR #288 / #290). When
+  local credential discovery can't stamp a token card with an
+  ``account_id``, ``GenericCollector.collect_provider`` consults this
+  map as the fallback before blocking the card.
 
 This module deliberately does NOT redeem credentials — the redeem endpoint
 lands with the first production caller in the follow-up PR. Until then,
@@ -116,30 +122,73 @@ def _parse_credential_tokens(payload: dict[str, Any]) -> dict[tuple[str, str], s
     return out
 
 
+def _parse_account_tag_hints(payload: dict[str, Any]) -> dict[str, dict[str, str]] | None:
+    """Extract ``{provider_id: {credential_origin: account_id, ...}}`` from a
+    ``/fleet/config`` response.
+
+    Used by the sidecar's silent-listener block guard (PR #288): when a
+    token card can't be stamped via local discovery, the sidecar
+    consults this map for any operator-set tag matching the credential's
+    ``origin_descriptor``. Returns ``None`` when the payload omits the
+    field — older server versions (pre-PR #288) don't carry it and
+    ``None`` lets the caller distinguish "field missing" from
+    "field present and empty", which is what the outage-tolerant
+    refresh logic in ``run_collection`` keys off.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("account_tag_hints")
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, dict[str, str]] = {}
+    for provider_id, by_origin in raw.items():
+        if not isinstance(by_origin, dict) or not isinstance(provider_id, str):
+            continue
+        cleaned = {
+            str(origin): str(account_id)
+            for origin, account_id in by_origin.items()
+            if isinstance(origin, str) and origin and isinstance(account_id, str) and account_id
+        }
+        if cleaned:
+            out[provider_id] = cleaned
+    return out
+
+
 def fetch_identity_hints(
     api_url: str,
     *,
     timeout: int = 10,
-) -> dict[str, list[str]] | None:
-    """Fetch per-account identity hints from ``GET /api/v1/fleet/config``.
+) -> tuple[dict[str, list[str]], dict[str, dict[str, str]] | None] | None:
+    """Fetch per-account identity hints + operator tag-hint map from ``GET /api/v1/fleet/config``.
 
-    Returns ``{provider_id: [account_id, ...]}`` for every **enabled**
-    account row in the server's provider_configs. **Decoupled from
-    token issuance** — rows without credentials and configurations with
-    empty ``INGEST_API_KEY`` still contribute their ``account_id`` here,
-    so the per-account event iteration that fixes #272 is not silently
-    disabled by either condition (PR #283 review).
+    Single round-trip — both views deserialize from the same payload
+    (PR #288 silent-listener model; PR #290 round-2 review). The
+    account-identity view is decoupled from token issuance — rows
+    without credentials and configurations with empty ``INGEST_API_KEY``
+    still contribute their ``account_id`` here, so the per-account
+    event iteration that fixes #272 is not silently disabled by either
+    condition (PR #283 review).
+
+    Returns ``(accounts, tag_hints)`` on success. ``tag_hints`` is
+    ``None`` when the payload omits the ``account_tag_hints`` field
+    (older server versions pre-PR #288) — that sentinel preserves the
+    prior tag-hint snapshot via ``cache.replace(tag_hints=None)``'s
+    "None means keep prior" contract, so a server downgrade doesn't
+    silently clear a previously-cached hint map.
 
     Returns ``None`` when the fetch fails (network error, non-200,
-    malformed JSON). Callers must distinguish this from an empty dict —
-    an empty dict is a successful response with no enabled rows; ``None``
-    is an outage where the prior cache should be retained and the next
-    cycle should retry (PR #283 round-3 review).
+    malformed JSON). Callers must distinguish this from a successful
+    empty payload — an empty ``accounts`` dict is a successful response
+    with no enabled rows; ``None`` is an outage where the prior cache
+    should be retained and the next cycle should retry (PR #283
+    round-3 review).
     """
     payload = _fetch_config_payload(api_url, timeout=timeout)
     if payload is None:
         return None
-    return _parse_identity_hints(payload)
+    accounts = _parse_identity_hints(payload)
+    tag_hints = _parse_account_tag_hints(payload)
+    return accounts, tag_hints
 
 
 def fetch_credential_tokens(
@@ -184,6 +233,7 @@ class CredentialCache:
         self._tokens_fetched_at: float = 0.0
         self._accounts: dict[str, list[str]] = {}
         self._tokens: dict[tuple[str, str], str] = {}
+        self._tag_hints: dict[str, dict[str, str]] = {}
 
     @property
     def tokens(self) -> dict[tuple[str, str], str]:
@@ -212,6 +262,9 @@ class CredentialCache:
 
         Single round-trip — when ``fetch_tokens`` is True, both views
         deserialize from the same payload (PR #283 round-3 review).
+        Tag hints are always parsed from the same payload (they're a
+        top-level field, not gated on token issuance), so the cache
+        picks them up for free on every refresh.
 
         Returns ``(account_count, token_count)`` on a successful fetch,
         or ``None`` on a fetch failure. ``None`` is the canonical signal
@@ -226,12 +279,18 @@ class CredentialCache:
 
         accounts = _parse_identity_hints(payload)
         tokens = _parse_credential_tokens(payload) if fetch_tokens else {}
+        tag_hints = _parse_account_tag_hints(payload)
 
         self._accounts = accounts
         self._identities_fetched_at = time.time()
         if fetch_tokens:
             self._tokens = tokens
             self._tokens_fetched_at = time.time()
+        if tag_hints is not None:
+            # Field present in the payload — overwrite. The fetch itself
+            # never returns ``None`` for a successful round-trip, so this
+            # only ever fires when the server actually emits the field.
+            self._tag_hints = tag_hints
         # Report cache state, not just this call's fetch. With
         # ``fetch_tokens=False`` no token fetch happens here, but the
         # cache may already hold tokens from an earlier call; the
@@ -247,12 +306,15 @@ class CredentialCache:
         *,
         accounts: dict[str, list[str]] | None = None,
         tokens: dict[tuple[str, str], str] | None = None,
+        tag_hints: dict[str, dict[str, str]] | None = None,
     ) -> None:
         """Bulk-set the cache from an externally-fetched mapping.
 
         Pass ``accounts=None`` to keep the existing identity view; pass
-        ``accounts={}`` to clear it. ``tokens`` follows the same pattern
-        for the token view.
+        ``accounts={}`` to clear it. ``tokens`` and ``tag_hints`` follow
+        the same pattern. ``tag_hints=None`` preserves the prior hint
+        map — used when the server omits the field (older server
+        versions) so a downgrade doesn't silently wipe cached hints.
 
         Used by ``run_collection`` when it fetches the config directly.
         On a fetch failure (returned ``None`` from the fetcher), the
@@ -265,6 +327,8 @@ class CredentialCache:
         if tokens is not None:
             self._tokens = dict(tokens)
             self._tokens_fetched_at = time.time()
+        if tag_hints is not None:
+            self._tag_hints = {k: dict(v) for k, v in tag_hints.items()}
 
     def provider_accounts(self) -> dict[str, list[str]]:
         """Return ``{provider_id: [account_id, ...]}`` for every enabled
@@ -276,3 +340,17 @@ class CredentialCache:
         rely on position when iterating; use a value lookup instead.
         """
         return {pid: list(aids) for pid, aids in self._accounts.items()}
+
+    def provider_tag_hints(self) -> dict[str, dict[str, str]]:
+        """Return ``{provider_id: {credential_origin: account_id}}`` for
+        every operator-resolved tag the server has shipped via
+        ``/fleet/config``'s ``account_tag_hints`` (PR #288 silent
+        listener; PR #290 round-2 review).
+
+        Returns ``{}`` when no hints are cached (server never emitted
+        any, or this is the first cycle). Callers — currently
+        ``GenericCollector.collect_provider``'s block guard — look up
+        ``provider_tag_hints()[provider_id][origin_descriptor]`` and
+        fall back to that ``account_id`` when local discovery is empty.
+        """
+        return {pid: dict(by_origin) for pid, by_origin in self._tag_hints.items()}

@@ -100,7 +100,9 @@ def init_db() -> None:
     """Create database tables if they don't exist."""
     from app.models.db import (  # noqa: F401  ensures models are registered
         AuditLog,
+        CredentialTag,
         LatestUsage,
+        PendingCredentialTag,
         ProviderConfig,
         ProviderPricing,
         QuotaSnapshot,

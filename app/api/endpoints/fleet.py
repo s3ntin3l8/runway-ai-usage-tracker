@@ -1,8 +1,5 @@
-import hashlib
-import hmac
 import json
 import logging
-import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -13,13 +10,22 @@ from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
-from app.core.security import require_admin_key
+from app.core.security import require_admin_key, validate_ingest_auth
 from app.core.utils import scrub_log
-from app.models.db import LatestUsage, ProviderConfig, SidecarRegistry, SystemConfig
+from app.models.db import (
+    LatestUsage,
+    ProviderConfig,
+    SidecarRegistry,
+    SystemConfig,
+)
 from app.models.schemas import IngestRequest
 from app.services import audit_log
 from app.services.account_identity import normalize_sidecar_id, resolve_account_id
 from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
+from app.services.credential_tags import (
+    CredentialTagRepo,
+    PendingCredentialTagRepo,
+)
 from app.services.credential_token import issue_credential_token
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
@@ -54,59 +60,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     a flooding attacker from saturating the HMAC + Pydantic parse path,
     not to throttle legitimate operators.
     """
-    # 0. Guard against misconfigured or insecure API key
-    if not settings.INGEST_API_KEY:
-        logger.error("INGEST_API_KEY is empty — ingest endpoint is disabled")
-        raise HTTPException(
-            status_code=503,
-            detail="Ingest endpoint not configured: INGEST_API_KEY is empty",
-        )
-    if settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
-        logger.error("INGEST_API_KEY is the default insecure value — ingest endpoint is disabled")
-        raise HTTPException(
-            status_code=503,
-            detail="Ingest endpoint not configured: INGEST_API_KEY must be changed from default",
-        )
-
-    # 1. Check headers
-    if not x_signature or not x_timestamp:
-        logger.warning("Ingest attempt with missing HMAC headers")
-        raise HTTPException(status_code=401, detail="Missing HMAC signature or timestamp")
-
-    # 2. Check timestamp (5-minute window for past, 60s for future drift)
-    try:
-        ts = float(x_timestamp)
-        now = time.time()
-        skew = now - ts
-        if skew < -60 or skew > 300:
-            logger.warning(f"Ingest attempt with rejected timestamp: {skew:.0f}s difference")
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "timestamp_expired" if skew > 0 else "timestamp_future",
-                    "skew_seconds": round(skew, 1),
-                    "message": "Clock skew detected. Please check NTP sync on the sidecar machine.",
-                },
-            )
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid X-Timestamp format")
-
-    # 3. Read body and verify signature
-    body_bytes = await request.body()
-    # 8 MB cap. Sidecars batch large event backfills (spec §7.3: ≤1000 events/POST).
-    if len(body_bytes) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Request body too large")
-    expected_sig = hmac.new(
-        settings.INGEST_API_KEY.encode(),
-        f"{x_timestamp}".encode() + body_bytes,
-        hashlib.sha256,
-    ).hexdigest()
-
-    if not hmac.compare_digest(x_signature, expected_sig):
-        logger.warning(
-            f"HMAC mismatch. Received: {scrub_log(x_signature[:8])}... (len: {len(x_signature)})"
-        )
-        raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+    # Validate HMAC + window + body cap via the shared ingest-auth helper
+    # (any change to the scheme is one place). #288+ deduplicates against
+    # the same helper used by /fleet/credentials/manifest.
+    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp)
 
     # 4. Parse request
     try:
@@ -361,6 +318,223 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
         # One-shot: self-update immediately on this heartbeat (admin pushed it).
         "update_now": update_now,
+        # Tag hints the sidecar consumes on its next collection cycle to
+        # stamp cards it couldn't resolve via local discovery alone (silent
+        # listener model — see PR #288).
+        "account_tag_hints": _account_tag_hints_for_providers(session, list(poll_providers))
+        if poll_providers
+        else {},
+    }
+
+
+def _account_tag_hints_for_providers(
+    session: Session, providers: list[str]
+) -> dict[str, dict[str, str]]:
+    """Return ``{provider_id: {credential_origin: account_id, ...}}`` for the
+    requested providers. Powers both ``/fleet/config`` and the ``/fleet/ingest``
+    response, so the sidecar can stamp cards it couldn't resolve locally.
+
+    Thin wrapper over :meth:`CredentialTagRepo.list_pending_payload` —
+    the lookup key lives in the repo so future callers (and the
+    sidecar's ``GenericCollector.collect_provider`` block-guard unit
+    tests) all read through the same SQL shape (PR #290 round-2
+    review, Hermes suggestion #6).
+    """
+    return CredentialTagRepo.list_pending_payload(session, providers=providers)
+
+
+# ---------------------------------------------------------------------------
+# Silent listener — /fleet/credentials/manifest (sidecar-issued)
+# ---------------------------------------------------------------------------
+#
+# The sidecar reports the credential_origins it discovered locally. The server
+# upserts each into pending_credential_tags for UI surfacing, prunes entries
+# the sidecar didn't re-report, and returns the resolved hints the sidecar
+# will consume on its next /fleet/config. Closes the silent-listener loop
+# without touching the sidecar's identity-local discovery paths.
+
+
+class CredentialManifestRequest(BaseModel):
+    """Body shape for POST /fleet/credentials/manifest."""
+
+    sidecar_id: str
+    entries: list[dict[str, str]] = []  # [{provider_id, credential_origin}, ...]
+
+
+@router.post("/credentials/manifest")
+@limiter.limit("60/minute")
+async def post_credential_manifest(
+    request: Request,
+    x_signature: str = Header(None, alias="X-Signature"),
+    x_timestamp: str = Header(None, alias="X-Timestamp"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Sidecar-issued manifest of credential origins it found locally.
+
+    The body lists every origin the sidecar currently has. The server
+    upserts each into ``pending_credential_tags`` (these power the
+    "Untagged credentials" surface in the fleet UI), prunes entries the
+    sidecar didn't re-report this cycle (a credential disappeared from
+    disk), and responds with the resolved hints — origin → account_id —
+    the sidecar will consume on its next ``/fleet/config`` round-trip.
+
+    Rate limit: 60/min — one call per sidecar per heartbeat (10-min default)
+    is the steady state, so 60/min is ~6× headroom for retries.
+    """
+    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp)
+    try:
+        payload = CredentialManifestRequest.model_validate_json(body_bytes)
+    except Exception as exc:
+        logger.debug(f"manifest: invalid body: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid manifest: {exc}") from exc
+
+    if not payload.sidecar_id:
+        raise HTTPException(status_code=400, detail="sidecar_id is required")
+
+    # Mirror /fleet/ingest: normalize the sidecar_id so a reporter that
+    # sends an FQDN doesn't get a pending row keyed on a string no
+    # card can surface in the per-sidecar badge query
+    # (?sidecar_id=<registry id>). Defensive — today's sidecar normalizes
+    # client-side, but a future reporter (custom integration, scripted
+    # curl) might not (PR #290 round-2 review, Hermes suggestion #7).
+    payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
+
+    keep_by_provider: dict[str, set[str]] = {}
+    for entry in payload.entries:
+        provider_id = entry.get("provider_id")
+        origin = entry.get("credential_origin")
+        if not isinstance(provider_id, str) or not provider_id:
+            continue
+        if not isinstance(origin, str) or not origin:
+            continue
+        keep_by_provider.setdefault(provider_id, set()).add(origin)
+        PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=payload.sidecar_id,
+            provider_id=provider_id,
+            credential_origin=origin,
+        )
+
+    removed = PendingCredentialTagRepo.delete_stale(
+        session,
+        sidecar_id=payload.sidecar_id,
+        keep_origins_by_provider=keep_by_provider,
+    )
+    session.commit()
+
+    resolved = _account_tag_hints_for_providers(session, list(keep_by_provider.keys()))
+
+    return {
+        "status": "ok",
+        "sidecar_id": payload.sidecar_id,
+        "entries_received": sum(len(v) for v in keep_by_provider.values()),
+        "entries_pruned": removed,
+        "resolved": resolved,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Silent listener — operator tag endpoints (admin-gated)
+# ---------------------------------------------------------------------------
+
+
+class CredentialTagRequest(BaseModel):
+    """Body shape for POST /fleet/credentials/tags."""
+
+    sidecar_id: str
+    provider_id: str
+    credential_origin: str
+    # The chosen provider_configs row's account_id. The server looks up
+    # the row to verify it exists before persisting the tag.
+    account_id: str
+
+
+@router.post("/credentials/tags")
+async def post_credential_tag(
+    request: Request,
+    body: CredentialTagRequest,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Operator resolves a pending credential origin into a server-side
+    ``account_id`` (matching a configured ``provider_configs`` row).
+
+    Validates the chosen ``account_id`` corresponds to an existing
+    ``provider_configs`` row for the same provider, persists a
+    :class:`CredentialTag`, deletes the corresponding
+    :class:`PendingCredentialTag`, and writes an audit-log row.
+    """
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == body.provider_id,
+            ProviderConfig.account_id == body.account_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No provider_configs row for provider={body.provider_id!r} "
+                f"account_id={body.account_id!r} — create one in Provider Settings "
+                "first, then tag."
+            ),
+        )
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id=body.provider_id,
+        credential_origin=body.credential_origin,
+        account_id=body.account_id,
+        set_by=getattr(request.state.auth, "actor", "operator")
+        if hasattr(request.state, "auth")
+        else "operator",
+    )
+    PendingCredentialTagRepo.delete(
+        session,
+        sidecar_id=body.sidecar_id,
+        provider_id=body.provider_id,
+        credential_origin=body.credential_origin,
+    )
+
+    audit_log.record(
+        session,
+        request,
+        action="credential.tag_set",
+        target_id=f"{body.provider_id}/{body.account_id}",
+        payload={
+            "credential_origin": body.credential_origin,
+            "sidecar_id": body.sidecar_id,
+        },
+    )
+
+    return {"status": "ok"}
+
+
+@router.get("/credentials/tags/pending")
+async def list_pending_credential_tags(
+    sidecar_id: str | None = None,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """List pending credential tags awaiting operator resolution.
+
+    When ``sidecar_id`` is given, returns just that sidecar's pending set
+    (used by the per-card badge on the fleet view). When omitted, returns
+    all pending entries across sidecars (the top-of-page banner).
+    """
+    rows = PendingCredentialTagRepo.list_all(session, sidecar_id=sidecar_id)
+    return {
+        "items": [
+            {
+                "sidecar_id": r.sidecar_id,
+                "provider_id": r.provider_id,
+                "credential_origin": r.credential_origin,
+                "first_seen": r.first_seen.isoformat() if r.first_seen else None,
+                "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+            }
+            for r in rows
+        ],
+        "counts_by_sidecar": PendingCredentialTagRepo.pending_count_by_sidecar(session),
     }
 
 
@@ -724,7 +898,18 @@ async def get_fleet_config(
                 "accounts": [],
             }
 
-    return {"status": "ok", "config": config}
+    # Tag hints for every provider the sidecar might poll — powers the
+    # silent-listener fall-through path (see PR #288). Sidecar uses these
+    # when local credential discovery doesn't surface an account_id; the
+    # hint maps the credential's `origin_descriptor` to a known
+    # provider_configs.account_id.
+    account_tag_hints = _account_tag_hints_for_providers(session, list(config["providers"].keys()))
+
+    return {
+        "status": "ok",
+        "config": config,
+        "account_tag_hints": account_tag_hints,
+    }
 
 
 # NOTE: /api/v1/fleet/credentials/redeem is intentionally not implemented
