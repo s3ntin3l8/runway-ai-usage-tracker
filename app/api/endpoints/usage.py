@@ -6,6 +6,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.core.cache import cache_clear, cache_get, cache_set
@@ -208,7 +209,7 @@ async def fetch_fleet_view(
 
 
 def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
-    from app.models.db import LatestUsage
+    from app.models.db import LatestUsage, ProviderConfig
 
     records = session.exec(select(LatestUsage)).all()
     cards: list[dict[str, Any]] = []
@@ -218,12 +219,21 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             continue
 
+    # Filter out archived providers — their latest_usage rows are preserved
+    # (no deletion) but they should not appear in the active fleet view.
+    archived_pairs = {
+        (r.provider_id, r.account_id)
+        for r in session.exec(select(ProviderConfig).where(ProviderConfig.archived)).all()
+    }
+
     # Group cards by (provider_id, account_id)
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for c in cards:
         pid = c.get("provider_id") or ""
         aid = c.get("account_id") or ""
         if not pid:
+            continue
+        if (pid, aid) in archived_pairs:
             continue
         groups.setdefault((pid, aid), []).append(c)
 
@@ -247,6 +257,8 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     for pid, aid in events_pairs:
         if not pid:
             continue
+        if (pid, aid) in archived_pairs:
+            continue  # archived provider; do not synthesize a fleet entry
         if aid == "default" and pid in pids_with_real_identity:
             continue  # orphan from pre-fix sidecar; real-identity card covers it
         if (pid, aid) in groups:
@@ -408,6 +420,64 @@ def _pick_critical_card(cards: list[dict[str, Any]]) -> dict[str, Any]:
         return -1.0
 
     return max(cards, key=score)
+
+
+_EPOCH = datetime(2020, 1, 1, tzinfo=UTC)
+
+
+@router.get("/archived-providers")
+@limiter.limit("30/minute")
+async def get_archived_providers(
+    request: Request, session: Session = Depends(get_session)
+) -> dict[str, Any]:
+    """Lifetime stats for archived providers — hidden from the main fleet view."""
+    from app.models.db import ProviderConfig, UsageEvent
+
+    archived_rows = session.exec(select(ProviderConfig).where(ProviderConfig.archived)).all()
+    archived_pairs = {(r.provider_id, r.account_id) for r in archived_rows}
+    if not archived_pairs:
+        return {"archived": []}
+
+    # Single bulk cumulative query filtered to archived pairs only.
+    all_life = query_cumulative_live(session, since=_EPOCH, identity_pairs=archived_pairs)
+
+    # Single bulk last-activity query filtered to archived pairs.
+    last_events = session.exec(
+        select(
+            UsageEvent.provider_id,
+            UsageEvent.account_id,
+            func.max(UsageEvent.ts).label("last_ts"),
+        )
+        .where(UsageEvent.kind == "message")
+        .where(
+            or_(
+                *[
+                    and_(
+                        UsageEvent.provider_id == pid,  # type: ignore[arg-type]
+                        UsageEvent.account_id == aid,  # type: ignore[arg-type]
+                    )
+                    for pid, aid in archived_pairs
+                ]
+            )
+        )
+        .group_by(UsageEvent.provider_id, UsageEvent.account_id)
+    ).all()
+    last_ts_map = {(r[0], r[1]): r[2] for r in last_events}
+
+    results: list[dict[str, Any]] = []
+    for pid, aid in archived_pairs:
+        life = all_life.get((pid, aid))
+        last_ts = last_ts_map.get((pid, aid))
+        results.append(
+            {
+                "provider_id": pid,
+                "account_id": aid,
+                "lifetime": life if life else None,
+                "last_activity_ts": last_ts.isoformat() if last_ts else None,
+            }
+        )
+
+    return {"archived": results}
 
 
 @router.get("/cumulative")

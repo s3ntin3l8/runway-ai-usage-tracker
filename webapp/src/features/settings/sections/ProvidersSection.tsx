@@ -107,6 +107,7 @@ export function ProvidersSection() {
           <div className="flex shrink-0 items-center gap-1.5">
             {p.api_key_set ? <Badge variant="ok">key</Badge> : null}
             {p.session_cookie_set ? <Badge variant="ok">cookie</Badge> : null}
+            {p.archived ? <Badge variant="neutral">archived</Badge> : null}
             <Badge variant={p.enabled ? 'accent' : 'neutral'}>
               {p.enabled ? 'enabled' : 'disabled'}
             </Badge>
@@ -137,6 +138,7 @@ export function ProvidersSection() {
 function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved: () => void }) {
   const queryClient = useQueryClient();
   const [enabled, setEnabled] = useState(provider.enabled ?? true);
+  const [archived, setArchived] = useState(provider.archived ?? false);
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
   const [label, setLabel] = useState(provider.account_label ?? '');
@@ -155,6 +157,7 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
     mutationFn: () => {
       const body: ProviderConfigUpdate = {
         enabled,
+        archived,
         account_label: label,
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
         collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
@@ -202,6 +205,16 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
       <div className="flex items-center justify-between">
         <Label htmlFor="prov-enabled">Collection enabled</Label>
         <Switch id="prov-enabled" checked={enabled} onCheckedChange={setEnabled} />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="prov-archived">Archived</Label>
+          <span className="text-[11px] text-fg-muted">
+            Hidden from the home dashboard; lifetime stats preserved
+          </span>
+        </div>
+        <Switch id="prov-archived" checked={archived} onCheckedChange={setArchived} />
       </div>
 
       {provider.provider_id === 'github' ? (

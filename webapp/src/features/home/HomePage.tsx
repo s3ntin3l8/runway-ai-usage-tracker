@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
+import { Archive, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { putDashboardLayout } from '@/api/endpoints';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -11,6 +11,7 @@ import { Inbox } from 'lucide-react';
 import { useForceCollect } from '@/hooks/useForceCollect';
 import { timeAgo } from '@/lib/format';
 import { AggregateStrip } from './AggregateStrip';
+import { ArchivedSection } from './ArchivedSection';
 import { AtRiskRail } from './AtRiskRail';
 import { Banners } from './Banners';
 import { ProviderGrid } from './ProviderGrid';
@@ -36,6 +37,7 @@ export function HomePage() {
   const anomalies = useAnomalies();
   const providerConfigs = useProviderConfigs();
   const layout = useDashboardLayout();
+  const [showArchived, setShowArchived] = useState(false);
 
   const providerNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -83,15 +85,26 @@ export function HomePage() {
         title="Home"
         description={generatedAt ? `updated ${timeAgo(generatedAt)}` : undefined}
         actions={
-          <Button
-            size="sm"
-            onClick={() => collect.mutate()}
-            loading={collect.isPending}
-            aria-label="Collect now"
-          >
-            <RefreshCw className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">Collect now</span>
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant={showArchived ? 'primary' : 'ghost'}
+              onClick={() => setShowArchived(!showArchived)}
+              aria-label={showArchived ? 'Hide archived providers' : 'Show archived providers'}
+            >
+              <Archive className="size-3.5" aria-hidden />
+              <span className="hidden sm:inline">Archived</span>
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => collect.mutate()}
+              loading={collect.isPending}
+              aria-label="Collect now"
+            >
+              <RefreshCw className="size-3.5" aria-hidden />
+              <span className="hidden sm:inline">Collect now</span>
+            </Button>
+          </>
         }
       />
       <div className="flex flex-col gap-5 p-4 lg:p-8">
@@ -132,6 +145,7 @@ export function HomePage() {
             />
           </>
         )}
+        {showArchived ? <ArchivedSection /> : null}
       </div>
     </>
   );
