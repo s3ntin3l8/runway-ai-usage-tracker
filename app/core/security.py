@@ -27,6 +27,7 @@ from fastapi import Cookie, Header, HTTPException, Request
 
 from app.core.config import settings
 from app.core.sessions import verify_session
+from app.core.utils import scrub_log
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +238,14 @@ async def validate_ingest_auth(
 
     now = time.time()
     skew = now - ts
-    # 5-minute window for past timestamps, 60s for future drift
+    # 5-minute window for past timestamps, 60s for future drift.
+    # ``skew`` is a float we computed — safe to interpolate; the
+    # response body in ``detail`` echoes the same value but is
+    # serialized via FastAPI's JSON encoder (CR/LF escaping is handled
+    # there). The HMAC-mismatch log line below DOES wrap user input,
+    # because ``x_signature`` is fully attacker-controlled and is
+    # reached before signature validation passes (PR #290 round-2
+    # review, Hermes warning #4 + CodeQL log-injection).
     if skew < -60 or skew > 300:
         logger.warning(f"Sidecar attempt with rejected timestamp: {skew:.0f}s difference")
         raise HTTPException(
@@ -261,7 +269,14 @@ async def validate_ingest_auth(
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(x_signature, expected_sig):
-        logger.warning(f"HMAC mismatch. Received: {x_signature[:8]}... (len: {len(x_signature)})")
+        # ``scrub_log`` strips CR/LF from ``x_signature`` so a malicious
+        # client can't inject extra log lines ("FAKE root login") via a
+        # crafted ``X-Signature`` header. The other log lines in this
+        # function either use computed floats (skew, body length) or
+        # static strings — none reach user input.
+        logger.warning(
+            f"HMAC mismatch. Received: {scrub_log(x_signature[:8])}... (len: {len(x_signature)})"
+        )
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
     return body_bytes
