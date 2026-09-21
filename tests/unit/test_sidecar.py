@@ -1014,18 +1014,14 @@ class TestCredentialOriginForProvider:
         """Guard-lookup and manifest-report must use the same string
         for the same provider_id — that's the whole point of the
         seam (PR #290 round-2 Hermes thread Vha6)."""
-        import scripts.sidecar as sc
-        from scripts.sidecar import credential_origin_for_provider
-
-        # The hint-lookup site in collect_provider
-        # (``provider_hints.get(<descriptor>)``) and the manifest
-        # entry site (``credential_origin: <descriptor>``) both
-        # call the helper, so any change to one shows up in both.
-        # We assert the helper's return value is consistent — the
-        # call-site equality is exercised by the integration tests.
-        assert credential_origin_for_provider("antigravity") == "provider:antigravity"
+        # Use the top-level ``sidecar`` binding (resolved via
+        # ``sys.path.insert`` at module top) instead of a local
+        # ``import scripts.sidecar as sc`` — CodeQL flags the
+        # dual-style import when the file already has a top-level
+        # ``import sidecar``.
+        assert sidecar.credential_origin_for_provider("antigravity") == "provider:antigravity"
         # And the helper is importable / accessible at module scope.
-        assert hasattr(sc, "credential_origin_for_provider")
+        assert hasattr(sidecar, "credential_origin_for_provider")
 
 
 class TestPostCredentialManifest:
@@ -1199,7 +1195,6 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
     manifest, so the server's ``delete_stale`` never sees their keys.
     The manifest POST must fire on a partial cycle so healthy
     providers' blocked origins still ship."""
-    import scripts.sidecar as sc
 
     posted = {"called": False, "entries": []}
 
@@ -1207,10 +1202,10 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
         posted["called"] = True
         posted["entries"] = kwargs.get("entries", [])
 
-    monkeypatch.setattr(sc, "_post_credential_manifest", _capture)
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture)
 
     # Empty the events providers list so the events loop is skipped.
-    monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset())
 
     # Two providers in the registry, two different collect_provider
     # behaviors: one raises, one returns a blocked origin. The
@@ -1223,12 +1218,12 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
             [{"provider_id": provider_id, "credential_origin": f"provider:{provider_id}"}],
         )
 
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", _by_provider)
+    monkeypatch.setattr(sidecar.GenericCollector, "collect_provider", _by_provider)
 
     # Stub cache so the fetch path is a no-op.
-    monkeypatch.setattr(sc, "_get_credential_cache", _StubCache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", _StubCache)
 
-    sc.run_collection(
+    sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["anthropic", "chatgpt"],
     )
@@ -1249,7 +1244,6 @@ def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, 
     into the persistent cache. The next ``run_collection`` cycle
     consults that cache to unblock the now-tagged card (PR #290
     round-2 review, Hermes suggestion #9 — same-cycle loop closure)."""
-    import scripts.sidecar as sc
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
@@ -1258,13 +1252,13 @@ def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, 
         tokens={},
         tag_hints={},  # No hints yet — first time the operator tags.
     )
-    monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", cache)
-    monkeypatch.setattr(sc, "_get_credential_cache", lambda: cache)
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
 
     # Empty the events providers list — the events loop isn't the
     # subject of this test and would otherwise raise on missing
     # ``_LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]``.
-    monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset())
 
     posted: dict[str, Any] = {}
 
@@ -1273,11 +1267,11 @@ def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, 
         # Simulate the server returning the operator's just-set tag.
         on_resolved({"anthropic": {"provider:anthropic": "alice@example.com"}})
 
-    monkeypatch.setattr(sc, "_post_credential_manifest", _capture_manifest)
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
     # collect_provider returns a blocked origin (no local discovery).
     monkeypatch.setattr(
-        sc.GenericCollector,
+        sidecar.GenericCollector,
         "collect_provider",
         lambda *a, **kw: (
             [],
@@ -1285,7 +1279,7 @@ def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, 
         ),
     )
 
-    sc.run_collection(
+    sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["anthropic"],
     )
