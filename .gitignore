@@ -100,3 +100,4 @@ artifacts/
 # Developer worktrees (per AGENTS.md make wt convention)
 .wt/
 
+coverage/
