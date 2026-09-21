@@ -1031,8 +1031,10 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # chose to hide it, so no point wasting poll cycles.
         if body.archived and row.enabled:
             row.enabled = False
-        # Unarchiving restores collection so the provider is usable again.
-        elif not body.archived and not row.enabled:
+        # Unarchiving restores collection so the provider is usable again,
+        # but only when the caller did not explicitly state enabled (e.g.
+        # the Settings dialog always sends both fields).
+        elif body.enabled is None and not body.archived and not row.enabled:
             row.enabled = True
     if body.account_label is not None:
         row.account_label = body.account_label or None

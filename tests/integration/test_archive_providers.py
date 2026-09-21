@@ -352,6 +352,32 @@ class TestArchiveSideEffects:
         assert row is not None
         assert row.enabled is False
 
+    def test_explicit_disable_not_overridden_by_unarchive(self, session: Session):
+        """Settings sends {enabled: false, archived: false} — disable must stick."""
+        _add_provider_config(
+            session,
+            provider_id="openrouter",
+            account_id="default",
+            enabled=True,
+            archived=True,
+        )
+
+        resp = _client().put(
+            "/api/v1/system/provider-config/openrouter",
+            json={"enabled": False, "archived": False},
+        )
+        assert resp.status_code == 200, resp.text
+
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "openrouter",
+                ProviderConfig.account_id == "default",
+            )
+        ).first()
+        assert row is not None
+        assert row.archived is False
+        assert row.enabled is False  # explicit disable wins over auto-re-enable
+
 
 # ---------------------------------------------------------------------------
 # Multi-account archive via account-scoped endpoint
@@ -385,3 +411,15 @@ class TestMultiAccountArchive:
         ).first()
         assert row_a is not None and row_a.archived is True and row_a.enabled is False
         assert row_b is not None and row_b.archived is False and row_b.enabled is True
+
+
+# ---------------------------------------------------------------------------
+# Upgrade-path guard
+# ---------------------------------------------------------------------------
+
+
+def test_deferred_columns_includes_archived():
+    """archived column must be in _DEFERRED_COLUMNS for existing DB upgrades."""
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("provider_configs", "archived", "BOOLEAN NOT NULL DEFAULT 0") in _DEFERRED_COLUMNS
