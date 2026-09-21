@@ -43,6 +43,23 @@ const provider = (o: Partial<ProviderConfig> = {}): ProviderConfig => ({
   supports_session_cookie: false,
   api_key_label: 'API key', // pragma: allowlist secret
   collection_strategies: [{ id: 'api', enabled: true }],
+  // Multi-account shape: legacy single-account users have one row under
+  // `accounts` keyed by `account_id="default"`. The v2 UI iterates this
+  // list; the legacy dialog renders the canonical row above.
+  accounts: [
+    {
+      account_id: 'default',
+      account_label: 'Work',
+      enabled: true,
+      api_key_set: true,
+      session_cookie_set: false,
+      poll_interval_seconds: null,
+      collection_strategies: [{ id: 'api', enabled: true }],
+      has_live_data: true,
+      is_orphaned: false,
+    },
+  ],
+  account_count: 1,
   ...o,
 });
 
@@ -94,7 +111,7 @@ describe('ProvidersSection', () => {
 
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    expect(api.putProviderConfig).toHaveBeenCalledWith('claude', {
+    expect(api.putProviderConfig).toHaveBeenCalledWith('claude', 'default', {
       enabled: true,
       archived: false,
       account_label: 'Work',
@@ -116,7 +133,7 @@ describe('ProvidersSection', () => {
     await userEvent.click(within(dialog).getByRole('switch', { name: 'api' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
     expect(body.collection_strategies).toEqual([{ id: 'api', enabled: false }]);
   });
 
@@ -139,7 +156,7 @@ describe('ProvidersSection', () => {
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
     expect(body).not.toHaveProperty('api_key');
     expect(body).not.toHaveProperty('session_cookie');
   });
@@ -206,7 +223,7 @@ describe('ProvidersSection', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
     expect(body.collection_strategies).toEqual([
       { id: 'oauth', enabled: false },
       { id: 'sidecar', enabled: true },
@@ -273,7 +290,7 @@ describe('ProvidersSection', () => {
     await userEvent.click(within(dialog).getByRole('switch', { name: 'oauth' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][1];
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
     expect(body.collection_strategies).toEqual([
       { id: 'web', enabled: true },
       { id: 'oauth', enabled: true },
@@ -495,5 +512,160 @@ describe('reorderStrategies', () => {
       { id: 'sidecar', enabled: true },
       { id: 'web', enabled: true },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v2 path — empty-canvas card grid + per-account detail dialog. Activated by
+// the `?providers=v2` URL param (rollback = drop the param). Rendered in the
+// v2 subroute so the legacy tests above can run unchanged.
+// ---------------------------------------------------------------------------
+
+describe('ProvidersSection (v2 — ?providers=v2)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const renderV2 = (ui: React.ReactElement) =>
+    renderWithProviders(ui, { route: '/settings/providers?providers=v2' });
+
+  it('renders the empty state when no providers are configured', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('No providers configured')).toBeInTheDocument();
+    expect(screen.getByText(/add your first provider/i)).toBeInTheDocument();
+  });
+
+  it('renders a card per provider with the N accounts subtitle', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({ provider_id: 'claude', name: 'Claude', account_count: 1 }),
+        provider({
+          provider_id: 'openrouter',
+          name: 'OpenRouter',
+          account_count: 3,
+          accounts: [
+            { account_id: 'default', account_label: 'A', enabled: true, api_key_set: true, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, has_live_data: true, is_orphaned: false },
+            { account_id: 'alice@example.com', account_label: 'Alice', enabled: true, api_key_set: true, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, has_live_data: true, is_orphaned: false },
+            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false, api_key_set: false, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, has_live_data: true, is_orphaned: false },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Claude')).toBeInTheDocument();
+    // Subtitle line embeds the count + poll in a single <p>; use a function
+    // matcher so it finds the substring within the surrounding text node.
+    expect(screen.getByText((_, node) => node?.textContent?.startsWith('1 account · ') ?? false)).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent?.startsWith('3 accounts · ') ?? false)).toBeInTheDocument();
+  });
+
+  it('opens the detail dialog when a provider card is clicked', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Claude')).toBeInTheDocument();
+    // The default account row is rendered.
+    expect(within(dialog).getByText('Work')).toBeInTheDocument();
+  });
+
+  it('shows the orphan hint for account_id="default" rows without live data', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          accounts: [
+            {
+              account_id: 'default',
+              account_label: null,
+              enabled: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              has_live_data: false,
+              is_orphaned: true,
+            },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/no usage data — safe to remove/i)).toBeInTheDocument();
+  });
+
+  it('removes an account when the user confirms', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.deleteProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for work/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /remove/i }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /remove account/i }));
+
+    expect(api.deleteProviderConfig).toHaveBeenCalledWith('claude', 'default');
+  });
+
+  it('disables the Add provider / Add account buttons pending the wizard (#287)', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    const addBtn = await screen.findByRole('button', { name: /add provider/i });
+    expect(addBtn).toBeDisabled();
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const dialog = await screen.findByRole('dialog');
+    const dialogAdd = within(dialog).getByRole('button', { name: /add account/i });
+    expect(dialogAdd).toBeDisabled();
+  });
+
+  it('filters the grid by the search input', async () => {
+    // Search input only renders when there are >5 providers (UI hides it for
+    // small lists to reduce noise). Six providers triggers the filter row.
+    const sixProviders = [
+      provider({ provider_id: 'p1', name: 'Alpha' }),
+      provider({ provider_id: 'p2', name: 'Bravo' }),
+      provider({ provider_id: 'p3', name: 'Charlie' }),
+      provider({ provider_id: 'p4', name: 'Delta' }),
+      provider({ provider_id: 'p5', name: 'Echo' }),
+      provider({ provider_id: 'openrouter', name: 'OpenRouter' }),
+    ];
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: sixProviders });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await screen.findByText('Alpha');
+    const search = screen.getByLabelText(/search providers/i);
+    await userEvent.type(search, 'open');
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+    expect(screen.getByText('OpenRouter')).toBeInTheDocument();
+  });
+
+  it('opens the per-account edit dialog and saves via putProviderConfig', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Claude'));
+    const detail = await screen.findByRole('dialog');
+    await userEvent.click(within(detail).getByRole('button', { name: /actions for work/i }));
+    await userEvent.click(within(detail).getByRole('menuitem', { name: /^edit$/i }));
+
+    const accountDialog = await screen.findByRole('dialog');
+    // The account dialog's title includes the display name.
+    expect(within(accountDialog).getByText(/edit account · work/i)).toBeInTheDocument();
   });
 });

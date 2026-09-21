@@ -22,6 +22,8 @@ const webhook = (o: Partial<Webhook> = {}): Webhook => ({
 const provider = (o: Partial<ProviderConfig> = {}): ProviderConfig => ({
   provider_id: 'claude',
   name: 'Claude',
+  accounts: [],
+  account_count: 0,
   ...o,
 });
 

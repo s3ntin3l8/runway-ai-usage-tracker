@@ -29,15 +29,37 @@ const anthropicRow = {
   provider_id: 'anthropic',
   name: 'Anthropic',
   accounts: [
-    { account_id: 'alice@example.com', account_label: 'Alice' },
+    {
+      account_id: 'alice@example.com',
+      account_label: 'Alice',
+      enabled: true,
+      api_key_set: false,
+      session_cookie_set: false,
+      poll_interval_seconds: null,
+      collection_strategies: null,
+      has_live_data: false,
+      is_orphaned: false,
+    },
   ],
+  account_count: 1,
 };
 const chatgptRow = {
   provider_id: 'chatgpt',
   name: 'ChatGPT',
   accounts: [
-    { account_id: 'default', account_label: 'Default' },
+    {
+      account_id: 'default',
+      account_label: 'Default',
+      enabled: true,
+      api_key_set: false,
+      session_cookie_set: false,
+      poll_interval_seconds: null,
+      collection_strategies: null,
+      has_live_data: false,
+      is_orphaned: false,
+    },
   ],
+  account_count: 1,
 };
 
 describe('UntaggedCredentialsDialog', () => {
@@ -205,9 +227,30 @@ describe('UntaggedCredentialsDialog', () => {
           provider_id: 'anthropic',
           name: 'Anthropic',
           accounts: [
-            { account_id: 'alice@example.com', account_label: 'Alice', enabled: true },
-            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false },
+            {
+              account_id: 'alice@example.com',
+              account_label: 'Alice',
+              enabled: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              has_live_data: false,
+              is_orphaned: false,
+            },
+            {
+              account_id: 'bob@example.com',
+              account_label: 'Bob',
+              enabled: false,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              has_live_data: false,
+              is_orphaned: false,
+            },
           ],
+          account_count: 2,
         },
       ],
     });
@@ -236,8 +279,19 @@ describe('UntaggedCredentialsDialog', () => {
           provider_id: 'anthropic',
           name: 'Anthropic',
           accounts: [
-            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false },
+            {
+              account_id: 'bob@example.com',
+              account_label: 'Bob',
+              enabled: false,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              has_live_data: false,
+              is_orphaned: false,
+            },
           ],
+          account_count: 1,
         },
       ],
     });

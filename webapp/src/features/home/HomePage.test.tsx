@@ -231,7 +231,10 @@ describe('HomePage layout reordering', () => {
         fleetEntry({ provider_id: 'chatgpt' }),
       ]),
     );
-    vi.mocked(api.putDashboardLayout).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.putDashboardLayout).mockResolvedValue({
+      provider_order: [],
+      card_orders: {},
+    });
     renderWithProviders(<HomePage />);
     await screen.findByText('Providers');
 

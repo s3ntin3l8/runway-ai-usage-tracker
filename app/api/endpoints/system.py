@@ -832,6 +832,19 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     for r in db_rows:
         rows_by_provider.setdefault(r.provider_id, []).append(r)
 
+    # Pre-compute the set of (provider_id, account_id) pairs that have at
+    # least one row in latest_usage — drives the per-account `has_live_data`
+    # flag in the response. Single batched DISTINCT query instead of one
+    # subquery per row; O(1) lookup when building each entry.
+    from app.models.db import LatestUsage
+
+    live_keys: set[tuple[str, str]] = set()
+    live_rows = session.exec(
+        select(LatestUsage.provider_id, LatestUsage.account_id).distinct()
+    ).all()
+    for provider_id, account_id in live_rows:
+        live_keys.add((provider_id, account_id))
+
     def _canonical_row(rows: list[ProviderConfig]) -> ProviderConfig | None:
         for r in rows:
             if r.account_id == "default":
@@ -915,6 +928,15 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "account_label": r.account_label,
                         "poll_interval_seconds": r.poll_interval_seconds,
                         "collection_strategies": r.strategies,
+                        # `has_live_data` / `is_orphaned` surface the
+                        # orphaned-bookkeeping-row bug in the settings UI:
+                        # #286 highlights `account_id="default"` rows whose
+                        # data is missing (no entry in `latest_usage`). They
+                        # need a one-shot migration (#288) to either be
+                        # re-keyed under the live identity or removed.
+                        "has_live_data": (p_id, r.account_id) in live_keys,
+                        "is_orphaned": r.account_id == "default"
+                        and (p_id, r.account_id) not in live_keys,
                     }
                     for r in provider_rows
                 ],

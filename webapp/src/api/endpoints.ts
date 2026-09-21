@@ -208,11 +208,23 @@ export interface ProviderConfigUpdate {
   collection_strategies?: { id: string; enabled: boolean }[];
 }
 
-export const putProviderConfig = (providerId: string, body: ProviderConfigUpdate) =>
-  api<{ status: string }>(`/api/v1/system/provider-config/${encodeURIComponent(providerId)}`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
+// Multi-account canonical PUT. accountId is required in the URL — see #281
+// for the legacy shortcut that resolves to account_id="default" only when
+// exactly one row exists.
+export const putProviderConfig = (providerId: string, accountId: string, body: ProviderConfigUpdate) =>
+  api<{ status: string }>(
+    `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  );
+
+export const deleteProviderConfig = (providerId: string, accountId: string) =>
+  api<{ status: string }>(
+    `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
+    { method: 'DELETE' },
+  );
 
 export const putProviderConfigForAccount = (
   providerId: string,
@@ -246,7 +258,7 @@ export const fetchArchivedProviders = () =>
 export const getDashboardLayout = () => api<DashboardLayout>('/api/v1/system/dashboard-layout');
 
 export const putDashboardLayout = (layout: DashboardLayout) =>
-  api<{ status: string }>('/api/v1/system/dashboard-layout', {
+  api<DashboardLayout>('/api/v1/system/dashboard-layout', {
     method: 'PUT',
     body: JSON.stringify(layout),
   });
