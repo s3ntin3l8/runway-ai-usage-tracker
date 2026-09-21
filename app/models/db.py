@@ -483,3 +483,37 @@ class AuditLog(SQLModel, table=True):  # type: ignore[call-arg]
     target_id: str | None = Field(default=None, index=True)
     # Optional structured detail (old vs new values, etc.); JSON-encoded.
     payload_json: str | None = None
+
+
+class CredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
+    """Operator-set mapping from a host-side credential origin to a server-side identity.
+
+    Phase-1 silent-listener storage. The sidecar reads ``/fleet/config`` to
+    discover tag hints (one per ``credential_origin``); if no tag exists,
+    the matching credential card is blocked from the ingest queue and the
+    sidecar reports the origin via ``POST /fleet/credentials/manifest`` so
+    the operator can resolve it in the fleet UI. Resolutions persist here
+    keyed on ``(provider_id, credential_origin)``. See PR #288.
+
+    ``credential_origin`` is a stable host-side descriptor like
+    ``"path:/home/user/.claude/.credentials.json"`` or ``"env:ANTHROPIC_API_KEY"`` —
+    never a credential value, never a hash of one. Two sidecars sharing
+    the same origin (e.g. NFS-shared home dir) intentionally resolve to
+    one tag, since the credential itself is genuinely one identity.
+
+    Phase-2 widens with an optional ``sidecar_id`` column for hosts that
+    hold the same logical origin but want different per-host tags.
+    """
+
+    __tablename__ = "credential_tags"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "credential_origin", name="uq_credential_tag_identity"),
+        Index("ix_credential_tags_provider", "provider_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    credential_origin: str
+    account_id: str  # matches provider_configs.account_id
+    set_by: str = "operator"
+    set_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
