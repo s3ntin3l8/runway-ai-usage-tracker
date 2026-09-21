@@ -81,7 +81,6 @@ describe('ArchivedCard', () => {
   it('navigates on Enter key', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ArchivedCard item={makeItem()} providerName="Claude" />);
-    const card = screen.getByRole('button');
     await user.tab();
     await user.keyboard('{Enter}');
     expect(mockNavigate).toHaveBeenCalledWith('/provider/anthropic?account=u@example.com');
@@ -90,7 +89,6 @@ describe('ArchivedCard', () => {
   it('navigates on Space key', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ArchivedCard item={makeItem()} providerName="Claude" />);
-    const card = screen.getByRole('button');
     await user.tab();
     await user.keyboard(' ');
     expect(mockNavigate).toHaveBeenCalledWith('/provider/anthropic?account=u@example.com');
