@@ -372,14 +372,16 @@ class TestSmartCollectorCacheTags:
         assert original_detail in cached_detail
 
     def test_stale_ceiling_degrades_card_visibly(self, mock_collector):
-        """Past STALE_CEILING_SECONDS, a cache-served card must visibly flag
-        that collection is failing rather than presenting old data as healthy
-        — this is the fix for the frozen-but-confident Antigravity card.
+        """Past STALE_CEILING_SECONDS, a cache-served card must flag `stale=True`
+        so the frontend can skip the health→critical override. The "Collection
+        failing" prefix stays in detail for visual feedback. We deliberately do
+        NOT touch health — stale cards should not land in the at-risk rail
+        unless quota is genuinely near the limit.
 
-        health/detail are used for the degrade signal (not data_source/
-        error_type/remaining) so accumulator.upsert_latest_usage's error-card
-        suppression does NOT swallow this update — it's still real data, just
-        old, and the row must keep refreshing.
+        data_source/error_type/remaining are untouched so
+        accumulator.upsert_latest_usage's error-card suppression does NOT
+        swallow this update — it's still real data, just old, and the row
+        must keep refreshing.
         """
         smart = SmartCollector(mock_collector, "TestCollector")
         smart.last_success_time = time.time() - 7200  # 2 hours ago > 1h ceiling
@@ -387,7 +389,8 @@ class TestSmartCollectorCacheTags:
 
         tagged = smart._tag_as_cached(data, time.time())
 
-        assert tagged[0]["health"] == "critical"
+        assert tagged[0]["stale"] is True
+        assert "health" not in tagged[0]  # must NOT override health
         assert "Collection failing" in tagged[0]["detail"]
         assert "[Cached" in tagged[0]["detail"]
         # Must NOT flip these — accumulator would suppress the write entirely.
@@ -403,7 +406,7 @@ class TestSmartCollectorCacheTags:
 
         tagged = smart._tag_as_cached(data, time.time())
 
-        assert "health" not in tagged[0]
+        assert tagged[0].get("stale") is not True
         assert "Collection failing" not in tagged[0]["detail"]
 
 

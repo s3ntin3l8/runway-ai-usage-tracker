@@ -74,10 +74,14 @@ export function cardPct(card: LimitCard): number | null {
 
 // Card → semantic status token. Precedence: error cards > unlimited >
 // collector-asserted health > percentage thresholds.
+// Stale cards with a derivable percentage skip the health override so
+// old-but-valid quota data doesn't trigger false at-risk alerts for
+// occasionally-used providers. Balance cards (no pct) retain
+// collector-asserted health even when stale.
 export function cardStatus(card: LimitCard): QuotaStatus {
   if (card.error_type) return 'critical';
   if (card.is_unlimited) return 'unlimited';
-  if (card.health === 'critical') return 'critical';
+  if (card.health === 'critical' && !(card.stale && cardPct(card) != null)) return 'critical';
   if (card.health === 'warning') return 'warning';
   return statusForPct(cardPct(card));
 }

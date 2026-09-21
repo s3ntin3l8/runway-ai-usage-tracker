@@ -342,13 +342,12 @@ class SmartCollector:
         above), the tag stays truthful instead of freezing at whatever value
         it happened to have the first time this card was cache-served.
 
-        Past `STALE_CEILING_SECONDS`, the card is additionally flagged
-        (health="critical" + a "Collection failing" prefix) so a long-running
-        outage reads as visibly degraded rather than confidently healthy. This
-        intentionally avoids touching `data_source`/`error_type`/`remaining`
-        (the fields `accumulator.upsert_latest_usage` uses to detect and
-        suppress error cards) — this is still real, if old, data, so it must
-        keep being written and refresh the row's `updated_at`.
+        Past `STALE_CEILING_SECONDS`, the card is flagged with `stale=True`
+        and a "Collection failing" prefix so a long-running outage reads as
+        visibly degraded rather than confidently healthy. We deliberately do
+        NOT override `health` here — the frontend uses `stale` to skip the
+        health→critical override so old-but-valid data doesn't land in the
+        at-risk rail unless quota is genuinely near the limit.
 
         Args:
             result: Original result from collector
@@ -374,7 +373,7 @@ class SmartCollector:
             if "data_source" not in card_copy:
                 card_copy["data_source"] = "cache"
             if is_stale:
-                card_copy["health"] = "critical"
+                card_copy["stale"] = True
                 card_copy["detail"] = f"⚠ Collection failing — {card_copy['detail']}"
             tagged.append(card_copy)
 

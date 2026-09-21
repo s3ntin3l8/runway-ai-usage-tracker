@@ -200,6 +200,22 @@ describe('QuotaWindowRow', () => {
     );
     expect(screen.getByText(/ahead of pace/i)).toBeInTheDocument();
   });
+
+  it('shows a Stale badge when card.stale is true', () => {
+    const card = limitCard({ pct_used: 40, stale: true });
+    renderWithProviders(
+      <QuotaWindowRow card={card} siblings={[card]} forecast={null} />,
+    );
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
+  it('does not show a Stale badge for non-stale cards', () => {
+    const card = limitCard({ pct_used: 40 });
+    renderWithProviders(
+      <QuotaWindowRow card={card} siblings={[card]} forecast={null} />,
+    );
+    expect(screen.queryByText('Stale')).not.toBeInTheDocument();
+  });
 });
 
 describe('RecentSessions', () => {

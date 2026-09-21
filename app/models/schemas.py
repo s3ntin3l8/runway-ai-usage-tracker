@@ -62,6 +62,11 @@ class LimitCard(BaseModel):
     )
     msgs: int | None = None  # Total message count
     pct_used: float | None = None  # Percentage used (based on cost vs limit)
+    # Set by SmartCollector when cache age exceeds STALE_CEILING_SECONDS.
+    # Signals collection failure — the card data is real but old. The frontend
+    # uses this to skip the health→critical override so stale cards don't
+    # appear in the at-risk rail unless quota is genuinely near the limit.
+    stale: bool = False
 
     @field_validator(
         "service_name", "remaining", "unit", "reset", "pace", "detail", "tier", "variant"

@@ -56,6 +56,7 @@ export interface LimitCard {
   by_model?: Record<string, ByModelEntry> | null;
   msgs?: number | null;
   pct_used?: number | null;
+  stale?: boolean;
 }
 
 // Live aggregation of usage_events over a quota window, split by model and

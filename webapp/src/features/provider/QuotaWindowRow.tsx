@@ -5,6 +5,7 @@
 // consuming the backend's forecast fields instead of recomputing client-side.
 
 import type { ForecastEntry, ForecastStatus, LimitCard } from '@/api/types';
+import { Badge } from '@/components/ui/Badge';
 import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { cn } from '@/lib/cn';
@@ -74,6 +75,11 @@ export function QuotaWindowRow({
         </span>
       </div>
       <Gauge pct={used} status={cardStatus(card)} glide={glide} size="xl" className="mt-1.5" />
+      {card.stale ? (
+        <div className="mt-1">
+          <Badge variant="outline" className="text-[10px]">Stale</Badge>
+        </div>
+      ) : null}
       <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
         <Countdown until={card.reset_at} className="text-[11px]" />
         <span className="text-center text-fg-subtle">{pace ?? ''}</span>
