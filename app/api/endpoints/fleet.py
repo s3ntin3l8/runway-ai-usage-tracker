@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Any
@@ -19,6 +20,7 @@ from app.models.schemas import IngestRequest
 from app.services import audit_log
 from app.services.account_identity import normalize_sidecar_id, resolve_account_id
 from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
+from app.services.credential_token import issue_credential_token
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
 
@@ -429,7 +431,6 @@ def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
           ...
         }
     """
-    import json
     from datetime import UTC, datetime
 
     from app.models.db import LatestUsage
@@ -623,14 +624,28 @@ async def get_fleet_config(
 
     - ``enabled`` + ``strategies`` (legacy top-level): OR-merged across accounts
       so today's single-sidecar / single-account consumer keeps working unchanged.
-    - ``accounts`` (new): per-account ``{account_id, enabled, strategies}`` so a
-      future per-account sidecar (Issue 1) can iterate without guessing.
+    - ``accounts`` (new): per-account ``{account_id, enabled, strategies,
+      credential_token}`` so a future per-account sidecar (Issue #272) can
+      iterate without guessing.
+
+    Tokens are short-lived (TTL = ``CREDENTIAL_TOKEN_TTL_SECONDS``, default
+    1 hour) and scoped to a single ``(provider_id, account_id)`` pair. The
+    companion redeem endpoint is the next PR — this one ships the wire
+    format and the issuer so a sidecar build can target a stable token
+    format without playing catch-up.
     """
     from app.models.db import ProviderConfig
 
     rows = session.exec(select(ProviderConfig)).all()
 
     config: dict[str, dict] = {"providers": {}}
+    token_ttl = max(60, int(settings.CREDENTIAL_TOKEN_TTL_SECONDS))
+    # Tokens are only issued when ingest is configured — the redeem endpoint
+    # requires INGEST_API_KEY to authenticate, so issuing tokens without it
+    # would just produce tokens no one can redeem.
+    can_issue_tokens = (
+        bool(settings.INGEST_API_KEY) and not settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
+    )
 
     for row in rows:
         is_first_for_provider = row.provider_id not in config["providers"]
@@ -646,17 +661,42 @@ async def get_fleet_config(
                 "strategies": row.strategies,
                 # Per-account breakdown (multi-account). One entry per row.
                 # Existing sidecars ignore this; new per-account sidecars
-                # iterate the list. See Issue 1.
+                # iterate the list. See Issue #272.
                 "accounts": [],
             },
         )
-        provider_cfg["accounts"].append(
-            {
-                "account_id": row.account_id,
-                "enabled": row.enabled,
-                "strategies": row.strategies,
-            }
+        # Issue a per-account credential token. Tokens are issued only for
+        # accounts that actually have a credential field set (api_key,
+        # session_cookie, oai_sc_cookie) — there's no point handing a
+        # sidecar a token for an empty row.
+        has_credential = bool(
+            row.api_key_encrypted or row.session_cookie_encrypted or row.oai_sc_cookie_encrypted
         )
+        account_entry: dict[str, Any] = {
+            "account_id": row.account_id,
+            "enabled": row.enabled,
+            "strategies": row.strategies,
+        }
+        if can_issue_tokens and has_credential and row.enabled:
+            try:
+                account_entry["credential_token"] = issue_credential_token(
+                    settings.INGEST_API_KEY,
+                    provider_id=row.provider_id,
+                    account_id=row.account_id,
+                    ttl_seconds=token_ttl,
+                )
+            except Exception as exc:  # noqa: BLE001 — token issuance must never fail /config
+                # Defensive: if token issuance raises (e.g. INGEST_API_KEY races
+                # with a config reload), don't break /fleet/config — just omit
+                # the token. The sidecar's existing local-credential path keeps
+                # working until the next heartbeat can retry.
+                logger.warning(
+                    "Failed to issue credential token for %s/%s: %s",
+                    scrub_log(row.provider_id),
+                    scrub_log(row.account_id),
+                    exc,
+                )
+        provider_cfg["accounts"].append(account_entry)
         if is_first_for_provider:
             # The setdefault above already seeded `enabled` and `strategies`
             # from this row — nothing else to do for the first row.
@@ -685,3 +725,12 @@ async def get_fleet_config(
             }
 
     return {"status": "ok", "config": config}
+
+
+# NOTE: /api/v1/fleet/credentials/redeem is intentionally not implemented
+# in this PR. Adding the endpoint without a production caller would ship
+# unused authenticated surface (HMAC body parsing, decryption, audit
+# hooks) that nothing exercises — see code review on PR #283. The token
+# module + the issuance in ``/fleet/config`` are the public surface for
+# now; the redeem handler lands with the first real caller in the
+# follow-up PR.
