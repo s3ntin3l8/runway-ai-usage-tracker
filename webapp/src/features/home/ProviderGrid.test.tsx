@@ -96,6 +96,23 @@ describe('ProviderGrid', () => {
     expect(screen.queryByText('default')).not.toBeInTheDocument();
   });
 
+  it('applies opacity to stale cards', () => {
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ stale: true }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    const cardEl = screen.getByRole('button', { name: /claude/i });
+    expect(cardEl.className).toContain('opacity-60');
+  });
+
+  it('does not apply opacity to non-stale cards', () => {
+    const items = buildRiskItems([entry()], []);
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    const cardEl = screen.getByRole('button', { name: /claude/i });
+    expect(cardEl.className).not.toContain('opacity-60');
+  });
+
   it('respects the exclude-cache toggle in the tokens-kind hero metric', () => {
     const tokenCard = card({
       pct_used: undefined,

@@ -67,6 +67,13 @@ describe('status semantics', () => {
     // Non-stale card with health:critical stays critical
     expect(cardStatus(card({ health: 'critical', pct_used: 20 }))).toBe('critical');
   });
+  it('stale balance card retains health:critical (no derivable pct)', () => {
+    // Balance card: no pct_used, no used_value/limit_value → cardPct = null
+    expect(cardStatus(card({ stale: true, health: 'critical' }))).toBe('critical');
+  });
+  it('stale + warning health still returns warning', () => {
+    expect(cardStatus(card({ stale: true, health: 'warning', pct_used: 50 }))).toBe('warning');
+  });
 });
 
 describe('sameQuota', () => {

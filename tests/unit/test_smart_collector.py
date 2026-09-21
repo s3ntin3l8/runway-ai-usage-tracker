@@ -390,7 +390,7 @@ class TestSmartCollectorCacheTags:
         tagged = smart._tag_as_cached(data, time.time())
 
         assert tagged[0]["stale"] is True
-        assert tagged[0].get("health") != "critical"  # must NOT override health
+        assert "health" not in tagged[0]  # must NOT override health
         assert "Collection failing" in tagged[0]["detail"]
         assert "[Cached" in tagged[0]["detail"]
         # Must NOT flip these — accumulator would suppress the write entirely.
