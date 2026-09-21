@@ -631,5 +631,3 @@ function UntaggedBanner({
     </Card>
   );
 }
-
-
