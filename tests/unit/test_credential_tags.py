@@ -236,9 +236,7 @@ def test_list_pending_payload_returns_map_for_known_origins(session: Session):
     )
     session.commit()
 
-    out = CredentialTagRepo.list_pending_payload(
-        session, providers=["anthropic", "chatgpt"]
-    )
+    out = CredentialTagRepo.list_pending_payload(session, providers=["anthropic", "chatgpt"])
 
     assert out == {
         "anthropic": {
@@ -249,8 +247,7 @@ def test_list_pending_payload_returns_map_for_known_origins(session: Session):
         },
     }
     assert "not-requested" not in out, (
-        "untagged provider scope — must NOT leak other providers' tags "
-        "into a scoped read"
+        "untagged provider scope — must NOT leak other providers' tags into a scoped read"
     )
 
 
