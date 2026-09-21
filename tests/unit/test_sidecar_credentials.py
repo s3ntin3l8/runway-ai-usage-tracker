@@ -449,6 +449,47 @@ class TestCredentialCache:
         )
         assert cache.tokens == {("anthropic", "default"): "tok"}
 
+    def test_refresh_from_config_returns_cache_token_count_when_not_fetching(self):
+        """When ``fetch_tokens=False``, no token fetch happens, but the
+        cache may still hold tokens from an earlier call. The returned
+        tuple's token count should describe the cache, not this call —
+        otherwise dashboards and health checks that read the return
+        value see a misleading 0 (PR #283 round-4 review)."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        cache.replace(
+            accounts={"anthropic": ["default"]},
+            tokens={("anthropic", "default"): "tok-old"},
+        )
+
+        payload = {
+            "config": {
+                "providers": {
+                    "anthropic": {"accounts": [{"account_id": "default", "enabled": True}]}
+                }
+            }
+        }
+
+        with patch(
+            "scripts.sidecar_pkg.credentials._fetch_config_payload",
+            return_value=payload,
+        ):
+            account_count, token_count = cache.refresh_from_config(
+                "https://api.example.com", fetch_tokens=False
+            )
+
+        # account count is what we just fetched; token count is the
+        # cache state — still holding the pre-existing token even though
+        # we didn't refetch.
+        assert account_count == 1
+        assert token_count == 1, (
+            "refresh_from_config(fetch_tokens=False) must report the cache's "
+            "token count, not a fresh-fetch-only count — callers see the cache "
+            "not the network call."
+        )
+        assert cache.tokens == {("anthropic", "default"): "tok-old"}
+
 
 # ---------------------------------------------------------------------------
 # scripts/sidecar.py — per-account event extraction loop
@@ -802,3 +843,70 @@ def test_run_collection_falls_back_to_legacy_when_no_server_accounts(monkeypatch
 
     # Single fallback call with the legacy "default" identity.
     assert emitted == ["default"]
+
+
+def test_run_collection_keeps_prior_cache_when_fetch_identity_hints_returns_none(
+    monkeypatch,
+):
+    """When ``fetch_identity_hints`` returns ``None`` (outage) and the
+    cache is stale, the ``if fetched is not None`` guard skips the
+    ``cache.replace`` call. The prior snapshot survives and the next
+    cycle retries — proving the outage-tolerant contract end-to-end
+    (PR #283 round-4 review).
+
+    Mutation check from the reviewer: ``cache.replace(accounts=fetched or {})``
+    would pass every other test in this file but would clobber the cache
+    with an empty identity view, suppressing all per-account discovery
+    for the remainder of the 10-min TTL. The guard exists to keep prior
+    state intact on outage.
+    """
+    import scripts.sidecar as sc
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        accounts={"anthropic": ["default", "alice@example.com"]},
+        tokens={
+            ("anthropic", "default"): "tok-default",
+            ("anthropic", "alice@example.com"): "tok-alice",
+        },
+    )
+    # Mark as stale so the next cycle attempts a fetch.
+    cache._identities_fetched_at = 0.0
+    initial_tokens_at = cache._identities_fetched_at
+    preserved_snapshot = cache.provider_accounts()
+
+    monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", cache)
+
+    # Outage: fetch_identity_hints returns None.
+    monkeypatch.setattr(
+        "scripts.sidecar_pkg.credentials.fetch_identity_hints",
+        lambda api_url: None,
+    )
+
+    monkeypatch.setattr(
+        sc,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"anthropic": lambda: "default"},
+    )
+    monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x: [])
+    monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x: [])
+    monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+
+    config = {"api_url": "https://api.example.com"}
+    _, _, errors = sc.run_collection(config=config, providers=["anthropic"])
+
+    assert errors == 0
+    # The prior snapshot survived: the ``if fetched is not None`` guard
+    # skipped ``cache.replace(accounts=None)``. A regression that uses
+    # ``cache.replace(accounts=fetched or {})`` would clobber this with
+    # an empty dict.
+    assert cache.provider_accounts() == preserved_snapshot, (
+        "Outage must not clobber the cache — the if fetched is not None "
+        "guard exists to keep prior state intact so the next cycle retries."
+    )
+    # And the freshness sentinel still says "stale", so the next cycle
+    # will retry (the snapshot is preserved, not the freshness claim).
+    assert cache.is_fresh() is False
+    assert cache._identities_fetched_at == initial_tokens_at

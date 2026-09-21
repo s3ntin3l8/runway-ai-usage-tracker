@@ -232,9 +232,14 @@ class CredentialCache:
         if fetch_tokens:
             self._tokens = tokens
             self._tokens_fetched_at = time.time()
+        # Report cache state, not just this call's fetch. With
+        # ``fetch_tokens=False`` no token fetch happens here, but the
+        # cache may already hold tokens from an earlier call; the
+        # returned tuple should describe what callers will see when they
+        # read ``self.tokens`` (PR #283 round-4 review).
         return (
             sum(len(v) for v in accounts.values()),
-            len(tokens),
+            len(self._tokens),
         )
 
     def replace(
