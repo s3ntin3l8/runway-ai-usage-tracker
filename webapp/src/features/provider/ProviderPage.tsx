@@ -5,9 +5,9 @@
 import { useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, RefreshCw, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Archive, ArchiveRestore, RefreshCw, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import { collectProvider, resetProvider } from '@/api/endpoints';
+import { collectProvider, putProviderConfigForAccount, resetProvider } from '@/api/endpoints';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -97,6 +97,24 @@ export function ProviderPage() {
     onError: (err) => toast.error(`Reset failed: ${err.message}`),
   });
 
+  const isArchived =
+    providerConfigs.data?.providers
+      .find((p) => p.provider_id === providerId)
+      ?.accounts?.find((a) => a.account_id === accountId)?.archived
+    ?? providerConfigs.data?.providers.find((p) => p.provider_id === providerId)?.archived
+    ?? false;
+
+  const archive = useMutation({
+    mutationFn: () => putProviderConfigForAccount(providerId, accountId, { archived: !isArchived }),
+    onSuccess: () => {
+      toast.success(isArchived ? 'Provider restored' : 'Provider archived');
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+      queryClient.invalidateQueries({ queryKey: ['usage'] });
+      if (!isArchived) navigate('/', { replace: true });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   return (
     <>
       <PageHeader
@@ -157,6 +175,21 @@ export function ProviderPage() {
             >
               <RefreshCw className="size-3.5" aria-hidden />
               <span className="hidden sm:inline">Collect</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => archive.mutate()}
+              loading={archive.isPending}
+              aria-label={isArchived ? 'Restore provider' : 'Archive provider'}
+              title={isArchived ? 'Restore to dashboard' : 'Archive (hide from dashboard)'}
+            >
+              {isArchived ? (
+                <ArchiveRestore className="size-3.5" aria-hidden />
+              ) : (
+                <Archive className="size-3.5" aria-hidden />
+              )}
+              <span className="hidden sm:inline">{isArchived ? 'Restore' : 'Archive'}</span>
             </Button>
           </>
         }

@@ -14,7 +14,7 @@ well as model/sidecar and emits the cumulative-bucket shape consumed by the
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
@@ -61,6 +61,7 @@ def query_cumulative_live(
     until: datetime | None = None,
     provider_id: str | None = None,
     account_id: str | None = None,
+    identity_pairs: set[tuple[str, str]] | None = None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Aggregate billable usage_events in ``[since, until)`` per identity.
 
@@ -69,6 +70,11 @@ def query_cumulative_live(
     breakdowns — the same shape ``/usage/cumulative`` builds from the rollup.
     Only ``kind == "message"`` rows are counted (errors excluded), matching
     the rollup semantics.
+
+    When *identity_pairs* is provided, only events matching one of the
+    ``(provider_id, account_id)`` tuples are included — an OR-clause filter
+    that avoids scanning the full event log when only a small subset of
+    identities is needed (e.g. the archived-providers endpoint).
     """
     stmt = select(  # type: ignore[call-overload]
         UsageEvent.provider_id,
@@ -92,10 +98,22 @@ def query_cumulative_live(
     )
     if until is not None:
         stmt = stmt.where(UsageEvent.ts < until)
-    if provider_id:
-        stmt = stmt.where(UsageEvent.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(UsageEvent.account_id == account_id)
+    if identity_pairs:
+        from sqlalchemy import or_
+
+        stmt = stmt.where(
+            or_(
+                *[
+                    and_(UsageEvent.provider_id == pid, UsageEvent.account_id == aid)  # type: ignore[arg-type]
+                    for pid, aid in identity_pairs
+                ]
+            )
+        )
+    else:
+        if provider_id:
+            stmt = stmt.where(UsageEvent.provider_id == provider_id)
+        if account_id:
+            stmt = stmt.where(UsageEvent.account_id == account_id)
     stmt = stmt.group_by(
         UsageEvent.provider_id,
         UsageEvent.account_id,

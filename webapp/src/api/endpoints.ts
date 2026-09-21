@@ -200,6 +200,7 @@ export const fetchProviderConfigs = () =>
 
 export interface ProviderConfigUpdate {
   enabled?: boolean;
+  archived?: boolean;
   api_key?: string;
   session_cookie?: string;
   account_label?: string;
@@ -212,6 +213,35 @@ export const putProviderConfig = (providerId: string, body: ProviderConfigUpdate
     method: 'PUT',
     body: JSON.stringify(body),
   });
+
+export const putProviderConfigForAccount = (
+  providerId: string,
+  accountId: string,
+  body: ProviderConfigUpdate,
+) =>
+  api<{ status: string }>(
+    `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  );
+
+export interface ArchivedProvider {
+  provider_id: string;
+  account_id: string;
+  lifetime: {
+    tokens_input: number;
+    tokens_output: number;
+    tokens_cache_read: number;
+    tokens_cache_create: number;
+    tokens_reasoning: number;
+    msgs: number;
+    cost_usd: number;
+    by_model: Record<string, { tokens_input: number; tokens_output: number; msgs: number; cost_usd: number }>;
+  } | null;
+  last_activity_ts: string | null;
+}
+
+export const fetchArchivedProviders = () =>
+  api<{ archived: ArchivedProvider[] }>('/api/v1/usage/archived-providers');
 
 export const getDashboardLayout = () => api<DashboardLayout>('/api/v1/system/dashboard-layout');
 

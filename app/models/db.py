@@ -69,6 +69,7 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
     provider_id: str = Field(index=True)
     account_id: str = Field(default="default")
     enabled: bool = Field(default=True)
+    archived: bool = Field(default=False)
     api_key_encrypted: str | None = Field(default=None)  # encrypted via encryption_service
     session_cookie_encrypted: str | None = Field(
         default=None

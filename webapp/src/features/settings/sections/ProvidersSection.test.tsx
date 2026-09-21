@@ -96,6 +96,7 @@ describe('ProvidersSection', () => {
 
     expect(api.putProviderConfig).toHaveBeenCalledWith('claude', {
       enabled: true,
+      archived: false,
       account_label: 'Work',
       poll_interval_seconds: null,
       collection_strategies: [{ id: 'api', enabled: true }],

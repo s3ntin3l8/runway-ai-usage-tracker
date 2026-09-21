@@ -808,6 +808,7 @@ class _DashboardLayout(BaseModel):
 
 class _ProviderConfigUpdate(BaseModel):
     enabled: bool | None = None
+    archived: bool | None = None
     api_key: str | None = None  # empty string = clear, None = no change
     session_cookie: str | None = None  # empty string = clear, None = no change
     account_label: str | None = None
@@ -883,6 +884,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "name": name,
                 "icon": icon,
                 "enabled": db.enabled if db else True,
+                "archived": db.archived if db else False,
                 "api_key_set": bool(db and db.api_key_encrypted),
                 "session_cookie_set": bool(db and db.session_cookie_encrypted),
                 "account_label": db.account_label if db else None,
@@ -907,6 +909,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     {
                         "account_id": r.account_id,
                         "enabled": r.enabled,
+                        "archived": r.archived,
                         "api_key_set": bool(r.api_key_encrypted),
                         "session_cookie_set": bool(r.session_cookie_encrypted),
                         "account_label": r.account_label,
@@ -1022,6 +1025,17 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
     if body.enabled is not None:
         row.enabled = body.enabled
+    if body.archived is not None:
+        row.archived = body.archived
+        # Archiving a provider should stop collection — the user explicitly
+        # chose to hide it, so no point wasting poll cycles.
+        if body.archived and row.enabled:
+            row.enabled = False
+        # Unarchiving restores collection so the provider is usable again,
+        # but only when the caller did not explicitly state enabled (e.g.
+        # the Settings dialog always sends both fields).
+        elif body.enabled is None and not body.archived and not row.enabled:
+            row.enabled = True
     if body.account_label is not None:
         row.account_label = body.account_label or None
     if body.poll_interval_seconds is not None:
@@ -1148,6 +1162,11 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
 
     session.commit()
+    # Invalidate server-side fleet/limits caches so archived/restored
+    # providers appear or disappear immediately on the next dashboard poll.
+    from app.core.cache import cache_clear
+
+    cache_clear()
     # Trigger immediate sync and collection to reflect changes in dashboard instantly
     try:
         await manager._sync_collectors()
