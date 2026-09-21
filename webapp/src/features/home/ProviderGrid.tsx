@@ -153,7 +153,8 @@ function SortableProviderCard({
       }}
       className={
         'cursor-pointer touch-manipulation p-3.5 transition-colors duration-150 hover:border-edge-strong ' +
-        (isDragging ? 'z-10 opacity-80 shadow-lg' : '')
+        (isDragging ? 'z-10 opacity-80 shadow-lg' : '') +
+        (gauge.stale ? ' opacity-60' : '')
       }
     >
       <div className="flex items-center gap-2.5">
