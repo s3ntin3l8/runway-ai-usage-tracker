@@ -138,21 +138,25 @@ def test_delete_tag_returns_true_when_removed(session: Session):
     )
     session.commit()
 
-    assert (
-        CredentialTagRepo.delete_tag(session, provider_id="anthropic", credential_origin="path:/x")
-        is True
+    # PR #290 round-2 review (CodeQL): separate side-effecting delete_tag
+    # from the assert expression. Same fix as
+    # ``test_pending_delete_returns_true_when_present_false_when_absent``.
+    delete_result = CredentialTagRepo.delete_tag(
+        session, provider_id="anthropic", credential_origin="path:/x"
     )
+    assert delete_result is True
     session.commit()
-    assert (
-        CredentialTagRepo.get(session, provider_id="anthropic", credential_origin="path:/x") is None
+    get_result = CredentialTagRepo.get(
+        session, provider_id="anthropic", credential_origin="path:/x"
     )
+    assert get_result is None
 
 
 def test_delete_tag_returns_false_when_missing(session: Session):
-    assert (
-        CredentialTagRepo.delete_tag(session, provider_id="anthropic", credential_origin="path:/x")
-        is False
+    delete_result = CredentialTagRepo.delete_tag(
+        session, provider_id="anthropic", credential_origin="path:/x"
     )
+    assert delete_result is False
 
 
 def test_list_by_provider_returns_only_that_provider(session: Session):

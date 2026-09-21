@@ -32,7 +32,7 @@ import type {
 } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { Input, Label } from '@/components/ui/Input';
+import { Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import {
   Select,
