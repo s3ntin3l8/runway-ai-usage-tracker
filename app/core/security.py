@@ -5,18 +5,30 @@
 auth probe so the two can never drift. It returns a structured `AuthResult`
 (issue #103) carrying both a coarse `actor_type` and, when a reverse proxy
 supplies it, the asserted user identity for the audit log.
+
+The companion ``validate_ingest_auth`` is the single source of truth for
+the sidecar-facing HMAC scheme used by ``/fleet/ingest`` and (post #288)
+``/fleet/credentials/manifest``. Extracted so any future endpoint that
+needs the same shape inherits one canonical scheme — a change in the
+skew window, header layout, or signature construction can't accidentally
+diverge between the two endpoints.
 """
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import logging
 import re
+import time
 from dataclasses import dataclass
 
 from fastapi import Cookie, Header, HTTPException, Request
 
 from app.core.config import settings
 from app.core.sessions import verify_session
+
+logger = logging.getLogger(__name__)
 
 # Name of the HttpOnly cookie minted by POST /auth/session.
 SESSION_COOKIE = "runway_session"
@@ -168,3 +180,88 @@ async def require_admin_key(
     request.state.admin_actor = result.actor
     if not result.authenticated:
         raise HTTPException(status_code=403, detail="Invalid or missing admin key")
+
+
+async def validate_ingest_auth(
+    request: Request,
+    x_signature: str | None = Header(default=None, alias="X-Signature"),
+    x_timestamp: str | None = Header(default=None, alias="X-Timestamp"),
+) -> bytes:
+    """Shared HMAC pre-flight for ingest-side endpoints (``/fleet/ingest``,
+    ``/fleet/credentials/manifest``).
+
+    Returns the raw request body on success so the caller can parse it as
+    the next step. Raises ``HTTPException`` with the documented status
+    code on any failure — no caller ever needs to know the skew window,
+    the body cap, or the signature construction. This is the
+    canonical scheme — any change to the HMAC pre-flight MUST land
+    here, never in a duplicate copy at the endpoint.
+
+    Errors:
+    - 503 ``INGEST_API_KEY`` empty / insecure default (endpoint disabled)
+    - 401 missing headers, malformed timestamp, signature mismatch
+    - 400 timestamp skew outside ``[now - 300, now + 60]``
+    - 413 body larger than 8 MB
+    """
+    # Read settings via the canonical module path so test fixtures that
+    # ``patch("app.core.config.settings")`` (or ``app.api.endpoints.fleet.settings``)
+    # observe the same value the helper sees. Importing at call time also
+    # avoids a module-load race with conftest fixtures that swap settings
+    # before the app is constructed.
+    from app.core.config import settings as _settings
+
+    if not _settings.INGEST_API_KEY:
+        logger.error("INGEST_API_KEY is empty — sidecar endpoint is disabled")
+        raise HTTPException(
+            status_code=503,
+            detail="Sidecar endpoint not configured: INGEST_API_KEY is empty",
+        )
+    if _settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
+        logger.error("INGEST_API_KEY is the default insecure value — sidecar endpoint is disabled")
+        raise HTTPException(
+            status_code=503,
+            detail=("Sidecar endpoint not configured: INGEST_API_KEY must be changed from default"),
+        )
+
+    if not x_signature or not x_timestamp:
+        logger.warning("Sidecar attempt with missing HMAC headers")
+        raise HTTPException(
+            status_code=401,
+            detail="Missing HMAC signature or timestamp",
+        )
+
+    try:
+        ts = float(x_timestamp)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid X-Timestamp format") from None
+
+    now = time.time()
+    skew = now - ts
+    # 5-minute window for past timestamps, 60s for future drift
+    if skew < -60 or skew > 300:
+        logger.warning(f"Sidecar attempt with rejected timestamp: {skew:.0f}s difference")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "timestamp_expired" if skew > 0 else "timestamp_future",
+                "skew_seconds": round(skew, 1),
+                "message": "Clock skew detected. Please check NTP sync on the sidecar machine.",
+            },
+        )
+
+    body_bytes = await request.body()
+    # 8 MB cap. Manifests stay small (one origin per host-provider), ingest
+    # bodies batch up to 1000 events (~1 MB worst case), so 8 MB is generous.
+    if len(body_bytes) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Request body too large")
+
+    expected_sig = hmac.new(
+        _settings.INGEST_API_KEY.encode(),
+        f"{x_timestamp}".encode() + body_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(x_signature, expected_sig):
+        logger.warning(f"HMAC mismatch. Received: {x_signature[:8]}... (len: {len(x_signature)})")
+        raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+
+    return body_bytes

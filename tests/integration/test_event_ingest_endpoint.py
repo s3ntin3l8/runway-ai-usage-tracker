@@ -67,7 +67,7 @@ def test_ingest_events_inserts_rows_and_dedups(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -85,7 +85,7 @@ def test_ingest_events_inserts_rows_and_dedups(session):
 
     # Replay the same payload — both events should be deduped
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -125,7 +125,7 @@ def test_ingest_normalizes_sidecar_id(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY

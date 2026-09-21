@@ -216,7 +216,7 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+        with patch("app.core.config.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
@@ -244,7 +244,7 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+        with patch("app.core.config.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = "test-key"
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
@@ -284,7 +284,7 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+        with patch("app.core.config.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
@@ -314,7 +314,7 @@ class TestIngestEndpoint:
         body = json.dumps(invalid_payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+        with patch("app.core.config.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
@@ -339,7 +339,7 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+        with patch("app.core.config.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = ""
             response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
@@ -366,7 +366,7 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch("app.api.endpoints.fleet.settings") as mock_settings:
+        with patch("app.core.config.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = DEFAULT_INGEST_API_KEY
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = True
             response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)

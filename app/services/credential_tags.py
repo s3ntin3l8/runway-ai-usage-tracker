@@ -20,7 +20,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.models.db import CredentialTag
+from app.models.db import CredentialTag, PendingCredentialTag
 
 
 class CredentialTagRepo:
@@ -158,3 +158,155 @@ class CredentialTagRepo:
         for row in rows:
             out.setdefault(row.provider_id, {})[row.credential_origin] = row.account_id
         return out
+
+
+class PendingCredentialTagRepo:
+    """Read/write operations on the ``pending_credential_tags`` table.
+
+    Maintained in lockstep with the sidecar's manifest reporting cycle.
+    The single-statement operations are kept thin because the manifest
+    endpoint orchestrates them in a single transaction (upsert each entry,
+    then delete any pending row for the sidecar that's not in the new
+    list).
+    """
+
+    @staticmethod
+    def upsert(
+        session: Session,
+        *,
+        sidecar_id: str,
+        provider_id: str,
+        credential_origin: str,
+    ) -> PendingCredentialTag:
+        """Upsert a pending row, refreshing ``last_seen`` if it already exists."""
+        row = session.exec(
+            select(PendingCredentialTag).where(
+                PendingCredentialTag.sidecar_id == sidecar_id,
+                PendingCredentialTag.provider_id == provider_id,
+                PendingCredentialTag.credential_origin == credential_origin,
+            )
+        ).first()
+        now = datetime.now(UTC)
+        if row is None:
+            row = PendingCredentialTag(
+                sidecar_id=sidecar_id,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+                first_seen=now,
+                last_seen=now,
+            )
+            session.add(row)
+        else:
+            row.last_seen = now
+        session.flush()
+        return row
+
+    @staticmethod
+    def delete_stale(
+        session: Session,
+        *,
+        sidecar_id: str,
+        keep_origins_by_provider: dict[str, set[str]],
+    ) -> int:
+        """Delete pending rows for ``sidecar_id`` whose (provider, origin) is not
+        in the supplied ``keep_origins_by_provider`` map.
+
+        Returns the number of rows removed. Called by the manifest endpoint
+        after upserting the cycle's entries: ``keep_origins_by_provider`` is
+        ``{provider_id: {credential_origin, ...}}`` derived from the
+        sidecar's manifest body. A pair absent from the sidecar's manifest
+        means the sidecar's local state has dropped that credential
+        (de-installed, re-configured, or the sidecar crashed mid-discovery)
+        — clearing it keeps the fleet UI's "Untagged" panel truthful.
+
+        NB: a transient discovery failure could delete a row that the
+        sidecar re-reports next cycle, re-promoting the same origin back
+        to "needs attention". That bounce is acceptable — operators
+        seeing the same entry flash twice will diagnose the sidecar's
+        credential-discovery flake, not the server.
+        """
+        rows = list(
+            session.exec(
+                select(PendingCredentialTag).where(
+                    PendingCredentialTag.sidecar_id == sidecar_id,
+                )
+            ).all()
+        )
+        removed = 0
+        for row in rows:
+            kept = keep_origins_by_provider.get(row.provider_id, set())
+            if row.credential_origin not in kept:
+                session.delete(row)
+                removed += 1
+        session.flush()
+        return removed
+
+    @staticmethod
+    def list_all(
+        session: Session,
+        *,
+        sidecar_id: str | None = None,
+    ) -> list[PendingCredentialTag]:
+        """All pending entries, optionally filtered by sidecar. Sorted for stable UI."""
+        stmt = select(PendingCredentialTag)
+        if sidecar_id is not None:
+            stmt = stmt.where(PendingCredentialTag.sidecar_id == sidecar_id)
+        stmt = stmt.order_by(
+            PendingCredentialTag.sidecar_id,
+            PendingCredentialTag.provider_id,
+            PendingCredentialTag.credential_origin,
+        )
+        return list(session.exec(stmt).all())
+
+    @staticmethod
+    def get(
+        session: Session,
+        *,
+        sidecar_id: str,
+        provider_id: str,
+        credential_origin: str,
+    ) -> PendingCredentialTag | None:
+        """Look up a single pending entry by its three-component identity."""
+        return session.exec(
+            select(PendingCredentialTag).where(
+                PendingCredentialTag.sidecar_id == sidecar_id,
+                PendingCredentialTag.provider_id == provider_id,
+                PendingCredentialTag.credential_origin == credential_origin,
+            )
+        ).first()
+
+    @staticmethod
+    def delete(
+        session: Session,
+        *,
+        sidecar_id: str,
+        provider_id: str,
+        credential_origin: str,
+    ) -> bool:
+        """Delete a pending entry. Returns ``True`` when a row was removed."""
+        row = PendingCredentialTagRepo.get(
+            session,
+            sidecar_id=sidecar_id,
+            provider_id=provider_id,
+            credential_origin=credential_origin,
+        )
+        if row is None:
+            return False
+        session.delete(row)
+        session.flush()
+        return True
+
+    @staticmethod
+    def pending_count_by_sidecar(session: Session) -> dict[str, int]:
+        """Aggregate pending counts per sidecar_id. Powers the fleet banner total."""
+        from sqlmodel import func
+
+        rows = list(
+            session.exec(
+                select(
+                    PendingCredentialTag.sidecar_id,
+                    func.count(),
+                ).group_by(PendingCredentialTag.sidecar_id)
+            ).all()
+        )
+        return {sidecar_id: int(count) for sidecar_id, count in rows}

@@ -102,6 +102,7 @@ def init_db() -> None:
         AuditLog,
         CredentialTag,
         LatestUsage,
+        PendingCredentialTag,
         ProviderConfig,
         ProviderPricing,
         QuotaSnapshot,

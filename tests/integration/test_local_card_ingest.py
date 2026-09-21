@@ -82,7 +82,7 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -136,7 +136,7 @@ def test_sidecar_pushed_card_merges_on_second_push(session):
     updated_card = {**base_card, "used_value": 55.0, "pct_used": 55.0, "detail": "Updated push"}
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -201,7 +201,7 @@ def test_sidecar_pushed_card_skipped_without_provider_id(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -248,7 +248,7 @@ def test_two_sidecars_different_accounts_produce_separate_rows(session):
         }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -320,7 +320,7 @@ def test_ingest_prunes_ghost_model_rows_with_past_reset_at(session):
         }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -402,7 +402,7 @@ def test_ingest_does_not_prune_other_provider_rows(session):
         }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -479,7 +479,7 @@ def test_passive_provider_added_to_poll_providers(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -542,7 +542,7 @@ def test_sidecar_quota_guard_rejects_non_lsp(session):
     }
 
     with (
-        patch("app.api.endpoints.fleet.settings") as mock_settings,
+        patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY

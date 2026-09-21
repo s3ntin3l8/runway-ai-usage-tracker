@@ -517,3 +517,47 @@ class CredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     account_id: str  # matches provider_configs.account_id
     set_by: str = "operator"
     set_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
+    """Origin the sidecar is currently reporting but no operator tag exists yet.
+
+    Maintained by ``POST /fleet/credentials/manifest``: the sidecar sends
+    the set of origins it found this cycle, the server upserts each row,
+    then deletes any row for that ``sidecar_id`` whose origin is absent
+    from the new list (silent disappearance of a local credential).
+
+    Powers the "Untagged credentials" surface on the fleet view: the
+    webapp reads these via ``GET /fleet/credentials/tags/pending`` and
+    offers a tag action that creates a :class:`CredentialTag` and deletes
+    the pending row.
+
+    ``pending_credential_tags`` is the only place where the per-sidecar
+    identity matters in phase-1 — a CredentialTag is global (resolved
+    per origin, not per sidecar), but the pending state needs to know
+    which sidecar reported it so the operator can answer "which host is
+    this credential from?" before resolving.
+    """
+
+    __tablename__ = "pending_credential_tags"
+    __table_args__ = (
+        UniqueConstraint(
+            "sidecar_id",
+            "provider_id",
+            "credential_origin",
+            name="uq_pending_credential_tag_identity",
+        ),
+        Index("ix_pending_credential_tags_sidecar", "sidecar_id"),
+        Index(
+            "ix_pending_credential_tags_unresolved",
+            "provider_id",
+            "credential_origin",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    sidecar_id: str = Field(index=True)
+    provider_id: str
+    credential_origin: str
+    first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))

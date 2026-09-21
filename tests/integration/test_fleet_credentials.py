@@ -219,6 +219,289 @@ def test_config_emits_distinct_tokens_per_account(client: TestClient, session: S
 
 
 # ---------------------------------------------------------------------------
+# Silent-listener flow (PR #288):
+#   POST /fleet/credentials/manifest           — sidecar writes origins
+#   POST /fleet/credentials/tags               — operator resolves pending → tag
+#   GET  /fleet/credentials/tags/pending       — UI panel
+#   GET  /fleet/config account_tag_hints key   — sidecar reads hints on next cycle
+# ---------------------------------------------------------------------------
+
+
+def _sign_manifest(body: bytes, ts: str | None = None) -> tuple[str, str]:
+    """Compute HMAC headers the manifest endpoint expects."""
+    ts = ts or str(int(time.time()))
+    sig = hmac.new(SECRET.encode(), ts.encode() + body, hashlib.sha256).hexdigest()
+    return ts, sig
+
+
+def _post_manifest(client: TestClient, body: dict, ts: str | None = None):
+    raw = json.dumps(body).encode()
+    ts, sig = _sign_manifest(raw, ts=ts)
+    return client.post(
+        "/api/v1/fleet/credentials/manifest",
+        content=raw,
+        headers={"Content-Type": "application/json", "X-Signature": sig, "X-Timestamp": ts},
+    )
+
+
+def test_manifest_503_when_ingest_key_missing(monkeypatch):
+    """Same gate as /fleet/ingest: INGEST_API_KEY must be configured."""
+    monkeypatch.setattr(settings, "INGEST_API_KEY", "")
+    client = TestClient(app)
+    r = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
+    assert r.status_code == 503
+
+
+def test_manifest_401_on_bad_signature(client: TestClient):
+    """A signature that doesn't match the HMAC scheme returns 401 (not 400
+    for skew). Use a valid timestamp so we exercise the signature-comparison
+    branch, not the timestamp-skew branch.
+    """
+    r = client.post(
+        "/api/v1/fleet/credentials/manifest",
+        content=b'{"sidecar_id":"x"}',
+        headers={
+            "X-Signature": "deadbeef",
+            "X-Timestamp": str(int(time.time())),
+        },
+    )
+    assert r.status_code == 401
+
+
+def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
+    client: TestClient, session: Session
+):
+    """A tag pre-existing for one origin is echoed in the response; untagged origins get pending rows."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    # Pre-tag one origin to verify the response shape.
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/tagged/.claude/.credentials.json",
+        account_id="alice@example.com",
+    )
+    session.commit()
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "entries": [
+            {
+                "provider_id": "anthropic",
+                "credential_origin": "path:/tagged/.claude/.credentials.json",
+            },
+            {
+                "provider_id": "anthropic",
+                "credential_origin": "path:/untagged/.claude/.credentials.json",
+            },
+            {"provider_id": "chatgpt", "credential_origin": "path:/untagged2/.codex/auth.json"},
+        ],
+    }
+    r = _post_manifest(client, body)
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert payload["sidecar_id"] == "alpha-host"
+    assert payload["entries_received"] == 3
+    # Tagged entry resolves; untagged entries are absent from resolved but
+    # recorded in pending_credential_tags.
+    assert payload["resolved"] == {
+        "anthropic": {"path:/tagged/.claude/.credentials.json": "alice@example.com"}
+    }
+
+
+def test_manifest_prunes_pending_entries_not_re_reported(client: TestClient, session: Session):
+    """Sidecar's manifest is authoritative — credentials it stops reporting
+    for get removed from the pending table."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body_full = {
+        "sidecar_id": "alpha-host",
+        "entries": [
+            {"provider_id": "anthropic", "credential_origin": "path:/a"},
+            {"provider_id": "anthropic", "credential_origin": "path:/b"},
+        ],
+    }
+    r1 = _post_manifest(client, body_full)
+    assert r1.status_code == 200
+    pending_a = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert {p.credential_origin for p in pending_a} == {"path:/a", "path:/b"}
+
+    body_partial = {
+        "sidecar_id": "alpha-host",
+        "entries": [
+            {"provider_id": "anthropic", "credential_origin": "path:/a"},
+            # /b dropped from disk since the last cycle.
+        ],
+    }
+    r2 = _post_manifest(client, body_partial)
+    assert r2.status_code == 200
+    assert r2.json()["entries_pruned"] == 1
+    pending_a = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert {p.credential_origin for p in pending_a} == {"path:/a"}
+
+
+def test_manifest_does_not_prune_other_sidecar(client: TestClient, session: Session):
+    """Sidecar A's manifest only prunes A's pending rows, never B's."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    for sidecar in ("alpha", "beta"):
+        PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=sidecar,
+            provider_id="anthropic",
+            credential_origin="path:/shared",
+        )
+        session.commit()
+
+    r = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})  # alpha now empty
+    assert r.status_code == 200
+    assert r.json()["entries_pruned"] == 1
+
+    assert [
+        (r.sidecar_id, r.credential_origin) for r in PendingCredentialTagRepo.list_all(session)
+    ] == [("beta", "path:/shared")]
+
+
+def test_tag_endpoint_creates_tag_and_clears_pending(client: TestClient, session: Session):
+    """Operator's POST creates a CredentialTag and deletes the matching pending row."""
+    from app.services.credential_tags import (
+        CredentialTagRepo,
+        PendingCredentialTagRepo,
+    )
+
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha-host",
+        provider_id="anthropic",
+        credential_origin="path:/.claude/.credentials.json",
+    )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha-host",
+            "provider_id": "anthropic",
+            "credential_origin": "path:/.claude/.credentials.json",
+            "account_id": "alice@example.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Tag persisted; pending row cleared.
+    assert (
+        CredentialTagRepo.get_account_id(
+            session,
+            provider_id="anthropic",
+            credential_origin="path:/.claude/.credentials.json",
+        )
+        == "alice@example.com"
+    )
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha-host",
+            provider_id="anthropic",
+            credential_origin="path:/.claude/.credentials.json",
+        )
+        is None
+    )
+
+
+def test_tag_endpoint_404_when_provider_account_missing(client: TestClient):
+    """Selecting a provider+account pair that has no provider_configs row fails."""
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha",
+            "provider_id": "anthropic",
+            "credential_origin": "path:/x",
+            "account_id": "ghost@example.com",
+        },
+    )
+    assert resp.status_code == 404
+    assert "provider_configs" in resp.text
+
+
+def test_pending_endpoint_lists_all(client: TestClient, session: Session):
+    """Aggregation view for the fleet view banner."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="alpha", provider_id="anthropic", credential_origin="path:/a"
+    )
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="alpha", provider_id="anthropic", credential_origin="path:/b"
+    )
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="beta", provider_id="chatgpt", credential_origin="path:/c"
+    )
+    session.commit()
+
+    resp = client.get("/api/v1/fleet/credentials/tags/pending")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    sides = {(i["sidecar_id"], i["provider_id"], i["credential_origin"]) for i in items}
+    assert sides == {
+        ("alpha", "anthropic", "path:/a"),
+        ("alpha", "anthropic", "path:/b"),
+        ("beta", "chatgpt", "path:/c"),
+    }
+    counts = resp.json()["counts_by_sidecar"]
+    assert counts == {"alpha": 2, "beta": 1}
+
+
+def test_pending_endpoint_filters_by_sidecar(client: TestClient, session: Session):
+    """Per-sidecar query for the per-card badge."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    for sidecar in ("alpha", "beta"):
+        PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=sidecar,
+            provider_id="anthropic",
+            credential_origin=f"path:/{sidecar}/x",
+        )
+    session.commit()
+
+    resp = client.get("/api/v1/fleet/credentials/tags/pending?sidecar_id=alpha")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert {i["credential_origin"] for i in items} == {"path:/alpha/x"}
+
+
+def test_config_response_carries_account_tag_hints(client: TestClient, session: Session):
+    """/fleet/config exposes the per-provider hint map for the sidecar's next cycle."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/.claude/.credentials.json",
+        account_id="alice@example.com",
+    )
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert hints == {
+        "anthropic": {"path:/.claude/.credentials.json": "alice@example.com"},
+    }
+
+
+def test_config_response_account_tag_hints_empty_when_no_tags(client: TestClient):
+    """No tags → empty map (not absent), so the sidecar sees the key safely."""
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+# ---------------------------------------------------------------------------
 # Note on redeem endpoint coverage: POST /api/v1/fleet/credentials/redeem is
 # intentionally not implemented in this PR. Adding the endpoint without a
 # production caller would ship unused authenticated surface — see the PR
