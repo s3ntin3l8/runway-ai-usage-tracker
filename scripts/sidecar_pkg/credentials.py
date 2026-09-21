@@ -116,6 +116,63 @@ def _parse_credential_tokens(payload: dict[str, Any]) -> dict[tuple[str, str], s
     return out
 
 
+def _parse_account_tag_hints(payload: dict[str, Any]) -> dict[str, dict[str, str]] | None:
+    """Extract ``{provider_id: {credential_origin: account_id, ...}}`` from a
+    ``/fleet/config`` response.
+
+    Used by the sidecar's silent-listener block guard (PR #288): when a
+    token card can't be stamped via local discovery, the sidecar
+    consults this map for any operator-set tag matching the credential's
+    ``origin_descriptor``. Returns ``None`` when the payload omits the
+    field — older server versions (pre-PR #288) don't carry it and
+    ``None`` lets the caller distinguish "field missing" from
+    "field present and empty", which is what the outage-tolerant
+    refresh logic in ``run_collection`` keys off.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("account_tag_hints")
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, dict[str, str]] = {}
+    for provider_id, by_origin in raw.items():
+        if not isinstance(by_origin, dict) or not isinstance(provider_id, str):
+            continue
+        cleaned = {
+            str(origin): str(account_id)
+            for origin, account_id in by_origin.items()
+            if isinstance(origin, str) and origin and isinstance(account_id, str) and account_id
+        }
+        if cleaned:
+            out[provider_id] = cleaned
+    return out
+
+
+def fetch_account_tag_hints(
+    api_url: str,
+    *,
+    timeout: int = 10,
+) -> dict[str, dict[str, str]] | None:
+    """Read the operator-resolved tag-hint map from ``GET /api/v1/fleet/config``.
+
+    Reuses ``_fetch_config_payload`` so this never does a second round-trip
+    per cycle (the sidecar's ``run_collection`` typically calls
+    :func:`fetch_identity_hints` first anyway; pair them with the same
+    response).
+
+    Returns the parsed hint map, or ``None`` when the fetch fails
+    (network error, non-200, malformed JSON) **or** the payload omits
+    the ``account_tag_hints`` field. The caller is expected to skip the
+    update on ``None`` so the prior snapshot survives and ``is_fresh()``
+    returns False on the next cycle (mirror of the outage-tolerance in
+    PR #283 round-3 review).
+    """
+    payload = _fetch_config_payload(api_url, timeout=timeout)
+    if payload is None:
+        return None
+    return _parse_account_tag_hints(payload)
+
+
 def fetch_identity_hints(
     api_url: str,
     *,

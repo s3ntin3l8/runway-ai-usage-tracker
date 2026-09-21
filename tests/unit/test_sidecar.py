@@ -98,7 +98,7 @@ class TestAntigravityTokenStamp:
         with patch.dict(
             sidecar._ACCOUNT_IDENTITIES, {"antigravity": "user@example.com"}, clear=True
         ):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
         assert token_cards[0]["account_id"] == "user@example.com"
@@ -107,7 +107,7 @@ class TestAntigravityTokenStamp:
         tok = self._write_token_file(tmp_path)
         config = self._ag_config(tok)
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
         assert token_cards[0]["account_id"] == "default"
@@ -163,7 +163,7 @@ class TestChatGPTTokenStamp:
         )
         config = self._codex_config(auth_file)
         with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
-            cards = sidecar.GenericCollector.collect_provider("chatgpt", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("chatgpt", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
@@ -184,7 +184,7 @@ class TestChatGPTTokenStamp:
         )
         config = self._codex_config(auth_file)
         with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
-            cards = sidecar.GenericCollector.collect_provider("chatgpt", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("chatgpt", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
@@ -235,7 +235,7 @@ class TestAntigravityTokenExpiry:
         config = self._config(tok)
 
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
@@ -258,7 +258,7 @@ class TestAntigravityTokenExpiry:
         config = self._config(tok)
 
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
-            cards = sidecar.GenericCollector.collect_provider("antigravity", config)
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
 
         # No oauth_token/refresh_token survives → no token card is emitted.
         token_cards = [c for c in cards if c.get("remaining") == "Token"]

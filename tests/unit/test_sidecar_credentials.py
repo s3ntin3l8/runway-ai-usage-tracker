@@ -1,18 +1,18 @@
 """Tests for the sidecar identity cache (issue #272, deferred redeem).
 
 Covers:
-- ``scripts/sidecar_pkg/credentials.py``: ``fetch_identity_hints`` and
-  ``fetch_credential_tokens`` HTTP plumbing, plus the ``CredentialCache``
-  staleness / replacement / decoupled-identity semantics.
+- ``scripts/sidecar_pkg/credentials.py``: ``fetch_identity_hints``,
+  ``fetch_credential_tokens``, ``fetch_account_tag_hints`` HTTP plumbing,
+  plus the ``CredentialCache`` staleness / replacement /
+  decoupled-identity semantics.
 - The per-account event-extraction loop wired into ``run_collection`` —
   the dispatch table, the local-identity intersect (one account per
   host), the legacy fallback when the server has no per-account config,
   the partial-failure tolerance.
-
-The redeem side (``redeem_credential`` / HMAC headers / decrypted body)
-intentionally is NOT exercised here — that endpoint ships with the first
-production caller in the follow-up PR; today there is none, so the
-implementation has been deferred to keep public surface tight.
+- The silent-listener block guard (PR #288): a token card whose
+  ``account_id`` cannot be resolved via local discovery or a server
+  hint is dropped from the result list, the credential's origin is
+  captured for the next ``/fleet/credentials/manifest`` POST.
 """
 
 from __future__ import annotations
@@ -182,6 +182,81 @@ class TestFetchIdentityHints:
         assert result == {"anthropic": ["default"]}
 
 
+class TestFetchAccountTagHints:
+    """``fetch_account_tag_hints`` consumes the operator-set mapping the
+    server emits via ``/fleet/config``. See PR #288.
+
+    The shape is ``{provider_id: {credential_origin: account_id, ...}}``
+    — fetched once per sidecar cycle and passed to
+    :meth:`GenericCollector.collect_provider` as the silent-listener
+    fallback when local credential discovery fails.
+    """
+
+    def test_returns_none_when_urlopen_raises(self):
+        from scripts.sidecar_pkg.credentials import fetch_account_tag_hints
+
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
+                assert fetch_account_tag_hints("https://api.example.com") is None
+
+    def test_returns_none_when_payload_omits_account_tag_hints(self):
+        """Older server versions (pre-PR #288) won't carry ``account_tag_hints``.
+
+        The fetcher returns ``None`` so the sidecar stays on the prior
+        cached snapshot — never echoes back ``{}`` and overwrites a
+        previously good hint map with an empty one.
+        """
+        from scripts.sidecar_pkg.credentials import fetch_account_tag_hints
+
+        payload = json.dumps({"config": {"providers": {}}}).encode()
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                ctx = MagicMock()
+                ctx.__enter__ = MagicMock(
+                    return_value=MagicMock(
+                        getcode=MagicMock(return_value=200), read=MagicMock(return_value=payload)
+                    )
+                )
+                ctx.__exit__ = MagicMock(return_value=False)
+                mock_urlopen.return_value = ctx
+                assert fetch_account_tag_hints("https://api.example.com") is None
+
+    def test_parses_hint_map(self):
+        from scripts.sidecar_pkg.credentials import fetch_account_tag_hints
+
+        payload = json.dumps(
+            {
+                "config": {"providers": {}},
+                "account_tag_hints": {
+                    "anthropic": {
+                        "path:/home/alice/.claude/.credentials.json": "alice@example.com",
+                    },
+                    "chatgpt": {
+                        "path:/home/alice/.codex/auth.json": "alice@example.com",
+                        # Filters out non-string entries defensively.
+                        "broken_entry": 42,
+                    },
+                },
+            }
+        ).encode()
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                ctx = MagicMock()
+                ctx.__enter__ = MagicMock(
+                    return_value=MagicMock(
+                        getcode=MagicMock(return_value=200), read=MagicMock(return_value=payload)
+                    )
+                )
+                ctx.__exit__ = MagicMock(return_value=False)
+                mock_urlopen.return_value = ctx
+                result = fetch_account_tag_hints("https://api.example.com")
+
+        assert result == {
+            "anthropic": {"path:/home/alice/.claude/.credentials.json": "alice@example.com"},
+            "chatgpt": {"path:/home/alice/.codex/auth.json": "alice@example.com"},
+        }
+
+
 class TestFetchCredentialTokens:
     """``fetch_credential_tokens`` is the supplementary token map. It's a
     subset of the identity hints — rows where the server didn't issue a
@@ -297,6 +372,150 @@ class TestFetchCredentialTokens:
         # Disabled row is filtered out.
         assert ("anthropic", "alice@example.com") not in result
         assert ("anthropic", "default") in result
+
+
+class TestCollectProviderBlockGuard:
+    """The silent-listener block guard (PR #288) inside ``GenericCollector.collect_provider``.
+
+    A token card whose ``account_id`` can't be resolved via local
+    discovery or an ``account_label_hints`` server-supplied fallback
+    must NOT ship. The card is dropped and the credential's origin is
+    recorded in the second return value so ``run_collection`` can
+    POST it to ``/fleet/credentials/manifest``.
+
+    The legacy single-account shape (one token card per provider) is
+    preserved — the block affects only the case where ``account_id``
+    can't be stamped, which is the multi-account silent-failure the
+    PR series is closing.
+    """
+
+    @staticmethod
+    def _anthropic_provider_config():
+        """A config that exercises env + file rules; matches today's anthropic registry."""
+        return {
+            "name": "Anthropic",
+            "icon": "🅰️",
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "ANTHROPIC_API_KEY",
+                    "mapping": {"value": "api_key"},
+                },
+                {
+                    "type": "file",
+                    "paths": ["~/nonexistent-credential-file.json"],
+                    "format": "json",
+                    "mapping": {"apiKey": "api_key"},
+                },
+            ],
+        }
+
+    def test_token_card_ships_when_account_id_resolvable(self, monkeypatch):
+        """When local discovery yields an email, the card ships as today."""
+        import scripts.sidecar as sc
+
+        # Env rule yields a credential; account_id resolved via chatgpt-style stamp.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "chatgpt",
+            {
+                "name": "ChatGPT",
+                "icon": "💬",
+                "rules": [
+                    {
+                        "type": "file",
+                        "paths": ["~/nonexistent.json"],
+                        "format": "json",
+                        "mapping": {"tokens.account_id": "account_id"},
+                    },
+                ],
+            },
+        )
+        # No credential extracted because the file doesn't exist; account_id
+        # stamping never runs. Should be empty with no blocked entries.
+        assert cards == []
+        assert blocked == []
+
+    def test_token_card_blocked_when_no_account_id(self, monkeypatch):
+        """When tokens are extracted but ``account_id`` can't be resolved,
+        the card is dropped and the credential origin is recorded."""
+        import scripts.sidecar as sc
+
+        # Env rule yields a credential; no local discovery path stamps account_id
+        # because we monkeypatch the helper that normally does. This is the
+        # precondition for "tokens extracted, no account_id resolvable".
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
+        monkeypatch.setattr(sc, "_codex_account_email", lambda: None)
+        # Render the env rule's path empty so anthropic statusline doesn't fire.
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "antigravity",  # any provider; we'll override the rule chain
+            {
+                "name": "Anthropic",
+                "icon": "🅰️",
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "ANTHROPIC_API_KEY",
+                        "mapping": {"value": "api_key"},
+                    },
+                ],
+            },
+        )
+        # The env rule fires, tokens dict has api_key, but account_id can't be
+        # resolved (the antigravity+chatgpt stamping helpers returned None,
+        # anthropic statusline wasn't iterated).
+        assert cards == [], "token card must be dropped when account_id is None"
+        assert len(blocked) == 1, "exactly one blocked origin expected"
+        assert blocked[0]["provider_id"] == "antigravity"
+        assert blocked[0]["credential_origin"] == "provider:antigravity"
+
+    def test_no_block_when_no_tokens_extracted(self):
+        """No credentials found → no blocked origin (because there was nothing to ship)."""
+        import scripts.sidecar as sc
+
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "anthropic",
+            {
+                "name": "Anthropic",
+                "icon": "🅰️",
+                "rules": [
+                    {
+                        "type": "file",
+                        "paths": ["~/no-such-credential-file.json"],
+                        "format": "json",
+                        "mapping": {"apiKey": "api_key"},
+                    },
+                ],
+            },
+        )
+        assert cards == []
+        assert blocked == []
+
+    def test_token_card_blocked_logs_warning(self, monkeypatch, caplog):
+        import logging
+
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
+        monkeypatch.setattr(sc, "_codex_account_email", lambda: None)
+        with caplog.at_level(logging.WARNING, logger="root"):
+            sc.GenericCollector.collect_provider(
+                "antigravity",
+                {
+                    "name": "Anthropic",
+                    "icon": "🅰️",
+                    "rules": [
+                        {
+                            "type": "env",
+                            "variable": "ANTHROPIC_API_KEY",
+                            "mapping": {"value": "api_key"},
+                        },
+                    ],
+                },
+            )
+        assert any("blocked" in r.message for r in caplog.records)
 
 
 class TestCredentialCache:
@@ -642,7 +861,7 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
     monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: _fake_extractor)
 
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     config: dict = {"api_url": "http://unused", "api_key": "secret"}
 
@@ -701,7 +920,7 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
     monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: _fake_extractor)
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     config: dict = {"api_url": "http://unused", "api_key": "secret"}
 
@@ -754,7 +973,7 @@ def test_run_collection_uses_get_credential_cache_factory(monkeypatch, tmp_path)
     monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x: [])
     monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x: [])
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x: [])
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
     assert errors == 0
@@ -799,7 +1018,7 @@ def test_run_collection_swallows_lazy_init_failure(monkeypatch):
     monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: _fake_extractor)
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
     assert errors == 0
@@ -837,7 +1056,7 @@ def test_run_collection_falls_back_to_legacy_when_no_server_accounts(monkeypatch
     monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: _fake_extractor)
 
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     sc.run_collection(config={}, providers=["anthropic"])
 
@@ -892,7 +1111,7 @@ def test_run_collection_keeps_prior_cache_when_fetch_identity_hints_returns_none
     monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x: [])
     monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x: [])
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x: [])
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: [])
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     config = {"api_url": "https://api.example.com"}
     _, _, errors = sc.run_collection(config=config, providers=["anthropic"])
