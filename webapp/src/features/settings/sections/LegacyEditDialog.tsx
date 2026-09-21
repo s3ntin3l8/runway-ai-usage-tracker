@@ -507,4 +507,3 @@ function GitHubLoginSection() {
     </Button>
   );
 }
-
