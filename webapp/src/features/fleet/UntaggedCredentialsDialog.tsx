@@ -27,7 +27,7 @@ import {
 } from '@/api/endpoints';
 import type {
   CredentialTagRequest,
-  ProviderConfig,
+  ProviderAccount,
   UntaggedCredential,
 } from '@/api/types';
 import { Button } from '@/components/ui/Button';
@@ -110,15 +110,17 @@ export function UntaggedCredentialsDialog({
     [entries, singleEntry],
   );
 
-  // Provider rows scoped to each entry's provider_id. Computed once
-  // per provider_configs fetch. The dropdown's available options match
-  // the entry, not the dialog-level staged state — the staged state
-  // only controls which row's Tag button is enabled.
-  const providerConfigsByProvider = useMemo<Record<string, ProviderConfig[]>>(() => {
+  // Per-account rows scoped to each entry's provider_id. The
+  // ``ProviderConfig`` response is provider-level — each provider's
+  // ``accounts`` field is the per-row list we actually let the
+  // operator pick from. Computed once per provider_configs fetch.
+  const accountsByProvider = useMemo<Record<string, ProviderAccount[]>>(() => {
     const list = providerConfigs.data?.providers ?? [];
-    const by_provider: Record<string, ProviderConfig[]> = {};
+    const by_provider: Record<string, ProviderAccount[]> = {};
     for (const p of list) {
-      (by_provider[p.provider_id] ??= []).push(p);
+      if (p.accounts?.length) {
+        by_provider[p.provider_id] = p.accounts;
+      }
     }
     return by_provider;
   }, [providerConfigs.data]);
@@ -171,14 +173,14 @@ export function UntaggedCredentialsDialog({
             <UntaggedRow
               key={`${entry.sidecar_id}/${entry.provider_id}/${entry.credential_origin}`}
               entry={entry}
-              providerConfigs={providerConfigsByProvider[entry.provider_id] ?? []}
+              accounts={accountsByProvider[entry.provider_id] ?? []}
               currentSelection={state}
               onSelect={(accountId) => stage(entry, accountId)}
               onSave={() =>
                 save.mutate(
                   stageToBody(
                     entry,
-                    providerConfigsByProvider[entry.provider_id] ?? [],
+                    accountsByProvider[entry.provider_id] ?? [],
                     state,
                   ),
                 )
@@ -203,7 +205,7 @@ export function UntaggedCredentialsDialog({
 
 function stageToBody(
   entry: UntaggedCredential,
-  matchingProviderConfigs: ProviderConfig[],
+  matchingAccounts: ProviderAccount[],
   state: DialogState,
 ): CredentialTagRequest {
   // The state machine keeps a single staged selection per dialog open.
@@ -217,15 +219,15 @@ function stageToBody(
       state.account_id ||
       // Defensive: if the row's account_id wasn't staged yet (e.g. the
       // user clicked Save before the Select rendered), fall back to the
-      // first matching row's account_id so the click isn't a no-op.
-      matchingProviderConfigs[0]?.account_id ||
+      // first matching account's id so the click isn't a no-op.
+      matchingAccounts[0]?.account_id ||
       '',
   };
 }
 
 interface UntaggedRowProps {
   entry: UntaggedCredential;
-  providerConfigs: ProviderConfig[];
+  accounts: ProviderAccount[];
   currentSelection: DialogState;
   onSelect: (accountId: string) => void;
   onSave: () => void;
@@ -234,7 +236,7 @@ interface UntaggedRowProps {
 
 function UntaggedRow({
   entry,
-  providerConfigs,
+  accounts,
   currentSelection,
   onSelect,
   onSave,
@@ -264,7 +266,7 @@ function UntaggedRow({
         </div>
       </div>
 
-      {providerConfigs.length === 0 ? (
+      {accounts.length === 0 ? (
         <p className="mt-2 flex items-center gap-2 text-[12px] text-warning">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
           No <span className="font-mono">{entry.provider_id}</span> row configured.{' '}
@@ -291,13 +293,13 @@ function UntaggedRow({
                 <SelectValue placeholder="Pick a configured account…" />
               </SelectTrigger>
               <SelectContent>
-                {providerConfigs.map((p) => (
+                {accounts.map((a) => (
                   <SelectItem
-                    key={`${p.provider_id}/${p.account_id}`}
-                    value={p.account_id}
+                    key={`${entry.provider_id}/${a.account_id}`}
+                    value={a.account_id}
                   >
-                    {p.account_label || p.account_id}
-                    {p.account_label ? ` · ${p.account_id}` : ''}
+                    {a.account_label || a.account_id}
+                    {a.account_label ? ` · ${a.account_id}` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>

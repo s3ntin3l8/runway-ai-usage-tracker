@@ -22,17 +22,22 @@ const entry = {
   credential_origin: 'provider:anthropic',
 };
 
+// Server response shape (PR #288 multi-account): each ProviderConfig
+// has an ``accounts`` array — one entry per ``provider_configs`` row.
+// The dialog iterates ``accounts``, not the provider-level fields.
 const anthropicRow = {
   provider_id: 'anthropic',
   name: 'Anthropic',
-  account_id: 'alice@example.com',
-  account_label: 'Alice',
+  accounts: [
+    { account_id: 'alice@example.com', account_label: 'Alice' },
+  ],
 };
 const chatgptRow = {
   provider_id: 'chatgpt',
   name: 'ChatGPT',
-  account_id: 'default',
-  account_label: 'Default',
+  accounts: [
+    { account_id: 'default', account_label: 'Default' },
+  ],
 };
 
 describe('UntaggedCredentialsDialog', () => {
