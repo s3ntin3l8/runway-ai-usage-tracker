@@ -1,19 +1,30 @@
 // Fleet: sidecar registry — status, identity, tags, throughput, logs, and
-// the pause/resume/rename/delete controls.
+// the pause/resume/rename/delete controls. Also hosts the
+// silent-listener "Untagged credentials" banner + per-card badge (PR #288).
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpCircle, Pause, Pencil, Play, RefreshCw, Server, Trash2 } from 'lucide-react';
+import {
+  ArrowUpCircle,
+  Pause,
+  Pencil,
+  Play,
+  RefreshCw,
+  Server,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   checkForUpdates,
   deleteSidecar,
   fetchSidecars,
+  fetchUntaggedCredentials,
   patchSidecar,
   setSidecarEnabled,
   triggerSidecarUpdate,
 } from '@/api/endpoints';
-import type { Sidecar } from '@/api/types';
+import type { Sidecar, UntaggedCredential } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -24,6 +35,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
+import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
 // gated on stale_threshold_minutes) so there's one source of truth — a
@@ -45,10 +57,24 @@ export function FleetPage() {
     queryFn: fetchSidecars,
     refetchInterval: 60_000,
   });
+  // Silent-listener pending credentials (PR #288). Polled on the same
+  // cadence as the sidecar list so the banner and per-card badge stay
+  // current without forcing a fresh sidecar heartbeat on the wire.
+  const untagged = useQuery({
+    queryKey: ['fleet', 'untagged_credentials', 'all'],
+    queryFn: () => fetchUntaggedCredentials(),
+    refetchInterval: 60_000,
+  });
   const [editing, setEditing] = useState<Sidecar | null>(null);
   const [deleting, setDeleting] = useState<Sidecar | null>(null);
   const [updating, setUpdating] = useState<Sidecar | null>(null);
   const [confirmUpdateAll, setConfirmUpdateAll] = useState(false);
+  // Silent-listener dialog state. ``null`` = closed; an
+  // ``UntaggedCredential`` = single-row entry (per-card badge); ``undefined`` =
+  // open in banner mode (all pending rows for the operator).
+  const [tagDialogEntry, setTagDialogEntry] = useState<UntaggedCredential | null | undefined>(
+    undefined,
+  );
 
   const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
 
@@ -136,22 +162,41 @@ export function FleetPage() {
             description="Install the Runway sidecar on a machine you work from; it will register here on its first check-in."
           />
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {sidecars.data!.sidecars.map((s) => (
-              <SidecarCard
-                key={s.sidecar_id}
-                sidecar={s}
-                onEdit={() => setEditing(s)}
-                onDelete={() => setDeleting(s)}
-                onUpdate={() => setUpdating(s)}
-              />
-            ))}
-          </div>
+          <>
+            <UntaggedBanner
+              counts={untagged.data?.counts_by_sidecar ?? {}}
+              items={untagged.data?.items ?? []}
+              loading={untagged.isPending}
+              onResolveAll={() => setTagDialogEntry(null)}
+              onResolveOne={(entry) => setTagDialogEntry(entry)}
+            />
+            <div className="grid gap-3 lg:grid-cols-2">
+              {sidecars.data!.sidecars.map((s) => (
+                <SidecarCard
+                  key={s.sidecar_id}
+                  sidecar={s}
+                  untaggedCount={untagged.data?.counts_by_sidecar[s.sidecar_id] ?? 0}
+                  untaggedEntries={
+                    (untagged.data?.items ?? []).filter((e) => e.sidecar_id === s.sidecar_id)
+                  }
+                  onEdit={() => setEditing(s)}
+                  onDelete={() => setDeleting(s)}
+                  onUpdate={() => setUpdating(s)}
+                  onResolveUntagged={(entry) => setTagDialogEntry(entry)}
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
       <EditSidecarDialog sidecar={editing} onClose={() => setEditing(null)} />
       <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
       <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
+      <UntaggedCredentialsDialog
+        open={tagDialogEntry !== undefined}
+        singleEntry={tagDialogEntry ?? undefined}
+        onClose={() => setTagDialogEntry(undefined)}
+      />
       <ResponsiveDialog
         open={confirmUpdateAll}
         onOpenChange={(open) => {
@@ -183,14 +228,20 @@ export function FleetPage() {
 
 function SidecarCard({
   sidecar,
+  untaggedCount,
+  untaggedEntries,
   onEdit,
   onDelete,
   onUpdate,
+  onResolveUntagged,
 }: {
   sidecar: Sidecar;
+  untaggedCount: number;
+  untaggedEntries: UntaggedCredential[];
   onEdit: () => void;
   onDelete: () => void;
   onUpdate: () => void;
+  onResolveUntagged: (entry: UntaggedCredential) => void;
 }) {
   const queryClient = useQueryClient();
   const online = isOnline(sidecar);
@@ -253,7 +304,7 @@ function SidecarCard({
             </div>
           </div>
 
-          {(sidecar.tags?.length ?? 0) > 0 || paused ? (
+          {(sidecar.tags?.length ?? 0) > 0 || paused || untaggedCount > 0 ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
               {(sidecar.tags ?? []).map((tag) => (
@@ -261,6 +312,21 @@ function SidecarCard({
                   {tag}
                 </Badge>
               ))}
+              {untaggedCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => onResolveUntagged(untaggedEntries[0])}
+                  className="rounded-md border border-warning/40 bg-warning-muted px-2 py-0.5 text-[11px] font-medium text-warning hover:border-warning"
+                  aria-label={`${untaggedCount} untagged credential${
+                    untaggedCount === 1 ? '' : 's'
+                  } — click to resolve`}
+                  title={`${untaggedCount} credential${
+                    untaggedCount === 1 ? '' : 's'
+                  } waiting for an operator tag`}
+                >
+                  Untagged: {untaggedCount}
+                </button>
+              ) : null}
             </div>
           ) : null}
 
@@ -497,3 +563,73 @@ function UpdateSidecarDialog({
     </ResponsiveDialog>
   );
 }
+
+function UntaggedBanner({
+  counts,
+  items,
+  loading,
+  onResolveAll,
+  onResolveOne,
+}: {
+  counts: Record<string, number>;
+  items: UntaggedCredential[];
+  loading: boolean;
+  onResolveAll: () => void;
+  onResolveOne: (entry: UntaggedCredential) => void;
+}) {
+  // Banner is hidden when nothing pending — same render path either way
+  // so the parent doesn't have to conditionalize.
+  const totalCount = Object.values(counts).reduce((acc, n) => acc + n, 0);
+  if (totalCount === 0 && !loading) return null;
+
+  return (
+    <Card className="mb-3 border-warning/40 bg-warning-muted p-3">
+      <div className="flex items-start gap-3">
+        <TriangleAlert
+          className="mt-0.5 size-4 shrink-0 text-warning"
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold">
+            Untagged credentials
+            <span className="ml-2 font-mono text-[11px] text-fg-muted">
+              {totalCount} pending
+            </span>
+          </p>
+          <p className="mt-0.5 text-[11px] text-fg-muted">
+            Sidecars are blocking these from upload until you map each to a configured provider row.
+          </p>
+
+          {Object.keys(counts).length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-1">
+              {Object.entries(counts).map(([sidecarId, count]) => {
+                const sidecarItems = items.filter((e) => e.sidecar_id === sidecarId);
+                return (
+                  <li key={sidecarId}>
+                    <button
+                      type="button"
+                      onClick={() => sidecarItems[0] && onResolveOne(sidecarItems[0])}
+                      className="rounded-md border border-warning/40 bg-surface-1 px-2 py-0.5 text-[11px] font-medium text-fg hover:border-warning"
+                      aria-label={`${count} untagged credential${
+                        count === 1 ? '' : 's'
+                      } on sidecar ${sidecarId} — click to resolve`}
+                      title={`${sidecarId}: ${count} pending`}
+                    >
+                      <span className="font-mono">{sidecarId}</span> · {count}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </div>
+
+        <Button size="sm" variant="primary" onClick={onResolveAll}>
+          Tag now
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+

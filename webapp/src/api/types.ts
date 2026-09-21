@@ -502,11 +502,41 @@ export interface Sidecar {
   // reported; false = from-source/Docker (no update push offered).
   self_update_capable?: boolean | null;
   // One-shot "Update now" push queued but not yet delivered (persisted
-  // server-side; survives a server restart until the sidecar's next check-in).
+  // server-side; survives a server restart until the sidecar's next
+  // successful ingest — see fleet_registry.set_pending_update/consume_pending_update).
   pending_update?: boolean;
   stale?: boolean;
   stale_threshold_minutes?: number;
   [key: string]: unknown;
+}
+
+// Silent-listener pending entry — a credential the sidecar reported but
+// the operator hasn't tagged yet. Surfaces on the fleet view (PR #288).
+export interface UntaggedCredential {
+  sidecar_id: string;
+  provider_id: string;
+  // Stable host-side descriptor; phase 1 ships `provider:<id>`,
+  // per-rule expansion is the follow-up issue.
+  credential_origin: string;
+  first_seen?: string | null;
+  last_seen?: string | null;
+}
+
+// Response shape of GET /api/v1/fleet/credentials/tags/pending — both the
+// flat item list and the per-sidecar counts the banner uses.
+export interface UntaggedCredentialsList {
+  items: UntaggedCredential[];
+  counts_by_sidecar: Record<string, number>;
+}
+
+// Body for POST /api/v1/fleet/credentials/tags — operator resolves a
+// pending entry into a server-side account_id by selecting one of the
+// provider_configs rows for the entry's provider_id.
+export interface CredentialTagRequest {
+  sidecar_id: string;
+  provider_id: string;
+  credential_origin: string;
+  account_id: string;
 }
 
 export interface SystemSettings {
