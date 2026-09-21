@@ -1183,7 +1183,7 @@ def test_run_collection_manifest_post_skipped_when_error_count_positive(monkeypa
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", _boom)
 
     # Stub cache so the fetch path is a no-op.
-    monkeypatch.setattr(sc, "_get_credential_cache", lambda: _StubCache())
+    monkeypatch.setattr(sc, "_get_credential_cache", _StubCache)
 
     sc.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
