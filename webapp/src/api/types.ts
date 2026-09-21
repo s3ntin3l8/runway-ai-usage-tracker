@@ -585,6 +585,7 @@ export interface CollectionStrategy {
 export interface ProviderAccount {
   account_id: string;
   enabled?: boolean;
+  archived?: boolean;
   api_key_set?: boolean;
   session_cookie_set?: boolean;
   account_label?: string | null;
