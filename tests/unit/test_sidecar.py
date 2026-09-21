@@ -992,6 +992,45 @@ class TestOpencodeDbPath:
 # ---------------------------------------------------------------------------
 
 
+class TestCredentialOriginForProvider:
+    """The ``credential_origin_for_provider`` helper is the seam between
+    the silent-listener block guard (looks up the operator's hint) and
+    the manifest ``blocked_origins`` entry (reports the unresolved
+    origin). PR #290 round-2 review (Hermes thread Vha6): a #289
+    widening changes the helper, not the two call sites — so the
+    guard and the manifest can't drift apart silently.
+
+    Phase 1 returns ``f"provider:{provider_id}"``. The shape is
+    pinned here so a future widening is intentional, not accidental.
+    """
+
+    def test_returns_phase1_coarse_descriptor(self):
+        from scripts.sidecar import credential_origin_for_provider
+
+        assert credential_origin_for_provider("anthropic") == "provider:anthropic"
+        assert credential_origin_for_provider("chatgpt") == "provider:chatgpt"
+
+    def test_descriptor_is_stable_across_call_sites(self):
+        """Guard-lookup and manifest-report must use the same string
+        for the same provider_id — that's the whole point of the
+        seam (PR #290 round-2 Hermes thread Vha6)."""
+        import scripts.sidecar as sc
+        from scripts.sidecar import credential_origin_for_provider
+
+        # The hint-lookup site in collect_provider
+        # (``provider_hints.get(<descriptor>)``) and the manifest
+        # entry site (``credential_origin: <descriptor>``) both
+        # call the helper, so any change to one shows up in both.
+        # We assert the helper's return value is consistent — the
+        # call-site equality is exercised by the integration tests.
+        assert (
+            credential_origin_for_provider("antigravity")
+            == "provider:antigravity"
+        )
+        # And the helper is importable / accessible at module scope.
+        assert hasattr(sc, "credential_origin_for_provider")
+
+
 class TestPostCredentialManifest:
     """The silent-listener manifest POST. PR #288 shipped the endpoint;
     PR #290 round-2 review added (a) the ``resolved``-field consumption
@@ -1152,49 +1191,60 @@ class TestPostCredentialManifest:
         callback.assert_called_once()
 
 
-def test_run_collection_manifest_post_skipped_when_error_count_positive(monkeypatch):
-    """PR #290 round-2 review: when ``error_count > 0`` the manifest
-    POST is suppressed — a provider whose ``collect_provider`` raised
-    contributed nothing to ``blocked_origins_this_cycle``, so the
-    server's ``delete_stale`` would prune its pending row. The
-    operator's "Untagged" entry would silently disappear while the
-    credential is still unresolved. Skip the prune until the next
-    clean cycle."""
+def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monkeypatch):
+    """PR #290 round-2 review (Hermes thread Vha0): the round-1
+    ``if error_count > 0`` gate suppressed the WHOLE manifest, so a
+    healthy provider's blocked origin was dropped while any single
+    provider kept raising — the operator's Untagged surface went
+    blind until that provider recovered. The fix scopes the prune
+    per-provider via the existing ``try/except``: providers whose
+    ``collect_provider`` raised contribute no entries to the
+    manifest, so the server's ``delete_stale`` never sees their keys.
+    The manifest POST must fire on a partial cycle so healthy
+    providers' blocked origins still ship."""
     import scripts.sidecar as sc
 
-    posted = {"called": False}
+    posted = {"called": False, "entries": []}
 
-    def _should_not_post(*args, **kwargs):
+    def _capture(*args, **kwargs):
         posted["called"] = True
+        posted["entries"] = kwargs.get("entries", [])
 
-    monkeypatch.setattr(sc, "_post_credential_manifest", _should_not_post)
+    monkeypatch.setattr(sc, "_post_credential_manifest", _capture)
 
-    # Empty the events providers list so the events loop is skipped —
-    # it would otherwise raise KeyError on
-    # ``_LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]`` since we don't
-    # populate it. We're testing the manifest gate, not the events loop.
+    # Empty the events providers list so the events loop is skipped.
     monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
 
-    # Patch collect_provider so it raises. We pick a real registry
-    # provider ("anthropic") so the loop actually enters.
-    def _boom(*args, **kwargs):
-        raise RuntimeError("provider exploded")
+    # Two providers in the registry, two different collect_provider
+    # behaviors: one raises, one returns a blocked origin. The
+    # manifest must still ship the healthy provider's blocked origin.
+    def _by_provider(provider_id, *args, **kwargs):
+        if provider_id == "anthropic":
+            raise RuntimeError("anthropic exploded")
+        return (
+            [],
+            [{"provider_id": provider_id, "credential_origin": f"provider:{provider_id}"}],
+        )
 
-    monkeypatch.setattr(sc.GenericCollector, "collect_provider", _boom)
+    monkeypatch.setattr(sc.GenericCollector, "collect_provider", _by_provider)
 
     # Stub cache so the fetch path is a no-op.
     monkeypatch.setattr(sc, "_get_credential_cache", _StubCache)
 
     sc.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
-        providers=["anthropic"],
+        providers=["anthropic", "chatgpt"],
     )
 
-    assert posted["called"] is False, (
-        "manifest POST must be suppressed when error_count > 0 — otherwise "
-        "delete_stale prunes pending rows for providers that raised, "
-        "silently hiding credentials that are still unresolved."
+    assert posted["called"], (
+        "manifest POST must fire on partial cycles so healthy providers' "
+        "blocked origins still ship (PR #290 round-2 Hermes thread Vha0)"
     )
+    # The healthy provider's blocked origin made it through; the
+    # raised provider's did not.
+    assert posted["entries"] == [
+        {"provider_id": "chatgpt", "credential_origin": "provider:chatgpt"}
+    ]
 
 
 def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, tmp_path):

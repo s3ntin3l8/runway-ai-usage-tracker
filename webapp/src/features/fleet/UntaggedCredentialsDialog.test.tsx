@@ -189,4 +189,70 @@ describe('UntaggedCredentialsDialog', () => {
     await within(dialog).findByText(/provider:anthropic/);
     expect(within(dialog).getByText(/provider:chatgpt/)).toBeInTheDocument();
   });
+
+  it('filters disabled accounts from the dropdown and surfaces an Enable hint', async () => {
+    // PR #290 round-2 review (Hermes body suggestion #4): tagging to
+    // a disabled row stores a hint the server won't collect (the
+    // /fleet/config ``accounts`` view only ships enabled rows).
+    // Filter disabled rows out and show an Enable hint instead.
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'anthropic',
+          name: 'Anthropic',
+          accounts: [
+            { account_id: 'alice@example.com', account_label: 'Alice', enabled: true },
+            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false },
+          ],
+        },
+      ],
+    });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    const trigger = within(dialog).getByRole('combobox');
+    await user.click(trigger);
+    // Only the enabled row appears; Bob is filtered out.
+    await screen.findByText('Alice · alice@example.com');
+    expect(screen.queryByText('Bob · bob@example.com')).not.toBeInTheDocument();
+  });
+
+  it('shows the "all rows disabled" message with an Enable link', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'anthropic',
+          name: 'Anthropic',
+          accounts: [
+            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false },
+          ],
+        },
+      ],
+    });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    // No Tag button when all rows are disabled.
+    expect(within(dialog).queryByRole('button', { name: /^tag$/i })).not.toBeInTheDocument();
+    // The Enable-in-Provider-Settings link is the precondition.
+    const link = await within(dialog).findByRole('link', {
+      name: /enable in provider settings/i,
+    });
+    expect(link.closest('p')?.textContent).toMatch(/all .*anthropic.* rows? configured .* disabled/i);
+  });
 });

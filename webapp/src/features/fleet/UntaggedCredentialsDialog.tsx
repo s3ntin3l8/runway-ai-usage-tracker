@@ -252,6 +252,13 @@ function UntaggedRow({
 
   const selectedAccountId = isActive ? currentSelection.account_id : '';
 
+  // Filter out disabled accounts — tagging to a disabled row stores
+  // a hint the server won't collect (the sidecar's
+  // ``accounts`` view in /fleet/config only ships enabled rows).
+  // PR #290 round-2 review (Hermes body suggestion #4).
+  const enabledAccounts = accounts.filter((a) => a.enabled !== false);
+  const disabledCount = accounts.length - enabledAccounts.length;
+
   return (
     <Card className="p-3">
       <div className="flex items-start justify-between gap-3">
@@ -266,17 +273,35 @@ function UntaggedRow({
         </div>
       </div>
 
-      {accounts.length === 0 ? (
+      {enabledAccounts.length === 0 ? (
         <p className="mt-2 flex items-center gap-2 text-[12px] text-warning">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-          No <span className="font-mono">{entry.provider_id}</span> row configured.{' '}
-          <a
-            href={`/settings/providers#${entry.provider_id}`}
-            className="text-accent underline underline-offset-2"
-          >
-            Add one in Provider Settings
-          </a>
-          .
+          {accounts.length === 0 ? (
+            <>
+              No <span className="font-mono">{entry.provider_id}</span> row configured.{' '}
+              <a
+                href={`/settings/providers#${entry.provider_id}`}
+                className="text-accent underline underline-offset-2"
+              >
+                Add one in Provider Settings
+              </a>
+              .
+            </>
+          ) : (
+            <>
+              All {accounts.length}{' '}
+              <span className="font-mono">{entry.provider_id}</span> row
+              {accounts.length === 1 ? '' : 's'} configured{' '}
+              {disabledCount > 0 ? 'are' : 'is'} disabled.{' '}
+              <a
+                href={`/settings/providers#${entry.provider_id}`}
+                className="text-accent underline underline-offset-2"
+              >
+                Enable in Provider Settings
+              </a>
+              .
+            </>
+          )}
         </p>
       ) : (
         <div className="mt-3 flex items-end gap-2">
@@ -293,7 +318,7 @@ function UntaggedRow({
                 <SelectValue placeholder="Pick a configured account…" />
               </SelectTrigger>
               <SelectContent>
-                {accounts.map((a) => (
+                {enabledAccounts.map((a) => (
                   <SelectItem
                     key={`${entry.provider_id}/${a.account_id}`}
                     value={a.account_id}

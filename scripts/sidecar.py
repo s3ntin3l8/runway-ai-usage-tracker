@@ -1839,6 +1839,24 @@ def _opencode_account_email(db_path: Path | None) -> str:
 # --- Generic Collector Engine ---
 
 
+def credential_origin_for_provider(provider_id: str) -> str:
+    """Return the stable credential-origin descriptor the sidecar
+    reports for a provider's blocked card.
+
+    Phase 1 (PR #288 / #290): one origin per provider per cycle,
+    ``f"provider:{provider_id}"``. The hint lookup in
+    ``GenericCollector.collect_provider``'s block guard and the
+    ``credential_origin`` field of the manifest ``blocked_origins``
+    entry both go through this helper so the guard and the manifest
+    can't drift apart.
+
+    Phase 2 (#289): widens to a per-rule origin list. The two call
+    sites stay the same; only this helper changes — that's the
+    seam.
+    """
+    return f"provider:{provider_id}"
+
+
 class GenericCollector:
     """Orchestrates data collection based on registry rules."""
 
@@ -2229,7 +2247,7 @@ class GenericCollector:
             # provider per cycle (``provider:<provider_id>``). Per-rule
             # origin expansion is the follow-up issue.
             local_account_id = tokens.get("account_id")
-            hint_account_id = provider_hints.get(f"provider:{provider_id}")
+            hint_account_id = provider_hints.get(credential_origin_for_provider(provider_id))
             if local_account_id is not None:
                 resolved_account_id = local_account_id
             elif hint_account_id is not None:
@@ -2247,11 +2265,12 @@ class GenericCollector:
                 resolved_account_id = None
 
             if resolved_account_id is None:
+                origin = credential_origin_for_provider(provider_id)
                 logging.warning(
-                    f"  [{provider_id}] token card blocked (origin="
-                    f"provider:{provider_id}) — no account_id resolved "
-                    "(local discovery + server hint both empty); not shipping. "
-                    "Operator will see this in the fleet view's Untagged Credentials panel."
+                    f"  [{provider_id}] token card blocked (origin={origin}) — "
+                    "no account_id resolved (local discovery + server hint both empty); "
+                    "not shipping. Operator will see this in the fleet view's "
+                    "Untagged Credentials panel."
                 )
                 blocked_origins.append(
                     {
@@ -2260,7 +2279,7 @@ class GenericCollector:
                         # subdivide per-rule. Operators keying off this
                         # today get a single row per provider regardless
                         # of how many credentials the host has on disk.
-                        "credential_origin": f"provider:{provider_id}",
+                        "credential_origin": origin,
                     }
                 )
             else:
@@ -2697,20 +2716,31 @@ def run_collection(
 
     if error_count > 0:
         logging.debug(
-            f"manifest: skipped this cycle (error_count={error_count}); "
-            "would prune pending rows for providers that raised"
+            f"manifest: posting on a partial cycle (error_count={error_count}); "
+            "blocked origins from healthy providers still ship, "
+            "providers that raised are absent from the manifest so their "
+            "pending rows are NOT pruned"
         )
-    else:
-        try:
-            _post_credential_manifest(
-                api_url=(os.environ.get("RUNWAY_API_URL") or config.get("api_url")),
-                api_key=(os.environ.get("RUNWAY_API_KEY") or config.get("api_key") or ""),
-                sidecar_id=get_hostname(),
-                entries=blocked_origins_this_cycle,
-                on_resolved=_consume_resolved_into_cache,
-            )
-        except Exception as _e:
-            logging.debug(f"manifest: skipped ({_e})")
+    # PR #290 round-2 review (Hermes thread Vha0): the prune is scoped
+    # per-provider by what the manifest reports. The ``try/except``
+    # above already filters ``blocked_origins_this_cycle`` to providers
+    # whose ``collect_provider`` completed cleanly — so providers
+    # that raised contribute no entries, and the server's
+    # ``delete_stale`` never sees their keys. The ``if error_count > 0``
+    # gate from round-1 was over-broad: it dropped healthy providers'
+    # blocked origins while a single bad provider kept raising, leaving
+    # the operator's Untagged surface blind. Post unconditionally so
+    # the loop stays closed on every cycle.
+    try:
+        _post_credential_manifest(
+            api_url=(os.environ.get("RUNWAY_API_URL") or config.get("api_url")),
+            api_key=(os.environ.get("RUNWAY_API_KEY") or config.get("api_key") or ""),
+            sidecar_id=get_hostname(),
+            entries=blocked_origins_this_cycle,
+            on_resolved=_consume_resolved_into_cache,
+        )
+    except Exception as _e:
+        logging.debug(f"manifest: skipped ({_e})")
 
     return all_metrics, all_events, error_count
 
