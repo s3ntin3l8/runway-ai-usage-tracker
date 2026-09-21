@@ -386,7 +386,6 @@ class TestCredentialCache:
         return ``None`` AND leave the cache untouched — so the next cycle
         retries instead of silently working off an empty map for the
         entire TTL (PR #283 round-3 review)."""
-        import scripts.sidecar_pkg.credentials as creds
         from scripts.sidecar_pkg.credentials import CredentialCache
 
         cache = CredentialCache()
@@ -395,7 +394,10 @@ class TestCredentialCache:
             tokens={("anthropic", "default"): "tok"},
         )
 
-        with patch.object(creds, "_fetch_config_payload", return_value=None):
+        with patch(
+            "scripts.sidecar_pkg.credentials._fetch_config_payload",
+            return_value=None,
+        ):
             result = cache.refresh_from_config("https://api.example.com", fetch_tokens=True)
 
         assert result is None
@@ -409,7 +411,6 @@ class TestCredentialCache:
         payload (PR #283 round-3 review). Two consecutive
         ``_fetch_config_payload`` calls (one per view) would double the
         request load on every heartbeat."""
-        import scripts.sidecar_pkg.credentials as creds
         from scripts.sidecar_pkg.credentials import CredentialCache
 
         payload = {
@@ -435,7 +436,10 @@ class TestCredentialCache:
             return payload
 
         cache = CredentialCache()
-        with patch.object(creds, "_fetch_config_payload", side_effect=_counted_fetch):
+        with patch(
+            "scripts.sidecar_pkg.credentials._fetch_config_payload",
+            side_effect=_counted_fetch,
+        ):
             result = cache.refresh_from_config("https://api.example.com", fetch_tokens=True)
 
         assert result == (1, 1)
