@@ -405,7 +405,7 @@ class TestCollectProviderBlockGuard:
                     "type": "file",
                     "paths": ["~/nonexistent-credential-file.json"],
                     "format": "json",
-                    "mapping": {"apiKey": "api_key"},
+                    "mapping": {"apiKey": "api_key"},  # pragma: allowlist secret
                 },
             ],
         }
@@ -484,7 +484,7 @@ class TestCollectProviderBlockGuard:
                         "type": "file",
                         "paths": ["~/no-such-credential-file.json"],
                         "format": "json",
-                        "mapping": {"apiKey": "api_key"},
+                        "mapping": {"apiKey": "api_key"},  # pragma: allowlist secret
                     },
                 ],
             },
