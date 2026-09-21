@@ -2330,6 +2330,10 @@ def run_collection(
     # still contribute their ``account_id`` here, so the per-account
     # attribution fix isn't gated on those conditions (PR #283 review).
     #
+    # On a fetch failure the cache retains its prior snapshot — the next
+    # cycle retries; a transient outage shouldn't suppress identity hints
+    # for the whole 10-min TTL (PR #283 round-3 review).
+    #
     # The whole block (lazy import + cache init + network fetch) is
     # wrapped in a single guarded ``try`` so a failure at any point —
     # including missing credentials module on a frozen binary — falls
@@ -2344,7 +2348,12 @@ def run_collection(
             api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
             if api_url_for_tokens:
                 fetched = fetch_identity_hints(api_url_for_tokens)
-                cache.replace(fetched)
+                # ``fetched is None`` distinguishes outage from a valid
+                # empty response. The cache skips the update on None, so
+                # the prior snapshot survives and ``is_fresh()`` returns
+                # False at the next call.
+                if fetched is not None:
+                    cache.replace(accounts=fetched)
         server_accounts_by_provider = cache.provider_accounts()
     except Exception as _e:
         # Defensive: never let identity-fetch failures kill collection.
@@ -2427,18 +2436,10 @@ def run_collection(
                             provider_accounts,
                         )
                     scoped_accounts = [local_account_id]
-                elif provider_accounts:
-                    # Local discovery returned nothing usable. Stay with
-                    # legacy single-account behavior: stamp with
-                    # "default" so events don't disappear.
-                    logging.debug(
-                        "  [%s] no local identity; using legacy 'default'",
-                        provider_id,
-                    )
-                    scoped_accounts = ["default"]
                 else:
-                    # Server has nothing and local discovery returned
-                    # nothing — same as the previous branch.
+                    # Either the server has rows but local discovery came
+                    # back empty, or both are empty — either way, fall
+                    # back to legacy "default" so events don't disappear.
                     scoped_accounts = ["default"]
 
                 _extract_events_for_provider(

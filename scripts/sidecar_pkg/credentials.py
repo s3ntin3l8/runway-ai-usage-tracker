@@ -3,9 +3,9 @@
 Reads the server's ``/fleet/config`` and exposes two decoupled views:
 
 - ``provider_accounts()`` returns ``{provider_id: [account_id, ...]}`` for
-  every account the server has registered, **independent of whether a
-  credential_token is attached**. Identity hints live in the public
-  ``accounts[*].account_id`` field; tokens are conditional on
+  every **enabled** account the server has registered, **independent of
+  whether a credential_token is attached**. Identity hints live in the
+  public ``accounts[*].account_id`` field; tokens are conditional on
   ``INGEST_API_KEY`` being configured and the row having at least one
   credential. Tying the per-account event iteration to token *presence*
   would silently no-op the #272 attribution fix in any configuration
@@ -27,29 +27,25 @@ from __future__ import annotations
 import json
 import logging
 import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_identity_hints(
+def _fetch_config_payload(
     api_url: str,
     *,
     timeout: int = 10,
-) -> dict[str, list[str]]:
-    """Fetch per-account identity hints from ``GET /api/v1/fleet/config``.
+) -> dict[str, Any] | None:
+    """Single ``GET /api/v1/fleet/config`` round-trip.
 
-    Returns ``{provider_id: [account_id, ...]}`` for every enabled row in
-    the server's provider_configs. **Decoupled from token issuance** —
-    rows without credentials and configurations with empty
-    ``INGEST_API_KEY`` still contribute their ``account_id`` to this map,
-    so the per-account event iteration that fixes #272 is not silently
-    disabled by either condition (PR #283 review).
+    Returns the parsed JSON payload (``{"config": {...}}``) on success,
+    or ``None`` on any failure — HTTP error, non-200 status, malformed
+    JSON, missing ``config`` key.
 
-    On HTTP error / non-200 response / malformed JSON / non-dict
-    ``config``, returns an empty dict — sidecar collection must keep
-    working when the server is unreachable (e.g. before the first
-    heartbeat). The caller decides whether to fall back to legacy
-    single-account stamping.
+    The two public fetchers share this so they don't double-round-trip
+    when both are needed by ``refresh_from_config(fetch_tokens=True)``
+    (PR #283 round-3 review).
     """
     from urllib import error, request
 
@@ -60,13 +56,20 @@ def fetch_identity_hints(
     try:
         with request.urlopen(req, timeout=timeout, context=build_context(url)) as resp:
             if resp.getcode() != 200:
-                logger.debug("fetch_identity_hints: %s returned %s", url, resp.getcode())
-                return {}
-            payload = json.loads(resp.read().decode("utf-8"))
+                logger.debug("fetch_config: %s returned %s", url, resp.getcode())
+                return None
+            return json.loads(resp.read().decode("utf-8"))
     except (error.HTTPError, error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        logger.debug("fetch_identity_hints: %s failed: %s", url, exc)
-        return {}
+        logger.debug("fetch_config: %s failed: %s", url, exc)
+        return None
 
+
+def _parse_identity_hints(payload: dict[str, Any]) -> dict[str, list[str]]:
+    """Extract ``{provider_id: [account_id, ...]}`` from a /fleet/config payload.
+
+    Only **enabled** rows contribute (matches /fleet/config's behavior of
+    omitting tokens for disabled rows; PR #283 round-3 review).
+    """
     cfg = payload.get("config") if isinstance(payload, dict) else None
     providers = cfg.get("providers") if isinstance(cfg, dict) else None
     if not isinstance(providers, dict):
@@ -79,45 +82,19 @@ def fetch_identity_hints(
         for acct in entry.get("accounts") or []:
             if not isinstance(acct, dict):
                 continue
+            if not acct.get("enabled", False):
+                continue
             aid = acct.get("account_id")
             if isinstance(aid, str) and aid:
                 out.setdefault(provider_id, []).append(aid)
     return out
 
 
-def fetch_credential_tokens(
-    api_url: str,
-    *,
-    timeout: int = 10,
-) -> dict[tuple[str, str], str]:
-    """Fetch per-account credential tokens from ``GET /api/v1/fleet/config``.
+def _parse_credential_tokens(payload: dict[str, Any]) -> dict[tuple[str, str], str]:
+    """Extract ``{(provider_id, account_id): token}`` from a /fleet/config payload.
 
-    Returns a ``{(provider_id, account_id): token}`` map. Tokens are only
-    issued by the server when ``INGEST_API_KEY`` is configured and the row
-    has at least one credential — so this dict is *strictly a subset* of
-    the identity hints from :func:`fetch_identity_hints`. The wider
-    identity map is what drives per-account event iteration; this is the
-    supplementary view reserved for the future redeem handler.
-
-    On HTTP error / non-200 response / malformed JSON / non-dict ``config``,
-    returns an empty dict.
+    Disabled rows produce no token regardless of credential content.
     """
-    from urllib import error, request
-
-    from scripts.sidecar_pkg.tls import build_context
-
-    url = f"{api_url.rstrip('/')}/api/v1/fleet/config"
-    req = request.Request(url)
-    try:
-        with request.urlopen(req, timeout=timeout, context=build_context(url)) as resp:
-            if resp.getcode() != 200:
-                logger.debug("fetch_credential_tokens: %s returned %s", url, resp.getcode())
-                return {}
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (error.HTTPError, error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        logger.debug("fetch_credential_tokens: %s failed: %s", url, exc)
-        return {}
-
     cfg = payload.get("config") if isinstance(payload, dict) else None
     providers = cfg.get("providers") if isinstance(cfg, dict) else None
     if not isinstance(providers, dict):
@@ -130,11 +107,56 @@ def fetch_credential_tokens(
         for acct in entry.get("accounts") or []:
             if not isinstance(acct, dict):
                 continue
+            if not acct.get("enabled", False):
+                continue
             aid = acct.get("account_id")
             token = acct.get("credential_token")
             if isinstance(aid, str) and isinstance(token, str) and aid and token:
                 out[(provider_id, aid)] = token
     return out
+
+
+def fetch_identity_hints(
+    api_url: str,
+    *,
+    timeout: int = 10,
+) -> dict[str, list[str]] | None:
+    """Fetch per-account identity hints from ``GET /api/v1/fleet/config``.
+
+    Returns ``{provider_id: [account_id, ...]}`` for every **enabled**
+    account row in the server's provider_configs. **Decoupled from
+    token issuance** — rows without credentials and configurations with
+    empty ``INGEST_API_KEY`` still contribute their ``account_id`` here,
+    so the per-account event iteration that fixes #272 is not silently
+    disabled by either condition (PR #283 review).
+
+    Returns ``None`` when the fetch fails (network error, non-200,
+    malformed JSON). Callers must distinguish this from an empty dict —
+    an empty dict is a successful response with no enabled rows; ``None``
+    is an outage where the prior cache should be retained and the next
+    cycle should retry (PR #283 round-3 review).
+    """
+    payload = _fetch_config_payload(api_url, timeout=timeout)
+    if payload is None:
+        return None
+    return _parse_identity_hints(payload)
+
+
+def fetch_credential_tokens(
+    api_url: str,
+    *,
+    timeout: int = 10,
+) -> dict[tuple[str, str], str] | None:
+    """Fetch per-account credential tokens from ``GET /api/v1/fleet/config``.
+
+    Returns ``None`` on a fetch failure (caller should keep the prior
+    cache, retry on the next cycle). Returns an empty dict on success
+    with no tokens issued.
+    """
+    payload = _fetch_config_payload(api_url, timeout=timeout)
+    if payload is None:
+        return None
+    return _parse_credential_tokens(payload)
 
 
 class CredentialCache:
@@ -146,6 +168,10 @@ class CredentialCache:
 
     The cache is *strictly* per-process and never persisted. A sidecar
     restart means a fresh fetch.
+
+    On a fetched outage, ``replace()`` and ``refresh_from_config()`` skip
+    the cache write entirely — the prior snapshot is retained and the
+    next cycle retries. This is the round-3 review fix.
     """
 
     def __init__(self, *, ttl_seconds: int = 600) -> None:
@@ -157,14 +183,10 @@ class CredentialCache:
         self._identities_fetched_at: float = 0.0
         self._tokens_fetched_at: float = 0.0
         self._accounts: dict[str, list[str]] = {}
-        # ``str | None`` because ``fetch_credential_tokens`` omits pairs
-        # where the server didn't issue a token (empty INGEST_API_KEY,
-        # row has no credentials). Future redeem code will skip pairs
-        # whose value is ``None``.
-        self._tokens: dict[tuple[str, str], str | None] = {}
+        self._tokens: dict[tuple[str, str], str] = {}
 
     @property
-    def tokens(self) -> dict[tuple[str, str], str | None]:
+    def tokens(self) -> dict[tuple[str, str], str]:
         return dict(self._tokens)
 
     def is_fresh(self, *, now: float | None = None) -> bool:
@@ -172,7 +194,8 @@ class CredentialCache:
 
         A never-populated cache is never fresh. Distinguish via the
         ``_identities_fetched_at == 0.0`` sentinel that ``__init__``
-        writes.
+        writes. Critically, a fetch that returned ``None`` does NOT set
+        this sentinel — the next cycle keeps trying.
         """
         ts = now if now is not None else time.time()
         if self._identities_fetched_at == 0.0:
@@ -184,50 +207,64 @@ class CredentialCache:
         api_url: str,
         *,
         fetch_tokens: bool = False,
-    ) -> tuple[int, int]:
-        """Re-fetch ``/fleet/config`` and replace the cached identity hints
-        (and, optionally, tokens).
+    ) -> tuple[int, int] | None:
+        """Re-fetch ``/fleet/config`` and replace the cached snapshot.
 
-        Returns ``(account_count, token_count)``. Both fetches go to the
-        same endpoint — when ``fetch_tokens`` is False (the common path),
-        we only deserialize the identity view we actually need.
+        Single round-trip — when ``fetch_tokens`` is True, both views
+        deserialize from the same payload (PR #283 round-3 review).
+
+        Returns ``(account_count, token_count)`` on a successful fetch,
+        or ``None`` on a fetch failure. ``None`` is the canonical signal
+        to the caller that the prior snapshot is still in the cache and
+        should be reused as-is.
         """
-        accounts = fetch_identity_hints(api_url)
+        payload = _fetch_config_payload(api_url)
+        if payload is None:
+            # Outage — leave the cache untouched. ``is_fresh`` stays at
+            # its prior value (likely False), so the next cycle retries.
+            return None
+
+        accounts = _parse_identity_hints(payload)
+        tokens = _parse_credential_tokens(payload) if fetch_tokens else {}
+
         self._accounts = accounts
         self._identities_fetched_at = time.time()
         if fetch_tokens:
-            self._tokens = fetch_credential_tokens(api_url)
+            self._tokens = tokens
             self._tokens_fetched_at = time.time()
-        else:
-            self._tokens = {}
-            self._tokens_fetched_at = 0.0
         return (
             sum(len(v) for v in accounts.values()),
-            len(self._tokens),
+            len(tokens),
         )
 
     def replace(
         self,
-        accounts: dict[str, list[str]],
         *,
-        tokens: dict[tuple[str, str], str | None] | None = None,
+        accounts: dict[str, list[str]] | None = None,
+        tokens: dict[tuple[str, str], str] | None = None,
     ) -> None:
         """Bulk-set the cache from an externally-fetched mapping.
 
+        Pass ``accounts=None`` to keep the existing identity view; pass
+        ``accounts={}`` to clear it. ``tokens`` follows the same pattern
+        for the token view.
+
         Used by ``run_collection`` when it fetches the config directly.
-        Pass ``tokens=None`` to keep the existing token cache; pass
-        ``tokens={}`` to clear it.
+        On a fetch failure (returned ``None`` from the fetcher), the
+        caller should skip this call entirely so the prior snapshot is
+        retained.
         """
-        self._accounts = {k: list(v) for k, v in accounts.items()}
-        self._identities_fetched_at = time.time()
+        if accounts is not None:
+            self._accounts = {k: list(v) for k, v in accounts.items()}
+            self._identities_fetched_at = time.time()
         if tokens is not None:
             self._tokens = dict(tokens)
             self._tokens_fetched_at = time.time()
 
     def provider_accounts(self) -> dict[str, list[str]]:
-        """Return ``{provider_id: [account_id, ...]}`` for every account
-        the server has registered — independent of whether a credential
-        token was issued.
+        """Return ``{provider_id: [account_id, ...]}`` for every enabled
+        account the server has registered — independent of whether a
+        credential token was issued.
 
         **Order is arbitrary** (it mirrors the server's JSON
         serialization of ``provider_configs`` rows). Callers must not

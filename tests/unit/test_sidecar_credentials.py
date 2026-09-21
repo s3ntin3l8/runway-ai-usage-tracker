@@ -53,16 +53,21 @@ class TestFetchIdentityHints:
     ``account_id`` here — gating identity discovery on token presence
     would silently no-op the #272 attribution fix in any configuration
     where the row has no credentials or INGEST_API_KEY is empty
-    (PR #283 review)."""
+    (PR #283 review).
 
-    def test_returns_empty_when_urlopen_raises(self):
+    The function returns ``None`` on fetch failures (outage) to distinguish
+    that from a successful empty response (PR #283 round-3 review).
+    """
+
+    def test_returns_none_when_urlopen_raises(self):
         from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
             with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
-                assert fetch_identity_hints("https://api.example.com") == {}
+                result = fetch_identity_hints("https://api.example.com")
+                assert result is None
 
-    def test_returns_empty_on_non_200(self):
+    def test_returns_none_on_non_200(self):
         from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
@@ -73,7 +78,8 @@ class TestFetchIdentityHints:
                 )
                 ctx.__exit__ = MagicMock(return_value=False)
                 mock_urlopen.return_value = ctx
-                assert fetch_identity_hints("https://api.example.com") == {}
+                result = fetch_identity_hints("https://api.example.com")
+                assert result is None
 
     def test_parses_per_account_ids_independent_of_token(self):
         from scripts.sidecar_pkg.credentials import fetch_identity_hints
@@ -84,19 +90,28 @@ class TestFetchIdentityHints:
                     "providers": {
                         "anthropic": {
                             "accounts": [
-                                {"account_id": "default", "credential_token": "tok-default"},
+                                {
+                                    "account_id": "default",
+                                    "credential_token": "tok-default",
+                                    "enabled": True,
+                                },
                                 {
                                     "account_id": "alice@example.com",
                                     "credential_token": "tok-alice",
+                                    "enabled": True,
                                 },
                                 # Token-less row — must STILL appear in the
                                 # identity hints.
-                                {"account_id": "bob@example.com"},
+                                {"account_id": "bob@example.com", "enabled": True},
                             ]
                         },
                         "chatgpt": {
                             "accounts": [
-                                {"account_id": "default", "credential_token": "tok-chatgpt"}
+                                {
+                                    "account_id": "default",
+                                    "credential_token": "tok-chatgpt",
+                                    "enabled": True,
+                                }
                             ]
                         },
                         "empty": {"accounts": []},
@@ -123,11 +138,58 @@ class TestFetchIdentityHints:
         # Provider with no accounts is absent.
         assert "empty" not in result
 
+    def test_skips_disabled_rows(self):
+        """Disabled rows (the per-account enable toggle) must NOT appear in
+        the identity hints, regardless of credential presence (PR #283
+        round-3 review)."""
+        from scripts.sidecar_pkg.credentials import fetch_identity_hints
+
+        payload = json.dumps(
+            {
+                "config": {
+                    "providers": {
+                        "anthropic": {
+                            "accounts": [
+                                {
+                                    "account_id": "default",
+                                    "credential_token": "tok-default",
+                                    "enabled": True,
+                                },
+                                {
+                                    "account_id": "alice@example.com",
+                                    "credential_token": "tok-alice",
+                                    "enabled": False,
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        ).encode()
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                ctx = MagicMock()
+                ctx.__enter__ = MagicMock(
+                    return_value=MagicMock(
+                        getcode=MagicMock(return_value=200), read=MagicMock(return_value=payload)
+                    )
+                )
+                ctx.__exit__ = MagicMock(return_value=False)
+                mock_urlopen.return_value = ctx
+                result = fetch_identity_hints("https://api.example.com")
+
+        # Disabled row is filtered out.
+        assert result == {"anthropic": ["default"]}
+
 
 class TestFetchCredentialTokens:
     """``fetch_credential_tokens`` is the supplementary token map. It's a
     subset of the identity hints — rows where the server didn't issue a
-    token (no credentials, or empty INGEST_API_KEY) are simply absent."""
+    token (no credentials, or empty INGEST_API_KEY) are simply absent.
+
+    Like :func:`fetch_identity_hints`, returns ``None`` on fetch failure
+    (PR #283 round-3 review).
+    """
 
     def test_parses_per_account_tokens(self):
         from scripts.sidecar_pkg.credentials import fetch_credential_tokens
@@ -138,20 +200,29 @@ class TestFetchCredentialTokens:
                     "providers": {
                         "anthropic": {
                             "accounts": [
-                                {"account_id": "default", "credential_token": "tok-default"},
+                                {
+                                    "account_id": "default",
+                                    "credential_token": "tok-default",
+                                    "enabled": True,
+                                },
                                 {
                                     "account_id": "alice@example.com",
                                     "credential_token": "tok-alice",
+                                    "enabled": True,
                                 },
                                 # Row without a token — dropped here (the
                                 # identity view keeps it; this view is the
                                 # subset of issued tokens only).
-                                {"account_id": "bob@example.com"},
+                                {"account_id": "bob@example.com", "enabled": True},
                             ]
                         },
                         "chatgpt": {
                             "accounts": [
-                                {"account_id": "default", "credential_token": "tok-chatgpt"}
+                                {
+                                    "account_id": "default",
+                                    "credential_token": "tok-chatgpt",
+                                    "enabled": True,
+                                }
                             ]
                         },
                     }
@@ -176,6 +247,56 @@ class TestFetchCredentialTokens:
             ("anthropic", "alice@example.com"): "tok-alice",
             ("chatgpt", "default"): "tok-chatgpt",
         }
+
+    def test_returns_none_when_urlopen_raises(self):
+        from scripts.sidecar_pkg.credentials import fetch_credential_tokens
+
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
+                result = fetch_credential_tokens("https://api.example.com")
+                assert result is None
+
+    def test_skips_disabled_rows(self):
+        """Disabled rows contribute no tokens (PR #283 round-3 review)."""
+        from scripts.sidecar_pkg.credentials import fetch_credential_tokens
+
+        payload = json.dumps(
+            {
+                "config": {
+                    "providers": {
+                        "anthropic": {
+                            "accounts": [
+                                {
+                                    "account_id": "default",
+                                    "credential_token": "tok-default",
+                                    "enabled": True,
+                                },
+                                {
+                                    "account_id": "alice@example.com",
+                                    "credential_token": "tok-alice",
+                                    "enabled": False,
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        ).encode()
+        with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                ctx = MagicMock()
+                ctx.__enter__ = MagicMock(
+                    return_value=MagicMock(
+                        getcode=MagicMock(return_value=200), read=MagicMock(return_value=payload)
+                    )
+                )
+                ctx.__exit__ = MagicMock(return_value=False)
+                mock_urlopen.return_value = ctx
+                result = fetch_credential_tokens("https://api.example.com")
+
+        # Disabled row is filtered out.
+        assert ("anthropic", "alice@example.com") not in result
+        assert ("anthropic", "default") in result
 
 
 class TestCredentialCache:
@@ -242,6 +363,87 @@ class TestCredentialCache:
         assert cache.is_fresh(now=baseline)
         # Stale after TTL
         assert not cache.is_fresh(now=baseline + 61)
+
+    def test_replace_preserves_view_when_argument_is_none(self):
+        """``replace(accounts=None, tokens=X)`` keeps the existing
+        identity view, and vice versa. Lets ``run_collection`` skip
+        either side independently when its fetch returned None (PR #283
+        round-3 review)."""
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        cache.replace(
+            accounts={"anthropic": ["default"]},
+            tokens={("anthropic", "default"): "tok"},
+        )
+        # Replace only tokens → identity view intact.
+        cache.replace(tokens={("anthropic", "default"): "tok2"})
+        assert cache.provider_accounts() == {"anthropic": ["default"]}
+        assert cache.tokens == {("anthropic", "default"): "tok2"}
+
+    def test_refresh_from_config_keeps_prior_snapshot_on_outage(self):
+        """When the server is unreachable, ``refresh_from_config`` must
+        return ``None`` AND leave the cache untouched — so the next cycle
+        retries instead of silently working off an empty map for the
+        entire TTL (PR #283 round-3 review)."""
+        import scripts.sidecar_pkg.credentials as creds
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        cache = CredentialCache()
+        cache.replace(
+            accounts={"anthropic": ["default"]},
+            tokens={("anthropic", "default"): "tok"},
+        )
+
+        with patch.object(creds, "_fetch_config_payload", return_value=None):
+            result = cache.refresh_from_config("https://api.example.com", fetch_tokens=True)
+
+        assert result is None
+        # Cache state untouched.
+        assert cache.provider_accounts() == {"anthropic": ["default"]}
+        assert cache.tokens == {("anthropic", "default"): "tok"}
+
+    def test_refresh_from_config_single_round_trip_when_fetch_tokens_true(self):
+        """``refresh_from_config(fetch_tokens=True)`` must share ONE
+        underlying HTTP fetch — both views deserialize from the same
+        payload (PR #283 round-3 review). Two consecutive
+        ``_fetch_config_payload`` calls (one per view) would double the
+        request load on every heartbeat."""
+        import scripts.sidecar_pkg.credentials as creds
+        from scripts.sidecar_pkg.credentials import CredentialCache
+
+        payload = {
+            "config": {
+                "providers": {
+                    "anthropic": {
+                        "accounts": [
+                            {
+                                "account_id": "default",
+                                "credential_token": "tok",
+                                "enabled": True,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        call_count = {"n": 0}
+
+        def _counted_fetch(*args, **kwargs):
+            call_count["n"] += 1
+            return payload
+
+        cache = CredentialCache()
+        with patch.object(creds, "_fetch_config_payload", side_effect=_counted_fetch):
+            result = cache.refresh_from_config("https://api.example.com", fetch_tokens=True)
+
+        assert result == (1, 1)
+        assert call_count["n"] == 1, (
+            "refresh_from_config(fetch_tokens=True) should hit the server once, "
+            f"not {call_count['n']} times — share the payload between views."
+        )
+        assert cache.tokens == {("anthropic", "default"): "tok"}
 
 
 # ---------------------------------------------------------------------------
