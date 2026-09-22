@@ -96,7 +96,14 @@ export function EventsTab({
                     {e.kind === 'error' ? (
                       <Badge variant="critical">error</Badge>
                     ) : (
-                      <span className="text-xs">{e.model_id ?? '—'}</span>
+                      <span className="inline-flex items-center gap-1.5 text-xs">
+                        {e.model_id ?? '—'}
+                        {e.effort ? (
+                          <Badge variant="neutral" className="uppercase" data-testid="effort-badge">
+                            {e.effort}
+                          </Badge>
+                        ) : null}
+                      </span>
                     )}
                   </TD>
                   <TD className="hidden text-xs text-fg-muted md:table-cell">
