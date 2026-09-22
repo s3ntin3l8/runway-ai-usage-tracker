@@ -148,6 +148,9 @@ def phase_b_effort(
         target = _pick_target(candidates, push)
         if target.effort == push.effort:
             continue
+        # Fill-only: a push with no variant must not clear a non-NULL effort.
+        if push.effort is None and target.effort is not None:
+            continue
         changed += 1
         touched.add(target.provider_id)
         if not dry_run:

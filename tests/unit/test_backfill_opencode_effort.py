@@ -139,20 +139,45 @@ def test_prefers_account_match_on_shared_event_id():
 
 
 def test_prefers_provider_match_on_shared_event_id():
-    """Same event_id under opencode + kimi_coding: the push's provider wins."""
+    """Same event_id under opencode + kimi_coding: the push's provider wins.
+
+    The push's provider (``opencode``) sorts *after* ``kimi_coding`` in the
+    SQL ``ORDER BY``, so without ``_pick_target``'s provider preference the
+    kimi_coding row would be picked first and this test would fail.
+    """
     s = _session()
     _add(s, "shared", provider_id="opencode", effort=None)
     _add(s, "shared", provider_id="kimi_coding", effort=None)
 
-    pushes = {"shared": _push("shared", effort="medium", provider_id="kimi_coding")}
+    pushes = {"shared": _push("shared", effort="medium", provider_id="opencode")}
 
     changed, touched = bf.phase_b_effort(s, pushes, dry_run=False)
     assert changed == 1
-    assert touched == {"kimi_coding"}
+    assert touched == {"opencode"}
 
     rows = {r.provider_id: r for r in s.exec(select(UsageEvent)).all()}
-    assert rows["kimi_coding"].effort == "medium"
-    assert rows["opencode"].effort is None
+    assert rows["opencode"].effort == "medium"
+    assert rows["kimi_coding"].effort is None
+
+
+def test_null_push_does_not_clear_existing_effort():
+    """Fill-only: a push with no variant must not wipe a non-NULL effort."""
+    s = _session()
+    _add(s, "filled", effort="high")
+    _add(s, "empty", effort=None)
+
+    pushes = {
+        "filled": _push("filled", effort=None),
+        "empty": _push("empty", effort=None),
+    }
+
+    changed, touched = bf.phase_b_effort(s, pushes, dry_run=False)
+    assert changed == 0
+    assert touched == set()
+
+    rows = {r.event_id: r for r in s.exec(select(UsageEvent)).all()}
+    assert rows["filled"].effort == "high"
+    assert rows["empty"].effort is None
 
 
 def test_missing_db_override_exits_nonzero(tmp_path, monkeypatch):
