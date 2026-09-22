@@ -75,7 +75,12 @@ _CANONICAL_TARGETS = tuple(pid for pid, _ in _OC_CANONICAL_MAP.values())
 def _discover_db_paths(db_override: Path | None = None) -> list[Path]:
     """Return existing OpenCode DB paths (both historical locations), or [override]."""
     if db_override is not None:
-        return [db_override] if db_override.exists() else []
+        if db_override.exists():
+            return [db_override]
+        raise FileNotFoundError(
+            f"--db override not found: {db_override} "
+            "(default discovery looks at ~/.local/share/opencode and ~/.opencode)"
+        )
     candidates = [
         Path.home() / ".local/share/opencode/opencode.db",
         Path.home() / ".opencode/opencode.db",
@@ -87,13 +92,24 @@ def _collect_pushes(db_paths: list[Path]) -> dict[str, UsageEventPush]:
     """Re-parse OpenCode DB(s) → {event_id: push}. First path wins on collision."""
     if not db_paths:
         return {}
-    account_id = _opencode_account_email(db_paths[0])
     pushes: dict[str, UsageEventPush] = {}
     for db_path in db_paths:
+        # Resolve identity per path — two locations can carry different accounts.
+        account_id = _opencode_account_email(db_path)
         for push in parse_opencode_events(db_path, account_id=account_id, since=_EPOCH):
             if push.event_id not in pushes:
                 pushes[push.event_id] = push
     return pushes
+
+
+def _pick_target(candidates: list[UsageEvent], push: UsageEventPush) -> UsageEvent:
+    """Prefer provider_id match, then account_id; stable tie-break by ts then event order."""
+    by_provider = [c for c in candidates if c.provider_id == push.provider_id]
+    pool = by_provider or candidates
+    by_account = [c for c in pool if c.account_id == push.account_id]
+    if by_account:
+        return by_account[0]
+    return pool[0]
 
 
 def phase_b_effort(
@@ -109,7 +125,7 @@ def phase_b_effort(
                 | UsageEvent.provider_id.in_(list(_CANONICAL_TARGETS))  # type: ignore[attr-defined]
             ),
         )
-        .order_by(UsageEvent.ts)
+        .order_by(UsageEvent.ts, UsageEvent.provider_id, UsageEvent.account_id)
     )
     events = session.exec(stmt).all()
     print(f"Phase B — examining {len(events):,} opencode-derived message(s)…", flush=True)
@@ -127,8 +143,9 @@ def phase_b_effort(
         if not candidates:
             continue
         matched += 1
-        # Prefer the row whose account_id matches the push; else first candidate.
-        target = next((c for c in candidates if c.account_id == push.account_id), candidates[0])
+        # Prefer provider_id, then account_id (same event_id can exist under
+        # multiple providers, e.g. opencode + kimi_coding retags).
+        target = _pick_target(candidates, push)
         if target.effort == push.effort:
             continue
         changed += 1
@@ -156,7 +173,11 @@ def run(db_path: Path | None, dry_run: bool, skip_rollups: bool) -> None:
     # against a DB the server hasn't started against yet.
     init_db()
 
-    db_paths = _discover_db_paths(db_path)
+    try:
+        db_paths = _discover_db_paths(db_path)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(1) from exc
     if not db_paths:
         print(
             "No OpenCode DB found (~/.local/share/opencode or ~/.opencode) — nothing to backfill."
@@ -200,11 +221,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="Report changes without writing.")
     p.add_argument("--skip-rollups", action="store_true", help="Skip Phase C (rollup rebuild).")
     args = p.parse_args(argv)
-    run(
-        db_path=Path(args.db) if args.db else None,
-        dry_run=args.dry_run,
-        skip_rollups=args.skip_rollups,
-    )
+    try:
+        run(
+            db_path=Path(args.db) if args.db else None,
+            dry_run=args.dry_run,
+            skip_rollups=args.skip_rollups,
+        )
+    except SystemExit as exc:
+        return int(exc.code or 1)
     return 0
 
 

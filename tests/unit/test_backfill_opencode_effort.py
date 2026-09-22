@@ -138,6 +138,62 @@ def test_prefers_account_match_on_shared_event_id():
     assert rows["other@host"].effort is None
 
 
+def test_prefers_provider_match_on_shared_event_id():
+    """Same event_id under opencode + kimi_coding: the push's provider wins."""
+    s = _session()
+    _add(s, "shared", provider_id="opencode", effort=None)
+    _add(s, "shared", provider_id="kimi_coding", effort=None)
+
+    pushes = {"shared": _push("shared", effort="medium", provider_id="kimi_coding")}
+
+    changed, touched = bf.phase_b_effort(s, pushes, dry_run=False)
+    assert changed == 1
+    assert touched == {"kimi_coding"}
+
+    rows = {r.provider_id: r for r in s.exec(select(UsageEvent)).all()}
+    assert rows["kimi_coding"].effort == "medium"
+    assert rows["opencode"].effort is None
+
+
+def test_missing_db_override_exits_nonzero(tmp_path, monkeypatch):
+    """A typo'd --db must not read as success."""
+    monkeypatch.setattr(bf, "init_db", lambda: None)
+    missing = tmp_path / "nope.db"
+    assert bf.main(["--db", str(missing)]) == 1
+
+
+def test_collect_pushes_resolves_identity_per_path(monkeypatch):
+    """Each DB path resolves its own account_id — not db_paths[0] for all."""
+    from pathlib import Path
+
+    seen: list[str] = []
+
+    def _account(path):
+        seen.append(str(path))
+        return f"acct-for-{path.name}"
+
+    def _parse(path, *, account_id, since):
+        return [
+            UsageEventPush(
+                provider_id="opencode",
+                account_id=account_id,
+                event_id=f"ev-{path.name}",
+                ts="2026-05-08T14:00:00+00:00",
+                effort="high",
+            )
+        ]
+
+    monkeypatch.setattr(bf, "_opencode_account_email", _account)
+    monkeypatch.setattr(bf, "parse_opencode_events", _parse)
+
+    paths = [Path("/tmp/a.db"), Path("/tmp/b.db")]
+    pushes = bf._collect_pushes(paths)
+
+    assert seen == ["/tmp/a.db", "/tmp/b.db"]
+    assert pushes["ev-a.db"].account_id == "acct-for-a.db"
+    assert pushes["ev-b.db"].account_id == "acct-for-b.db"
+
+
 def test_main_dry_run_flag(monkeypatch):
     """argparse --dry-run routes through run() without raising."""
     called = {}
@@ -150,3 +206,70 @@ def test_main_dry_run_flag(monkeypatch):
     assert called["dry_run"] is True
     assert called["db_path"] is None
     assert called["skip_rollups"] is False
+
+
+def test_run_end_to_end_dry_run_and_apply(tmp_path, monkeypatch):
+    """Exercise run() itself: discovery → collect → phase B → (optionally) rollups."""
+    import sqlite3
+
+    from app.core.db import configure_sqlite_engine
+
+    db_path = tmp_path / "opencode.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, "
+        "time_created INTEGER, time_updated INTEGER, data TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO message VALUES (?,?,?,?,?)",
+        (
+            "msg1",
+            "ses1",
+            1778248860000,
+            1778248860000,
+            '{"role":"assistant","providerID":"opencode","modelID":"glm",'
+            '"tokens":{"input":10,"output":5},"variant":"high"}',
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # Point the module's engine at an isolated file DB under tmp_path;
+    # skip init_db() (it would touch the shared app engine / lock the test DB).
+    monkeypatch.setattr(bf, "init_db", lambda: None)
+    test_engine = create_engine(f"sqlite:///{tmp_path}/runway.db", connect_args=SQLITE_CONNECT_ARGS)
+    configure_sqlite_engine(test_engine)
+    SQLModel.metadata.create_all(test_engine)
+    monkeypatch.setattr(bf, "engine", test_engine)
+
+    session = Session(test_engine)
+    pushes_probe = bf._collect_pushes([db_path])
+    assert pushes_probe, "fixture should parse at least one push"
+    real_eid = next(iter(pushes_probe))
+    _add(session, real_eid, effort=None)
+
+    rollup_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        bf,
+        "backfill_rollups",
+        lambda providers: rollup_calls.append(list(providers)) or 0,
+    )
+
+    # Dry-run: no write, no rollups.
+    bf.run(db_path=db_path, dry_run=True, skip_rollups=False)
+    with Session(test_engine) as verify:
+        row = verify.exec(select(UsageEvent).where(UsageEvent.event_id == real_eid)).one()
+        assert row.effort is None
+    assert rollup_calls == []
+
+    # Apply: writes effort and rebuilds rollups for touched providers.
+    bf.run(db_path=db_path, dry_run=False, skip_rollups=False)
+    with Session(test_engine) as verify:
+        row = verify.exec(select(UsageEvent).where(UsageEvent.event_id == real_eid)).one()
+        assert row.effort == pushes_probe[real_eid].effort
+        assert rollup_calls and rollup_calls[0] == sorted({row.provider_id})
+
+    # Apply with --skip-rollups: effort already set (idempotent), no Phase C.
+    rollup_calls.clear()
+    bf.run(db_path=db_path, dry_run=False, skip_rollups=True)
+    assert rollup_calls == []
