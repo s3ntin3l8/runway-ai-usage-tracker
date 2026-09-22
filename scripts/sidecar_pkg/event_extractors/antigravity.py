@@ -150,6 +150,23 @@ def _ag_looks_like_3x(raw: str, display: str) -> bool:
     return re.search(r"(?<![\d.])3(?![\d.])", display) is not None
 
 
+# Minors with dedicated antigravity pricing rows in pricing_seed.py. Any other
+# 3.x minor clamps to the major-only bucket: emitting flash-3.1 would miss the
+# exact row, version-strip to the cheaper bare "flash" family, and under-bill
+# with no warning (only segment-trim logs).
+_SEEDED_MINORS: dict[str, frozenset[str]] = {
+    "flash": frozenset({"3.5", "3.6", "3.7", "3.8"}),
+    "pro": frozenset({"3.1"}),
+}
+
+
+def _ag_versioned_bucket(family: str, version: str) -> str:
+    """``flash`` + ``3.7`` → ``flash-3.7``; unseeded minors → ``{family}-3``."""
+    if family in _SEEDED_MINORS and version in _SEEDED_MINORS[family]:
+        return f"{family}-{version}"
+    return f"{family}-3"
+
+
 def _extract_ag_effort(display_name: str) -> str | None:
     """Map a trailing ``(Low)``/``(Medium)``/``(High)`` suffix to effort.
 
@@ -181,6 +198,7 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
         "gemini-pro-default" / "Gemini 3.1 Pro" → "pro-3.1"
         "gemini-default" / "Gemini 3.5 Flash"   → "flash-3.5"
         "gemini-3-flash-a" / "Gemini 3 Flash"   → "flash-3"
+        "gemini-3.1-flash" / …                  → "flash-3"  (unseeded minor)
         "gpt-oss"                               → "gpt-oss"
         ""                                      → "unknown"
     """
@@ -189,6 +207,8 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
     if kv.get("used_claude") == "true":
         return "claude-sonnet"
 
+    # Call sites default missing field 19 to "" (not "unknown") so empty and
+    # decoded-empty raw take the same display-only path.
     raw = (raw_model or "").strip()
     display = (display_name or "").strip()
 
@@ -204,7 +224,7 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
         if family == "flash-lite":
             return "flash-lite-3" if version.startswith("3.") else "flash-lite"
         if version.startswith("3."):
-            return f"{family}-{version}"
+            return _ag_versioned_bucket(family, version)
         return family
 
     family = _ag_detect_family(raw) or _ag_detect_family(display)
@@ -220,7 +240,7 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
         return "flash-lite-3" if _ag_looks_like_3x(raw, display) else "flash-lite"
 
     if version is not None and version.startswith("3."):
-        return f"{family}-{version}"
+        return _ag_versioned_bucket(family, version)
 
     # Major-only Gemini-3 (no minor in either field) → flash-3 / pro-3.
     if version is None and _ag_looks_like_3x(raw, display):
@@ -336,7 +356,7 @@ def parse_antigravity_events(
             if tokens_input == 0 and tokens_output == 0:
                 continue
 
-            raw_model = _first_str(f1, 19, "unknown")
+            raw_model = _first_str(f1, 19, "")
             display_name = _first_str(f1, 21, "")
             kv = _parse_kv_metadata(f1)
             model_id = _normalize_ag_model(raw_model, display_name, kv)

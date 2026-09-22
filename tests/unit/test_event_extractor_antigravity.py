@@ -102,6 +102,26 @@ def test_display_version_preferred_over_raw():
     assert _normalize_ag_model("gemini-3.5-flash", "Gemini 3.6 Flash", {}) == "flash-3.6"
 
 
+def test_unseeded_flash_minor_clamps_to_major_bucket():
+    """flash-3.1 has no antigravity seed row — clamp to flash-3 (not bare flash)."""
+    assert _normalize_ag_model("gemini-3.1-flash", "Gemini 3.1 Flash", {}) == "flash-3"
+
+
+def test_unseeded_pro_minor_clamps_to_major_bucket():
+    assert _normalize_ag_model("gemini-3.2-pro", "Gemini 3.2 Pro", {}) == "pro-3"
+
+
+def test_hybrid_family_and_display_version_clamps():
+    """Family from raw (pro) + version from display (3.5) must not emit pro-3.5."""
+    assert _normalize_ag_model("gemini-pro-default", "Gemini 3.5 Flash", {}) == "pro-3"
+
+
+def test_call_site_default_raw_is_empty_string():
+    """Missing field 19 defaults to '' (not 'unknown') so both paths agree."""
+    assert _normalize_ag_model("", "Gemini Flash", {}) == "unknown"
+    assert _normalize_ag_model("", "Gemini 3.5 Flash", {}) == "flash-3.5"
+
+
 # ---------------------------------------------------------------------------
 # Claude KV branches — regression pin (PR #302 owns the real changes)
 # ---------------------------------------------------------------------------
