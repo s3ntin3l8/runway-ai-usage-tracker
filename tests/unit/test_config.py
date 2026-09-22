@@ -10,16 +10,52 @@ Tests cover:
 """
 
 import os
+import sys
 import tempfile
 from unittest.mock import patch
 
 import pytest
 
 
+@pytest.fixture
+def _restore_config_module():
+    """Snapshot ``sys.modules['app.core.config']`` and restore it after the test.
+
+    ``test_settings_load_from_env`` calls ``importlib.reload(app.core.config)``
+    to verify env-var propagation. The reload swaps the entry in
+    ``sys.modules`` with a fresh module instance, leaving any module
+    that did ``from app.core.config import settings`` at top-of-file
+    bound to the pre-reload snapshot. Without restoration, downstream
+    tests in the same pytest session see a stale ``settings`` object —
+    consumers that read via top-of-file imports see the snapshot,
+    consumers that read via late import see the live module, and
+    the two diverge depending on the consumer's pattern.
+
+    This fixture retires the whole class by restoring the original
+    module after the reload-test completes. With this in place, the
+    rest of the suite sees consistent state regardless of whether
+    each consumer uses late-import or top-of-file reads
+    (PR #291, Hermes forward note on PR #297).
+    """
+    # Snapshot the ``settings`` attribute of the module — ``importlib.reload``
+    # re-uses the module object but re-instantiates its ``settings``
+    # attribute, so the bound ``from app.core.config import settings`` in
+    # downstream test files (and prod modules like ``db.py``) ends up
+    # pointing at the OLD instance while the freshly-reloaded module
+    # exposes a NEW one. Restoring the attribute makes both sides agree
+    # (PR #291, Hermes forward note on PR #297).
+    settings_obj = (
+        sys.modules["app.core.config"].settings if "app.core.config" in sys.modules else None
+    )
+    yield
+    if settings_obj is not None and "app.core.config" in sys.modules:
+        sys.modules["app.core.config"].settings = settings_obj
+
+
 class TestSettings:
     """Test suite for application settings."""
 
-    def test_settings_load_from_env(self):
+    def test_settings_load_from_env(self, _restore_config_module):
         """Test that settings correctly load from environment variables."""
         test_vars = {
             "CLAUDE_CODE_OAUTH_TOKEN": "test_claude_token",
