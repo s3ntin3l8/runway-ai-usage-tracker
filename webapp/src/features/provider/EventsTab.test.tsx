@@ -80,4 +80,44 @@ describe('EventsTab', () => {
     );
     expect(await screen.findByText('error')).toBeInTheDocument();
   });
+
+  it('renders an effort badge next to the model when present', async () => {
+    vi.mocked(api.fetchEvents).mockResolvedValue({
+      events: [
+        {
+          event_id: 'e1',
+          kind: 'message',
+          ts: new Date().toISOString(),
+          model_id: 'claude-opus',
+          effort: 'high',
+        },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+    });
+    renderWithProviders(
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+    );
+    expect(await screen.findByText('claude-opus')).toBeInTheDocument();
+    expect(screen.getByText('high')).toBeInTheDocument();
+  });
+
+  it('omits the effort badge when effort is null or empty', async () => {
+    vi.mocked(api.fetchEvents).mockResolvedValue({
+      events: [
+        { event_id: 'e1', kind: 'message', ts: new Date().toISOString(), model_id: 'a', effort: null },
+        { event_id: 'e2', kind: 'message', ts: new Date().toISOString(), model_id: 'b', effort: '' },
+      ],
+      total: 2,
+      limit: 25,
+      offset: 0,
+    });
+    renderWithProviders(
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+    );
+    expect(await screen.findByText('a')).toBeInTheDocument();
+    expect(screen.getByText('b')).toBeInTheDocument();
+    expect(screen.queryByText('high')).not.toBeInTheDocument();
+  });
 });

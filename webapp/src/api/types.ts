@@ -321,7 +321,8 @@ export interface UsageEvent {
   tokens_cache_create_1h?: number;
   tokens_cache_create_5m?: number;
   tokens_reasoning?: number;
-  // Claude Code per-message dimensions (Anthropic only; null/0 elsewhere).
+  // Per-message dimensions. effort: anthropic + chatgpt (antigravity/opencode
+  // pending); the rest Anthropic-only, null/0 elsewhere.
   effort?: string | null;
   speed?: string | null;
   service_tier?: string | null;
