@@ -116,6 +116,41 @@ def test_hybrid_family_and_display_version_clamps():
     assert _normalize_ag_model("gemini-pro-default", "Gemini 3.5 Flash", {}) == "pro-3"
 
 
+def test_raw_3x_wins_when_display_has_non_3x_minor():
+    """Stale non-3.x display must not mask a 3.x signal that lives in raw."""
+    # Hermes probe: display 2.5, raw gemini-3.5-flash → flash-3.5 (not bare flash).
+    assert _normalize_ag_model("gemini-3.5-flash", "Gemini 2.5 Flash", {}) == "flash-3.5"
+
+
+def test_raw_3x_wins_when_display_first_token_is_not_minor_version():
+    """`Backend v1.5` has a \\d+.\\d+ token but no 3.x — trust raw's 3.5."""
+    assert _normalize_ag_model("gemini-3.5-flash", "Backend v1.5", {}) == "flash-3.5"
+
+
+def test_seeded_minors_match_pricing_seed():
+    """_SEEDED_MINORS must stay in sync with pricing_seed's antigravity rows.
+
+    Adding e.g. pro-3.5 to PRICING_SEED without updating _SEEDED_MINORS would
+    silently clamp that minor to pro-3; this test fails loudly instead.
+    """
+    import re
+
+    from app.services.pricing_seed import PRICING_SEED
+    from scripts.sidecar_pkg.event_extractors.antigravity import _SEEDED_MINORS
+
+    for row in PRICING_SEED:
+        if row.get("provider_id") != "antigravity":
+            continue
+        m = re.fullmatch(r"(flash|pro)-(\d+\.\d+)", str(row["model_id"]))
+        if not m or not m.group(2).startswith("3."):
+            continue
+        family, minor = m.group(1), m.group(2)
+        assert minor in _SEEDED_MINORS[family], (
+            f"{row['model_id']} has a pricing row but {minor!r} is not in "
+            f"_SEEDED_MINORS[{family!r}] — unseeded minors clamp to {family}-3"
+        )
+
+
 def test_call_site_default_raw_is_empty_string():
     """Missing field 19 defaults to '' (not 'unknown') so both paths agree."""
     assert _normalize_ag_model("", "Gemini Flash", {}) == "unknown"

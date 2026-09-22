@@ -142,6 +142,20 @@ def _ag_extract_version(s: str) -> str | None:
     return m.group(0) if m else None
 
 
+def _ag_extract_3x(s: str) -> str | None:
+    """Return the first Gemini-3 minor (``3.x``) token in ``s``, if any.
+
+    Unlike ``_ag_extract_version``, this skips non-3.x minors (``2.5``,
+    ``1.5``) so a stale display name cannot mask a 3.x signal that only
+    lives in the raw id (or a later token).
+    """
+    for m in re.finditer(r"\d+\.\d+", s):
+        ver = m.group(0)
+        if ver.startswith("3."):
+            return ver
+    return None
+
+
 def _ag_looks_like_3x(raw: str, display: str) -> bool:
     """True when there is a Gemini-3 signal but no extracted minor version."""
     if "gemini-3" in raw.lower():
@@ -231,8 +245,14 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
     if family is None:
         return raw
 
-    # Prefer the display name's minor version when both sides carry one.
-    version = _ag_extract_version(display) or _ag_extract_version(raw)
+    # Prefer a 3.x minor from either field (display first), then any minor
+    # (display first). A non-3.x display token must not mask raw's gemini-3.x id.
+    version = (
+        _ag_extract_3x(display)
+        or _ag_extract_3x(raw)
+        or _ag_extract_version(display)
+        or _ag_extract_version(raw)
+    )
 
     if family == "flash-lite":
         if version is not None:

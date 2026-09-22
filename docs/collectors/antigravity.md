@@ -57,14 +57,15 @@ Workspace path (→ `cwd`) comes from `trajectory_metadata_blob` table, field 7,
 
 **Model normalization** (`_normalize_ag_model`):
 
-Claude KV short-circuits first, then family + minor version are resolved from the raw id and display name (display preferred for the minor when both carry one). Gemini 3.x minor versions get their own cost bucket; flash-lite stays major-only; non-family raw ids pass through verbatim.
+Claude KV short-circuits first, then family + minor version are resolved from the raw id and display name (a 3.x minor from either field wins, display first; otherwise display preferred for the minor). Gemini 3.x minor versions get their own cost bucket when seeded; unseeded 3.x minors clamp to the major bucket; flash-lite stays major-only; non-family raw ids pass through verbatim.
 
 | Condition | `model_id` |
 |---|---|
 | `used_claude_conservative=true` | `claude-opus` |
 | `used_claude=true` | `claude-sonnet` |
 | family flash-lite, 3.x signal | `flash-lite-3` (never versioned) |
-| family flash/pro, minor starts with `3.` | `flash-3.5` / `flash-3.6` / `flash-3.7` / `flash-3.8` / `pro-3.1` |
+| family flash/pro, seeded 3.x minor (flash 3.5–3.8, pro 3.1) | `flash-3.5` / `flash-3.6` / `flash-3.7` / `flash-3.8` / `pro-3.1` |
+| family flash/pro, 3.x minor without its own pricing row | `flash-3` / `pro-3` (clamped) |
 | family flash/pro, major-3 only (no minor) | `flash-3` / `pro-3` |
 | family flash/pro, no 3.x signal | bare `flash` / `pro` / `flash-lite` |
 | non-family raw (`gpt-oss`, …) | raw id verbatim |
