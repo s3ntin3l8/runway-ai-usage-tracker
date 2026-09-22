@@ -40,9 +40,17 @@ def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1"):
     )
 
 
-def _config(session, provider="anthropic", threshold=90.0, channel="discord", last_fired=None):
+def _config(
+    session,
+    provider="anthropic",
+    threshold=90.0,
+    channel="discord",
+    last_fired=None,
+    account=None,
+):
     cfg = WebhookConfig(
         provider_id=provider,
+        account_id=account,
         threshold_pct=threshold,
         url="https://discord.example.com/webhook",
         channel=channel,
@@ -260,3 +268,146 @@ async def test_global_wildcard_matches_all_providers(session):
         await check_and_fire([_card(provider="openai", used=950.0)], session)
 
         assert mock_client.post.called
+
+
+# ---------------------------------------------------------------------------
+# Per-account scoping (#274)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scoped_config_fires_for_matching_account(session):
+    """A config scoped to account X fires when X's card breaches."""
+    from app.services.webhooks import check_and_fire
+
+    _config(session, account="acc1")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        await check_and_fire([_card(account="acc1", used=950.0)], session)
+
+        assert mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_scoped_config_ignores_other_account(session):
+    """A config scoped to acc1 does not fire when only acc2 breaches."""
+    from app.services.webhooks import check_and_fire
+
+    cfg = _config(session, account="acc1")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        await check_and_fire([_card(account="acc2", used=950.0)], session)
+
+        assert not mock_client.post.called
+
+    session.refresh(cfg)
+    assert cfg.last_fired_at is None
+
+
+@pytest.mark.asyncio
+async def test_scoped_config_ignores_accountless_card(session):
+    """A scoped config does not match cards with account_id=None."""
+    from app.services.webhooks import check_and_fire
+
+    _config(session, account="acc1")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        await check_and_fire([_card(account=None, used=950.0)], session)
+
+        assert not mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_null_config_matches_accountless_card(session):
+    """A NULL-account (all accounts) config matches a card with account_id=None."""
+    from app.services.webhooks import check_and_fire
+
+    cfg = _config(session)  # account_id defaults to None
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        await check_and_fire([_card(account=None, used=950.0)], session)
+
+        assert mock_client.post.called
+
+    session.refresh(cfg)
+    assert cfg.last_fired_at is not None
+
+
+@pytest.mark.asyncio
+async def test_null_config_fires_when_any_account_breaches(session):
+    """All-accounts config keeps current behavior: fires if ANY account crosses."""
+    from app.services.webhooks import check_and_fire
+
+    _config(session)  # account_id=None
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        # Two accounts: only acc2 breaches — still fires for the NULL config.
+        await check_and_fire(
+            [_card(account="acc1", used=500.0), _card(account="acc2", used=950.0)],
+            session,
+        )
+
+        assert mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_scoped_hysteresis_isolated_from_other_accounts(session):
+    """Reset of a scoped config only considers its own account's cards."""
+    from app.services.webhooks import check_and_fire
+
+    fired_time = datetime.now(UTC)
+    cfg = _config(session, account="acc1", threshold=90.0, last_fired=fired_time)
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        # acc1 recovered below hysteresis → reset, even though acc2 is breaching.
+        await check_and_fire(
+            [_card(account="acc1", used=700.0), _card(account="acc2", used=950.0)],
+            session,
+        )
+
+        assert not mock_client.post.called
+
+    session.refresh(cfg)
+    assert cfg.last_fired_at is None

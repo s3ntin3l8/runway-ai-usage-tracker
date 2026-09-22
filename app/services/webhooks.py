@@ -80,7 +80,9 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     - Reset last_fired_at only when ALL matched cards are below threshold * _HYSTERESIS.
     - Cards in the dead zone (hysteresis ≤ used_pct < threshold) neither fire nor reset.
 
-    Provider-specific configs are evaluated before global '*' configs.
+    Matching: provider-specific configs are evaluated before global '*' configs.
+    A config with account_id set only matches cards for that account; account_id
+    NULL matches any account (per-provider alert, current behavior).
     """
     configs = session.exec(
         select(WebhookConfig).where(WebhookConfig.active == True)  # noqa: E712
@@ -103,6 +105,8 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                 matched = [c for cards_list in card_by_provider.values() for c in cards_list]
             else:
                 matched = card_by_provider.get(config.provider_id, [])
+            if config.account_id is not None:
+                matched = [c for c in matched if c.account_id == config.account_id]
 
             # Two-pass: categorise all cards before mutating state
             breaching: list[tuple[LimitCard, float]] = []

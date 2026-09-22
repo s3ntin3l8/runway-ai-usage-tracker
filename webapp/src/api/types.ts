@@ -656,6 +656,7 @@ export interface AccountPreviewResponse {
 export interface Webhook {
   id: number;
   provider_id: string;
+  account_id: string | null; // null = applies to all accounts
   threshold_pct: number;
   url: string;
   channel: 'discord' | 'slack';

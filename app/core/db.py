@@ -127,6 +127,7 @@ def init_db() -> None:
         _add_indexes_if_missing(conn)
         _rebuild_quota_snapshot_indexes(conn)
         _backfill_quota_snapshot_variant(conn)
+        _migrate_webhook_uniqueness(conn)
 
     from app.services.pricing_seed import seed_pricing_table
 
@@ -182,6 +183,8 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("usage_events", "web_search_requests", "INTEGER NOT NULL DEFAULT 0"),
     ("usage_events", "web_fetch_requests", "INTEGER NOT NULL DEFAULT 0"),
     ("provider_pricing", "cache_create_1h_per_mtok", "FLOAT NOT NULL DEFAULT 0"),
+    # Per-account webhook scoping: NULL = applies to all accounts (legacy rows).
+    ("webhook_configs", "account_id", "VARCHAR"),
 ]
 
 
@@ -290,6 +293,60 @@ def _add_columns_if_missing(conn: Any) -> None:
             if "duplicate column" in str(e).lower():
                 continue
             raise
+
+
+def _migrate_webhook_uniqueness(conn: Any) -> None:
+    """Enforce (provider_id, account_id, url) uniqueness on webhook_configs.
+
+    On fresh databases create_all() builds the unique constraint from
+    __table_args__ (backed by a sqlite_autoindex_* index). On existing
+    databases the constraint predates account_id, so the column is added by
+    _add_columns_if_missing first and the unique index is created here.
+    Legacy rows created before any uniqueness existed are deduped (keeping
+    the oldest row) so index creation cannot fail.
+
+    Note: SQLite treats NULLs as distinct in unique indexes, so this index
+    only hardens rows with a concrete account_id — duplicates of the
+    "all accounts" (NULL) form are rejected by the API layer instead.
+    """
+    from sqlalchemy import text
+
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(webhook_configs)"))}
+    if "account_id" not in cols:
+        return
+
+    # Already enforced? Fresh DBs carry the __table_args__ constraint under a
+    # sqlite_autoindex_* name; migrated DBs carry uq_webhook_provider_account_url.
+    needed = {"provider_id", "account_id", "url"}
+    for row in conn.execute(text("PRAGMA index_list(webhook_configs)")):
+        index_name, unique = row[1], row[2]
+        if not unique:
+            continue
+        index_cols = {r[2] for r in conn.execute(text(f"PRAGMA index_info('{index_name}')"))}
+        if needed <= index_cols:
+            return
+
+    # Drop legacy duplicates that would make CREATE UNIQUE INDEX fail.
+    # GROUP BY treats NULL account_id values as one group.
+    result = conn.execute(
+        text(
+            "DELETE FROM webhook_configs WHERE id NOT IN ("
+            "SELECT MIN(id) FROM webhook_configs "
+            "GROUP BY provider_id, account_id, url)"
+        )
+    )
+    conn.commit()
+    if result.rowcount:
+        logger.info("Migrated: removed %d duplicate webhook_configs rows", result.rowcount)
+
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_provider_account_url "
+            "ON webhook_configs (provider_id, account_id, url)"
+        )
+    )
+    conn.commit()
+    logger.info("Migrated: created unique index uq_webhook_provider_account_url")
 
 
 def get_session() -> Iterator[Session]:

@@ -628,6 +628,7 @@ async def delete_token_health_entry(
 
 class _WebhookCreate(BaseModel):
     provider_id: str
+    account_id: str | None = None  # None = applies to all accounts
     threshold_pct: float = Field(ge=0.0, le=100.0)
     url: str
     channel: Literal["discord", "slack"]
@@ -638,6 +639,62 @@ class _WebhookUpdate(BaseModel):
     threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     url: str | None = None
     active: bool | None = None
+    account_id: str | None = None  # explicit null clears back to "all accounts"
+
+
+def _validate_webhook_account(session: Session, provider_id: str, account_id: str | None) -> None:
+    """Reject account scopes that cannot fire: wildcard providers and
+    account_ids with no matching provider_configs row."""
+    if account_id is None:
+        return
+    if provider_id == "*":
+        raise HTTPException(
+            status_code=400,
+            detail="account_id cannot be set when provider_id is '*' (all providers)",
+        )
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == provider_id,
+            ProviderConfig.account_id == account_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No provider_configs row for provider={provider_id!r} "
+                f"account_id={account_id!r} — configure the account first"
+            ),
+        )
+
+
+def _assert_webhook_unique(
+    session: Session,
+    provider_id: str,
+    account_id: str | None,
+    url: str,
+    exclude_id: int | None = None,
+) -> None:
+    """Reject duplicate (provider_id, account_id, url) rows.
+
+    SQLite unique indexes treat NULLs as distinct, so the "all accounts"
+    (NULL) case must be checked explicitly here alongside the DB index.
+    """
+    stmt = select(WebhookConfig).where(
+        WebhookConfig.provider_id == provider_id,
+        WebhookConfig.url == url,
+    )
+    if account_id is None:
+        stmt = stmt.where(col(WebhookConfig.account_id).is_(None))
+    else:
+        stmt = stmt.where(WebhookConfig.account_id == account_id)
+    if exclude_id is not None:
+        stmt = stmt.where(WebhookConfig.id != exclude_id)
+    if session.exec(stmt).first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A webhook with this provider, account, and URL already exists",
+        )
 
 
 @router.get("/webhooks")
@@ -654,6 +711,7 @@ async def list_webhooks(
             {
                 "id": c.id,
                 "provider_id": c.provider_id,
+                "account_id": c.account_id,
                 "threshold_pct": c.threshold_pct,
                 "url": c.url,
                 "channel": c.channel,
@@ -680,6 +738,9 @@ async def create_webhook(
         validate_webhook_url(body.url)
     except WebhookURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _validate_webhook_account(session, body.provider_id, body.account_id)
+    _assert_webhook_unique(session, body.provider_id, body.account_id, body.url)
 
     config = WebhookConfig(**body.model_dump())
     session.add(config)
@@ -709,6 +770,17 @@ async def update_webhook(
             validate_webhook_url(updates["url"])
         except WebhookURLError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # exclude_none would swallow an explicit account_id: null — that value
+    # means "clear back to all accounts", so honor it when the field was set.
+    account_touched = "account_id" in body.model_fields_set
+    if account_touched:
+        updates["account_id"] = body.account_id
+    if account_touched or "url" in updates:
+        new_provider = config.provider_id
+        new_account = body.account_id if account_touched else config.account_id
+        new_url = updates.get("url", config.url)
+        _validate_webhook_account(session, new_provider, new_account)
+        _assert_webhook_unique(session, new_provider, new_account, new_url, exclude_id=webhook_id)
     for key, value in updates.items():
         setattr(config, key, value)
     session.add(config)

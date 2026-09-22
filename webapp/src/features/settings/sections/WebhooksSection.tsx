@@ -29,7 +29,11 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { useProviderConfigs } from '@/features/home/queries';
+import { displayAccountName } from '@/lib/accountDisplay';
 import { timeAgo } from '@/lib/format';
+
+// Radix Select rejects value="" on SelectItem — sentinel for "All accounts".
+const ALL_ACCOUNTS = '__all__';
 
 export function WebhooksSection() {
   const queryClient = useQueryClient();
@@ -102,6 +106,11 @@ function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () =>
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-medium">
           {webhook.provider_id}
+          <span className="ml-1.5 font-normal text-fg-muted">
+            {webhook.account_id
+              ? displayAccountName({ account_id: webhook.account_id })
+              : 'All accounts'}
+          </span>
           <span className="ml-1.5 font-mono text-fg-muted tabular">
             ≥ {webhook.threshold_pct}%
           </span>
@@ -147,14 +156,26 @@ function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () =>
 function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
   const providers = useProviderConfigs();
   const [providerId, setProviderId] = useState('');
+  const [accountId, setAccountId] = useState(ALL_ACCOUNTS);
   const [threshold, setThreshold] = useState('80');
   const [url, setUrl] = useState('');
   const [channel, setChannel] = useState<'discord' | 'slack'>('discord');
+
+  const selectedProvider = (providers.data?.providers ?? []).find(
+    (p) => p.provider_id === providerId,
+  );
+  const accounts = selectedProvider?.accounts ?? [];
+
+  const onProviderChange = (id: string) => {
+    setProviderId(id);
+    setAccountId(ALL_ACCOUNTS);
+  };
 
   const save = useMutation({
     mutationFn: () =>
       createWebhook({
         provider_id: providerId,
+        ...(accountId !== ALL_ACCOUNTS && { account_id: accountId }),
         threshold_pct: Number(threshold),
         url: url.trim(),
         channel,
@@ -179,7 +200,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label>Provider</Label>
-          <Select value={providerId} onValueChange={setProviderId}>
+          <Select value={providerId} onValueChange={onProviderChange}>
             <SelectTrigger>
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
@@ -204,6 +225,22 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
             onChange={(e) => setThreshold(e.target.value)}
           />
         </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label>Account</Label>
+        <Select value={accountId} onValueChange={setAccountId}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_ACCOUNTS}>All accounts</SelectItem>
+            {accounts.map((a) => (
+              <SelectItem key={a.account_id} value={a.account_id}>
+                {displayAccountName(a)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="wh-url">Webhook URL</Label>
