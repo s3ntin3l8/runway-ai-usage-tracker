@@ -61,4 +61,19 @@ describe('accountSubtitle', () => {
   it('returns null when label equals account_id (no useful secondary line)', () => {
     expect(accountSubtitle({ account_id: 'alice@example.com', account_label: 'alice@example.com' })).toBeNull();
   });
+
+  it('returns null for opaque short account_ids (display name already covers them)', () => {
+    // displayAccountName falls back to account_id when label is empty AND
+    // id is not "default", so the subtitle would be a duplicate string —
+    // suppress it regardless of whether the id looks like an email/uuid/hash.
+    expect(accountSubtitle({ account_id: 'short-opaque', account_label: null })).toBeNull();
+  });
+
+  it('treats a whitespace-only label as missing', () => {
+    // displayAccountName trims whitespace labels to fall through; accountSubtitle
+    // must follow the same rule so the two stay consistent.
+    expect(
+      accountSubtitle({ account_id: 'bob@example.com', account_label: '   ' }),
+    ).toBeNull();
+  });
 });

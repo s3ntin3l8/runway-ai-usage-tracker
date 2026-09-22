@@ -1,5 +1,5 @@
 import { createElement } from 'react';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { ProviderConfig } from '@/api/types';
@@ -723,5 +723,66 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
     const accountDialog = await screen.findByRole('dialog');
     // The account dialog's title includes the display name.
     expect(within(accountDialog).getByText(/edit account · work/i)).toBeInTheDocument();
+  });
+
+  it('persists provider reorder via putDashboardLayout on drag end (#286)', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({ provider_id: 'a', name: 'Alpha' }),
+        provider({ provider_id: 'b', name: 'Bravo' }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({
+      provider_order: ['a', 'b'],
+      card_orders: {},
+    });
+    vi.mocked(api.putDashboardLayout).mockResolvedValue({ status: 'ok' });
+    renderV2(<ProvidersSection />);
+
+    await screen.findByText('Alpha');
+
+    // The mocked DndContext captures the onDragEnd callback. Simulate a drop
+    // that moves 'a' past 'b' → expect the reordered list and the PUT body.
+    expect(dndCallbacks.onDragEnd).not.toBeNull();
+    dndCallbacks.onDragEnd!({
+      active: { id: 'a' } as DragEndEvent['active'],
+      over: { id: 'b' } as DragEndEvent['over'],
+    } as DragEndEvent);
+
+    await waitFor(() =>
+      expect(api.putDashboardLayout).toHaveBeenCalledWith({
+        provider_order: ['b', 'a'],
+        card_orders: {},
+      }),
+    );
+  });
+
+  it('does not call putDashboardLayout when drag ends on the same card (#286)', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await screen.findByText('Claude');
+
+    dndCallbacks.onDragEnd!({
+      active: { id: 'claude' } as DragEndEvent['active'],
+      over: { id: 'claude' } as DragEndEvent['over'],
+    } as DragEndEvent);
+
+    expect(api.putDashboardLayout).not.toHaveBeenCalled();
+  });
+
+  it('does not render the search input when there are ≤5 providers (#286)', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({ provider_id: 'p1', name: 'Alpha' }),
+        provider({ provider_id: 'p2', name: 'Bravo' }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await screen.findByText('Alpha');
+    expect(screen.queryByLabelText(/search providers/i)).not.toBeInTheDocument();
   });
 });

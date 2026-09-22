@@ -48,10 +48,17 @@ import { useDashboardLayout } from '@/features/home/queries';
 import { ProviderDetailDialog } from './ProviderDetailDialog';
 import { LegacyEditDialog } from './LegacyEditDialog';
 
-export function reorderItems<T>(items: T[], activeId: string, overId: string): T[] {
-  const ids = items.map((s) => ({ s, id: (s as { id?: string }).id ?? '' }));
-  const oldIndex = ids.findIndex((x) => x.id === activeId);
-  const newIndex = ids.findIndex((x) => x.id === overId);
+export function reorderItems<T>(
+  items: T[],
+  activeId: string,
+  overId: string,
+  // Default reads `.id` (used by the strategy reorder — `StrategyEntry` has
+  // an `id` field). Provider reorder passes `(p) => p.provider_id` so the
+  // v2 grid uses the right key.
+  getId: (s: T) => string = (s) => (s as { id?: string }).id ?? '',
+): T[] {
+  const oldIndex = items.findIndex((s) => getId(s) === activeId);
+  const newIndex = items.findIndex((s) => getId(s) === overId);
   if (oldIndex === -1 || newIndex === -1) return items;
   return arrayMove(items, oldIndex, newIndex);
 }
@@ -231,7 +238,12 @@ function ProvidersSectionV2({
       setPullToRefreshSuspended(false);
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const next = reorderItems(ordered, String(active.id), String(over.id));
+      const next = reorderItems(
+        ordered,
+        String(active.id),
+        String(over.id),
+        (p) => p.provider_id,
+      );
       saveOrder.mutate(next.map((p) => p.provider_id));
     },
     [ordered, saveOrder],
