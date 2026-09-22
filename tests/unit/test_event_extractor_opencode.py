@@ -240,6 +240,41 @@ def test_absent_variant_yields_null_effort():
 
 
 @pytest.mark.parametrize(
+    "raw_variant,expected",
+    [
+        ("High", "high"),
+        (" high ", "high"),
+        ("MEDIUM", "medium"),
+        ("", None),
+        ("   ", None),
+        (None, None),
+        (42, None),
+        (True, None),
+    ],
+)
+def test_variant_is_normalized_to_lowercase_effort(raw_variant, expected):
+    """variant is strip().lower()'d; non-strings / blanks become None (not ValidationError)."""
+    db_path = _build_db(
+        [
+            {
+                "id": "msg_norm",
+                "session_id": "s",
+                "time_created": 1778248860000,
+                "data": _base_data(variant=raw_variant),
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].effort == expected
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
     "oc_provider_id,expected_provider",
     [
         ("opencode-go", "opencode"),

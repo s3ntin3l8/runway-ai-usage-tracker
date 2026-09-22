@@ -103,7 +103,7 @@ def _collect_pushes(db_paths: list[Path]) -> dict[str, UsageEventPush]:
 
 
 def _pick_target(candidates: list[UsageEvent], push: UsageEventPush) -> UsageEvent:
-    """Prefer provider_id match, then account_id; stable tie-break by ts then event order."""
+    """Prefer provider_id match, then account_id; SQL tie-break is (ts, provider_id, account_id)."""
     by_provider = [c for c in candidates if c.provider_id == push.provider_id]
     pool = by_provider or candidates
     by_account = [c for c in pool if c.account_id == push.account_id]
@@ -221,7 +221,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="Override path to opencode.db (default: discover ~/.local/share and ~/.opencode).",
     )
-    p.add_argument("--dry-run", action="store_true", help="Report changes without writing.")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report changes without writing (still runs init_db ALTERs to ensure columns exist).",
+    )
     p.add_argument("--skip-rollups", action="store_true", help="Skip Phase C (rollup rebuild).")
     args = p.parse_args(argv)
     try:
