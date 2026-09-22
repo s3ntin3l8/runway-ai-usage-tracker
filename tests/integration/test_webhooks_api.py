@@ -266,7 +266,7 @@ def test_patch_duplicate_scoped_account_409(client, session):
     )
     session.commit()
 
-    first = client.post(
+    client.post(
         "/api/v1/system/webhooks",
         json={
             "provider_id": "anthropic",
@@ -275,7 +275,7 @@ def test_patch_duplicate_scoped_account_409(client, session):
             "url": "https://discord.example.com/hook",
             "channel": "discord",
         },
-    ).json()["id"]
+    )
     second = client.post(
         "/api/v1/system/webhooks",
         json={
