@@ -24,7 +24,6 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from app.core.config import settings
 from app.core.db import get_session
 from app.main import app
 from app.models.db import ProviderConfig
@@ -39,8 +38,17 @@ def _isolated_ingest_key(monkeypatch):
     autouse because every test in this module depends on a configured
     ingest key, and accidentally leaving the test value behind would
     break the rest of the suite.
+
+    Uses the dotted-path ``monkeypatch.setattr`` form (not the bound
+    ``settings`` import) so the patch survives
+    ``importlib.reload(app.core.config)`` from ``tests/unit/test_config.py``.
+    After a reload, the bound ``settings`` object is the OLD module's;
+    only the string-path patch re-resolves through ``sys.modules`` to
+    the live settings instance that ``validate_ingest_auth`` reads
+    at call time (PR #290 round-2 review, Hermes body suggestion
+    #1, issue #291).
     """
-    monkeypatch.setattr(settings, "INGEST_API_KEY", SECRET)
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", SECRET)
     yield
 
 
@@ -164,7 +172,7 @@ def test_config_omits_tokens_when_ingest_key_unconfigured(
     client: TestClient, session: Session, monkeypatch
 ):
     """With ``INGEST_API_KEY`` empty, no tokens are issued."""
-    monkeypatch.setattr(settings, "INGEST_API_KEY", "")
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", "")
     _add_provider_config(session, provider_id="openrouter", account_id="default", api_key="k")
     r = client.get("/api/v1/fleet/config")
     openrouter = r.json()["config"]["providers"]["openrouter"]
@@ -246,7 +254,7 @@ def _post_manifest(client: TestClient, body: dict, ts: str | None = None):
 
 def test_manifest_503_when_ingest_key_missing(monkeypatch):
     """Same gate as /fleet/ingest: INGEST_API_KEY must be configured."""
-    monkeypatch.setattr(settings, "INGEST_API_KEY", "")
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", "")
     client = TestClient(app)
     r = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
     assert r.status_code == 503

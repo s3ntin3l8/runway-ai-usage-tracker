@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
-from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -812,13 +811,22 @@ async def get_fleet_config(
 
     rows = session.exec(select(ProviderConfig)).all()
 
+    # Late import — survives ``importlib.reload(app.core.config)`` from
+    # ``tests/unit/test_config.py``'s reload test. ``from app.core.config
+    # import settings`` at module top would bind the pre-reload settings
+    # instance, so a dotted-path ``monkeypatch.setattr`` in the test
+    # fixture would patch the live module while this endpoint reads the
+    # stale bound name (PR #290 round-2 review, Hermes body suggestion
+    # #1, issue #291).
+    from app.core.config import settings as _settings
+
     config: dict[str, dict] = {"providers": {}}
-    token_ttl = max(60, int(settings.CREDENTIAL_TOKEN_TTL_SECONDS))
+    token_ttl = max(60, int(_settings.CREDENTIAL_TOKEN_TTL_SECONDS))
     # Tokens are only issued when ingest is configured — the redeem endpoint
     # requires INGEST_API_KEY to authenticate, so issuing tokens without it
     # would just produce tokens no one can redeem.
     can_issue_tokens = (
-        bool(settings.INGEST_API_KEY) and not settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
+        bool(_settings.INGEST_API_KEY) and not _settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
     )
 
     for row in rows:
@@ -854,7 +862,7 @@ async def get_fleet_config(
         if can_issue_tokens and has_credential and row.enabled:
             try:
                 account_entry["credential_token"] = issue_credential_token(
-                    settings.INGEST_API_KEY,
+                    _settings.INGEST_API_KEY,
                     provider_id=row.provider_id,
                     account_id=row.account_id,
                     ttl_seconds=token_ttl,
