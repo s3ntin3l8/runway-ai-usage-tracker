@@ -99,7 +99,7 @@ export function EventsTab({
                       <span className="inline-flex items-center gap-1.5 text-xs">
                         {e.model_id ?? '—'}
                         {e.effort ? (
-                          <Badge variant="neutral" className="uppercase">
+                          <Badge variant="neutral" className="uppercase" data-testid="effort-badge">
                             {e.effort}
                           </Badge>
                         ) : null}

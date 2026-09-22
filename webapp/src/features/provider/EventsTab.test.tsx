@@ -100,7 +100,7 @@ describe('EventsTab', () => {
       <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
     );
     expect(await screen.findByText('claude-opus')).toBeInTheDocument();
-    expect(screen.getByText('high')).toBeInTheDocument();
+    expect(screen.getByTestId('effort-badge')).toHaveTextContent('high');
   });
 
   it('omits the effort badge when effort is null or empty', async () => {
@@ -118,6 +118,6 @@ describe('EventsTab', () => {
     );
     expect(await screen.findByText('a')).toBeInTheDocument();
     expect(screen.getByText('b')).toBeInTheDocument();
-    expect(screen.queryByText('high')).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId('effort-badge')).toHaveLength(0);
   });
 });
