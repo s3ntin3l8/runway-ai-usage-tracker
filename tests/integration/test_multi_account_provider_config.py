@@ -262,7 +262,7 @@ def test_is_orphaned_false_for_default_row_when_no_live_data(client: TestClient)
     means the dialog only shows the hint when there's a real replacement.
     """
     r = client.put(
-        "/api/v1/system/provider-config/openrouter",
+        "/api/v1/system/provider-config/openrouter/default",
         json={"account_label": "only row"},
         headers=_admin_headers(),
     )
@@ -328,8 +328,8 @@ def test_clear_api_key_wipes_encrypted_blob(client: TestClient):
     key. The next GET reports ``api_key_set=false``."""
     # Seed a row with an api_key.
     r = client.put(
-        "/api/v1/system/provider-config/openrouter",
-        json={"account_label": "only row"},
+        "/api/v1/system/provider-config/openrouter/default",
+        json={"api_key": "sk-test-123", "account_label": "only row"},  # pragma: allowlist secret
         headers=_admin_headers(),
     )
     assert r.status_code == 200
@@ -339,7 +339,20 @@ def test_clear_api_key_wipes_encrypted_blob(client: TestClient):
     assert openrouter["account_count"] == 1
     default_row = openrouter["accounts"][0]
     assert default_row["account_id"] == "default"
-    assert default_row["is_orphaned"] is False
+    assert default_row["api_key_set"] is True
+
+    # Clear the key.
+    r = client.put(
+        "/api/v1/system/provider-config/openrouter/default",
+        json={"clear_api_key": True},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+    default_row = openrouter["accounts"][0]
+    assert default_row["api_key_set"] is False
 
 
 def test_is_orphaned_true_when_default_shadowed_by_live_sibling(

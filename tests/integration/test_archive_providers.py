@@ -287,10 +287,16 @@ class TestArchiveSideEffects:
         _add_provider_config(session, provider_id="openrouter", account_id="default", enabled=True)
 
         resp = _client().put(
-            "/api/v1/system/provider-config/openrouter",
+            "/api/v1/system/provider-config/openrouter/default",
             json={"archived": True},
         )
         assert resp.status_code == 200, resp.text
+
+        # Pin the PUT to the seeded row — account_id comes from the path now,
+        # so changing the seed's account_id would create a fresh row instead.
+        listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
+        openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+        assert openrouter["account_count"] == 1
 
         row = session.exec(
             select(ProviderConfig).where(
@@ -312,10 +318,14 @@ class TestArchiveSideEffects:
         )
 
         resp = _client().put(
-            "/api/v1/system/provider-config/openrouter",
+            "/api/v1/system/provider-config/openrouter/default",
             json={"archived": False},
         )
         assert resp.status_code == 200, resp.text
+
+        listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
+        openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+        assert openrouter["account_count"] == 1
 
         row = session.exec(
             select(ProviderConfig).where(
@@ -338,10 +348,14 @@ class TestArchiveSideEffects:
         )
 
         resp = _client().put(
-            "/api/v1/system/provider-config/openrouter",
+            "/api/v1/system/provider-config/openrouter/default",
             json={"archived": True},
         )
         assert resp.status_code == 200, resp.text
+
+        listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
+        openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+        assert openrouter["account_count"] == 1
 
         row = session.exec(
             select(ProviderConfig).where(
@@ -363,10 +377,14 @@ class TestArchiveSideEffects:
         )
 
         resp = _client().put(
-            "/api/v1/system/provider-config/openrouter",
+            "/api/v1/system/provider-config/openrouter/default",
             json={"enabled": False, "archived": False},
         )
         assert resp.status_code == 200, resp.text
+
+        listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
+        openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+        assert openrouter["account_count"] == 1
 
         row = session.exec(
             select(ProviderConfig).where(
