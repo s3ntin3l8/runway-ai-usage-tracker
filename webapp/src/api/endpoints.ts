@@ -3,6 +3,8 @@
 
 import { api, qs } from './client';
 import type {
+  AccountPreviewRequest,
+  AccountPreviewResponse,
   AnomaliesResponse,
   AppConfig,
   AuditEntry,
@@ -203,14 +205,19 @@ export interface ProviderConfigUpdate {
   archived?: boolean;
   api_key?: string;
   session_cookie?: string;
+  // Explicit-clear flags (#287). When set to true, the corresponding
+  // stored credential is wiped server-side. Wins over a same-field write
+  // (the UI sends one or the other, not both).
+  clear_api_key?: boolean;
+  clear_session_cookie?: boolean;
   account_label?: string;
   poll_interval_seconds?: number | null;
   collection_strategies?: { id: string; enabled: boolean }[];
 }
 
-// Multi-account canonical PUT. accountId is required in the URL — see #281
-// for the legacy shortcut that resolves to account_id="default" only when
-// exactly one row exists.
+// Multi-account canonical PUT (#281). accountId is required in the URL —
+// see #281 for the legacy shortcut that resolves to account_id="default"
+// only when exactly one row exists.
 export const putProviderConfig = (providerId: string, accountId: string, body: ProviderConfigUpdate) =>
   api<{ status: string }>(
     `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
@@ -270,6 +277,19 @@ export interface ArchivedProvider {
 
 export const fetchArchivedProviders = () =>
   api<{ archived: ArchivedProvider[] }>('/api/v1/usage/archived-providers');
+
+// Wizard (#287) preview endpoint — debounced from step 2. Returns 409
+// (with structured body in `detail`) when the previewed identity already
+// exists for this provider. The optional `signal` is forwarded to `fetch`
+// so callers (the wizard's debounce effect) can actually cancel an
+// in-flight request — without it, abort() is decorative and the request
+// races the next debounce.
+export const previewAccount = (body: AccountPreviewRequest, signal?: AbortSignal) =>
+  api<AccountPreviewResponse>('/api/v1/system/provider-config/preview-account', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal,
+  });
 
 export const getDashboardLayout = () => api<DashboardLayout>('/api/v1/system/dashboard-layout');
 

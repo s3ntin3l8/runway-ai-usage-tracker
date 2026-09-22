@@ -37,22 +37,24 @@ describe('accountSubtitle', () => {
     );
   });
 
-  it('returns null when no label AND displayAccountName already shows the account_id (no duplicate)', () => {
-    // Both the title and the subtitle would render "bob@example.com" — that's a
-    // duplicate. Suppress the subtitle so the row isn't visually busy.
+  it('returns null for an email-shaped account_id when there is no label (display name already shows it)', () => {
+    // displayAccountName falls back to the account_id verbatim when the
+    // label is empty, so the subtitle would be a duplicate. Suppressed
+    // regardless of the id shape — the regex branches the early Hermes
+    // review flagged as dead code are gone (#294 S1 / #295 follow-up).
     expect(accountSubtitle({ account_id: 'bob@example.com', account_label: null })).toBeNull();
   });
 
-  it('returns null when no label AND account_id looks like a UUID (display name already covers it)', () => {
+  it('returns null for a UUID account_id when there is no label (display name already shows it)', () => {
     expect(
       accountSubtitle({ account_id: '58235613-1234-1234-1234-123456789012', account_label: null }),
     ).toBeNull();
   });
 
-  it('returns null when no label AND account_id looks like a SHA hash (display name already covers it)', () => {
+  it('returns null for a SHA-hash account_id when there is no label (display name already shows it)', () => {
     expect(
       accountSubtitle({
-        account_id: 'e5e9fa1ba31ecd1ae84f75caaa474f3a663f05f4',
+        account_id: 'e5e9fa1ba31ecd1ae84f75caaa474f3a663f05f4', // pragma: allowlist secret
         account_label: null,
       }),
     ).toBeNull();
@@ -69,9 +71,11 @@ describe('accountSubtitle', () => {
     expect(accountSubtitle({ account_id: 'short-opaque', account_label: null })).toBeNull();
   });
 
-  it('treats a whitespace-only label as missing', () => {
-    // displayAccountName trims whitespace labels to fall through; accountSubtitle
-    // must follow the same rule so the two stay consistent.
+  it('treats a whitespace-only label as missing for email-shaped ids', () => {
+    // Whitespace-only labels are stripped (same as displayAccountName). The
+    // resulting empty label then takes the no-label branch: the subtitle
+    // is suppressed because displayAccountName already shows the
+    // account_id verbatim.
     expect(
       accountSubtitle({ account_id: 'bob@example.com', account_label: '   ' }),
     ).toBeNull();

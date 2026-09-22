@@ -811,9 +811,29 @@ class _ProviderConfigUpdate(BaseModel):
     archived: bool | None = None
     api_key: str | None = None  # empty string = clear, None = no change
     session_cookie: str | None = None  # empty string = clear, None = no change
+    # Explicit clear flags (PR #287). Mirrors the implicit "empty string = clear"
+    # contract above but lets the UI show a dedicated "Clear stored credential"
+    # button without ambiguous blank-string semantics. When set to True the
+    # corresponding `api_key` / `session_cookie` field is ignored and the
+    # stored credential is wiped. Always wins over a same-field write.
+    clear_api_key: bool | None = None
+    clear_session_cookie: bool | None = None
     account_label: str | None = None
     poll_interval_seconds: int | None = None
     collection_strategies: list[dict] | None = None  # [{"id": "web", "enabled": true}, ...]
+
+
+class _AccountPreviewRequest(BaseModel):
+    """Body for POST /provider-config/preview-account (#287).
+
+    The wizard's step 2 debounces keystrokes into this endpoint, derives the
+    canonical ``account_id`` from the credential, and surfaces "this
+    identity already exists" via 409.
+    """
+
+    provider_id: str
+    api_key: str | None = None
+    session_cookie: str | None = None
 
 
 @router.get("/provider-configs")
@@ -993,6 +1013,127 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
 
 
+@router.post("/provider-config/preview-account")
+@limiter.limit("30/minute")
+async def preview_account_identity(
+    request: Request,
+    body: _AccountPreviewRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Derive the canonical ``account_id`` (and a friendly ``account_label``)
+    from a credential the user is about to save. Powers the wizard's step-2
+    debounced preview (PR #287).
+
+    Returns ``{suggested_account_id, suggested_label, label_source,
+    already_exists}``. On collision returns 409 with the same payload under
+    ``detail`` so the wizard can render an inline error.
+
+    ``label_source`` values:
+      - ``"email"``: extracted from a JWT claim or pasted email-shaped string.
+      - ``"credential_hash"``: PBKDF2-HMAC-SHA256 of the credential
+        (fallback when no email is extractable; see
+        ``app/services/account_identity.py:resolve_account_id``).
+      - ``"default"``: neither email nor hash — falls back to the canonical
+        ``"default"`` sentinel.
+    """
+    import re as _re
+
+    from app.core.utils import IdentityExtractor
+    from app.services.account_identity import resolve_account_id
+
+    if body.provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {body.provider_id}")
+
+    credential_hint = body.api_key or body.session_cookie
+    if not credential_hint:
+        # No credential typed yet — return the canonical "default" so the
+        # wizard can render the preview block without a 400.
+        return {
+            "suggested_account_id": "default",
+            "suggested_label": None,
+            "label_source": "default",
+            "already_exists": _row_exists(session, body.provider_id, "default"),
+        }
+
+    email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
+    email_candidate: str | None = None
+    jwt_email = IdentityExtractor.get_email_from_jwt(credential_hint)
+    if jwt_email:
+        email_candidate = jwt_email.lower()
+    elif _re.match(email_pattern, credential_hint):
+        email_candidate = credential_hint.lower()
+
+    if email_candidate:
+        already_exists = _row_exists(session, body.provider_id, email_candidate)
+        if already_exists:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "suggested_account_id": email_candidate,
+                    "suggested_label": email_candidate,
+                    "label_source": "email",
+                    "already_exists": True,
+                },
+            )
+        return {
+            "suggested_account_id": email_candidate,
+            "suggested_label": email_candidate,
+            "label_source": "email",
+            "already_exists": False,
+        }
+
+    suggested_account_id = resolve_account_id(
+        provider_id=body.provider_id,
+        raw_account_id=None,
+        account_label=None,
+        credential_hint=credential_hint,
+    )
+
+    label_source = "credential_hash"
+    if _re.match(email_pattern, suggested_account_id):
+        label_source = "email"
+    if suggested_account_id == "default":
+        label_source = "default"
+
+    already_exists = _row_exists(session, body.provider_id, suggested_account_id)
+    if already_exists:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "suggested_account_id": suggested_account_id,
+                "suggested_label": suggested_account_id if label_source == "email" else None,
+                "label_source": label_source,
+                "already_exists": True,
+            },
+        )
+
+    return {
+        "suggested_account_id": suggested_account_id,
+        "suggested_label": suggested_account_id if label_source == "email" else None,
+        "label_source": label_source,
+        "already_exists": False,
+    }
+
+
+def _row_exists(session: Session, provider_id: str, account_id: str) -> bool:
+    """Cheap EXISTS check used by the preview endpoint. Single-row
+    SELECT with LIMIT 1 — faster than loading the full ProviderConfig
+    row when we only need to know whether one is there."""
+    from sqlmodel import func
+
+    stmt = (
+        select(func.count())
+        .select_from(ProviderConfig)
+        .where(
+            ProviderConfig.provider_id == provider_id,
+            ProviderConfig.account_id == account_id,
+        )
+        .limit(1)
+    )
+    return session.exec(stmt).one() > 0
+
+
 @router.put("/provider-config/{provider_id}")
 @limiter.limit("20/minute")
 async def upsert_provider_config(
@@ -1088,7 +1229,14 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     if body.collection_strategies is not None:
         # None list = reset to defaults; empty list = no strategies (disabled all)
         row.strategies = body.collection_strategies if body.collection_strategies else None
-    if body.api_key is not None:
+    if body.clear_api_key is True:
+        # Explicit-clear flag wins over any same-field write in the body
+        # (the UI sends one or the other, not both). Wipe the stored encrypted
+        # blob and invalidate the token-cache entry so stale creds don't linger
+        # in collectors that hot-path from cache (PR #287).
+        row.api_key = None
+        await token_cache.remove(provider_id, account_id)
+    if body.api_key is not None and body.clear_api_key is not True:
         # Empty string = clear the stored key; non-empty = encrypt and store
         val = body.api_key
         if val:
@@ -1134,7 +1282,13 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
-    if body.session_cookie is not None:
+    if body.clear_session_cookie is True:
+        # Mirror of the clear_api_key path above — wipe both session_cookie
+        # and the oai-sc companion (ChatGPT-only) and invalidate cache.
+        row.session_cookie = None
+        row.oai_sc_cookie = None
+        await token_cache.remove(provider_id, account_id)
+    if body.session_cookie is not None and body.clear_session_cookie is not True:
         val = body.session_cookie
         if val and (";" in val or "=" in val):
             # Attempt to extract common session tokens from a full cookie string

@@ -19,6 +19,7 @@
 // instead; this file is the rollback target only.
 
 import { useEffect, useRef, useState } from 'react';
+// (useState/useEffect used by GitHubLoginSection + Countdown)
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,

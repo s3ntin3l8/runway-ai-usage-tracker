@@ -25,12 +25,17 @@ interface ProviderDetailDialogProps {
   provider: ProviderConfig | null;
   onClose: () => void;
   onAccountDeleted?: (providerId: string, accountId: string) => void;
+  // PR #287 — when the user clicks "Add account" inside the dialog,
+  // surface the click to the parent so it can open the wizard
+  // pre-scoped to this provider.
+  onAddAccount?: (provider: ProviderConfig) => void;
 }
 
 export function ProviderDetailDialog({
   provider,
   onClose,
   onAccountDeleted,
+  onAddAccount,
 }: ProviderDetailDialogProps) {
   const [editingAccount, setEditingAccount] = useState<ProviderAccount | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderAccount | null>(null);
@@ -143,9 +148,15 @@ export function ProviderDetailDialog({
                 title="No accounts configured"
                 description="Add a credential to start collecting usage for this provider."
                 action={
-                  <Button variant="primary" size="sm" disabled aria-disabled="true" title="Wizard lands in #287">
-                    Add account
-                  </Button>
+                  onAddAccount ? (
+                    <Button variant="primary" size="sm" onClick={() => onAddAccount(provider)}>
+                      Add account
+                    </Button>
+                  ) : (
+                    <Button variant="primary" size="sm" disabled title="Wizard disabled">
+                      Add account
+                    </Button>
+                  )
                 }
               />
             ) : (
@@ -237,16 +248,20 @@ export function ProviderDetailDialog({
             )}
 
             {provider.accounts.length > 0 ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="self-start"
-                disabled
-                aria-disabled="true"
-                title="Wizard lands in #287"
-              >
-                Add account
-              </Button>
+              onAddAccount ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="self-start"
+                  onClick={() => onAddAccount(provider)}
+                >
+                  Add account
+                </Button>
+              ) : (
+                <Button variant="secondary" size="sm" className="self-start" disabled title="Wizard disabled">
+                  Add account
+                </Button>
+              )
             ) : null}
 
             {pendingDelete ? (

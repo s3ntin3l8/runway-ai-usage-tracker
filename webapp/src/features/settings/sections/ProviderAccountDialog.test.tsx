@@ -160,3 +160,162 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
     expect(within(dialog).getByText(/account not found/i)).toBeInTheDocument();
   });
 });
+
+describe('ProviderAccountDialog — Clear buttons (#287 / #273)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('clears the stored api_key when the Clear button is clicked (#273)', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+
+    renderDialog();
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /^clear$/i })).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /^clear$/i }));
+    // After Clear: the Clear button hides itself, the input flips into the
+    // "Will be cleared on save" placeholder, and the value is empty +
+    // disabled (preventing accidental type-over that would race the flag).
+    expect(within(dialog).queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/API key/i)).toHaveValue('');
+    expect(within(dialog).getByLabelText(/API key/i)).toBeDisabled();
+    expect(
+      within(dialog).getByPlaceholderText(/will be cleared on save/i),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'anthropic',
+      'alice@example.com',
+      expect.objectContaining({ clear_api_key: true }),
+    );
+    // api_key must NOT be sent alongside clear_api_key — the flag wins.
+    const callBody = vi.mocked(api.putProviderConfig).mock.calls[0][2];
+    expect(callBody).not.toHaveProperty('api_key');
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/Anthropic/),
+      ),
+    );
+  });
+
+  it('does not show the Clear button when no api_key is set (new accounts)', async () => {
+    const fresh: ProviderConfig = {
+      ...anthropic,
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          api_key_set: false,
+          session_cookie_set: false,
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <ProviderAccountDialog provider={fresh} accountId="alice@example.com" onClose={() => {}} />,
+    );
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Save body shape (#287)
+  // ---------------------------------------------------------------------------
+
+  it('saves without credentials when neither input is typed — body has no api_key / session_cookie / clear_*', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+
+    renderDialog();
+    const dialog = await screen.findByRole('dialog');
+    // Edit the label so the body has at least one field to assert against.
+    await userEvent.clear(within(dialog).getByLabelText(/Account label/i));
+    await userEvent.type(within(dialog).getByLabelText(/Account label/i), 'Renamed');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0]?.[2] ?? {};
+    expect(body).not.toHaveProperty('api_key');
+    expect(body).not.toHaveProperty('session_cookie');
+    expect(body).not.toHaveProperty('clear_api_key');
+    expect(body).not.toHaveProperty('clear_session_cookie');
+    expect(body).toMatchObject({ account_label: 'Renamed', enabled: true });
+  });
+
+  it('sends the typed api_key and omits clear_api_key when the user types a new credential', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+
+    renderDialog();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText(/API key/i), 'sk-rotated'); // pragma: allowlist secret
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'anthropic',
+      'alice@example.com',
+      expect.objectContaining({ api_key: 'sk-rotated' }), // pragma: allowlist secret
+    );
+    const body = vi.mocked(api.putProviderConfig).mock.calls[0]?.[2] ?? {};
+    expect(body).not.toHaveProperty('clear_api_key');
+  });
+
+  // ---------------------------------------------------------------------------
+  // session_cookie Clear button (#287)
+  // ---------------------------------------------------------------------------
+
+  it('shows the Clear button next to session_cookie when session_cookie_set=true', async () => {
+    const withCookie: ProviderConfig = {
+      ...anthropic,
+      supports_session_cookie: true,
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          api_key_set: false,
+          session_cookie_set: true,
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog
+        provider={withCookie}
+        accountId="alice@example.com"
+        onClose={() => {}}
+      />,
+    );
+    const dialog = await screen.findByRole('dialog');
+    // Two Clear buttons in the DOM (api_key hidden because api_key_set=false,
+    // session_cookie visible). Match exactly the cookie one by its context.
+    expect(within(dialog).getAllByRole('button', { name: /^clear$/i })).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Defensive branch — account not found (#287 follow-up)
+  // ---------------------------------------------------------------------------
+
+  it('renders an "Account not found" empty-state when accountId is not in provider.accounts', async () => {
+    renderWithProviders(
+      <ProviderAccountDialog
+        provider={anthropic}
+        accountId="ghost@example.com"
+        onClose={() => {}}
+      />,
+    );
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/account not found/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/this account may have been removed/i)).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Save error path (#287)
+  // ---------------------------------------------------------------------------
+
+  it('surfaces a save error via toast.error', async () => {
+    vi.mocked(api.putProviderConfig).mockRejectedValue(new Error('disk full'));
+
+    renderDialog();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('disk full'));
+  });
+});

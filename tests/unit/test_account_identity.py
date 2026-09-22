@@ -39,9 +39,11 @@ class TestResolveAccountId:
             account_label=None,
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()
+        expected = hashlib.pbkdf2_hmac("sha256", hint.encode(), b"runway-account-id-v1", 1).hex()
         assert result == expected
-        assert len(result) == 64  # full SHA-256, no truncation
+        assert (
+            len(result) == 64
+        )  # PBKDF2-HMAC-SHA256 = 64 hex chars (SHA-256 output)  # full PBKDF2-HMAC-SHA256, no truncation
 
     def test_all_none_defaults(self):
         result = resolve_account_id(
@@ -83,7 +85,7 @@ class TestResolveAccountId:
             account_label=None,
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()
+        expected = hashlib.pbkdf2_hmac("sha256", hint.encode(), b"runway-account-id-v1", 1).hex()
         assert result == expected
 
     def test_non_email_account_label_falls_through(self):
@@ -102,7 +104,7 @@ class TestResolveAccountId:
             account_label="Runway User",
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()
+        expected = hashlib.pbkdf2_hmac("sha256", hint.encode(), b"runway-account-id-v1", 1).hex()
         assert result == expected
 
     def test_custom_raw_id_returned_as_is(self):
@@ -137,7 +139,7 @@ class TestResolveAccountId:
             account_label=None,
             credential_hint=hint,
         )
-        expected = hashlib.sha256(hint.encode()).hexdigest()
+        expected = hashlib.pbkdf2_hmac("sha256", hint.encode(), b"runway-account-id-v1", 1).hex()
         assert result == expected
 
     def test_email_with_trailing_garbage_not_matched(self):

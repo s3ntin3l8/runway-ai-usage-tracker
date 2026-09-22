@@ -17,25 +17,23 @@ export function displayAccountName(account: AccountLike): string {
 
 /**
  * Subtitle (account_id) shown below the display name when the label is
- * distinct from the identity the display name already shows. Returns null
- * when the subtitle would duplicate the title (label === account_id, or no
- * label AND displayAccountName falls through to account_id).
+ * distinct from the account_id (otherwise the label already covers the
+ * identity and a subtitle would be a duplicate). Returns null when there
+ * is no meaningful second line — either no account_id, the special
+ * "default" sentinel, or the label already equals the account_id (no
+ * label, or label set to the id verbatim, in which case the display
+ * name line already shows it).
  */
 export function accountSubtitle(account: AccountLike): string | null {
   if (!account.account_id || account.account_id === 'default') return null;
   const label = (account.account_label ?? '').trim();
-  if (label !== '' && label !== account.account_id) {
-    return account.account_id;
-  }
-  if (label === account.account_id) {
-    // Label already covers the identity; a subtitle would be a duplicate.
+  if (label === account.account_id) return null;
+  if (label === '') {
+    // No label: `displayAccountName` falls through to `account_id`, so
+    // the display-name line already shows it. A subtitle would be a
+    // duplicate. (Replaces the dead-code regex branches the previous
+    // version carried — proven unreachable by mutation on PR #294.)
     return null;
   }
-  // No label: subtitle is omitted whenever the display name already shows
-  // the account_id verbatim, regardless of whether the id looks like an
-  // email/uuid/hash — the regex branches are dead code (see Hermes review
-  // on PR #294: proven by mutation). The display-name fallback path
-  // catches every case the early return below doesn't.
-  if (displayAccountName(account) === account.account_id) return null;
-  return null;
+  return account.account_id;
 }
