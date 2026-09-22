@@ -21,7 +21,7 @@ def session_fixture():
         yield session
 
 
-def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1"):
+def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1", label=None):
     return LimitCard(
         service_name="Test",
         icon="T",
@@ -33,7 +33,7 @@ def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1"):
         detail="",
         provider_id=provider,
         account_id=account,
-        account_label="test@example.com",
+        account_label=label,
         used_value=used,
         limit_value=limit,
         data_source="oauth",
@@ -406,6 +406,126 @@ async def test_scoped_hysteresis_isolated_from_other_accounts(session):
             [_card(account="acc1", used=700.0), _card(account="acc2", used=950.0)],
             session,
         )
+
+        assert not mock_client.post.called
+
+    session.refresh(cfg)
+    assert cfg.last_fired_at is None
+
+
+@pytest.mark.asyncio
+async def test_scoped_reset_held_when_only_other_accounts_present(session):
+    """Empty matched set (other accounts only) must not clear last_fired_at."""
+    from app.services.webhooks import check_and_fire
+
+    fired_time = datetime.now(UTC)
+    cfg = _config(session, account="acc1", threshold=90.0, last_fired=fired_time)
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        # Only acc2 present; scoped config matches nothing → no usable pct.
+        await check_and_fire([_card(account="acc2", used=950.0)], session)
+
+        assert not mock_client.post.called
+
+    session.refresh(cfg)
+    assert cfg.last_fired_at is not None
+    assert cfg.last_fired_at.replace(tzinfo=None) == fired_time.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_reset_held_when_only_error_cards(session):
+    """Cards with unusable used_value/limit_value must not clear last_fired_at."""
+    from app.services.webhooks import check_and_fire
+
+    fired_time = datetime.now(UTC)
+    cfg = _config(session, threshold=90.0, last_fired=fired_time)
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        error_card = _card(used=None, limit=None)
+        await check_and_fire([error_card], session)
+
+        assert not mock_client.post.called
+
+    session.refresh(cfg)
+    assert cfg.last_fired_at is not None
+    assert cfg.last_fired_at.replace(tzinfo=None) == fired_time.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_canonical_match_email_label_vs_default_id(session):
+    """Scope=email matches a card stamped account_id='default' with email label."""
+    from app.services.webhooks import check_and_fire
+
+    _config(session, account="work@example.com")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        # resolve_account_id(default + email label) → email; same as scope.
+        card = _card(account="default", used=950.0)
+        card = LimitCard(**{**card.model_dump(), "account_label": "work@example.com"})
+        await check_and_fire([card], session)
+
+        assert mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_canonical_match_scope_email_card_email(session):
+    """Scope=email matches a card whose raw account_id is already the email."""
+    from app.services.webhooks import check_and_fire
+
+    _config(session, account="work@example.com")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        await check_and_fire([_card(account="work@example.com", used=950.0)], session)
+
+        assert mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_scope_default_does_not_match_email_card(session):
+    """Scope=default must not fire when the card canonicalises to an email."""
+    from app.services.webhooks import check_and_fire
+
+    cfg = _config(session, account="default")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock()
+        mock_cls.return_value = mock_client
+
+        # Card canonicalises to work@example.com (via label), not "default".
+        card = _card(account="default", used=950.0)
+        card = LimitCard(**{**card.model_dump(), "account_label": "work@example.com"})
+        await check_and_fire([card], session)
 
         assert not mock_client.post.called
 

@@ -254,6 +254,46 @@ def test_create_duplicate_scoped_account_409(client, session):
     assert dup.status_code == 409
 
 
+def test_patch_duplicate_scoped_account_409(client, session):
+    """PATCH that would create a duplicate (provider, account, url) → 409."""
+    session.add(
+        ProviderConfig(
+            provider_id="anthropic",
+            account_id="work@example.com",
+            name="Anthropic Work",
+            is_active=True,
+        )
+    )
+    session.commit()
+
+    first = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "account_id": "work@example.com",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    ).json()["id"]
+    second = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 80.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    ).json()["id"]
+
+    resp = client.patch(
+        f"/api/v1/system/webhooks/{second}",
+        json={"account_id": "work@example.com"},
+    )
+    assert resp.status_code == 409
+    assert "already exists" in resp.json()["detail"]
+
+
 def test_patch_set_and_clear_account_id(client, session):
     _seed_account(session)
     create_resp = client.post("/api/v1/system/webhooks", json=_payload())
@@ -358,7 +398,12 @@ def test_deferred_columns_includes_webhook_account_id():
 
 
 def test_migrate_webhook_uniqueness_upgrades_legacy_db():
-    """Functional upgrade path: dedupe keeps MIN(id), unique index created, idempotent."""
+    """Functional upgrade path: index created without deleting rows; idempotent.
+
+    Pre-#274 rows are all account_id=NULL after the column add; SQLite treats
+    NULLs as distinct, so both same-key NULL rows must survive the migration
+    (a pre-delete would silently drop a legitimate config).
+    """
     from sqlalchemy import text
 
     from app.core.db import _add_columns_if_missing, _migrate_webhook_uniqueness
@@ -372,7 +417,8 @@ def test_migrate_webhook_uniqueness_upgrades_legacy_db():
 
     with engine.connect() as conn:
         # Rebuild webhook_configs as a pre-#274 legacy table: no account_id,
-        # no unique constraint, and two duplicate (provider, NULL, url) rows.
+        # no unique constraint, and two same-key (provider, url) rows that
+        # become (provider, NULL, url) after the column add.
         conn.execute(text("DROP TABLE webhook_configs"))
         conn.execute(
             text(
@@ -395,12 +441,11 @@ def test_migrate_webhook_uniqueness_upgrades_legacy_db():
         _add_columns_if_missing(conn)
         _migrate_webhook_uniqueness(conn)
 
-        # Oldest duplicate (id=1) survives; newer same-key row (id=2) dropped;
-        # the distinct openai row (id=3) is untouched. account_id backfilled as NULL.
+        # All three rows survive — NULLs are distinct, so no pre-delete.
         rows = conn.execute(
             text("SELECT id, account_id FROM webhook_configs ORDER BY id")
         ).fetchall()
-        assert [(r[0], r[1]) for r in rows] == [(1, None), (3, None)]
+        assert [(r[0], r[1]) for r in rows] == [(1, None), (2, None), (3, None)]
 
         # Named unique index covers the three columns.
         index_cols = [
@@ -414,7 +459,7 @@ def test_migrate_webhook_uniqueness_upgrades_legacy_db():
         rows_again = conn.execute(
             text("SELECT id, account_id FROM webhook_configs ORDER BY id")
         ).fetchall()
-        assert [(r[0], r[1]) for r in rows_again] == [(1, None), (3, None)]
+        assert [(r[0], r[1]) for r in rows_again] == [(1, None), (2, None), (3, None)]
         covering = []
         for row in conn.execute(text("PRAGMA index_list(webhook_configs)")):
             name, unique = row[1], row[2]

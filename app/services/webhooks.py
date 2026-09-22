@@ -77,13 +77,20 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
 
     For each config:
     - Fire when ANY matched card has used_pct >= threshold and last_fired_at is None.
-    - Reset last_fired_at only when ALL matched cards are below threshold * _HYSTERESIS.
+    - Reset last_fired_at only when at least one matched card yielded a usable
+      pct AND all of them are below threshold * _HYSTERESIS. An empty `matched`
+      (no cards for the scoped account, or only error cards with used_value=None)
+      holds state — clearing would re-arm the alert and double-fire on the
+      next breach.
     - Cards in the dead zone (hysteresis ≤ used_pct < threshold) neither fire nor reset.
 
     Matching: provider-specific configs are evaluated before global '*' configs.
-    A config with account_id set only matches cards for that account; account_id
-    NULL matches any account (per-provider alert, current behavior).
+    A config with account_id set only matches cards for that account (both sides
+    canonicalised through resolve_account_id); account_id NULL matches any
+    account (per-provider alert, current behavior).
     """
+    from app.services.account_identity import resolve_account_id
+
     configs = session.exec(
         select(WebhookConfig).where(WebhookConfig.active == True)  # noqa: E712
     ).all()
@@ -106,16 +113,28 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
             else:
                 matched = card_by_provider.get(config.provider_id, [])
             if config.account_id is not None:
-                matched = [c for c in matched if c.account_id == config.account_id]
+                # Compare canonical ids: collectors stamp raw identity
+                # (`account_id or "default"`), cards also carry account_label
+                # which often holds the resolved email — same resolver the
+                # accumulator/fleet write paths use.
+                scope = resolve_account_id(config.provider_id, config.account_id, None)
+                matched = [
+                    c
+                    for c in matched
+                    if resolve_account_id(config.provider_id, c.account_id, c.account_label)
+                    == scope
+                ]
 
             # Two-pass: categorise all cards before mutating state
             breaching: list[tuple[LimitCard, float]] = []
             all_recovered = True  # true until we find a card above hysteresis
+            saw_usable = False  # true once any matched card yielded a usable pct
 
             for card in matched:
                 if card.used_value is None or card.limit_value is None or card.limit_value == 0:
                     continue
 
+                saw_usable = True
                 used_pct = (card.used_value / card.limit_value) * 100.0
 
                 if used_pct >= config.threshold_pct:
@@ -125,8 +144,10 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                     # Dead zone: above hysteresis but below threshold — hold state
                     all_recovered = False
 
-            # Reset: every card has recovered below hysteresis
-            if all_recovered and config.last_fired_at is not None:
+            # Reset: every usable card has recovered below hysteresis.
+            # Without saw_usable, an empty/error-only matched list would vacuously
+            # clear last_fired_at and re-arm a scoped alert that never recovered.
+            if saw_usable and all_recovered and config.last_fired_at is not None:
                 config.last_fired_at = None
                 session.add(config)
             # Fire: at least one card is breaching and no active breach recorded

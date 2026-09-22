@@ -96,16 +96,30 @@ function WebhookRow({
   onChanged: () => void;
   providers: ProviderConfig[];
 }) {
-  const account =
-    webhook.account_id != null
-      ? providers
-          .find((p) => p.provider_id === webhook.provider_id)
-          ?.accounts.find((a) => a.account_id === webhook.account_id)
-      : undefined;
+  const providerAccounts =
+    providers.find((p) => p.provider_id === webhook.provider_id)?.accounts ?? [];
+  const isWildcard = webhook.provider_id === '*';
+  const serverScope = webhook.account_id ?? ALL_ACCOUNTS;
+  const [scope, setScope] = useState(serverScope);
   const toggle = useMutation({
     mutationFn: (active: boolean) => updateWebhook(webhook.id, { active }),
     onSuccess: onChanged,
     onError: (err) => toast.error(err.message),
+  });
+  const changeScope = useMutation({
+    mutationFn: (next: string) =>
+      updateWebhook(webhook.id, {
+        account_id: next === ALL_ACCOUNTS ? null : next,
+      }),
+    onSuccess: (_resp, next) => {
+      setScope(next);
+      toast.success(next === ALL_ACCOUNTS ? 'Alert covers all accounts' : 'Account scope updated');
+      onChanged();
+    },
+    onError: (err) => {
+      setScope(serverScope);
+      toast.error(err.message);
+    },
   });
   const test = useMutation({
     mutationFn: () => testWebhook(webhook.id),
@@ -124,16 +138,41 @@ function WebhookRow({
   return (
     <Card className="flex items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-medium">
-          {webhook.provider_id}
-          <span className="ml-1.5 font-normal text-fg-muted">
-            {webhook.account_id
-              ? displayAccountName(account ?? { account_id: webhook.account_id })
-              : 'All accounts'}
-          </span>
-          <span className="ml-1.5 font-mono text-fg-muted tabular">
-            ≥ {webhook.threshold_pct}%
-          </span>
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] font-medium">
+          <span>{webhook.provider_id}</span>
+          {isWildcard ? (
+            <span className="font-normal text-fg-muted">All accounts</span>
+          ) : (
+            <Select
+              value={scope}
+              onValueChange={(v) => {
+                if (v) changeScope.mutate(v);
+              }}
+            >
+              <SelectTrigger
+                className="h-6 max-w-44 px-2 text-xs font-normal"
+                aria-label="Alert account scope"
+                disabled={changeScope.isPending}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_ACCOUNTS}>All accounts</SelectItem>
+                {/* Fallback item so SelectValue can render a scope the
+                    provider-accounts list doesn't carry (stale/disabled row). */}
+                {scope !== ALL_ACCOUNTS &&
+                  !providerAccounts.some((a) => a.account_id === scope) && (
+                    <SelectItem value={scope}>{scope}</SelectItem>
+                  )}
+                {providerAccounts.map((a) => (
+                  <SelectItem key={a.account_id} value={a.account_id}>
+                    {displayAccountName(a)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <span className="font-mono text-fg-muted tabular">≥ {webhook.threshold_pct}%</span>
         </p>
         <p className="truncate text-[11px] text-fg-subtle">
           {webhook.channel} ·{' '}

@@ -170,4 +170,55 @@ describe('WebhooksSection', () => {
       channel: 'discord',
     });
   });
+
+  it('changes row account scope via updateWebhook', async () => {
+    vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [webhook()] });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          accounts: [{ account_id: 'work@example.com', account_label: 'Work' }],
+          account_count: 1,
+        }),
+      ],
+    });
+    vi.mocked(api.updateWebhook).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<WebhooksSection />);
+
+    const scope = await screen.findByRole('combobox', { name: /alert account scope/i });
+    await userEvent.click(scope);
+    await userEvent.click(await screen.findByRole('option', { name: 'Work' }));
+    expect(api.updateWebhook).toHaveBeenCalledWith(7, { account_id: 'work@example.com' });
+  });
+
+  it('clears row account scope back to all accounts with explicit null', async () => {
+    vi.mocked(api.fetchWebhooks).mockResolvedValue({
+      webhooks: [webhook({ account_id: 'work@example.com' })],
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          accounts: [{ account_id: 'work@example.com', account_label: 'Work' }],
+          account_count: 1,
+        }),
+      ],
+    });
+    vi.mocked(api.updateWebhook).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<WebhooksSection />);
+
+    const scope = await screen.findByRole('combobox', { name: /alert account scope/i });
+    await userEvent.click(scope);
+    await userEvent.click(await screen.findByRole('option', { name: 'All accounts' }));
+    expect(api.updateWebhook).toHaveBeenCalledWith(7, { account_id: null });
+  });
+
+  it('wildcard provider row has no account picker', async () => {
+    vi.mocked(api.fetchWebhooks).mockResolvedValue({
+      webhooks: [webhook({ provider_id: '*' })],
+    });
+    renderWithProviders(<WebhooksSection />);
+
+    expect(await screen.findByText(/\*/)).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /alert account scope/i })).toBeNull();
+    expect(screen.getByText('All accounts')).toBeInTheDocument();
+  });
 });

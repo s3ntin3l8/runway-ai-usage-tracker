@@ -302,11 +302,12 @@ def _migrate_webhook_uniqueness(conn: Any) -> None:
     __table_args__ (backed by a sqlite_autoindex_* index). On existing
     databases the constraint predates account_id, so the column is added by
     _add_columns_if_missing first and the unique index is created here.
-    Legacy rows created before any uniqueness existed are deduped (keeping
-    the oldest row) so index creation cannot fail.
 
-    Note: SQLite treats NULLs as distinct in unique indexes, so this index
-    only hardens rows with a concrete account_id — duplicates of the
+    Note: SQLite treats NULLs as distinct in unique indexes, so pre-#274
+    rows (all account_id=NULL after the column add) can never make
+    CREATE UNIQUE INDEX fail — no pre-delete is needed or desirable
+    (deleting would silently drop legitimate configs). The index only
+    hardens rows with a concrete account_id; duplicates of the
     "all accounts" (NULL) form are rejected by the API layer instead.
     """
     from sqlalchemy import text
@@ -325,19 +326,6 @@ def _migrate_webhook_uniqueness(conn: Any) -> None:
         index_cols = {r[2] for r in conn.execute(text(f"PRAGMA index_info('{index_name}')"))}
         if needed <= index_cols:
             return
-
-    # Drop legacy duplicates that would make CREATE UNIQUE INDEX fail.
-    # GROUP BY treats NULL account_id values as one group.
-    result = conn.execute(
-        text(
-            "DELETE FROM webhook_configs WHERE id NOT IN ("
-            "SELECT MIN(id) FROM webhook_configs "
-            "GROUP BY provider_id, account_id, url)"
-        )
-    )
-    conn.commit()
-    if result.rowcount:
-        logger.info("Migrated: removed %d duplicate webhook_configs rows", result.rowcount)
 
     conn.execute(
         text(
