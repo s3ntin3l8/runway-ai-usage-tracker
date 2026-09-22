@@ -527,12 +527,23 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
     renderWithProviders(ui, { route: '/settings/providers?providers=v2' });
 
   it('renders the empty state when no providers are configured', async () => {
-    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    // `/provider-configs` enumerates the registry on every fresh install,
+    // so the response carries N providers all with `account_count: 0`.
+    // Mocking `{ providers: [] }` would pin a shape the server never
+    // produces (Hermes round-2).
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({ account_count: 0, accounts: [] })],
+    });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
     renderV2(<ProvidersSection />);
 
     expect(await screen.findByText('No providers configured')).toBeInTheDocument();
     expect(screen.getByText(/add your first provider/i)).toBeInTheDocument();
+    // Exactly one Add provider affordance on a fresh install: the
+    // EmptyState's own button. The sticky footer Add is gated on
+    // `hasAnyConfig` (ProvidersSection.tsx:340) and stays hidden here so
+    // users don't see two identical CTAs.
+    expect(screen.getAllByRole('button', { name: /add provider/i })).toHaveLength(1);
   });
 
   it('renders a card per provider with the N accounts subtitle', async () => {

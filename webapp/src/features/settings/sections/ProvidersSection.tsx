@@ -337,19 +337,22 @@ function ProvidersSectionV2({
       </div>
 
       {/* Add provider CTA — sticky on mobile (above bottom nav), inline
-          top-right on desktop. Always rendered: a fresh install needs a
-          visible Add even though `hasAnyConfig` is false. */}
-      <Button
-        variant="primary"
-        size={isDesktop ? 'md' : 'lg'}
-        className={isDesktop ? 'mt-3 self-start' : 'fixed inset-x-4 bottom-4 z-30 shadow-lg'}
-        disabled
-        aria-disabled="true"
-        title="Wizard lands in #287"
-      >
-        <Plus className="size-4" />
-        Add provider
-      </Button>
+          top-right on desktop. Shows once at least one provider is configured;
+          on a fresh install the EmptyState at :288 renders its own Add
+          button, so we suppress this one to keep exactly one visible. */}
+      {hasAnyConfig ? (
+        <Button
+          variant="primary"
+          size={isDesktop ? 'md' : 'lg'}
+          className={isDesktop ? 'mt-3 self-start' : 'fixed inset-x-4 bottom-4 z-30 shadow-lg'}
+          disabled
+          aria-disabled="true"
+          title="Wizard lands in #287"
+        >
+          <Plus className="size-4" />
+          Add provider
+        </Button>
+      ) : null}
 
       <ProviderDetailDialog
         provider={detailProvider}
