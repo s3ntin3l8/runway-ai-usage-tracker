@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import httpx
 from sqlmodel import Session, select
 
-from app.models.db import WebhookConfig
+from app.models.db import ProviderConfig, WebhookConfig
 from app.models.schemas import LimitCard
 
 logger = logging.getLogger(__name__)
@@ -86,8 +86,11 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
 
     Matching: provider-specific configs are evaluated before global '*' configs.
     A config with account_id set only matches cards for that account (both sides
-    canonicalised through resolve_account_id); account_id NULL matches any
-    account (per-provider alert, current behavior).
+    canonicalised through resolve_account_id). The scope side also uses the
+    matching provider_configs.account_label so a sentinel `default` row whose
+    label is a resolved email canonicalises to that email — same as cards
+    stamped default + email label. account_id NULL matches any account
+    (per-provider alert, current behavior).
     """
     from app.services.account_identity import resolve_account_id
 
@@ -96,6 +99,12 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     ).all()
     if not configs:
         return
+
+    # (provider_id, account_id) → account_label for scope canonicalisation.
+    scope_labels = {
+        (r.provider_id, r.account_id): r.account_label
+        for r in session.exec(select(ProviderConfig)).all()
+    }
 
     # Build provider → cards lookup
     card_by_provider: dict[str, list[LimitCard]] = {}
@@ -116,8 +125,14 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                 # Compare canonical ids: collectors stamp raw identity
                 # (`account_id or "default"`), cards also carry account_label
                 # which often holds the resolved email — same resolver the
-                # accumulator/fleet write paths use.
-                scope = resolve_account_id(config.provider_id, config.account_id, None)
+                # accumulator/fleet write paths use. Scope side pulls the
+                # provider_configs label so `default` + email label resolves
+                # to the email (pins case-folding and the default→email path).
+                scope = resolve_account_id(
+                    config.provider_id,
+                    config.account_id,
+                    scope_labels.get((config.provider_id, config.account_id)),
+                )
                 matched = [
                     c
                     for c in matched

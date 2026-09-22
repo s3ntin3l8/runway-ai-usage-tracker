@@ -531,3 +531,59 @@ async def test_scope_default_does_not_match_email_card(session):
 
     session.refresh(cfg)
     assert cfg.last_fired_at is None
+
+
+@pytest.mark.asyncio
+async def test_scope_email_case_difference_matches(session):
+    """Scope-side resolve folds case: Work@Example.com matches work@example.com."""
+    from app.services.webhooks import check_and_fire
+
+    _config(session, account="Work@Example.com")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        await check_and_fire([_card(account="work@example.com", used=950.0)], session)
+
+        assert mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_scope_default_label_email_matches_email_card(session):
+    """provider_configs default row with email label → scope resolves to that email."""
+    from app.models.db import ProviderConfig
+    from app.services.webhooks import check_and_fire
+
+    session.add(
+        ProviderConfig(
+            provider_id="anthropic",
+            account_id="default",
+            account_label="work@example.com",
+            enabled=True,
+        )
+    )
+    session.commit()
+    _config(session, account="default")
+
+    with patch("app.services.webhooks.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        # Without the provider_configs label the scope stays "default" and
+        # never matches; with it, both sides canonicalise to the email.
+        card = _card(account="default", used=950.0)
+        card = LimitCard(**{**card.model_dump(), "account_label": "work@example.com"})
+        await check_and_fire([card], session)
+
+        assert mock_client.post.called
