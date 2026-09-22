@@ -180,7 +180,13 @@ def test_seeded_minors_match_pricing_seed():
 
 
 def test_call_site_default_raw_is_empty_string():
-    """Missing field 19 defaults to '' (not 'unknown') so both paths agree."""
+    """Missing field 19 defaults to '' (not 'unknown').
+
+    Paths agree on versioned displays and on the family-only case both
+    landing in `unknown` — placeholder raw ('gemini-3-flash-a') still
+    buckets to flash-3 for the same family-only display; empty raw
+    stays unknown deliberately (base parity for the version-less case).
+    """
     assert _normalize_ag_model("", "Gemini Flash", {}) == "unknown"
     assert _normalize_ag_model("", "Gemini 3.5 Flash", {}) == "flash-3.5"
 
