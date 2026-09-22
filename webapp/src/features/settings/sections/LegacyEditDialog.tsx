@@ -1,0 +1,517 @@
+// Legacy single-account edit dialog. Used only when `?providers=v2` is
+// absent — the rollback path. The form renders the legacy single-account
+// shape (one row per provider keyed by `account_id="default"`) using the
+// legacy single-account PUT shortcut (`PUT /provider-config/{pid}` without
+// `account_id`), which the backend resolves from the existing rows for the
+// provider: creates "default" on 0 rows, updates the row in place on 1 row,
+// returns 409 on 2+ rows so the caller can disambiguate via the per-account
+// endpoint.
+//
+// Deltas vs. the previous build (`ProvidersSection.tsx` before this PR):
+//   1. `useCallback` wrappers around `invalidateAfterAuth` / `startPolling`
+//      dropped (callers don't memoize on the references).
+//   2. The save path now calls `putProviderConfigLegacy(pid, body)` — the
+//      legacy shortcut that preserves the pre-#286 semantics of updating
+//      the existing email-keyed row in place rather than creating a second
+//      `default` row.
+//
+// The new v2 dialog shell uses `ProviderDetailDialog` + `ProviderAccountDialog`
+// instead; this file is the rollback target only.
+
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Copy, ExternalLink, GripVertical, LogIn, LogOut } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  getGitHubOAuthStatus,
+  initGitHubOAuth,
+  logoutGitHub,
+  pollGitHubOAuth,
+  putProviderConfigLegacy,
+  type ProviderConfigUpdate,
+} from '@/api/endpoints';
+import type { ProviderConfig } from '@/api/types';
+import { Button } from '@/components/ui/Button';
+import { Countdown } from '@/components/ui/Countdown';
+import { HelperText, Input, Label } from '@/components/ui/Input';
+import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import { Switch } from '@/components/ui/Switch';
+import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
+
+type FlowState =
+  | { phase: 'idle' }
+  | {
+      phase: 'pending';
+      deviceCode: string;
+      userCode: string;
+      verificationUri: string;
+      expiresAt: string;
+      pollInterval: number;
+    }
+  | { phase: 'error'; message: string };
+
+export function LegacyEditDialog({
+  editing,
+  onClose,
+}: {
+  editing: ProviderConfig | null;
+  onClose: () => void;
+}) {
+  return (
+    <ResponsiveDialog
+      open={editing !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={editing?.name ?? ''}
+      description="Configuration is stored encrypted on the server."
+    >
+      {editing ? (
+        <ProviderForm key={editing.provider_id} provider={editing} onSaved={onClose} />
+      ) : null}
+    </ResponsiveDialog>
+  );
+}
+
+function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved: () => void }) {
+  const queryClient = useQueryClient();
+  const [enabled, setEnabled] = useState(provider.enabled ?? true);
+  const [archived, setArchived] = useState(provider.archived ?? false);
+  const [apiKey, setApiKey] = useState('');
+  const [cookie, setCookie] = useState('');
+  const [label, setLabel] = useState(provider.account_label ?? '');
+  const [pollInterval, setPollInterval] = useState(
+    provider.poll_interval_seconds != null ? String(provider.poll_interval_seconds) : '',
+  );
+  const [strategies, setStrategies] = useState(
+    (provider.collection_strategies ?? provider.supported_strategies ?? []).map((s) => ({
+      id: s.id,
+      enabled: s.enabled,
+      label: (s as { label?: string }).label ?? s.id,
+    })),
+  );
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body: ProviderConfigUpdate = {
+        enabled,
+        archived,
+        account_label: label.trim(),
+        poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
+        collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
+      };
+      // Only send credentials the user actually typed — empty string means
+      // "clear" server-side, absence means "keep".
+      if (apiKey !== '') body.api_key = apiKey;
+      if (cookie !== '') body.session_cookie = cookie;
+      // Legacy single-account route — the backend resolves the target row
+      // from the existing rows for this provider (creates "default" on 0
+      // rows, updates in place on 1 row, 409s on 2+). This preserves the
+      // pre-#286 semantics: editing an email-keyed single-row install must
+      // UPDATE the existing row, not create a second "default" row.
+      return putProviderConfigLegacy(provider.provider_id, body);
+    },
+    onSuccess: () => {
+      toast.success(`${provider.name} saved — collection triggered`);
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+      queryClient.invalidateQueries({ queryKey: ['usage'] });
+      onSaved();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setPullToRefreshSuspended(false);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = strategies.map((s) => s.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    setStrategies(arrayMove(strategies, oldIndex, newIndex));
+  };
+
+  // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
+  // mid-drag unmount skips both — prevent permanently stuck pull-to-refresh.
+  useEffect(() => () => setPullToRefreshSuspended(false), []);
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate();
+      }}
+      className="flex flex-col gap-4"
+    >
+      <div className="flex items-center justify-between">
+        <Label htmlFor="prov-enabled">Collection enabled</Label>
+        <Switch id="prov-enabled" checked={enabled} onCheckedChange={setEnabled} />
+      </div>
+
+      {/* PR #292: hidden from the home dashboard; lifetime stats preserved. */}
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="prov-archived">Archived</Label>
+          <span className="text-[11px] text-fg-subtle">
+            Hidden from the home dashboard; lifetime stats preserved
+          </span>
+        </div>
+        <Switch id="prov-archived" checked={archived} onCheckedChange={setArchived} />
+      </div>
+
+      {provider.provider_id === 'github' ? (
+        <div className="flex flex-col gap-1.5">
+          <Label>GitHub login</Label>
+          <GitHubLoginSection />
+        </div>
+      ) : null}
+
+      {provider.supports_api_key ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-key">{provider.api_key_label || 'API key'}</Label>
+          <Input
+            id="prov-key"
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={provider.api_key_set ? '••••••••  (set — leave blank to keep)' : ''}
+          />
+          {provider.api_key_help ? <HelperText>{provider.api_key_help}</HelperText> : null}
+        </div>
+      ) : null}
+
+      {provider.supports_session_cookie ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-cookie">{provider.session_cookie_label || 'Session cookie'}</Label>
+          <Input
+            id="prov-cookie"
+            type="password"
+            autoComplete="off"
+            value={cookie}
+            onChange={(e) => setCookie(e.target.value)}
+            placeholder={provider.session_cookie_set ? '••••••••  (set — leave blank to keep)' : ''}
+          />
+          {provider.session_cookie_help ? (
+            <HelperText>{provider.session_cookie_help}</HelperText>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-label">Account label</Label>
+          <Input id="prov-label" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="prov-poll">Poll interval (s)</Label>
+          <Input
+            id="prov-poll"
+            type="number"
+            inputMode="numeric"
+            min={30}
+            value={pollInterval}
+            onChange={(e) => setPollInterval(e.target.value)}
+            placeholder={`default ${provider.effective_poll_interval ?? ''}`}
+          />
+        </div>
+      </div>
+
+      {strategies.length > 0 ? (
+        <fieldset className="flex flex-col gap-1 rounded-sm border border-edge p-3">
+          <legend className="px-1 text-xs font-medium text-fg-muted">Collection strategies</legend>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={() => setPullToRefreshSuspended(true)}
+            onDragEnd={handleDragEnd}
+            onDragCancel={() => setPullToRefreshSuspended(false)}
+          >
+            <SortableContext items={strategies.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+              {strategies.map((s) => (
+                <SortableStrategyRow
+                  key={s.id}
+                  strategy={s}
+                  onToggle={(enabled) =>
+                    setStrategies((prev) =>
+                      prev.map((x) => (x.id === s.id ? { ...x, enabled } : x)),
+                    )
+                  }
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+        </fieldset>
+      ) : null}
+
+      <Button type="submit" variant="primary" loading={save.isPending}>
+        Save
+      </Button>
+    </form>
+  );
+}
+
+function SortableStrategyRow({
+  strategy,
+  onToggle,
+}: {
+  strategy: { id: string; enabled: boolean; label: string };
+  onToggle: (enabled: boolean) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: strategy.id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center justify-between rounded-sm px-1 py-1.5 ${
+        isDragging ? 'z-10 opacity-60' : ''
+      }`}
+    >
+      <div
+        {...attributes}
+        {...listeners}
+        className="flex items-center gap-2 touch-none"
+        aria-label={'Reorder ' + strategy.label}
+      >
+        <GripVertical className="size-3.5 text-fg-muted" />
+        <span className="text-[13px]">{strategy.label}</span>
+      </div>
+      <Switch
+        checked={strategy.enabled}
+        onCheckedChange={onToggle}
+        aria-label={strategy.label}
+      />
+    </div>
+  );
+}
+
+function GitHubLoginSection() {
+  const queryClient = useQueryClient();
+  const [flow, setFlow] = useState<FlowState>({ phase: 'idle' });
+  const [copied, setCopied] = useState(false);
+  const pendingPollRef = useRef<{ stop: () => void } | null>(null);
+
+  const statusQuery = useQuery({
+    queryKey: ['github-oauth-status'],
+    queryFn: getGitHubOAuthStatus,
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  useEffect(() => {
+    return () => {
+      pendingPollRef.current?.stop();
+    };
+  }, []);
+
+  const invalidateAfterAuth = () => {
+    queryClient.invalidateQueries({ queryKey: ['github-oauth-status'] });
+    queryClient.invalidateQueries({ queryKey: ['usage'] });
+    queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+  };
+
+  const startPolling = (
+    deviceCode: string,
+    initialInterval: number,
+  ) => {
+    pendingPollRef.current?.stop();
+    let stopped = false;
+    let pollMs = initialInterval * 1000;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      if (stopped) return;
+      try {
+        const result = await pollGitHubOAuth(deviceCode);
+        if (result.status === 'success') {
+          stopped = true;
+          setFlow({ phase: 'idle' });
+          toast.success('GitHub connected');
+          invalidateAfterAuth();
+          return;
+        }
+        if (result.status === 'slow_down' && result.interval) {
+          pollMs = result.interval * 1000;
+        }
+      } catch {
+        stopped = true;
+        setFlow({ phase: 'error', message: 'Authorisation failed — try again' });
+        return;
+      }
+      if (!stopped) timeoutId = setTimeout(poll, pollMs);
+    };
+
+    timeoutId = setTimeout(poll, pollMs);
+    pendingPollRef.current = {
+      stop: () => {
+        stopped = true;
+        clearTimeout(timeoutId);
+      },
+    };
+  };
+
+  const login = useMutation({
+    mutationFn: initGitHubOAuth,
+    onSuccess: (data) => {
+      const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+      setFlow({
+        phase: 'pending',
+        deviceCode: data.device_code,
+        userCode: data.user_code,
+        verificationUri: data.verification_uri,
+        expiresAt,
+        pollInterval: data.interval,
+      });
+      startPolling(data.device_code, data.interval);
+    },
+    onError: (err) => setFlow({ phase: 'error', message: err.message }),
+  });
+
+  const logout = useMutation({
+    mutationFn: logoutGitHub,
+    onSuccess: () => {
+      toast.success('GitHub disconnected');
+      invalidateAfterAuth();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const cancel = () => {
+    pendingPollRef.current?.stop();
+    setFlow({ phase: 'idle' });
+  };
+
+  const copyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.info(`Code: ${code}`);
+    }
+  };
+
+  if (flow.phase === 'pending') {
+    return (
+      <div className="rounded-md border border-edge bg-surface-2 p-4">
+        <p className="mb-1 text-[12px] text-fg-subtle">
+          Open{' '}
+          <a
+            href={flow.verificationUri}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-accent underline underline-offset-2"
+          >
+            github.com/login/device
+            <ExternalLink className="size-2.5" />
+          </a>{' '}
+          and enter this code:
+        </p>
+        <div className="mb-3 flex items-center gap-2">
+          <code className="flex-1 rounded bg-surface-1 px-3 py-2 font-mono text-xl tracking-[0.25em]">
+            {flow.userCode}
+          </code>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => void copyCode(flow.userCode)}
+            title="Copy code"
+          >
+            {copied ? (
+              <span className="text-[10px] font-bold text-ok">✓</span>
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+          </Button>
+        </div>
+        <div className="flex items-center justify-between">
+          <Countdown until={flow.expiresAt} prefix="expires in" />
+          <div className="flex items-center gap-2">
+            <span className="animate-pulse text-[11px] text-fg-muted">Waiting…</span>
+            <Button size="sm" variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (flow.phase === 'error') {
+    return (
+      <div className="rounded-md border border-critical/30 bg-critical/5 p-3">
+        <p className="mb-2 text-[12px] text-critical">{flow.message}</p>
+        <Button size="sm" variant="ghost" onClick={() => setFlow({ phase: 'idle' })}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  const auth = statusQuery.data;
+
+  if (auth?.authenticated) {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium">
+            {auth.account ? `@${auth.account}` : 'Connected'}
+          </p>
+          {auth.email ? (
+            <p className="truncate text-[11px] text-fg-subtle">{auth.email}</p>
+          ) : null}
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => logout.mutate()}
+          loading={logout.isPending}
+          className="shrink-0 text-fg-muted"
+        >
+          <LogOut className="mr-1 size-3" />
+          Disconnect
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      className="w-full justify-center"
+      onClick={() => login.mutate()}
+      loading={login.isPending || statusQuery.isPending}
+    >
+      <LogIn className="mr-1.5 size-3.5" />
+      Connect via GitHub OAuth
+    </Button>
+  );
+}

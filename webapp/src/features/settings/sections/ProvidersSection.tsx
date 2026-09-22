@@ -1,21 +1,16 @@
-// Provider configuration: enable/disable, credentials, account label, poll
-// interval, per-strategy toggles. Credentials are write-only (server stores
-// them encrypted and only reports *_set flags).
+// Provider configuration: per-account settings with multi-account rendering.
+// When the `?providers=v2` URL param is set, renders the new card-grid +
+// per-account dialog shell (Issues #286 / #287 wizard targets this). When
+// absent, falls back to the legacy flat-list single-account form (one
+// ProviderConfig row per provider, no per-account breakdown). Rollback =
+// drop the URL param.
+//
+// Backend already exposes `accounts: ProviderAccount[]` and `account_count`
+// on every row (PR #281 hardening + #286 follow-up), so the v2 UI consumes
+// the same response shape — the only diff is which shell renders.
 
-export function reorderStrategies<T extends { id: string }>(
-  items: T[],
-  activeId: string,
-  overId: string,
-): T[] {
-  const ids = items.map((s) => s.id);
-  const oldIndex = ids.indexOf(activeId);
-  const newIndex = ids.indexOf(overId);
-  if (oldIndex === -1 || newIndex === -1) return items;
-  return arrayMove(items, oldIndex, newIndex);
-}
-
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
   KeyboardSensor,
@@ -34,43 +29,97 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Copy, ExternalLink, GripVertical, LogIn, LogOut } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
+import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
-import {
-  getGitHubOAuthStatus,
-  initGitHubOAuth,
-  logoutGitHub,
-  pollGitHubOAuth,
-  putProviderConfig,
-  type ProviderConfigUpdate,
-} from '@/api/endpoints';
-import type { ProviderConfig } from '@/api/types';
+import { putDashboardLayout } from '@/api/endpoints';
+import type { DashboardLayout, ProviderConfig } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { Countdown } from '@/components/ui/Countdown';
-import { HelperText, Input, Label } from '@/components/ui/Input';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
-import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Switch } from '@/components/ui/Switch';
+import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { useProviderConfigs } from '@/features/home/queries';
+import { useDashboardLayout } from '@/features/home/queries';
+import { ProviderDetailDialog } from './ProviderDetailDialog';
+import { LegacyEditDialog } from './LegacyEditDialog';
 
-type FlowState =
-  | { phase: 'idle' }
-  | {
-      phase: 'pending';
-      deviceCode: string;
-      userCode: string;
-      verificationUri: string;
-      expiresAt: string;
-      pollInterval: number;
-    }
-  | { phase: 'error'; message: string };
+export function reorderItems<T>(
+  items: T[],
+  activeId: string,
+  overId: string,
+  // Default reads `.id` (used by the strategy reorder — `StrategyEntry` has
+  // an `id` field). Provider reorder passes `(p) => p.provider_id` so the
+  // v2 grid uses the right key.
+  getId: (s: T) => string = (s) => (s as { id?: string }).id ?? '',
+): T[] {
+  const oldIndex = items.findIndex((s) => getId(s) === activeId);
+  const newIndex = items.findIndex((s) => getId(s) === overId);
+  if (oldIndex === -1 || newIndex === -1) return items;
+  return arrayMove(items, oldIndex, newIndex);
+}
+
+interface UseV2ProvidersResult {
+  enabled: boolean;
+  configs: ReturnType<typeof useProviderConfigs>;
+  layout: ReturnType<typeof useDashboardLayout>;
+  saveOrder: ReturnType<typeof useMutation<{ status: string }, Error, string[]>>;
+}
+
+/** Hook that wraps `?providers=v2` gating + the providers/layout queries. */
+function useV2Providers(): UseV2ProvidersResult {
+  const [searchParams] = useSearchParams();
+  const enabled = searchParams.get('providers') === 'v2';
+  const configs = useProviderConfigs();
+  const layout = useDashboardLayout();
+  const queryClient = useQueryClient();
+  const saveOrder = useMutation({
+    mutationFn: (orderedProviderIds: string[]) =>
+      putDashboardLayout({
+        provider_order: orderedProviderIds,
+        card_orders: layout.data?.card_orders ?? {},
+      }),
+    onMutate: async (orderedProviderIds) => {
+      // Optimistic update so the grid order reflects the drop immediately.
+      await queryClient.cancelQueries({ queryKey: ['system', 'dashboard-layout'] });
+      queryClient.setQueryData(['system', 'dashboard-layout'], (prev: DashboardLayout | undefined) => ({
+        provider_order: orderedProviderIds,
+        card_orders: prev?.card_orders ?? {},
+      }));
+    },
+    onError: () => {
+      toast.error('Could not save provider order');
+      queryClient.invalidateQueries({ queryKey: ['system', 'dashboard-layout'] });
+    },
+  });
+  return { enabled, configs, layout, saveOrder };
+}
 
 export function ProvidersSection() {
-  const configs = useProviderConfigs();
+  const { enabled: v2, configs, layout, saveOrder } = useV2Providers();
+
+  if (v2) {
+    return <ProvidersSectionV2 configs={configs} layout={layout} saveOrder={saveOrder} />;
+  }
+  return <ProvidersSectionLegacy configs={configs} />;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy single-account form (unchanged behaviour, kept for the rollback path).
+// The dialog / form internals are isolated in `LegacyEditDialog` for the v1
+// shell; `ProviderDetailDialog` + `ProviderAccountDialog` are the v2 UI. The
+// legacy path renders one row keyed by `account_id="default"`.
+// ---------------------------------------------------------------------------
+
+function ProvidersSectionLegacy({
+  configs,
+}: {
+  configs: ReturnType<typeof useProviderConfigs>;
+}) {
   const [editing, setEditing] = useState<ProviderConfig | null>(null);
 
   if (configs.isPending) {
@@ -115,169 +164,158 @@ export function ProvidersSection() {
         </Card>
       ))}
 
-      <ResponsiveDialog
-        open={editing !== null}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null);
-        }}
-        title={editing?.name ?? ''}
-        description="Configuration is stored encrypted on the server."
-      >
-        {editing ? (
-          <ProviderForm
-            key={editing.provider_id}
-            provider={editing}
-            onSaved={() => setEditing(null)}
-          />
-        ) : null}
-      </ResponsiveDialog>
+      {/* Legacy edit dialog — kept verbatim so the rollback path is the
+          exact previous build. Wired through the multi-account PUT endpoint
+          with account_id="default" for single-account users. */}
+      <LegacyEditDialog
+        editing={editing}
+        onClose={() => setEditing(null)}
+      />
     </div>
   );
 }
 
-function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved: () => void }) {
-  const queryClient = useQueryClient();
-  const [enabled, setEnabled] = useState(provider.enabled ?? true);
-  const [archived, setArchived] = useState(provider.archived ?? false);
-  const [apiKey, setApiKey] = useState('');
-  const [cookie, setCookie] = useState('');
-  const [label, setLabel] = useState(provider.account_label ?? '');
-  const [pollInterval, setPollInterval] = useState(
-    provider.poll_interval_seconds != null ? String(provider.poll_interval_seconds) : '',
-  );
-  const [strategies, setStrategies] = useState(
-    (provider.collection_strategies ?? provider.supported_strategies ?? []).map((s) => ({
-      id: s.id,
-      enabled: s.enabled,
-      label: (s as { label?: string }).label ?? s.id,
-    })),
-  );
+// ---------------------------------------------------------------------------
+// v2: empty-canvas card grid + per-account dialog shell.
+// ---------------------------------------------------------------------------
 
-  const save = useMutation({
-    mutationFn: () => {
-      const body: ProviderConfigUpdate = {
-        enabled,
-        archived,
-        account_label: label,
-        poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
-        collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
-      };
-      // Only send credentials the user actually typed — empty string means
-      // "clear" server-side, absence means "keep".
-      if (apiKey !== '') body.api_key = apiKey;
-      if (cookie !== '') body.session_cookie = cookie;
-      return putProviderConfig(provider.provider_id, body);
-    },
-    onSuccess: () => {
-      toast.success(`${provider.name} saved — collection triggered`);
-      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
-      queryClient.invalidateQueries({ queryKey: ['usage'] });
-      onSaved();
-    },
-    onError: (err) => toast.error(err.message),
-  });
+function ProvidersSectionV2({
+  configs,
+  layout,
+  saveOrder,
+}: {
+  configs: ReturnType<typeof useProviderConfigs>;
+  layout: ReturnType<typeof useDashboardLayout>;
+  saveOrder: UseV2ProvidersResult['saveOrder'];
+}) {
+  const providers = configs.data?.providers ?? [];
+  const isDesktop = useIsDesktop();
+  const [detailProvider, setDetailProvider] = useState<ProviderConfig | null>(null);
 
+
+  // Filter strip
+  const [search, setSearch] = useState('');
+
+  // Apply persisted provider_order from dashboard_layout, falling back to
+  // server order. Memoized to keep the dnd-kit sensors stable across renders.
+  const ordered = useMemo(() => {
+    const saved = layout.data?.provider_order ?? [];
+    if (saved.length === 0) return providers;
+    const byId = new Map(providers.map((p) => [p.provider_id, p]));
+    const result: ProviderConfig[] = [];
+    for (const id of saved) {
+      const p = byId.get(id);
+      if (p) {
+        result.push(p);
+        byId.delete(id);
+      }
+    }
+    // Append any providers not in the saved order (newly registered).
+    for (const p of byId.values()) result.push(p);
+    return result;
+  }, [providers, layout.data]);
+
+  // Apply the search filter to the *ordered* list so SortableContext.items
+  // and the rendered children stay aligned (otherwise dnd-kit considers the
+  // search-hidden rows as drop targets while the user is typing).
+  const orderedAndFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return ordered;
+    return ordered.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q),
+    );
+  }, [ordered, search]);
+
+  // Sensors for drag-to-reorder on the provider cards.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    setPullToRefreshSuspended(false);
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    setStrategies(reorderStrategies(strategies, String(active.id), String(over.id)));
-  };
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setPullToRefreshSuspended(false);
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const next = reorderItems(
+        ordered,
+        String(active.id),
+        String(over.id),
+        (p) => p.provider_id,
+      );
+      saveOrder.mutate(next.map((p) => p.provider_id));
+    },
+    [ordered, saveOrder],
+  );
 
-  // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
-  // mid-drag unmount skips both — prevent permanently stuck pull-to-refresh.
+  // Safety net: dnd-kit normally clears the suspend flag on onDragEnd /
+  // onDragCancel, but a mid-drag unmount skips both — prevent permanently
+  // stuck pull-to-refresh.
   useEffect(() => () => setPullToRefreshSuspended(false), []);
 
+  if (configs.isPending) {
+    return (
+      <div className="flex flex-col gap-2">
+        {Array.from({ length: 5 }, (_, i) => (
+          <Skeleton key={i} className="h-16" />
+        ))}
+      </div>
+    );
+  }
+
+  const hasAnyConfig = providers.some((p) => p.account_count > 0);
+
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        save.mutate();
-      }}
-      className="flex flex-col gap-4"
-    >
-      <div className="flex items-center justify-between">
-        <Label htmlFor="prov-enabled">Collection enabled</Label>
-        <Switch id="prov-enabled" checked={enabled} onCheckedChange={setEnabled} />
-      </div>
+    <>
+      <div className="flex max-w-2xl flex-col gap-3">
+        {providers.length > 5 && (
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-fg-subtle"
+              aria-hidden
+            />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search providers…"
+              aria-label="Search providers"
+              className="pl-9"
+            />
+          </div>
+        )}
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="prov-archived">Archived</Label>
-          <span className="text-[11px] text-fg-muted">
-            Hidden from the home dashboard; lifetime stats preserved
-          </span>
-        </div>
-        <Switch id="prov-archived" checked={archived} onCheckedChange={setArchived} />
-      </div>
-
-      {provider.provider_id === 'github' ? (
-        <div className="flex flex-col gap-1.5">
-          <Label>GitHub login</Label>
-          <GitHubLoginSection />
-        </div>
-      ) : null}
-
-      {provider.supports_api_key ? (
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="prov-key">{provider.api_key_label || 'API key'}</Label>
-          <Input
-            id="prov-key"
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={provider.api_key_set ? '••••••••  (set — leave blank to keep)' : ''}
-          />
-          {provider.api_key_help ? <HelperText>{provider.api_key_help}</HelperText> : null}
-        </div>
-      ) : null}
-
-      {provider.supports_session_cookie ? (
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="prov-cookie">{provider.session_cookie_label || 'Session cookie'}</Label>
-          <Input
-            id="prov-cookie"
-            type="password"
-            autoComplete="off"
-            value={cookie}
-            onChange={(e) => setCookie(e.target.value)}
-            placeholder={provider.session_cookie_set ? '••••••••  (set — leave blank to keep)' : ''}
-          />
-          {provider.session_cookie_help ? (
-            <HelperText>{provider.session_cookie_help}</HelperText>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="prov-label">Account label</Label>
-          <Input id="prov-label" value={label} onChange={(e) => setLabel(e.target.value)} />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="prov-poll">Poll interval (s)</Label>
-          <Input
-            id="prov-poll"
-            type="number"
-            inputMode="numeric"
-            min={30}
-            value={pollInterval}
-            onChange={(e) => setPollInterval(e.target.value)}
-            placeholder={`default ${provider.effective_poll_interval ?? ''}`}
-          />
-        </div>
-      </div>
-
-      {strategies.length > 0 ? (
-        <fieldset className="flex flex-col gap-1 rounded-sm border border-edge p-3">
-          <legend className="px-1 text-xs font-medium text-fg-muted">Collection strategies</legend>
+        {!hasAnyConfig ? (
+          // Fresh install: the registry returns every provider with
+          // `account_count=0`, so `orderedAndFiltered.length === 0` is true
+          // here even though the registry list isn't. Render the global
+          // "configure your first" empty state instead of falling through
+          // to the search-match state.
+          <Card className="py-2">
+            <EmptyState
+              icon={Plus}
+              title="No providers configured"
+              description="Add your first provider to start tracking AI usage."
+              action={
+                <Button variant="primary" disabled aria-disabled="true" title="Wizard lands in #287">
+                  <Plus className="size-3.5" />
+                  Add provider
+                </Button>
+              }
+            />
+          </Card>
+        ) : orderedAndFiltered.length === 0 ? (
+          <Card className="py-2">
+            <EmptyState
+              title={`No providers match "${search}"`}
+              action={
+                <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              }
+            />
+          </Card>
+        ) : (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -285,268 +323,138 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
             onDragEnd={handleDragEnd}
             onDragCancel={() => setPullToRefreshSuspended(false)}
           >
-            <SortableContext items={strategies.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-              {strategies.map((s) => (
-                <SortableStrategyRow
-                  key={s.id}
-                  strategy={s}
-                  onToggle={(enabled) =>
-                    setStrategies((prev) =>
-                      prev.map((x) => (x.id === s.id ? { ...x, enabled } : x)),
-                    )
-                  }
+            <SortableContext items={orderedAndFiltered.map((p) => p.provider_id)} strategy={verticalListSortingStrategy}>
+              {orderedAndFiltered.map((p) => (
+                <SortableProviderCard
+                  key={p.provider_id}
+                  provider={p}
+                  onOpen={() => setDetailProvider(p)}
                 />
               ))}
             </SortableContext>
           </DndContext>
-        </fieldset>
+        )}
+      </div>
+
+      {/* Add provider CTA — sticky on mobile (above bottom nav), inline
+          top-right on desktop. Shows once at least one provider is configured;
+          on a fresh install the EmptyState at :288 renders its own Add
+          button, so we suppress this one to keep exactly one visible. */}
+      {hasAnyConfig ? (
+        <Button
+          variant="primary"
+          size={isDesktop ? 'md' : 'lg'}
+          className={isDesktop ? 'mt-3 self-start' : 'fixed inset-x-4 bottom-4 z-30 shadow-lg'}
+          disabled
+          aria-disabled="true"
+          title="Wizard lands in #287"
+        >
+          <Plus className="size-4" />
+          Add provider
+        </Button>
       ) : null}
 
-      <Button type="submit" variant="primary" loading={save.isPending}>
-        Save
-      </Button>
-    </form>
+      <ProviderDetailDialog
+        provider={detailProvider}
+        onClose={() => setDetailProvider(null)}
+        onAccountDeleted={() => {
+          // Child invalidates the ['system', 'provider-configs'] query on
+          // success; no refetch needed here.
+        }}
+      />
+    </>
   );
 }
 
-function SortableStrategyRow({
-  strategy,
-  onToggle,
+function SortableProviderCard({
+  provider,
+  onOpen,
 }: {
-  strategy: { id: string; enabled: boolean; label: string };
-  onToggle: (enabled: boolean) => void;
+  provider: ProviderConfig;
+  onOpen: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: strategy.id,
+    id: provider.provider_id,
   });
 
+  const hasKey = provider.api_key_set;
+  const hasCookie = provider.session_cookie_set;
+  const allEnabled = provider.accounts.every((a: ProviderConfig['accounts'][number]) => a.enabled);
+  const anyEnabled = provider.accounts.some((a: ProviderConfig['accounts'][number]) => a.enabled);
+
   return (
-    <div
+    <Card
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={
-        'flex items-center justify-between rounded-sm px-1 py-1.5 ' +
-        (isDragging ? 'z-10 opacity-60' : '')
-      }
+      className={`flex items-center gap-3 px-4 py-3 ${isDragging ? 'z-10 opacity-60' : ''}`}
     >
-      <div
+      <button
+        type="button"
         {...attributes}
         {...listeners}
-        className="flex items-center gap-2 touch-none"
-        aria-label={"Reorder " + strategy.label}
+        aria-label={`Reorder ${provider.name}`}
+        className="touch-none text-fg-muted hover:text-fg"
       >
-        <GripVertical className="size-3.5 text-fg-muted" />
-        <span className="text-[13px]">{strategy.label}</span>
-      </div>
-      <Switch
-        checked={strategy.enabled}
-        onCheckedChange={onToggle}
-        aria-label={strategy.label}
-      />
-    </div>
-  );
-}
-
-function GitHubLoginSection() {
-  const queryClient = useQueryClient();
-  const [flow, setFlow] = useState<FlowState>({ phase: 'idle' });
-  const [copied, setCopied] = useState(false);
-  const pendingPollRef = useRef<{ stop: () => void } | null>(null);
-
-  const statusQuery = useQuery({
-    queryKey: ['github-oauth-status'],
-    queryFn: getGitHubOAuthStatus,
-    staleTime: 30_000,
-    retry: 1,
-  });
-
-  useEffect(() => {
-    return () => {
-      pendingPollRef.current?.stop();
-    };
-  }, []);
-
-  const invalidateAfterAuth = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['github-oauth-status'] });
-    queryClient.invalidateQueries({ queryKey: ['usage'] });
-    queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
-  }, [queryClient]);
-
-  const startPolling = useCallback(
-    (deviceCode: string, initialInterval: number) => {
-      pendingPollRef.current?.stop();
-      let stopped = false;
-      let pollMs = initialInterval * 1000;
-      let timeoutId: ReturnType<typeof setTimeout>;
-
-      const poll = async () => {
-        if (stopped) return;
-        try {
-          const result = await pollGitHubOAuth(deviceCode);
-          if (result.status === 'success') {
-            stopped = true;
-            setFlow({ phase: 'idle' });
-            toast.success('GitHub connected');
-            invalidateAfterAuth();
-            return;
-          }
-          if (result.status === 'slow_down' && result.interval) {
-            pollMs = result.interval * 1000;
-          }
-        } catch {
-          stopped = true;
-          setFlow({ phase: 'error', message: 'Authorisation failed — try again' });
-          return;
-        }
-        if (!stopped) timeoutId = setTimeout(poll, pollMs);
-      };
-
-      timeoutId = setTimeout(poll, pollMs);
-      pendingPollRef.current = {
-        stop: () => {
-          stopped = true;
-          clearTimeout(timeoutId);
-        },
-      };
-    },
-    [invalidateAfterAuth],
-  );
-
-  const login = useMutation({
-    mutationFn: initGitHubOAuth,
-    onSuccess: (data) => {
-      const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
-      setFlow({
-        phase: 'pending',
-        deviceCode: data.device_code,
-        userCode: data.user_code,
-        verificationUri: data.verification_uri,
-        expiresAt,
-        pollInterval: data.interval,
-      });
-      startPolling(data.device_code, data.interval);
-    },
-    onError: (err) => setFlow({ phase: 'error', message: err.message }),
-  });
-
-  const logout = useMutation({
-    mutationFn: logoutGitHub,
-    onSuccess: () => {
-      toast.success('GitHub disconnected');
-      invalidateAfterAuth();
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const cancel = () => {
-    pendingPollRef.current?.stop();
-    setFlow({ phase: 'idle' });
-  };
-
-  const copyCode = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.info(`Code: ${code}`);
-    }
-  };
-
-  if (flow.phase === 'pending') {
-    return (
-      <div className="rounded-md border border-edge bg-surface-2 p-4">
-        <p className="mb-1 text-[12px] text-fg-subtle">
-          Open{' '}
-          <a
-            href={flow.verificationUri}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 text-accent underline underline-offset-2"
-          >
-            github.com/login/device
-            <ExternalLink className="size-2.5" />
-          </a>{' '}
-          and enter this code:
-        </p>
-        <div className="mb-3 flex items-center gap-2">
-          <code className="flex-1 rounded bg-surface-1 px-3 py-2 font-mono text-xl tracking-[0.25em]">
-            {flow.userCode}
-          </code>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            onClick={() => void copyCode(flow.userCode)}
-            title="Copy code"
-          >
-            {copied ? (
-              <span className="text-[10px] font-bold text-ok">✓</span>
-            ) : (
-              <Copy className="size-3.5" />
-            )}
-          </Button>
-        </div>
-        <div className="flex items-center justify-between">
-          <Countdown until={flow.expiresAt} prefix="expires in" />
-          <div className="flex items-center gap-2">
-            <span className="animate-pulse text-[11px] text-fg-muted">Waiting…</span>
-            <Button size="sm" variant="ghost" onClick={cancel}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (flow.phase === 'error') {
-    return (
-      <div className="rounded-md border border-critical/30 bg-critical/5 p-3">
-        <p className="mb-2 text-[12px] text-critical">{flow.message}</p>
-        <Button size="sm" variant="ghost" onClick={() => setFlow({ phase: 'idle' })}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-
-  const auth = statusQuery.data;
-
-  if (auth?.authenticated) {
-    return (
-      <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2 px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-medium">
-            {auth.account ? `@${auth.account}` : 'Connected'}
-          </p>
-          {auth.email ? (
-            <p className="truncate text-[11px] text-fg-subtle">{auth.email}</p>
-          ) : null}
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => logout.mutate()}
-          loading={logout.isPending}
-          className="shrink-0 text-fg-muted"
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 14 14"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden
         >
-          <LogOut className="mr-1 size-3" />
-          Disconnect
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="w-full justify-center"
-      onClick={() => login.mutate()}
-      loading={login.isPending || statusQuery.isPending}
-    >
-      <LogIn className="mr-1.5 size-3.5" />
-      Connect via GitHub OAuth
-    </Button>
+          <circle cx="4" cy="3" r="1" fill="currentColor" />
+          <circle cx="4" cy="7" r="1" fill="currentColor" />
+          <circle cx="4" cy="11" r="1" fill="currentColor" />
+          <circle cx="10" cy="3" r="1" fill="currentColor" />
+          <circle cx="10" cy="7" r="1" fill="currentColor" />
+          <circle cx="10" cy="11" r="1" fill="currentColor" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex flex-1 cursor-pointer items-center gap-3 text-left"
+      >
+        <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-medium">{provider.name}</p>
+          <p className="truncate text-[11px] text-fg-subtle">
+            {provider.account_count === 0
+              ? 'Not configured'
+              : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
+                  provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
+                }s`}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {hasKey ? <Badge variant="ok">key</Badge> : null}
+          {hasCookie ? <Badge variant="ok">cookie</Badge> : null}
+          <Badge
+            variant={
+              provider.accounts.length === 0
+                ? 'neutral'
+                : allEnabled
+                  ? 'accent'
+                  : anyEnabled
+                    ? 'warning'
+                    : 'neutral'
+            }
+          >
+            {provider.accounts.length === 0
+              ? 'unconfigured'
+              : allEnabled
+                ? 'enabled'
+                : anyEnabled
+                  ? 'partial'
+                  : 'disabled'}
+          </Badge>
+        </div>
+      </button>
+    </Card>
   );
 }
+
+// Re-exported here so legacy tests that imported the old `reorderStrategies`
+// keep working without churning the test file along with the section rewrite.
+export { reorderItems as reorderStrategies };

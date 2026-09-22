@@ -582,22 +582,37 @@ export interface CollectionStrategy {
   [key: string]: unknown;
 }
 
-/** Per-account row in a provider's ``accounts`` list (PR #288). */
+/** Per-account row in a provider's ``accounts`` list. Multi-account
+ *  providers expose N of these under a ``ProviderConfig`` envelope. */
 export interface ProviderAccount {
   account_id: string;
   enabled?: boolean;
-  archived?: boolean;
+  archived?: boolean; // PR #292 — hide discontinued providers from the dashboard
   api_key_set?: boolean;
   session_cookie_set?: boolean;
   account_label?: string | null;
   poll_interval_seconds?: number | null;
   collection_strategies?: CollectionStrategy[] | null;
+  // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
+  // orphaned `account_id="default"` rows that have been shadowed by a real
+  // sibling account on the same provider. Safe to remove. The flag only
+  // fires when a non-default sibling has live data — without a replacement,
+  // "just-configured" and "collection currently failing" rows would be
+  // flagged too, and pairing that with the destructive Remove button would
+  // be a data-loss prompt on the user's only credential.
+  is_orphaned?: boolean;
 }
 
+// Provider envelope returned by GET /api/v1/system/provider-configs. The
+// legacy top-level fields stay populated for single-account consumers
+// (HomePage/HistoryPage/ProviderPage/WebhooksSection read only these).
+// `accounts` carries the full per-account breakdown for the settings UI.
 export interface ProviderConfig {
   provider_id: string;
   name: string;
   icon?: string;
+  // Legacy single-account view: derived from the canonical row
+  // (account_id="default" if it exists, else the first row).
   enabled?: boolean;
   archived?: boolean;
   api_key_set?: boolean;
@@ -615,11 +630,9 @@ export interface ProviderConfig {
   session_cookie_help?: string | null;
   supported_strategies?: CollectionStrategy[];
   collection_strategies?: CollectionStrategy[];
-  /** Per-account breakdown (PR #288 multi-account). One entry per
-   *  ``provider_configs`` row for this provider. Empty when no rows. */
-  accounts?: ProviderAccount[];
-  /** Count mirror of ``accounts.length``. */
-  account_count?: number;
+  // Multi-account view (one entry per ProviderConfig DB row).
+  accounts: ProviderAccount[];
+  account_count: number;
 }
 
 export interface Webhook {

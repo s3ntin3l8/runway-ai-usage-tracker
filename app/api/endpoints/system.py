@@ -832,6 +832,19 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     for r in db_rows:
         rows_by_provider.setdefault(r.provider_id, []).append(r)
 
+    # Pre-compute the set of (provider_id, account_id) pairs that have at
+    # least one row in latest_usage — drives the per-account `is_orphaned`
+    # flag in the response. Single batched DISTINCT query instead of one
+    # subquery per row; O(1) lookup when building each entry.
+    from app.models.db import LatestUsage
+
+    live_keys: set[tuple[str, str]] = set()
+    live_rows = session.exec(
+        select(LatestUsage.provider_id, LatestUsage.account_id).distinct()
+    ).all()
+    for provider_id, account_id in live_rows:
+        live_keys.add((provider_id, account_id))
+
     def _canonical_row(rows: list[ProviderConfig]) -> ProviderConfig | None:
         for r in rows:
             if r.account_id == "default":
@@ -878,6 +891,16 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             poll_source = "global_override"
             effective_interval = global_poll_interval
 
+        # Per-provider: does any *non-default* account have a `latest_usage`
+        # row? Used to gate the `is_orphaned` flag — without a live sibling,
+        # the default row's absence from `latest_usage` is equally explained
+        # by "just configured" or "collection currently failing", neither of
+        # which is a safe-to-remove condition (see flag docs in the response
+        # builder below).
+        provider_has_live_sibling = any(
+            (p_id, r.account_id) in live_keys and r.account_id != "default" for r in provider_rows
+        )
+
         results.append(
             {
                 "provider_id": p_id,
@@ -915,6 +938,26 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "account_label": r.account_label,
                         "poll_interval_seconds": r.poll_interval_seconds,
                         "collection_strategies": r.strategies,
+                        # `is_orphaned` surfaces the orphaned-bookkeeping-row
+                        # bug in the settings UI: #286 highlights
+                        # `account_id="default"` rows that have been shadowed
+                        # by another account on the same provider. The flag
+                        # only fires when:
+                        #   1. the row is the default sentinel
+                        #   2. the row itself has no live data (missing
+                        #      from `latest_usage`)
+                        #   3. AND at least one *other* account on this
+                        #      provider IS in `latest_usage` — without a
+                        #      replacement, "just-configured" and
+                        #      "collection currently failing" rows would be
+                        #      flagged too, and pairing that with the
+                        #      destructive Remove button would be a
+                        #      data-loss prompt on the user's only credential.
+                        "is_orphaned": (
+                            r.account_id == "default"
+                            and (p_id, r.account_id) not in live_keys
+                            and provider_has_live_sibling
+                        ),
                     }
                     for r in provider_rows
                 ],
