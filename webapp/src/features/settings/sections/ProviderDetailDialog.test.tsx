@@ -22,7 +22,6 @@ const alice: ProviderAccount = {
   session_cookie_set: false,
   poll_interval_seconds: null,
   collection_strategies: null,
-  has_live_data: true,
   is_orphaned: false,
 };
 
@@ -34,7 +33,6 @@ const bob: ProviderAccount = {
   session_cookie_set: true,
   poll_interval_seconds: 90,
   collection_strategies: null,
-  has_live_data: true,
   is_orphaned: false,
 };
 
@@ -46,7 +44,6 @@ const orphan: ProviderAccount = {
   session_cookie_set: false,
   poll_interval_seconds: null,
   collection_strategies: null,
-  has_live_data: false,
   is_orphaned: true,
 };
 
@@ -82,8 +79,11 @@ const emptyProvider: ProviderConfig = {
 
 const orphanProvider: ProviderConfig = {
   ...multiAccount,
-  accounts: [orphan],
-  account_count: 1,
+  // `is_orphaned` is only true when the default row has been shadowed by a
+  // real sibling — the server gates the flag on a non-default sibling
+  // having live data. Mirror that here so the fixture is realistic.
+  accounts: [orphan, alice],
+  account_count: 2,
 };
 
 function renderDialog(

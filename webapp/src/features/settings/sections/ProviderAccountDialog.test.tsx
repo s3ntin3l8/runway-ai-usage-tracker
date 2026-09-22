@@ -39,7 +39,6 @@ const anthropic: ProviderConfig = {
       session_cookie_set: false,
       poll_interval_seconds: 60,
       collection_strategies: null,
-      has_live_data: true,
       is_orphaned: false,
     },
   ],

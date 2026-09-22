@@ -55,7 +55,6 @@ const provider = (o: Partial<ProviderConfig> = {}): ProviderConfig => ({
       session_cookie_set: false,
       poll_interval_seconds: null,
       collection_strategies: [{ id: 'api', enabled: true }],
-      has_live_data: true,
       is_orphaned: false,
     },
   ],
@@ -98,20 +97,20 @@ describe('ProvidersSection', () => {
     expect(screen.getByText('enabled')).toBeInTheDocument();
   });
 
-  it('opens the edit dialog and saves config via putProviderConfig', async () => {
+  it('opens the edit dialog and saves config via putProviderConfigLegacy', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
-    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.putProviderConfigLegacy).mockResolvedValue({ status: 'ok' });
     renderWithProviders(<ProvidersSection />);
 
     await userEvent.click(await screen.findByText('Claude'));
 
     const dialog = await screen.findByRole('dialog');
     // Type a new API key so it gets included in the body.
-    await userEvent.type(within(dialog).getByLabelText('API key'), 'sk-new');
+    await userEvent.type(within(dialog).getByLabelText('API key'), 'sk-new'); // pragma: allowlist secret
 
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    expect(api.putProviderConfig).toHaveBeenCalledWith('claude', 'default', {
+    expect(api.putProviderConfigLegacy).toHaveBeenCalledWith('claude', {
       enabled: true,
       archived: false,
       account_label: 'Work',
@@ -123,7 +122,7 @@ describe('ProvidersSection', () => {
 
   it('toggles a collection strategy off before saving', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
-    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.putProviderConfigLegacy).mockResolvedValue({ status: 'ok' });
     renderWithProviders(<ProvidersSection />);
 
     await userEvent.click(await screen.findByText('Claude'));
@@ -133,7 +132,7 @@ describe('ProvidersSection', () => {
     await userEvent.click(within(dialog).getByRole('switch', { name: 'api' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
+    const body = vi.mocked(api.putProviderConfigLegacy).mock.calls[0][1];
     expect(body.collection_strategies).toEqual([{ id: 'api', enabled: false }]);
   });
 
@@ -149,14 +148,14 @@ describe('ProvidersSection', () => {
 
   it('omits untouched credentials from the save body', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
-    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.putProviderConfigLegacy).mockResolvedValue({ status: 'ok' });
     renderWithProviders(<ProvidersSection />);
 
     await userEvent.click(await screen.findByText('Claude'));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
+    const body = vi.mocked(api.putProviderConfigLegacy).mock.calls[0][1];
     expect(body).not.toHaveProperty('api_key');
     expect(body).not.toHaveProperty('session_cookie');
   });
@@ -208,7 +207,7 @@ describe('ProvidersSection', () => {
         }),
       ],
     });
-    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.putProviderConfigLegacy).mockResolvedValue({ status: 'ok' });
     renderWithProviders(<ProvidersSection />);
 
     await userEvent.click(await screen.findByText('Claude'));
@@ -223,7 +222,7 @@ describe('ProvidersSection', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
+    const body = vi.mocked(api.putProviderConfigLegacy).mock.calls[0][1];
     expect(body.collection_strategies).toEqual([
       { id: 'oauth', enabled: false },
       { id: 'sidecar', enabled: true },
@@ -281,7 +280,7 @@ describe('ProvidersSection', () => {
       ],
     });
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [multi] });
-    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    vi.mocked(api.putProviderConfigLegacy).mockResolvedValue({ status: 'ok' });
     renderWithProviders(<ProvidersSection />);
 
     await userEvent.click(await screen.findByText('Claude'));
@@ -290,7 +289,7 @@ describe('ProvidersSection', () => {
     await userEvent.click(within(dialog).getByRole('switch', { name: 'oauth' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
-    const body = vi.mocked(api.putProviderConfig).mock.calls[0][2];
+    const body = vi.mocked(api.putProviderConfigLegacy).mock.calls[0][1];
     expect(body.collection_strategies).toEqual([
       { id: 'web', enabled: true },
       { id: 'oauth', enabled: true },
@@ -545,9 +544,9 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
           name: 'OpenRouter',
           account_count: 3,
           accounts: [
-            { account_id: 'default', account_label: 'A', enabled: true, api_key_set: true, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, has_live_data: true, is_orphaned: false },
-            { account_id: 'alice@example.com', account_label: 'Alice', enabled: true, api_key_set: true, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, has_live_data: true, is_orphaned: false },
-            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false, api_key_set: false, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, has_live_data: true, is_orphaned: false },
+            { account_id: 'default', account_label: 'A', enabled: true, api_key_set: true, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, is_orphaned: false },
+            { account_id: 'alice@example.com', account_label: 'Alice', enabled: true, api_key_set: true, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, is_orphaned: false },
+            { account_id: 'bob@example.com', account_label: 'Bob', enabled: false, api_key_set: false, session_cookie_set: false, poll_interval_seconds: null, collection_strategies: null, is_orphaned: false },
           ],
         }),
       ],
@@ -574,10 +573,12 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
     expect(within(dialog).getByText('Work')).toBeInTheDocument();
   });
 
-  it('shows the orphan hint for account_id="default" rows without live data', async () => {
+  it('shows the orphan hint for account_id="default" rows without live data when a live sibling exists', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [
         provider({
+          // Server contract: is_orphaned is only true when the default row
+          // is shadowed by a sibling with live data. Mirror that here.
           accounts: [
             {
               account_id: 'default',
@@ -587,10 +588,20 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
               session_cookie_set: false,
               poll_interval_seconds: null,
               collection_strategies: null,
-              has_live_data: false,
               is_orphaned: true,
             },
+            {
+              account_id: 'alice@example.com',
+              account_label: 'Alice',
+              enabled: true,
+              api_key_set: true,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
           ],
+          account_count: 2,
         }),
       ],
     });
@@ -615,8 +626,7 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
               session_cookie_set: false,
               poll_interval_seconds: null,
               collection_strategies: null,
-              has_live_data: true, // <-- live data present
-              is_orphaned: false,  // <-- server flipped the flag accordingly
+              is_orphaned: false, // <-- live data present, server flipped the flag
             },
           ],
         }),
@@ -643,8 +653,7 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
               session_cookie_set: false,
               poll_interval_seconds: null,
               collection_strategies: null,
-              has_live_data: false, // no data yet (just-configured)
-              is_orphaned: false,  // <-- only `default` rows can be orphaned
+              is_orphaned: false, // <-- only `default` rows can be orphaned
             },
           ],
         }),

@@ -40,6 +40,14 @@ export function ProviderDetailDialog({
   // via N PUTs (one per account). For v1 the backend has no batch endpoint;
   // each toggle is an admin mutation that lands in audit_log. For users with
   // many accounts this is slow but functionally correct.
+  //
+  // Known debt (Hermes review on PR #294): the `Promise.all` here leaves
+  // accounts split on a mid-batch failure — e.g. 4 of 5 PUTs land before
+  // the 5th returns a 4xx. The toast surfaces the raw API error but does
+  // not roll back the partial state, so the UI shows a mix of enabled and
+  // disabled rows until the next refetch. Adding per-account rollback (or a
+  // server-side batch endpoint) is the durable fix; left for a follow-up
+  // so v1 can ship.
   const queryClient = useQueryClient();
   const masterEnabled =
     provider !== null && provider.accounts.length > 0 && provider.accounts.every((a) => a.enabled);

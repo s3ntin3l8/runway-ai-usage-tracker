@@ -285,30 +285,35 @@ function ProvidersSectionV2({
           </div>
         )}
 
-        {orderedAndFiltered.length === 0 ? (
+        {!hasAnyConfig ? (
+          // Fresh install: the registry returns every provider with
+          // `account_count=0`, so `orderedAndFiltered.length === 0` is true
+          // here even though the registry list isn't. Render the global
+          // "configure your first" empty state instead of falling through
+          // to the search-match state.
           <Card className="py-2">
-            {providers.length === 0 ? (
-              <EmptyState
-                icon={Plus}
-                title="No providers configured"
-                description="Add your first provider to start tracking AI usage."
-                action={
-                  <Button variant="primary" disabled aria-disabled="true" title="Wizard lands in #287">
-                    <Plus className="size-3.5" />
-                    Add provider
-                  </Button>
-                }
-              />
-            ) : (
-              <EmptyState
-                title={`No providers match "${search}"`}
-                action={
-                  <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
-                    Clear search
-                  </Button>
-                }
-              />
-            )}
+            <EmptyState
+              icon={Plus}
+              title="No providers configured"
+              description="Add your first provider to start tracking AI usage."
+              action={
+                <Button variant="primary" disabled aria-disabled="true" title="Wizard lands in #287">
+                  <Plus className="size-3.5" />
+                  Add provider
+                </Button>
+              }
+            />
+          </Card>
+        ) : orderedAndFiltered.length === 0 ? (
+          <Card className="py-2">
+            <EmptyState
+              title={`No providers match "${search}"`}
+              action={
+                <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              }
+            />
           </Card>
         ) : (
           <DndContext
@@ -332,20 +337,19 @@ function ProvidersSectionV2({
       </div>
 
       {/* Add provider CTA — sticky on mobile (above bottom nav), inline
-          top-right on desktop. */}
-      {hasAnyConfig && (
-        <Button
-          variant="primary"
-          size={isDesktop ? 'md' : 'lg'}
-          className={isDesktop ? 'mt-3 self-start' : 'fixed inset-x-4 bottom-4 z-30 shadow-lg'}
-          disabled
-          aria-disabled="true"
-          title="Wizard lands in #287"
-        >
-          <Plus className="size-4" />
-          Add provider
-        </Button>
-      )}
+          top-right on desktop. Always rendered: a fresh install needs a
+          visible Add even though `hasAnyConfig` is false. */}
+      <Button
+        variant="primary"
+        size={isDesktop ? 'md' : 'lg'}
+        className={isDesktop ? 'mt-3 self-start' : 'fixed inset-x-4 bottom-4 z-30 shadow-lg'}
+        disabled
+        aria-disabled="true"
+        title="Wizard lands in #287"
+      >
+        <Plus className="size-4" />
+        Add provider
+      </Button>
 
       <ProviderDetailDialog
         provider={detailProvider}

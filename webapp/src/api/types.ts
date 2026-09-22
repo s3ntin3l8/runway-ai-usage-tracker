@@ -594,9 +594,12 @@ export interface ProviderAccount {
   poll_interval_seconds?: number | null;
   collection_strategies?: CollectionStrategy[] | null;
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
-  // orphaned `account_id="default"` rows that have no live quota data —
-  // leftover from the old single-account era. Safe to remove.
-  has_live_data?: boolean;
+  // orphaned `account_id="default"` rows that have been shadowed by a real
+  // sibling account on the same provider. Safe to remove. The flag only
+  // fires when a non-default sibling has live data — without a replacement,
+  // "just-configured" and "collection currently failing" rows would be
+  // flagged too, and pairing that with the destructive Remove button would
+  // be a data-loss prompt on the user's only credential.
   is_orphaned?: boolean;
 }
 

@@ -1,14 +1,19 @@
 // Legacy single-account edit dialog. Used only when `?providers=v2` is
 // absent — the rollback path. The form renders the legacy single-account
 // shape (one row per provider keyed by `account_id="default"`) using the
-// new multi-account PUT endpoint with `account_id="default"` for the URL.
+// legacy single-account PUT shortcut (`PUT /provider-config/{pid}` without
+// `account_id`), which the backend resolves from the existing rows for the
+// provider: creates "default" on 0 rows, updates the row in place on 1 row,
+// returns 409 on 2+ rows so the caller can disambiguate via the per-account
+// endpoint.
 //
 // Deltas vs. the previous build (`ProvidersSection.tsx` before this PR):
 //   1. `useCallback` wrappers around `invalidateAfterAuth` / `startPolling`
 //      dropped (callers don't memoize on the references).
-//   2. The save path now calls `putProviderConfig(pid, "default", body)`
-//      instead of `putProviderConfig(pid, body)` — the new endpoint
-//      requires `account_id` in the URL.
+//   2. The save path now calls `putProviderConfigLegacy(pid, body)` — the
+//      legacy shortcut that preserves the pre-#286 semantics of updating
+//      the existing email-keyed row in place rather than creating a second
+//      `default` row.
 //
 // The new v2 dialog shell uses `ProviderDetailDialog` + `ProviderAccountDialog`
 // instead; this file is the rollback target only.
@@ -40,7 +45,7 @@ import {
   initGitHubOAuth,
   logoutGitHub,
   pollGitHubOAuth,
-  putProviderConfig,
+  putProviderConfigLegacy,
   type ProviderConfigUpdate,
 } from '@/api/endpoints';
 import type { ProviderConfig } from '@/api/types';
@@ -117,9 +122,12 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
       // "clear" server-side, absence means "keep".
       if (apiKey !== '') body.api_key = apiKey;
       if (cookie !== '') body.session_cookie = cookie;
-      // Legacy single-account route uses `account_id="default"` so the new
-      // multi-account endpoint remains byte-compatible with the old behavior.
-      return putProviderConfig(provider.provider_id, 'default', body);
+      // Legacy single-account route — the backend resolves the target row
+      // from the existing rows for this provider (creates "default" on 0
+      // rows, updates in place on 1 row, 409s on 2+). This preserves the
+      // pre-#286 semantics: editing an email-keyed single-row install must
+      // UPDATE the existing row, not create a second "default" row.
+      return putProviderConfigLegacy(provider.provider_id, body);
     },
     onSuccess: () => {
       toast.success(`${provider.name} saved — collection triggered`);

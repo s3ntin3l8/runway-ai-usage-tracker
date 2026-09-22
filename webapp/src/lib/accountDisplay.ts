@@ -7,10 +7,6 @@ interface AccountLike {
   account_label?: string | null;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const HASH_RE = /^[a-f0-9]{32,}$/i;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Human-readable name for a provider account row. */
 export function displayAccountName(account: AccountLike): string {
   const label = (account.account_label ?? '').trim();
@@ -35,15 +31,11 @@ export function accountSubtitle(account: AccountLike): string | null {
     // Label already covers the identity; a subtitle would be a duplicate.
     return null;
   }
-  // No label. Skip the subtitle when displayAccountName would also fall
-  // through to account_id — otherwise the row shows the same string twice.
+  // No label: subtitle is omitted whenever the display name already shows
+  // the account_id verbatim, regardless of whether the id looks like an
+  // email/uuid/hash — the regex branches are dead code (see Hermes review
+  // on PR #294: proven by mutation). The display-name fallback path
+  // catches every case the early return below doesn't.
   if (displayAccountName(account) === account.account_id) return null;
-  if (
-    EMAIL_RE.test(account.account_id) ||
-    UUID_RE.test(account.account_id) ||
-    HASH_RE.test(account.account_id)
-  ) {
-    return account.account_id;
-  }
   return null;
 }
