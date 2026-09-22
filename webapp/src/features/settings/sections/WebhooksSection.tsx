@@ -12,7 +12,7 @@ import {
   testWebhook,
   updateWebhook,
 } from '@/api/endpoints';
-import type { Webhook } from '@/api/types';
+import type { ProviderConfig, Webhook } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -38,6 +38,7 @@ const ALL_ACCOUNTS = '__all__';
 export function WebhooksSection() {
   const queryClient = useQueryClient();
   const webhooks = useQuery({ queryKey: ['system', 'webhooks'], queryFn: fetchWebhooks });
+  const providers = useProviderConfigs();
   const [creating, setCreating] = useState(false);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['system', 'webhooks'] });
@@ -60,7 +61,12 @@ export function WebhooksSection() {
         />
       ) : (
         webhooks.data!.webhooks.map((w) => (
-          <WebhookRow key={w.id} webhook={w} onChanged={invalidate} />
+          <WebhookRow
+            key={w.id}
+            webhook={w}
+            onChanged={invalidate}
+            providers={providers.data?.providers ?? []}
+          />
         ))
       )}
 
@@ -81,7 +87,21 @@ export function WebhooksSection() {
   );
 }
 
-function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () => void }) {
+function WebhookRow({
+  webhook,
+  onChanged,
+  providers,
+}: {
+  webhook: Webhook;
+  onChanged: () => void;
+  providers: ProviderConfig[];
+}) {
+  const account =
+    webhook.account_id != null
+      ? providers
+          .find((p) => p.provider_id === webhook.provider_id)
+          ?.accounts.find((a) => a.account_id === webhook.account_id)
+      : undefined;
   const toggle = useMutation({
     mutationFn: (active: boolean) => updateWebhook(webhook.id, { active }),
     onSuccess: onChanged,
@@ -108,7 +128,7 @@ function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () =>
           {webhook.provider_id}
           <span className="ml-1.5 font-normal text-fg-muted">
             {webhook.account_id
-              ? displayAccountName({ account_id: webhook.account_id })
+              ? displayAccountName(account ?? { account_id: webhook.account_id })
               : 'All accounts'}
           </span>
           <span className="ml-1.5 font-mono text-fg-muted tabular">

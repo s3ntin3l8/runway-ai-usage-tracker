@@ -57,6 +57,23 @@ describe('WebhooksSection', () => {
     expect(screen.queryByText('All accounts')).not.toBeInTheDocument();
   });
 
+  it('shows the account label in the row when the account has one', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          accounts: [{ account_id: 'work@example.com', account_label: 'Work' }],
+          account_count: 1,
+        }),
+      ],
+    });
+    vi.mocked(api.fetchWebhooks).mockResolvedValue({
+      webhooks: [webhook({ account_id: 'work@example.com' })],
+    });
+    renderWithProviders(<WebhooksSection />);
+    expect(await screen.findByText('Work')).toBeInTheDocument();
+    expect(screen.queryByText('work@example.com')).not.toBeInTheDocument();
+  });
+
   it('toggles an alert active state via updateWebhook', async () => {
     vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [webhook({ active: true })] });
     vi.mocked(api.updateWebhook).mockResolvedValue({ status: 'ok' });

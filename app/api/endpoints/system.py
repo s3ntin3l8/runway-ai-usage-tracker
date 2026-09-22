@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app import __version__
@@ -699,13 +700,20 @@ def _assert_webhook_unique(
 
 @router.get("/webhooks")
 async def list_webhooks(
+    account_id: str | None = None,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict:
-    """List all webhook alert configurations.
+    """List webhook alert configurations.
+
+    Optional `account_id` narrows to alerts scoped to that account
+    (all-accounts / NULL rows are only returned when the filter is omitted).
     Admin-gated: webhook URLs commonly carry per-channel tokens.
     """
-    configs = session.exec(select(WebhookConfig)).all()
+    stmt = select(WebhookConfig)
+    if account_id is not None:
+        stmt = stmt.where(WebhookConfig.account_id == account_id)
+    configs = session.exec(stmt).all()
     return {
         "webhooks": [
             {
@@ -744,7 +752,15 @@ async def create_webhook(
 
     config = WebhookConfig(**body.model_dump())
     session.add(config)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        # Concurrent create raced past the pre-check and hit the DB unique index.
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A webhook with this provider, account, and URL already exists",
+        ) from exc
     session.refresh(config)
     return {"id": config.id}
 
@@ -784,7 +800,14 @@ async def update_webhook(
     for key, value in updates.items():
         setattr(config, key, value)
     session.add(config)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A webhook with this provider, account, and URL already exists",
+        ) from exc
     return {"status": "updated"}
 
 
