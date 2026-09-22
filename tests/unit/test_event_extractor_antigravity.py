@@ -66,6 +66,11 @@ def test_flash_lite_3_from_major_only():
     assert _normalize_ag_model("gemini-flash-lite", "Gemini 3 Flash Lite", {}) == "flash-lite-3"
 
 
+def test_raw_3x_wins_for_flash_lite_when_display_has_non_3x_minor():
+    """Stale 2.5 display must not mask a major-3 lite raw id (lite analogue of raw_3x)."""
+    assert _normalize_ag_model("gemini-3-flash-lite", "Gemini 2.5 Flash Lite", {}) == "flash-lite-3"
+
+
 def test_non_3x_minor_falls_back_to_bare_family():
     """2.5 has no antigravity seed row → bare family (not flash-2.5)."""
     assert _normalize_ag_model("gemini-2.5-flash", "Gemini 2.5 Flash", {}) == "flash"
@@ -76,8 +81,18 @@ def test_non_family_raw_passthrough():
     assert _normalize_ag_model("gpt-oss-120b", "GPT-OSS 120B", {}) == "gpt-oss-120b"
 
 
+def test_non_family_raw_passes_through_despite_gemini_display():
+    """Display-family fallback is scoped to gemini-prefixed raw ids only."""
+    assert _normalize_ag_model("gpt-oss", "Gemini 3.5 Flash", {}) == "gpt-oss"
+
+
 def test_empty_raw_with_display_family_and_version():
     assert _normalize_ag_model("", "Gemini 3.5 Flash", {}) == "flash-3.5"
+
+
+def test_empty_raw_major_only_display_buckets_like_raw_present():
+    """('', 'Gemini 3 Flash') must match ('gemini-3-flash-a', same) → flash-3."""
+    assert _normalize_ag_model("", "Gemini 3 Flash", {}) == "flash-3"
 
 
 def test_empty_raw_with_display_family_but_no_version_is_unknown():

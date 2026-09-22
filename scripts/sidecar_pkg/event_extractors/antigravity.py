@@ -229,19 +229,36 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
     if not raw and not display:
         return "unknown"
 
-    # Empty raw: require both family and minor version from the display name.
+    # Empty raw: take family from the display; require a minor version except
+    # for a major-only Gemini-3 display (same contract as the raw-present path).
     if not raw:
         family = _ag_detect_family(display)
-        version = _ag_extract_version(display)
-        if family is None or version is None:
+        if family is None:
             return "unknown"
+        version = _ag_extract_version(display)
         if family == "flash-lite":
-            return "flash-lite-3" if version.startswith("3.") else "flash-lite"
-        if version.startswith("3."):
+            if version is not None and version.startswith("3."):
+                return "flash-lite-3"
+            if _ag_looks_like_3x(raw, display):
+                return "flash-lite-3"
+            return "flash-lite" if version is not None else "unknown"
+        if version is not None and version.startswith("3."):
             return _ag_versioned_bucket(family, version)
+        if version is None:
+            # Family but no minor: "Gemini 3 Flash" → flash-3; "Gemini Flash"
+            # stays unknown (base required both family and minor).
+            if _ag_looks_like_3x(raw, display):
+                return f"{family}-3"
+            return "unknown"
         return family
 
-    family = _ag_detect_family(raw) or _ag_detect_family(display)
+    # Prefer family from raw. Fall back to the display only when raw is a
+    # Gemini-prefixed id with no family of its own (``gemini-default``) —
+    # non-family raw ids (``gpt-oss``) must pass through verbatim even when
+    # the display happens to name a Gemini family.
+    family = _ag_detect_family(raw)
+    if family is None and raw.lower().startswith("gemini"):
+        family = _ag_detect_family(display)
     if family is None:
         return raw
 
@@ -265,9 +282,9 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
         return _ag_versioned_bucket(family, version)
 
     # Major-only Gemini-3 in either field (no 3.x minor resolved) → flash-3 / pro-3.
-    # Gate on "resolved version is not already 3.x" so a non-3.x display minor
-    # (2.5 / 1.5) cannot mask a major-3 raw id and drop to the bare family.
-    if not (version or "").startswith("3.") and _ag_looks_like_3x(raw, display):
+    # A 3.x version already returned above; a non-3.x display minor (2.5 / 1.5)
+    # must not mask a major-3 raw id.
+    if _ag_looks_like_3x(raw, display):
         return f"{family}-3"
 
     # Non-3.x minor (e.g. 2.5) or no version at all → bare family bucket.
