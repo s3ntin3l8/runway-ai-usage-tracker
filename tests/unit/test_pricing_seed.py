@@ -198,6 +198,153 @@ def test_seed_antigravity_flash_lite3_rates():
     assert row.cache_create_per_mtok == 0.0
 
 
+def test_seed_antigravity_flash_35_rates():
+    """Per https://ai.google.dev/gemini-api/docs/pricing (paid tier)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-3.5",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.50
+    assert row.output_per_mtok == 9.00
+    assert row.cache_read_per_mtok == 0.15
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_flash_36_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-3.6",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.50
+    assert row.output_per_mtok == 7.50
+    assert row.cache_read_per_mtok == 0.15
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_flash_37_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-3.7",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.75
+    assert row.output_per_mtok == 3.75
+    assert row.cache_read_per_mtok == 0.075
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_flash_38_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-3.8",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.75
+    assert row.output_per_mtok == 3.75
+    assert row.cache_read_per_mtok == 0.075
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_pro_31_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "pro-3.1",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 2.00
+    assert row.output_per_mtok == 12.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_bare_pro_rates():
+    """Bare pro (no version) uses Gemini's lower 2.5-pro-equivalent rate."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "pro",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.25
+    assert row.output_per_mtok == 10.00
+    assert row.cache_read_per_mtok == 0.125
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_bare_flash_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.30
+    assert row.output_per_mtok == 2.50
+    assert row.cache_read_per_mtok == 0.03
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_bare_flash_lite_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "flash-lite",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.10
+    assert row.output_per_mtok == 0.40
+    assert row.cache_read_per_mtok == 0.01
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_antigravity_gemini_default_rates():
+    """gemini-default with no family in display bills at Gemini 3.5 Flash rates."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "antigravity",
+            ProviderPricing.model_id == "gemini-default",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.50
+    assert row.output_per_mtok == 9.00
+    assert row.cache_read_per_mtok == 0.15
+    assert row.cache_create_per_mtok == 0.0
+
+
 def test_seed_antigravity_claude_opus_rates():
     """Antigravity Claude Opus uses official Claude Opus 4.x pricing."""
     s = _make_session()

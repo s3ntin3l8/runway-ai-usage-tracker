@@ -23,6 +23,7 @@ event_id (``<conversation_id>|gen_<idx>``).
 """
 
 import os
+import re
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -123,35 +124,110 @@ def _parse_kv_metadata(fields: dict) -> dict[str, str]:
 # ── Model normalizer ──────────────────────────────────────────────────────────
 
 
+def _ag_detect_family(s: str) -> str | None:
+    """Return flash-lite / flash / pro when ``s`` names a Gemini family."""
+    lower = s.lower()
+    if "flash" in lower and "lite" in lower:
+        return "flash-lite"
+    if "flash" in lower:
+        return "flash"
+    if "pro" in lower:
+        return "pro"
+    return None
+
+
+def _ag_extract_version(s: str) -> str | None:
+    """Return the first ``major.minor`` token in ``s`` (e.g. ``3.5``)."""
+    m = re.search(r"\d+\.\d+", s)
+    return m.group(0) if m else None
+
+
+def _ag_looks_like_3x(raw: str, display: str) -> bool:
+    """True when there is a Gemini-3 signal but no extracted minor version."""
+    if "gemini-3" in raw.lower():
+        return True
+    # Standalone major "3" in the display ("Gemini 3 Flash"), not "3.5".
+    return re.search(r"(?<![\d.])3(?![\d.])", display) is not None
+
+
+def _extract_ag_effort(display_name: str) -> str | None:
+    """Map a trailing ``(Low)``/``(Medium)``/``(High)`` suffix to effort.
+
+    ``(Thinking)`` and display names without a recognized trailing suffix
+    return ``None``.
+    """
+    text = (display_name or "").strip()
+    if not text:
+        return None
+    m = re.search(r"\((low|medium|high)\)$", text, flags=re.IGNORECASE)
+    return m.group(1).lower() if m else None
+
+
 def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -> str:
     """Map the raw agy model string to a stable cost-bucket id.
 
     When Claude is selected (``used_claude=true``), fall back to a family name
     so the cost_calculator can match against the Anthropic pricing rows.
-    The display name (f1.21, e.g. "Gemini 3.1 Pro (High)") carries version info
-    when the raw model id is a generic placeholder like ``gemini-pro-default``.
+
+    Otherwise prefer minor-version buckets (``flash-3.5``, ``pro-3.1``, …) when
+    the raw id or display name (f1.21, e.g. "Gemini 3.1 Pro (High)") carries a
+    Gemini-3.x version — Google charges distinct rates per
+    https://ai.google.dev/gemini-api/docs/pricing. Flash-lite stays
+    ``flash-lite-3`` / ``flash-lite`` (no versioned lite rows). Non-family raw
+    ids (``gpt-oss``, …) pass through verbatim.
+
+    Examples:
+        "gemini-3.5-flash" / "Gemini 3.5 Flash" → "flash-3.5"
+        "gemini-pro-default" / "Gemini 3.1 Pro" → "pro-3.1"
+        "gemini-default" / "Gemini 3.5 Flash"   → "flash-3.5"
+        "gemini-3-flash-a" / "Gemini 3 Flash"   → "flash-3"
+        "gpt-oss"                               → "gpt-oss"
+        ""                                      → "unknown"
     """
     if kv.get("used_claude_conservative") == "true":
         return "claude-opus"
     if kv.get("used_claude") == "true":
         return "claude-sonnet"
 
-    # Prefer the display name for version detection when raw_model is generic.
-    name_for_version = display_name or raw_model or ""
-    has_3x = any("gemini-3" in (raw_model or "").lower() for _ in [1]) or (
-        "3." in name_for_version or " 3 " in name_for_version
-    )
+    raw = (raw_model or "").strip()
+    display = (display_name or "").strip()
 
-    lower = (raw_model or "").lower()
-    if not lower:
+    if not raw and not display:
         return "unknown"
-    if "flash" in lower:
-        if "lite" in lower:
-            return "flash-lite-3" if has_3x else "flash-lite"
-        return "flash-3" if has_3x else "flash"
-    if "pro" in lower:
-        return "pro-3" if has_3x else "pro"
-    return raw_model or "unknown"
+
+    # Empty raw: require both family and minor version from the display name.
+    if not raw:
+        family = _ag_detect_family(display)
+        version = _ag_extract_version(display)
+        if family is None or version is None:
+            return "unknown"
+        if family == "flash-lite":
+            return "flash-lite-3" if version.startswith("3.") else "flash-lite"
+        if version.startswith("3."):
+            return f"{family}-{version}"
+        return family
+
+    family = _ag_detect_family(raw) or _ag_detect_family(display)
+    if family is None:
+        return raw
+
+    # Prefer the display name's minor version when both sides carry one.
+    version = _ag_extract_version(display) or _ag_extract_version(raw)
+
+    if family == "flash-lite":
+        if version is not None:
+            return "flash-lite-3" if version.startswith("3.") else "flash-lite"
+        return "flash-lite-3" if _ag_looks_like_3x(raw, display) else "flash-lite"
+
+    if version is not None and version.startswith("3."):
+        return f"{family}-{version}"
+
+    # Major-only Gemini-3 (no minor in either field) → flash-3 / pro-3.
+    if version is None and _ag_looks_like_3x(raw, display):
+        return f"{family}-3"
+
+    # Non-3.x minor (e.g. 2.5) or no version at all → bare family bucket.
+    return family
 
 
 # ── cwd extractor from trajectory_metadata_blob ───────────────────────────────
@@ -264,6 +340,7 @@ def parse_antigravity_events(
             display_name = _first_str(f1, 21, "")
             kv = _parse_kv_metadata(f1)
             model_id = _normalize_ag_model(raw_model, display_name, kv)
+            effort = _extract_ag_effort(display_name)
 
             event_id = f"{conversation_id}|gen_{idx}"
 
@@ -288,6 +365,7 @@ def parse_antigravity_events(
                     stop_reason=None,
                     tool_calls=0,
                     cost_usd=None,
+                    effort=effort,
                 )
             )
 

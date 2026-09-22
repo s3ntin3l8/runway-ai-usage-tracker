@@ -57,15 +57,25 @@ Workspace path (→ `cwd`) comes from `trajectory_metadata_blob` table, field 7,
 
 **Model normalization** (`_normalize_ag_model`):
 
+Claude KV short-circuits first, then family + minor version are resolved from the raw id and display name (display preferred for the minor when both carry one). Gemini 3.x minor versions get their own cost bucket; flash-lite stays major-only; non-family raw ids pass through verbatim.
+
 | Condition | `model_id` |
 |---|---|
 | `used_claude_conservative=true` | `claude-opus` |
 | `used_claude=true` | `claude-sonnet` |
-| raw contains `flash` + `lite`, 3.x display | `flash-lite-3` |
-| raw contains `flash`, 3.x display | `flash-3` |
-| raw contains `pro`, 3.x display | `pro-3` |
+| family flash-lite, 3.x signal | `flash-lite-3` (never versioned) |
+| family flash/pro, minor starts with `3.` | `flash-3.5` / `flash-3.6` / `flash-3.7` / `flash-3.8` / `pro-3.1` |
+| family flash/pro, major-3 only (no minor) | `flash-3` / `pro-3` |
+| family flash/pro, no 3.x signal | bare `flash` / `pro` / `flash-lite` |
+| non-family raw (`gpt-oss`, …) | raw id verbatim |
+| empty raw, display has family + minor | versioned/bare family from display |
+| empty raw otherwise | `unknown` |
+
+**Effort** (`_extract_ag_effort`): a trailing `(Low)` / `(Medium)` / `(High)` on the display name is lowercased into `usage_events.effort`. `(Thinking)` and missing suffixes → `None`.
 
 **Since-watermark:** DBs are filtered by file mtime `> since`. No per-row timestamp; DB mtime is used as approximate event timestamp (spread by `row_idx × 1ms` for stable ordering). Server deduplicates by `event_id = "<conversation_id>|gen_<idx>"`.
+
+**Backfill:** rows ingested before minor-version preservation are repaired by `scripts/reclassify_antigravity_models.py` (run with the server stopped), then repriced via `scripts/recost_events.py --provider antigravity`.
 
 ## Pricing
 
@@ -73,7 +83,16 @@ Antigravity events use `provider_id="antigravity"` pricing rows (independent of 
 
 | `model_id` | Rate basis |
 |---|---|
+| `flash-3.5` | Gemini 3.5 Flash — $1.50 / $9.00 / $0.15 |
+| `flash-3.6` | Gemini 3.6 Flash — $1.50 / $7.50 / $0.15 |
+| `flash-3.7` | Gemini 3.7 Flash — $0.75 / $3.75 / $0.075 |
+| `flash-3.8` | Gemini 3.8 Flash — $0.75 / $3.75 / $0.075 |
+| `pro-3.1` | Gemini 3.1 Pro — $2.00 / $12.00 / $0.20 |
 | `pro-3`, `flash-3`, `flash-lite-3` | Standard Gemini tier (mirrors gemini 3.x rows) |
+| `pro` | Bare Pro (no version) — $1.25 / $10.00 / $0.125 |
+| `flash` | Bare Flash (no version) — $0.30 / $2.50 / $0.03 |
+| `flash-lite` | Bare Flash-Lite (no 3.x) — $0.10 / $0.40 / $0.01 |
+| `gemini-default` | Placeholder with no family in display — billed at 3.5 Flash rates |
 | `claude-opus` | Official Claude Opus 4.x API pricing |
 | `claude-sonnet` | Official Claude Sonnet 4.x API pricing |
 | GPT-OSS 120B (`unknown`) | Unpriced — cost defaults to $0 |
@@ -105,4 +124,6 @@ For multi-host (server + remote sidecar), the sidecar ships the OAuth token to t
 | `app/core/config.py` | `ANTIGRAVITY_OAUTH_PATH` setting |
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
+| `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |
+| `scripts/recost_events.py` | Reprice after pricing-seed changes (`--provider antigravity`) |
 | `app/services/pricing_seed.py` | Antigravity pricing rows |
