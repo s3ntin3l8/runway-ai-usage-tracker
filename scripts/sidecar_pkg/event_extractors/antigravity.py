@@ -255,15 +255,19 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
     )
 
     if family == "flash-lite":
-        if version is not None:
-            return "flash-lite-3" if version.startswith("3.") else "flash-lite"
-        return "flash-lite-3" if _ag_looks_like_3x(raw, display) else "flash-lite"
+        if version is not None and version.startswith("3."):
+            return "flash-lite-3"
+        if _ag_looks_like_3x(raw, display):
+            return "flash-lite-3"
+        return "flash-lite"
 
     if version is not None and version.startswith("3."):
         return _ag_versioned_bucket(family, version)
 
-    # Major-only Gemini-3 (no minor in either field) → flash-3 / pro-3.
-    if version is None and _ag_looks_like_3x(raw, display):
+    # Major-only Gemini-3 in either field (no 3.x minor resolved) → flash-3 / pro-3.
+    # Gate on "resolved version is not already 3.x" so a non-3.x display minor
+    # (2.5 / 1.5) cannot mask a major-3 raw id and drop to the bare family.
+    if not (version or "").startswith("3.") and _ag_looks_like_3x(raw, display):
         return f"{family}-3"
 
     # Non-3.x minor (e.g. 2.5) or no version at all → bare family bucket.

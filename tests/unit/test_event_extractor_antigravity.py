@@ -127,27 +127,40 @@ def test_raw_3x_wins_when_display_first_token_is_not_minor_version():
     assert _normalize_ag_model("gemini-3.5-flash", "Backend v1.5", {}) == "flash-3.5"
 
 
-def test_seeded_minors_match_pricing_seed():
-    """_SEEDED_MINORS must stay in sync with pricing_seed's antigravity rows.
+def test_major_only_3x_not_masked_by_non_3x_display_minor():
+    """Raw major-only gemini-3 + stale non-3.x display minor → major bucket."""
+    # Hermes probes: version resolves to 2.5/1.5, but looks_like_3x still holds.
+    assert _normalize_ag_model("gemini-3-pro", "Gemini 2.5 Flash", {}) == "pro-3"
+    assert _normalize_ag_model("gemini-3-flash-a", "Backend v1.5", {}) == "flash-3"
+    # Display major-only 3 + raw non-3.x minor → major bucket (not bare family).
+    assert _normalize_ag_model("gemini-2.5-flash", "Gemini 3 Flash", {}) == "flash-3"
 
-    Adding e.g. pro-3.5 to PRICING_SEED without updating _SEEDED_MINORS would
-    silently clamp that minor to pro-3; this test fails loudly instead.
+
+def test_seeded_minors_match_pricing_seed():
+    """_SEEDED_MINORS must match pricing_seed's antigravity versioned rows both ways.
+
+    Seed row missing from the frozenset → silently clamps to {family}-3.
+    Frozenset minor with no seed row → emits e.g. flash-3.4, which
+    cost_calculator version-strips to bare flash with no warning.
     """
     import re
 
     from app.services.pricing_seed import PRICING_SEED
     from scripts.sidecar_pkg.event_extractors.antigravity import _SEEDED_MINORS
 
+    seed_by_family: dict[str, set[str]] = {}
     for row in PRICING_SEED:
         if row.get("provider_id") != "antigravity":
             continue
         m = re.fullmatch(r"(flash|pro)-(\d+\.\d+)", str(row["model_id"]))
-        if not m or not m.group(2).startswith("3."):
-            continue
-        family, minor = m.group(1), m.group(2)
-        assert minor in _SEEDED_MINORS[family], (
-            f"{row['model_id']} has a pricing row but {minor!r} is not in "
-            f"_SEEDED_MINORS[{family!r}] — unseeded minors clamp to {family}-3"
+        if m and m.group(2).startswith("3."):
+            seed_by_family.setdefault(m.group(1), set()).add(m.group(2))
+
+    for family in sorted(set(seed_by_family) | set(_SEEDED_MINORS)):
+        assert set(_SEEDED_MINORS.get(family, ())) == seed_by_family.get(family, set()), (
+            f"_SEEDED_MINORS[{family!r}] and pricing_seed versioned rows disagree: "
+            f"extractor={sorted(_SEEDED_MINORS.get(family, ()))} "
+            f"seed={sorted(seed_by_family.get(family, set()))}"
         )
 
 
