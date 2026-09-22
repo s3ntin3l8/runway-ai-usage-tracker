@@ -88,13 +88,18 @@ const orphanProvider: ProviderConfig = {
 
 function renderDialog(
   provider: ProviderConfig | null,
-  props: { onClose?: () => void; onAccountDeleted?: (id: string, accountId: string) => void } = {},
+  props: {
+    onClose?: () => void;
+    onAccountDeleted?: (id: string, accountId: string) => void;
+    onAddAccount?: (provider: ProviderConfig) => void;
+  } = {},
 ) {
   return renderWithProviders(
     <ProviderDetailDialog
       provider={provider}
       onClose={props.onClose ?? vi.fn()}
       onAccountDeleted={props.onAccountDeleted}
+      onAddAccount={props.onAddAccount}
     />,
   );
 }
@@ -272,34 +277,38 @@ describe('ProviderDetailDialog — account list + menu', () => {
   });
 });
 
-describe('ProviderDetailDialog — Add account callbacks', () => {
+describe('ProviderDetailDialog — Add account callbacks (#287)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('renders the disabled empty-state "Add account" CTA pointing at the follow-up wizard', async () => {
+  it('renders the enabled empty-state "Add account" CTA when onAddAccount is wired', async () => {
+    const onAddAccount = vi.fn();
+    renderDialog(emptyProvider, { onAddAccount });
+
+    const dialog = await screen.findByRole('dialog');
+    const addBtn = within(dialog).getByRole('button', { name: /^add account$/i });
+    expect(addBtn).not.toBeDisabled();
+    await userEvent.click(addBtn);
+    expect(onAddAccount).toHaveBeenCalledWith(emptyProvider);
+  });
+
+  it('renders the disabled empty-state "Add account" CTA when onAddAccount is undefined', async () => {
     renderDialog(emptyProvider);
 
     const dialog = await screen.findByRole('dialog');
     const addBtn = within(dialog).getByRole('button', { name: /^add account$/i });
     expect(addBtn).toBeDisabled();
-    expect(addBtn).toHaveAttribute('aria-disabled', 'true');
-    expect(addBtn).toHaveAttribute('title', 'Wizard lands in #287');
+    expect(addBtn).toHaveAttribute('title', 'Wizard disabled');
   });
 
-  it('renders the disabled footer "Add account" button when accounts > 0', async () => {
-    renderDialog(singleAccount);
+  it('renders the enabled footer "Add account" button when accounts > 0 and onAddAccount is wired', async () => {
+    const onAddAccount = vi.fn();
+    renderDialog(singleAccount, { onAddAccount });
 
     const dialog = await screen.findByRole('dialog');
     const footerAdd = within(dialog).getAllByRole('button', { name: /^add account$/i })[0]!;
-    expect(footerAdd).toBeDisabled();
-    expect(footerAdd).toHaveAttribute('aria-disabled', 'true');
-    expect(footerAdd).toHaveAttribute('title', 'Wizard lands in #287');
-  });
-
-  it('omits the footer "Add account" button when accounts is empty', async () => {
-    renderDialog(emptyProvider);
-    const dialog = await screen.findByRole('dialog');
-    // Only the empty-state CTA is rendered when there are no accounts.
-    expect(within(dialog).getAllByRole('button', { name: /^add account$/i })).toHaveLength(1);
+    expect(footerAdd).not.toBeDisabled();
+    await userEvent.click(footerAdd);
+    expect(onAddAccount).toHaveBeenCalledWith(singleAccount);
   });
 });
 

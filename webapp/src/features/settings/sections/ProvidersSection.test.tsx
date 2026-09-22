@@ -693,18 +693,34 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
     expect(api.deleteProviderConfig).toHaveBeenCalledWith('claude', 'default');
   });
 
-  it('disables the Add provider / Add account buttons pending the wizard (#287)', async () => {
+  it('opens the wizard when Add provider is clicked (#287)', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
     renderV2(<ProvidersSection />);
 
     const addBtn = await screen.findByRole('button', { name: /add provider/i });
-    expect(addBtn).toBeDisabled();
+    await userEvent.click(addBtn);
+
+    // Wizard opens at step 1 with the provider catalog visible — find the
+    // step-1 heading ("Add provider · step 1 of 3").
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(await screen.findByText(/Add provider · step 1 of 3/)).toBeInTheDocument();
+  });
+
+  it('opens the wizard pre-scoped when Add account is clicked in the detail dialog (#287)', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
 
     await userEvent.click(await screen.findByText('Claude'));
-    const dialog = await screen.findByRole('dialog');
-    const dialogAdd = within(dialog).getByRole('button', { name: /add account/i });
-    expect(dialogAdd).toBeDisabled();
+    const detail = await screen.findByRole('dialog');
+    await userEvent.click(within(detail).getByRole('button', { name: /add account/i }));
+
+    // Pre-scoped: the wizard skips step 1 and shows step 2 (Credentials)
+    // directly. The dialog title is set via Radix Dialog.Title so we can
+    // locate it by its accessible name.
+    const wizard = await screen.findByRole('dialog');
+    expect(wizard).toHaveAccessibleName(/Add account · Claude · step 2 of 3/);
   });
 
   it('filters the grid by the search input', async () => {

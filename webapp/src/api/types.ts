@@ -635,6 +635,24 @@ export interface ProviderConfig {
   account_count: number;
 }
 
+// Wizard (#287) preview-endpoint types — keep in sync with
+// `_AccountPreviewRequest` / preview_account_identity response in
+// `app/api/endpoints/system.py`.
+export type AccountPreviewLabelSource = 'email' | 'credential_hash' | 'default';
+
+export interface AccountPreviewRequest {
+  provider_id: string;
+  api_key?: string | null;
+  session_cookie?: string | null;
+}
+
+export interface AccountPreviewResponse {
+  suggested_account_id: string;
+  suggested_label: string | null;
+  label_source: AccountPreviewLabelSource;
+  already_exists: boolean;
+}
+
 export interface Webhook {
   id: number;
   provider_id: string;

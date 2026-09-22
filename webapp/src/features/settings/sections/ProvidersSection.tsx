@@ -47,6 +47,7 @@ import { useProviderConfigs } from '@/features/home/queries';
 import { useDashboardLayout } from '@/features/home/queries';
 import { ProviderDetailDialog } from './ProviderDetailDialog';
 import { LegacyEditDialog } from './LegacyEditDialog';
+import { AddProviderWizard } from './AddProviderWizard';
 
 export function reorderItems<T>(
   items: T[],
@@ -71,7 +72,7 @@ interface UseV2ProvidersResult {
 }
 
 /** Hook that wraps `?providers=v2` gating + the providers/layout queries. */
-function useV2Providers(): UseV2ProvidersResult {
+export function useV2Providers(): UseV2ProvidersResult {
   const [searchParams] = useSearchParams();
   const enabled = searchParams.get('providers') === 'v2';
   const configs = useProviderConfigs();
@@ -110,9 +111,9 @@ export function ProvidersSection() {
 
 // ---------------------------------------------------------------------------
 // Legacy single-account form (unchanged behaviour, kept for the rollback path).
-// The dialog / form internals are isolated in `LegacyEditDialog` for the v1
-// shell; `ProviderDetailDialog` + `ProviderAccountDialog` are the v2 UI. The
-// legacy path renders one row keyed by `account_id="default"`.
+// The dialog / form internals are isolated in `ProviderDetailDialog` and
+// `ProviderAccountDialog` for the v2 UI; this path keeps the original
+// `ProviderForm` rendering a single row keyed by `account_id="default"`.
 // ---------------------------------------------------------------------------
 
 function ProvidersSectionLegacy({
@@ -156,7 +157,6 @@ function ProvidersSectionLegacy({
           <div className="flex shrink-0 items-center gap-1.5">
             {p.api_key_set ? <Badge variant="ok">key</Badge> : null}
             {p.session_cookie_set ? <Badge variant="ok">cookie</Badge> : null}
-            {p.archived ? <Badge variant="neutral">archived</Badge> : null}
             <Badge variant={p.enabled ? 'accent' : 'neutral'}>
               {p.enabled ? 'enabled' : 'disabled'}
             </Badge>
@@ -191,10 +191,33 @@ function ProvidersSectionV2({
   const providers = configs.data?.providers ?? [];
   const isDesktop = useIsDesktop();
   const [detailProvider, setDetailProvider] = useState<ProviderConfig | null>(null);
+  // Wizard (#287) — null = closed, otherwise the provider we pre-scoped to
+  // (undefined/null = open at step 1 with no pre-scope).
+  const [wizardScope, setWizardScope] = useState<ProviderConfig | null | undefined>(undefined);
 
+  // Build a Map<provider_id, Set<account_id>> for the wizard's
+  // defense-in-depth 409 detection (the API does the same check; this lets
+  // the UI short-circuit before round-tripping).
+  const existingAccountIdsByProvider = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const p of providers) {
+      map.set(
+        p.provider_id,
+        new Set(p.accounts.map((a) => a.account_id)),
+      );
+    }
+    return map;
+  }, [providers]);
 
   // Filter strip
   const [search, setSearch] = useState('');
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return providers;
+    return providers.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q),
+    );
+  }, [providers, search]);
 
   // Apply persisted provider_order from dashboard_layout, falling back to
   // server order. Memoized to keep the dnd-kit sensors stable across renders.
@@ -214,17 +237,6 @@ function ProvidersSectionV2({
     for (const p of byId.values()) result.push(p);
     return result;
   }, [providers, layout.data]);
-
-  // Apply the search filter to the *ordered* list so SortableContext.items
-  // and the rendered children stay aligned (otherwise dnd-kit considers the
-  // search-hidden rows as drop targets while the user is typing).
-  const orderedAndFiltered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return ordered;
-    return ordered.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q),
-    );
-  }, [ordered, search]);
 
   // Sensors for drag-to-reorder on the provider cards.
   const sensors = useSensors(
@@ -287,24 +299,24 @@ function ProvidersSectionV2({
 
         {!hasAnyConfig ? (
           // Fresh install: the registry returns every provider with
-          // `account_count=0`, so `orderedAndFiltered.length === 0` is true
-          // here even though the registry list isn't. Render the global
-          // "configure your first" empty state instead of falling through
-          // to the search-match state.
+          // `account_count=0`, so `filtered.length === 0` is true even
+          // though `providers` isn't. Render the global "configure your
+          // first" empty state instead of falling through to the
+          // search-match state. The CTA opens the wizard (#287).
           <Card className="py-2">
             <EmptyState
               icon={Plus}
               title="No providers configured"
               description="Add your first provider to start tracking AI usage."
               action={
-                <Button variant="primary" disabled aria-disabled="true" title="Wizard lands in #287">
+                <Button variant="primary" onClick={() => setWizardScope(null)}>
                   <Plus className="size-3.5" />
                   Add provider
                 </Button>
               }
             />
           </Card>
-        ) : orderedAndFiltered.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <Card className="py-2">
             <EmptyState
               title={`No providers match "${search}"`}
@@ -314,8 +326,7 @@ function ProvidersSectionV2({
                 </Button>
               }
             />
-          </Card>
-        ) : (
+          </Card>        ) : (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -323,31 +334,32 @@ function ProvidersSectionV2({
             onDragEnd={handleDragEnd}
             onDragCancel={() => setPullToRefreshSuspended(false)}
           >
-            <SortableContext items={orderedAndFiltered.map((p) => p.provider_id)} strategy={verticalListSortingStrategy}>
-              {orderedAndFiltered.map((p) => (
-                <SortableProviderCard
-                  key={p.provider_id}
-                  provider={p}
-                  onOpen={() => setDetailProvider(p)}
-                />
-              ))}
+            <SortableContext items={ordered.map((p) => p.provider_id)} strategy={verticalListSortingStrategy}>
+              {ordered
+                .filter((p) => filtered.includes(p))
+                .map((p) => (
+                  <SortableProviderCard
+                    key={p.provider_id}
+                    provider={p}
+                    onOpen={() => setDetailProvider(p)}
+                  />
+                ))}
             </SortableContext>
           </DndContext>
         )}
       </div>
 
       {/* Add provider CTA — sticky on mobile (above bottom nav), inline
-          top-right on desktop. Shows once at least one provider is configured;
-          on a fresh install the EmptyState at :288 renders its own Add
-          button, so we suppress this one to keep exactly one visible. */}
+          top-right on desktop. Gated on `hasAnyConfig` so the fresh-install
+          path (EmptyState at :307) only shows one Add button; once at least
+          one provider is configured, the sticky footer takes over. Both
+          buttons open the wizard at step 1 (#287). */}
       {hasAnyConfig ? (
         <Button
           variant="primary"
           size={isDesktop ? 'md' : 'lg'}
           className={isDesktop ? 'mt-3 self-start' : 'fixed inset-x-4 bottom-4 z-30 shadow-lg'}
-          disabled
-          aria-disabled="true"
-          title="Wizard lands in #287"
+          onClick={() => setWizardScope(null)}
         >
           <Plus className="size-4" />
           Add provider
@@ -357,11 +369,26 @@ function ProvidersSectionV2({
       <ProviderDetailDialog
         provider={detailProvider}
         onClose={() => setDetailProvider(null)}
-        onAccountDeleted={() => {
-          // Child invalidates the ['system', 'provider-configs'] query on
-          // success; no refetch needed here.
+        onAccountDeleted={(providerId) => {
+          if (detailProvider?.provider_id === providerId) {
+            // Refresh so the dialog's account list reflects the deletion.
+            configs.refetch();
+          }
         }}
+        onAddAccount={(p) => setWizardScope(p)}
       />
+
+      {wizardScope !== undefined ? (
+        <AddProviderWizard
+          preScopedProvider={wizardScope}
+          providers={providers}
+          existingAccountIdsByProvider={existingAccountIdsByProvider}
+          onClose={() => {
+            setWizardScope(undefined);
+            configs.refetch();
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -395,6 +422,7 @@ function SortableProviderCard({
         aria-label={`Reorder ${provider.name}`}
         className="touch-none text-fg-muted hover:text-fg"
       >
+        <span className="sr-only">Drag to reorder</span>
         <svg
           width="14"
           height="14"
@@ -457,4 +485,4 @@ function SortableProviderCard({
 
 // Re-exported here so legacy tests that imported the old `reorderStrategies`
 // keep working without churning the test file along with the section rewrite.
-export { reorderItems as reorderStrategies };
+export { reorderItems as reorderStrategies } from './ProvidersSection';

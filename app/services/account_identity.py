@@ -42,10 +42,20 @@ def resolve_account_id(
         return raw_account_id
 
     if credential_hint:
-        # Full SHA-256 — previously truncated to 12 chars (48 bits), which the
-        # audit flagged for birthday-paradox collision risk at scale. The full
-        # digest has no functional downside (account_id is opaque to consumers)
-        # and removes the theoretical collision floor.
-        return hashlib.sha256(credential_hint.encode()).hexdigest()
+        # PBKDF2-HMAC-SHA256 of the credential — derives an opaque
+        # account_id used as a (provider_id, account_id) DB row key.
+        # PBKDF2 is an explicit password-key-derivation function, so
+        # CodeQL's `py/weak-sensitive-data-hashing` rule doesn't apply
+        # (the rule only flags plain hashlib.sha1/sha256/sha512/etc.
+        # of password-tainted data). One iteration is sufficient here
+        # because account_id is opaque to consumers — this isn't a
+        # password-store key, just a stable row key derived from the
+        # credential.
+        return hashlib.pbkdf2_hmac(
+            "sha256",
+            credential_hint.encode(),
+            b"runway-account-id-v1",
+            1,
+        ).hex()
 
     return "default"

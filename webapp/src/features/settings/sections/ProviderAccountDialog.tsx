@@ -125,6 +125,12 @@ function ProviderAccountForm({
   const [enabled, setEnabled] = useState(account.enabled);
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
+  // PR #287 / #273 — explicit clear flags for the stored credentials. Set
+  // by the "Clear" button next to each input. The flag wins over a
+  // same-field write, so the user can't accidentally clear a credential
+  // they intended to update.
+  const [clearApiKey, setClearApiKey] = useState(false);
+  const [clearCookie, setClearCookie] = useState(false);
   const [label, setLabel] = useState(account.account_label ?? '');
   const [pollInterval, setPollInterval] = useState(
     account.poll_interval_seconds != null ? String(account.poll_interval_seconds) : '',
@@ -145,6 +151,9 @@ function ProviderAccountForm({
       };
       if (apiKey !== '') body.api_key = apiKey;
       if (cookie !== '') body.session_cookie = cookie;
+      // Clear flags win over same-field writes (PR #287).
+      if (clearApiKey) body.clear_api_key = true;
+      if (clearCookie) body.clear_session_cookie = true;
       return putProviderConfig(provider.provider_id, account.account_id, body);
     },
     onSuccess: () => {
@@ -203,14 +212,39 @@ function ProviderAccountForm({
 
       {provider.supports_api_key ? (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="acct-key">{provider.api_key_label || 'API key'}</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="acct-key">{provider.api_key_label || 'API key'}</Label>
+            {account.api_key_set && !clearApiKey ? (
+              <Button
+                type="button"
+                variant="danger-ghost"
+                size="sm"
+                onClick={() => {
+                  setClearApiKey(true);
+                  setApiKey('');
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
           <Input
             id="acct-key"
             type="password"
             autoComplete="off"
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={account.api_key_set ? '••••••••  (set — leave blank to keep)' : ''}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              if (clearApiKey) setClearApiKey(false);
+            }}
+            placeholder={
+              clearApiKey
+                ? 'Will be cleared on save'
+                : account.api_key_set
+                  ? '••••••••  (set — leave blank to keep)'
+                  : ''
+            }
+            disabled={clearApiKey}
           />
           {provider.api_key_help ? <HelperText>{provider.api_key_help}</HelperText> : null}
         </div>
@@ -218,16 +252,41 @@ function ProviderAccountForm({
 
       {provider.supports_session_cookie ? (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="acct-cookie">{provider.session_cookie_label || 'Session cookie'}</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="acct-cookie">
+              {provider.session_cookie_label || 'Session cookie'}
+            </Label>
+            {account.session_cookie_set && !clearCookie ? (
+              <Button
+                type="button"
+                variant="danger-ghost"
+                size="sm"
+                onClick={() => {
+                  setClearCookie(true);
+                  setCookie('');
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
           <Input
             id="acct-cookie"
             type="password"
             autoComplete="off"
             value={cookie}
-            onChange={(e) => setCookie(e.target.value)}
+            onChange={(e) => {
+              setCookie(e.target.value);
+              if (clearCookie) setClearCookie(false);
+            }}
             placeholder={
-              account.session_cookie_set ? '••••••••  (set — leave blank to keep)' : ''
+              clearCookie
+                ? 'Will be cleared on save'
+                : account.session_cookie_set
+                  ? '••••••••  (set — leave blank to keep)'
+                  : ''
             }
+            disabled={clearCookie}
           />
           {provider.session_cookie_help ? (
             <HelperText>{provider.session_cookie_help}</HelperText>
