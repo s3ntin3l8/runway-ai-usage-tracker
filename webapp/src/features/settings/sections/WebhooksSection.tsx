@@ -12,7 +12,7 @@ import {
   testWebhook,
   updateWebhook,
 } from '@/api/endpoints';
-import type { Webhook } from '@/api/types';
+import type { ProviderConfig, Webhook } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -29,11 +29,16 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { useProviderConfigs } from '@/features/home/queries';
+import { displayAccountName } from '@/lib/accountDisplay';
 import { timeAgo } from '@/lib/format';
+
+// Radix Select rejects value="" on SelectItem — sentinel for "All accounts".
+const ALL_ACCOUNTS = '__all__';
 
 export function WebhooksSection() {
   const queryClient = useQueryClient();
   const webhooks = useQuery({ queryKey: ['system', 'webhooks'], queryFn: fetchWebhooks });
+  const providers = useProviderConfigs();
   const [creating, setCreating] = useState(false);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['system', 'webhooks'] });
@@ -56,7 +61,12 @@ export function WebhooksSection() {
         />
       ) : (
         webhooks.data!.webhooks.map((w) => (
-          <WebhookRow key={w.id} webhook={w} onChanged={invalidate} />
+          <WebhookRow
+            key={w.id}
+            webhook={w}
+            onChanged={invalidate}
+            providers={providers.data?.providers ?? []}
+          />
         ))
       )}
 
@@ -77,11 +87,39 @@ export function WebhooksSection() {
   );
 }
 
-function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () => void }) {
+function WebhookRow({
+  webhook,
+  onChanged,
+  providers,
+}: {
+  webhook: Webhook;
+  onChanged: () => void;
+  providers: ProviderConfig[];
+}) {
+  const providerAccounts =
+    providers.find((p) => p.provider_id === webhook.provider_id)?.accounts ?? [];
+  const isWildcard = webhook.provider_id === '*';
+  const serverScope = webhook.account_id ?? ALL_ACCOUNTS;
+  const [scope, setScope] = useState(serverScope);
   const toggle = useMutation({
     mutationFn: (active: boolean) => updateWebhook(webhook.id, { active }),
     onSuccess: onChanged,
     onError: (err) => toast.error(err.message),
+  });
+  const changeScope = useMutation({
+    mutationFn: (next: string) =>
+      updateWebhook(webhook.id, {
+        account_id: next === ALL_ACCOUNTS ? null : next,
+      }),
+    onSuccess: (_resp, next) => {
+      setScope(next);
+      toast.success(next === ALL_ACCOUNTS ? 'Alert covers all accounts' : 'Account scope updated');
+      onChanged();
+    },
+    onError: (err) => {
+      setScope(serverScope);
+      toast.error(err.message);
+    },
   });
   const test = useMutation({
     mutationFn: () => testWebhook(webhook.id),
@@ -100,11 +138,41 @@ function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () =>
   return (
     <Card className="flex items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-medium">
-          {webhook.provider_id}
-          <span className="ml-1.5 font-mono text-fg-muted tabular">
-            ≥ {webhook.threshold_pct}%
-          </span>
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] font-medium">
+          <span>{webhook.provider_id}</span>
+          {isWildcard ? (
+            <span className="font-normal text-fg-muted">All accounts</span>
+          ) : (
+            <Select
+              value={scope}
+              onValueChange={(v) => {
+                if (v) changeScope.mutate(v);
+              }}
+            >
+              <SelectTrigger
+                className="h-6 max-w-44 px-2 text-xs font-normal"
+                aria-label="Alert account scope"
+                disabled={changeScope.isPending}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_ACCOUNTS}>All accounts</SelectItem>
+                {/* Fallback item so SelectValue can render a scope the
+                    provider-accounts list doesn't carry (stale/disabled row). */}
+                {scope !== ALL_ACCOUNTS &&
+                  !providerAccounts.some((a) => a.account_id === scope) && (
+                    <SelectItem value={scope}>{scope}</SelectItem>
+                  )}
+                {providerAccounts.map((a) => (
+                  <SelectItem key={a.account_id} value={a.account_id}>
+                    {displayAccountName(a)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <span className="font-mono text-fg-muted tabular">≥ {webhook.threshold_pct}%</span>
         </p>
         <p className="truncate text-[11px] text-fg-subtle">
           {webhook.channel} ·{' '}
@@ -147,14 +215,26 @@ function WebhookRow({ webhook, onChanged }: { webhook: Webhook; onChanged: () =>
 function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
   const providers = useProviderConfigs();
   const [providerId, setProviderId] = useState('');
+  const [accountId, setAccountId] = useState(ALL_ACCOUNTS);
   const [threshold, setThreshold] = useState('80');
   const [url, setUrl] = useState('');
   const [channel, setChannel] = useState<'discord' | 'slack'>('discord');
+
+  const selectedProvider = (providers.data?.providers ?? []).find(
+    (p) => p.provider_id === providerId,
+  );
+  const accounts = selectedProvider?.accounts ?? [];
+
+  const onProviderChange = (id: string) => {
+    setProviderId(id);
+    setAccountId(ALL_ACCOUNTS);
+  };
 
   const save = useMutation({
     mutationFn: () =>
       createWebhook({
         provider_id: providerId,
+        ...(accountId !== ALL_ACCOUNTS && { account_id: accountId }),
         threshold_pct: Number(threshold),
         url: url.trim(),
         channel,
@@ -179,7 +259,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label>Provider</Label>
-          <Select value={providerId} onValueChange={setProviderId}>
+          <Select value={providerId} onValueChange={onProviderChange}>
             <SelectTrigger>
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
@@ -204,6 +284,22 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
             onChange={(e) => setThreshold(e.target.value)}
           />
         </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label>Account</Label>
+        <Select value={accountId} onValueChange={setAccountId}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_ACCOUNTS}>All accounts</SelectItem>
+            {accounts.map((a) => (
+              <SelectItem key={a.account_id} value={a.account_id}>
+                {displayAccountName(a)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="wh-url">Webhook URL</Label>

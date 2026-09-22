@@ -605,7 +605,7 @@ export interface ProviderAccount {
 
 // Provider envelope returned by GET /api/v1/system/provider-configs. The
 // legacy top-level fields stay populated for single-account consumers
-// (HomePage/HistoryPage/ProviderPage/WebhooksSection read only these).
+// (HomePage/HistoryPage/ProviderPage read only these).
 // `accounts` carries the full per-account breakdown for the settings UI.
 export interface ProviderConfig {
   provider_id: string;
@@ -656,6 +656,7 @@ export interface AccountPreviewResponse {
 export interface Webhook {
   id: number;
   provider_id: string;
+  account_id: string | null; // null = applies to all accounts
   threshold_pct: number;
   url: string;
   channel: 'discord' | 'slack';

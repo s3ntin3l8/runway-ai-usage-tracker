@@ -56,7 +56,7 @@
 - **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, and activity tracking
 - **Token Health**: Settings panel shows OAuth/cookie expiry status with one-click refresh for supported providers
 - **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
-- **Webhook Alerts**: Per-provider threshold alerts to Discord or Slack
+- **Webhook Alerts**: Per-provider/per-account threshold alerts to Discord or Slack
 - **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
 - **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status
 - **Session Auth**: Admin login via an HttpOnly `SameSite=Strict` session cookie with "log out everywhere" revocation; scripts can still use the `X-Admin-Key` header

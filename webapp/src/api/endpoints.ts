@@ -353,6 +353,7 @@ export const fetchWebhooks = () => api<{ webhooks: Webhook[] }>('/api/v1/system/
 
 export interface WebhookCreate {
   provider_id: string;
+  account_id?: string | null;
   threshold_pct: number;
   url: string;
   channel: 'discord' | 'slack';
@@ -364,7 +365,7 @@ export const createWebhook = (body: WebhookCreate) =>
 
 export const updateWebhook = (
   id: number,
-  body: Partial<Pick<Webhook, 'threshold_pct' | 'url' | 'active'>>,
+  body: Partial<Pick<Webhook, 'threshold_pct' | 'url' | 'active' | 'account_id'>>,
 ) =>
   api<{ status: string }>(`/api/v1/system/webhooks/${id}`, {
     method: 'PATCH',

@@ -51,7 +51,7 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 | `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
 | `provider_configs` | Per-provider user config — API keys, session cookies (Fernet-encrypted), account labels, poll intervals, per-strategy enable toggles. Unique on `(provider_id, account_id)`. |
 | `sidecar_registry` | Known sidecars with hostname, custom name, tags, last-seen, version, OS, recent log lines, and a `collection_enabled` pause flag. |
-| `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `threshold_pct`, `url`, `channel`, last-fired timestamp. |
+| `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `account_id` (NULL = all accounts), `threshold_pct`, `url`, `channel`, last-fired timestamp. |
 | `system_config` | Single-row global config — browser preference, default poll interval, dashboard layout JSON, user timezone. |
 | `audit_log` | Append-only record of admin mutations (sidecar pause/resume/delete/patch, etc.). Diagnostic, not legal-grade. |
 

@@ -46,12 +46,21 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
 
 
 class WebhookConfig(SQLModel, table=True):  # type: ignore[call-arg]
-    """Per-provider webhook alert configuration."""
+    """Per-provider/per-account webhook alert configuration."""
 
     __tablename__ = "webhook_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "url",
+            name="uq_webhook_provider_account_url",
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     provider_id: str  # provider name e.g. "anthropic", or "*" for global
+    account_id: str | None = Field(default=None)  # None = applies to all accounts
     threshold_pct: float  # 0.0–100.0, e.g. 90.0
     url: str  # Discord or Slack incoming webhook URL
     channel: str  # "discord" or "slack" — validated by CRUD API at ingestion
