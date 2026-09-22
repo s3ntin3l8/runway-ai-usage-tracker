@@ -49,6 +49,7 @@ def make_opencode_db(path: str = ":memory:") -> sqlite3.Connection:
                 "providerID": "opencode-go",
                 "time": {"created": 1746709260000, "completed": 1746709262000},
                 "finish": "end_turn",
+                "variant": "high",
             },
         },
         {
@@ -73,6 +74,7 @@ def make_opencode_db(path: str = ":memory:") -> sqlite3.Connection:
                 "providerID": "opencode-go",
                 "time": {"created": 1746709380000, "completed": 1746709383500},
                 "finish": "end_turn",
+                "variant": "medium",
             },
         },
         {
