@@ -409,8 +409,9 @@ class TestReconcileResidualHealth:
 
     def test_used_limit_only_card_keeps_health(self):
         # No explicit pct_used → reconcile never derives one from used/limit.
-        # The frontend cardStatus critical gate mirrors this contract: stale
-        # used/limit-only cards retain collector-asserted critical health.
+        # The frontend cardStatus critical gate complements this: it skips the
+        # override when cardPct is derivable (so residual used/limit-only
+        # cards leave the rail) while the DB row keeps health="critical".
         card = {"health": "critical", "used_value": 50.0, "limit_value": 100.0}
         assert HealthCalculator.reconcile_residual_health(card) is False
         assert card["health"] == "critical"

@@ -70,9 +70,10 @@ class LimitCard(BaseModel):
     # Set alongside `stale` when SmartCollector serves past-STALE_CEILING
     # cache because collection is failing, and by the startup residual scrub
     # for pre-#293 rows. Every current writer sets it together with `stale`
-    # (and the merge recovery pops both), so the two flags are equivalent
-    # today — cardStale() ORs them so a flag-only row still degrades. The
-    # frontend prefers this field over parsing the detail display string.
+    # (and the merge recovery pops both) — cardStale() still ORs them so the
+    # structured field alone is sufficient once the detail-regex fallback is
+    # removed (#312). The frontend prefers this field over parsing the detail
+    # display string.
     collection_failing: bool = False
 
     @field_validator(
