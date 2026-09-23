@@ -318,6 +318,25 @@ class TokenCache:
                     del self._cache[provider]
             return removed
 
+    def seed_sync(
+        self,
+        provider: str,
+        account_id: str,
+        tokens: dict[str, str],
+        metadata: dict[str, Any] | None = None,
+        last_seen: float | None = None,
+    ) -> None:
+        """Synchronously seed an entry without acquiring the asyncio lock.
+
+        Intended for tests: awaiting ``store()`` from a throwaway event loop
+        would bind ``_lock`` to that loop so later TestClient requests cannot
+        acquire it. Writes the same ``(tokens, metadata, last_seen)`` layout
+        that ``store()`` uses.
+        """
+        if provider not in self._cache:
+            self._cache[provider] = {}
+        self._cache[provider][account_id] = (tokens, metadata or {}, last_seen or time.time())
+
     async def remove(self, provider: str, account_id: str) -> bool:
         """
         Manually remove an account from the cache.

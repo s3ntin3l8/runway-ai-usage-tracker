@@ -640,7 +640,10 @@ function Step3({
             onChange={(e) => setLabel(e.target.value)}
             placeholder={accountId === 'default' ? 'Default account' : maskedAccountId}
           />
-          <HelperText>Saved under account_id={maskedAccountId || 'default'}</HelperText>
+          <HelperText>
+            Saved under account_id={maskedAccountId || 'default'}
+            {maskedAccountId && maskedAccountId !== accountId ? ' (masked)' : ''}
+          </HelperText>
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="wiz-poll">Poll interval (s)</Label>
