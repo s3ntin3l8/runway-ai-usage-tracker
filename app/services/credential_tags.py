@@ -192,10 +192,34 @@ class CredentialTagRepo:
         or where the single row is the ``"default"`` sentinel (the
         sidecar's ``"default"``-tagged events already land on it).
 
+        **Multi-host assumption (PR #318 round-2 review, Hermes
+        warning #2):** ``provider_configs`` is deployment-wide (no
+        ``sidecar_id`` column), so the auto-hint is shipped to every
+        sidecar via ``/fleet/config``. In a multi-host deployment, a
+        second host whose local discovery returns ``default``/``None``
+        would adopt the single account's identity for its events AND
+        its token cards — i.e. attribute another host's usage to its
+        own card. This heuristic is therefore gated on a single-host
+        detection: when ``sidecar_registry`` has 2+ rows, the auto-hint
+        is suppressed and operators must tag explicitly via the
+        Untagged Credentials dialog. Tracking: the
+        ``credential_tags`` table is planned to gain a ``sidecar_id``
+        column (phase-2 of #288) which will let this heuristic resume
+        per-host scoping.
+
         Empty ``providers`` returns an empty map. Defensively filters
         empty / non-string ``account_id`` values.
         """
         if not providers:
+            return {}
+        # Multi-host gate: see docstring. Auto-hints are deployment-
+        # wide, so they would cross-contaminate hosts in a multi-
+        # sidecar deployment. Phase-2 schema work (sidecar_id on
+        # credential_tags) will remove the need for this gate.
+        from app.models.db import SidecarRegistry
+
+        sidecar_count = session.exec(select(SidecarRegistry.sidecar_id)).all()
+        if len(sidecar_count) > 1:
             return {}
         # Group by provider_id, keeping only providers with exactly
         # one enabled non-default row. A GROUP BY + HAVING COUNT(*) = 1

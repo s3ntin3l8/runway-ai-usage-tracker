@@ -971,7 +971,13 @@ def test_extract_events_for_provider_calls_extractor_per_account(monkeypatch):
         def model_dump(self, mode: str = "python") -> dict:
             return {"event_id": self.event_id}
 
-    def _fake_extractor(account_id: str, watermark, bootstrap_days: int) -> list:
+    def _fake_extractor(
+        account_id: str,
+        watermark,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict | None = None,  # noqa: ARG001 — accepted for signature parity (PR #318)
+    ) -> list:
         calls.append(account_id)
         return [_FakeEvt(f"evt-{account_id}-1"), _FakeEvt(f"evt-{account_id}-2")]
 
@@ -1007,7 +1013,13 @@ def test_extract_events_for_provider_continues_on_partial_failure(monkeypatch):
     / decrypt, others continue.")."""
     call_log: list[str] = []
 
-    def _flaky(account_id: str, watermark, bootstrap_days: int) -> list:
+    def _flaky(
+        account_id: str,
+        watermark,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict | None = None,  # noqa: ARG001 — accepted for signature parity (PR #318)
+    ) -> list:
         call_log.append(account_id)
         if account_id == "broken":
             raise RuntimeError("redisconnect")
@@ -1095,7 +1107,13 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
         def model_dump(self, mode: str = "python") -> dict:
             return {"event_id": self.event_id}
 
-    def _fake_extractor(account_id: str, watermark, bootstrap_days: int) -> list:
+    def _fake_extractor(
+        account_id: str,
+        watermark,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict | None = None,  # noqa: ARG001 — accepted for signature parity (PR #318)
+    ) -> list:
         emitted.append({"account_id": account_id, "event_id": f"evt-{account_id}"})
         return [_Evt(f"evt-{account_id}")]
 
@@ -1155,7 +1173,13 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
         def model_dump(self, mode: str = "python") -> dict:
             return {"event_id": self.event_id}
 
-    def _fake_extractor(account_id: str, watermark, bootstrap_days: int) -> list:
+    def _fake_extractor(
+        account_id: str,
+        watermark,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict | None = None,  # noqa: ARG001 — accepted for signature parity (PR #318)
+    ) -> list:
         emitted.append(account_id)
         return [_Evt(f"evt-{account_id}")]
 
@@ -1253,7 +1277,13 @@ def test_run_collection_swallows_lazy_init_failure(monkeypatch):
         {"anthropic": lambda: "default"},
     )
 
-    def _fake_extractor(account_id: str, watermark, bootstrap_days: int) -> list:
+    def _fake_extractor(
+        account_id: str,
+        watermark,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict | None = None,  # noqa: ARG001 — accepted for signature parity (PR #318)
+    ) -> list:
         emitted.append(account_id)
         return []
 
@@ -1290,7 +1320,13 @@ def test_run_collection_falls_back_to_legacy_when_no_server_accounts(monkeypatch
 
     emitted: list[str] = []
 
-    def _fake_extractor(account_id: str, watermark, bootstrap_days: int) -> list:
+    def _fake_extractor(
+        account_id: str,
+        watermark,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict | None = None,  # noqa: ARG001 — accepted for signature parity (PR #318)
+    ) -> list:
         emitted.append(account_id)
         return []
 

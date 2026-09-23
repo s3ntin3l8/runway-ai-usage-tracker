@@ -571,3 +571,54 @@ def test_pending_delete_returns_true_when_present_false_when_absent(session: Ses
         credential_origin="path:/x",
     )
     assert second_delete is False
+
+
+def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> None:
+    """PR #318 round-2 review (Hermes warning #2): auto-hints are
+    deployment-wide — they would cross-contaminate hosts in a multi-
+    sidecar deployment. Gating: when ``sidecar_registry`` has 2+
+    rows, the auto-hint is suppressed. Operators must tag explicitly
+    via the Untagged Credentials dialog.
+
+    Tracking: ``credential_tags`` is planned to gain a ``sidecar_id``
+    column (phase-2 of #288) which will let this heuristic resume
+    per-host scoping. Until then, the multi-host deployment is the
+    safer default — explicit tags never cross-contaminate.
+    """
+    from app.models.db import ProviderConfig, SidecarRegistry
+
+    # Single-account setup that would normally fire the auto-hint.
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    # Two sidecars registered — multi-host deployment.
+    session.add(SidecarRegistry(sidecar_id="alpha", hostname="alpha-host"))
+    session.add(SidecarRegistry(sidecar_id="beta", hostname="beta-host"))
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    # Auto-hint suppressed because two sidecars are registered.
+    assert out == {}
+
+
+def test_auto_hints_unaffected_when_only_one_sidecar(session: Session) -> None:
+    """The single-host happy path: one sidecar registered, one labeled
+    row → auto-hint fires (matches the pre-multi-host-gate contract)."""
+    from app.models.db import ProviderConfig, SidecarRegistry
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    session.add(SidecarRegistry(sidecar_id="alpha", hostname="alpha-host"))
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    assert out == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
