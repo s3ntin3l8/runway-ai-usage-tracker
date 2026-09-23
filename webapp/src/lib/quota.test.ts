@@ -99,6 +99,21 @@ describe('status semantics', () => {
     expect(cardStatus(card({ stale: true, health: 'warning', pct_used: 10 }))).toBe('ok');
     expect(cardStatus(card({ stale: true, health: 'warning', pct_used: null }))).toBe('warning');
   });
+  it('stale spend card keeps from_spend warning (no explicit pct_used)', () => {
+    // from_spend → warning at remaining <= $5; card ships used/limit with no
+    // pct_used. Derived cardPct must not suppress the collector warning.
+    expect(
+      cardStatus(
+        card({
+          stale: true,
+          health: 'warning',
+          used_value: 48,
+          limit_value: 100,
+          pct_used: null,
+        }),
+      ),
+    ).toBe('warning');
+  });
 });
 
 describe('sameQuota', () => {

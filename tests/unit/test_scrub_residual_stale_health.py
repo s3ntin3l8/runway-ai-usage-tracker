@@ -123,3 +123,34 @@ def test_scrub_ignores_healthy_rows_without_failure_detail():
         engine.dispose()
         if os.path.exists(db_path):
             os.remove(db_path)
+
+
+def test_init_db_runs_residual_scrub(monkeypatch):
+    """init_db must invoke the scrub on startup — deleting the wiring would
+    leave residual pre-#293 rows stuck critical with no unit-test coverage."""
+    from app.core.db import init_db
+
+    engine, conn, db_path = _engine_and_conn()
+    try:
+        row_id = _insert(
+            conn,
+            {
+                "service_name": "Ollama",
+                "pct_used": 0.0,
+                "health": "critical",
+                "detail": "⚠ Collection failing — timeout [Cached 346.1m ago]",
+            },
+        )
+        conn.close()
+        monkeypatch.setattr("app.core.db.engine", engine)
+
+        init_db()
+
+        with engine.connect() as verify_conn:
+            card = _read(verify_conn, row_id)
+        assert card["stale"] is True
+        assert card["health"] == "good"
+    finally:
+        engine.dispose()
+        if os.path.exists(db_path):
+            os.remove(db_path)

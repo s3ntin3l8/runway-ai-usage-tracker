@@ -7,16 +7,13 @@ import { Link } from 'react-router';
 import { AlertTriangle, KeyRound, TrendingUp, X } from 'lucide-react';
 import type { AnomalyEntry, FleetEntry, TokenHealthEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
+import { cardStale } from '@/lib/quota';
 import { cn } from '@/lib/cn';
 
 interface BannersProps {
   tokens: TokenHealthEntry[] | undefined;
   anomalies: AnomalyEntry[] | undefined;
   fleet?: FleetEntry[] | undefined;
-}
-
-function isCollectionFailing(card: { detail?: string | null; stale?: boolean }): boolean {
-  return /collection failing/i.test(card.detail ?? '') || card.stale === true;
 }
 
 export function Banners({ tokens, anomalies, fleet }: BannersProps) {
@@ -26,7 +23,7 @@ export function Banners({ tokens, anomalies, fleet }: BannersProps) {
   const spikes = anomalies ?? [];
   const failing = (fleet ?? []).filter((e) => {
     const cards = [e.critical_gauge, ...(e.secondary_limits ?? [])];
-    return cards.some((c) => isCollectionFailing(c ?? {}));
+    return cards.some((c) => c != null && cardStale(c));
   });
 
   const failingLabel = (e: FleetEntry): string => {

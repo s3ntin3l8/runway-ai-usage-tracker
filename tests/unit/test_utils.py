@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from app.core.utils import (
+    HealthCalculator,
     IdentityExtractor,
     PaceCalculator,
     extract_token_regex,
@@ -385,3 +386,28 @@ class TestSafeWriteJson:
         # Original file should not exist (we never wrote it successfully)
         # and temp file should be cleaned up
         assert not os.path.exists(out_file)
+
+
+# ─── HealthCalculator.reconcile_residual_health ──────────────────────────────
+
+
+class TestReconcileResidualHealth:
+    def test_downgrades_residual_critical_when_pct_disagrees(self):
+        card = {"health": "critical", "pct_used": 0.0}
+        assert HealthCalculator.reconcile_residual_health(card) is True
+        assert card["health"] == "good"
+
+    def test_keeps_genuine_critical(self):
+        card = {"health": "critical", "pct_used": 96.0}
+        assert HealthCalculator.reconcile_residual_health(card) is False
+        assert card["health"] == "critical"
+
+    def test_balance_card_without_pct_keeps_health(self):
+        card = {"health": "critical"}
+        assert HealthCalculator.reconcile_residual_health(card) is False
+        assert card["health"] == "critical"
+
+    def test_leaves_good_health_alone(self):
+        card = {"health": "good", "pct_used": 10.0}
+        assert HealthCalculator.reconcile_residual_health(card) is False
+        assert card["health"] == "good"

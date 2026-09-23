@@ -300,6 +300,28 @@ class HealthCalculator:
             return "warning"
         return "good"
 
+    @staticmethod
+    def reconcile_residual_health(card: dict[str, Any]) -> bool:
+        """Downgrade residual critical/warning health when pct_used disagrees.
+
+        Pre-#293 collectors used health="critical" as a stale marker. After the
+        marker moved to `stale`, re-serving that cache (or scrubbing residual
+        rows at startup) keeps the baked health forever — and `cardStatus`
+        only skips health=critical when a percentage is also known. Recompute
+        from the percentage so the card reflects actual quota, not a
+        historical flag. Balance cards (no pct_used) keep collector-asserted
+        health. Returns True if the card was rewritten.
+        """
+        pct = card.get("pct_used")
+        if not isinstance(pct, (int, float)):
+            return False
+        expected = HealthCalculator.from_percentage(float(pct))
+        health = card.get("health")
+        if health in ("critical", "warning") and health != expected:
+            card["health"] = expected
+            return True
+        return False
+
 
 async def http_request_with_retry(
     client: httpx.AsyncClient,

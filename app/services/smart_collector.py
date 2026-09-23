@@ -346,8 +346,8 @@ class SmartCollector:
         and a "Collection failing" prefix so a long-running outage reads as
         visibly degraded rather than confidently healthy. Residual
         collector-baked `health` that no longer matches the percentage is
-        reconciled (see `_reconcile_residual_health`) so the frontend stale
-        gate can drop false at-risk alerts.
+        reconciled (via `HealthCalculator.reconcile_residual_health`) so the
+        frontend stale gate can drop false at-risk alerts.
 
         Args:
             result: Original result from collector
@@ -379,28 +379,10 @@ class SmartCollector:
                 # stale marker. Don't re-assert it at a percentage that doesn't
                 # warrant critical — the frontend stale-gate only helps when
                 # health is honest (or already good) alongside stale=True.
-                self._reconcile_residual_health(card_copy)
+                HealthCalculator.reconcile_residual_health(card_copy)
             tagged.append(card_copy)
 
         return tagged
-
-    @staticmethod
-    def _reconcile_residual_health(card: dict[str, Any]) -> None:
-        """Downgrade residual critical/warning health when pct_used disagrees.
-
-        Pre-#293 collectors used health="critical" as a stale marker. After the
-        marker moved to `stale`, re-serving that cache keeps the baked health
-        forever — and `cardStatus` only skips health=critical when `stale` is
-        also set (and warning has no stale gate at all). Recompute from the
-        percentage so the card reflects actual quota, not a historical flag.
-        """
-        pct = card.get("pct_used")
-        if not isinstance(pct, (int, float)):
-            return
-        expected = HealthCalculator.from_percentage(float(pct))
-        health = card.get("health")
-        if health in ("critical", "warning") and health != expected:
-            card["health"] = expected
 
     def get_stats(self) -> dict[str, Any]:
         """

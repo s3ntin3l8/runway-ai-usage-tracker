@@ -89,7 +89,14 @@ export function cardStatus(card: LimitCard): QuotaStatus {
   if (card.error_type) return 'critical';
   if (card.is_unlimited) return 'unlimited';
   if (card.health === 'critical' && !(cardStale(card) && cardPct(card) != null)) return 'critical';
-  if (card.health === 'warning' && !(cardStale(card) && cardPct(card) != null && cardPct(card)! < 70)) {
+  // Warning is only rewritten when an explicit pct_used contradicts it —
+  // spend cards (from_spend → warning at remaining <= $5) ship used/limit
+  // with no pct_used, and their derived cardPct must not suppress the
+  // collector-asserted warning. Mirrors the backend reconcile/scrub gate.
+  if (
+    card.health === 'warning' &&
+    !(cardStale(card) && card.pct_used != null && card.pct_used < WARNING_PCT)
+  ) {
     return 'warning';
   }
   return statusForPct(cardPct(card));

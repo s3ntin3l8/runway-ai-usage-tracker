@@ -98,9 +98,11 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     )
     if not is_error_card and incoming_has_fresh_quota:
         merged.pop("error_type", None)
-        # Sticky stale: SmartCollector stamps stale=True when serving aged cache;
-        # a later successful collect omits the key (exclude_none), so merge must
-        # drop residual stale or the card stays dimmed forever.
+        # Sticky stale: full model_dump(exclude_none=True) always emits
+        # stale=False (bool default is not None), so the loop below already
+        # clears it on the real upsert path. The pop covers partial dicts
+        # (merge_card_json's documented API) that carry fresh quota but omit
+        # the key entirely — without it, residual stale=True would stick.
         merged.pop("stale", None)
         if merged.get("data_source") == "error":
             merged.pop("data_source", None)

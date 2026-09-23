@@ -39,7 +39,7 @@ describe('ArchivedCard', () => {
     expect(screen.getByText('archived')).toBeInTheDocument();
   });
 
-  it('matches the normal provider card min height', () => {
+  it('uses a min-height floor and column layout for the footer', () => {
     renderWithProviders(<ArchivedCard item={makeItem()} providerName="Claude" />);
     const cardEl = screen.getByRole('button');
     expect(cardEl.className).toContain('min-h-36');

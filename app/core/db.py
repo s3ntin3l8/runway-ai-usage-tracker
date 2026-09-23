@@ -378,12 +378,8 @@ def _scrub_residual_stale_health(conn: Any) -> None:
         if card.get("stale") is not True:
             card["stale"] = True
             changed = True
-        pct = card.get("pct_used")
-        if isinstance(pct, (int, float)) and card.get("health") in ("critical", "warning"):
-            expected = HealthCalculator.from_percentage(float(pct))
-            if card.get("health") != expected:
-                card["health"] = expected
-                changed = True
+        if HealthCalculator.reconcile_residual_health(card):
+            changed = True
         if not changed:
             continue
         conn.execute(
