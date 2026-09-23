@@ -39,7 +39,7 @@ import { HelperText, Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Switch } from '@/components/ui/Switch';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
-import { displayAccountName, accountSubtitle } from '@/lib/accountDisplay';
+import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
 
 interface ProviderAccountDialogProps {
   // The provider envelope — passed for label/help text and supported_strategies
@@ -62,7 +62,7 @@ export function ProviderAccountDialog({
   );
   const title = account
     ? `Edit account · ${displayAccountName(account)}`
-    : `Edit account · ${accountId}`;
+    : `Edit account · ${maskAccountId(accountId)}`;
 
   if (!account) {
     // Defensive: render an empty-state dialog rather than crashing if the
@@ -301,7 +301,7 @@ function ProviderAccountForm({
             id="acct-label"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder={account.account_id}
+            placeholder={maskAccountId(account.account_id)}
           />
         </div>
         <div className="flex flex-col gap-1.5">

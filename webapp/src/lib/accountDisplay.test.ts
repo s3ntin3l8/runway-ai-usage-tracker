@@ -1,4 +1,25 @@
-import { accountSubtitle, displayAccountName } from './accountDisplay';
+import { accountSubtitle, displayAccountName, maskAccountId } from './accountDisplay';
+
+describe('maskAccountId', () => {
+  it('masks a 64-hex credential hash to the 8+4 form', () => {
+    const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret
+    expect(maskAccountId(hash)).toBe('72ca8b00…a9f5');
+  });
+
+  it('passes emails through unchanged', () => {
+    expect(maskAccountId('alice@example.com')).toBe('alice@example.com');
+  });
+
+  it('passes UUIDs through unchanged', () => {
+    expect(maskAccountId('6f9619ff-8b86-d011-b42d-00c04fc964ff')).toBe(
+      '6f9619ff-8b86-d011-b42d-00c04fc964ff',
+    );
+  });
+
+  it('passes "default" through unchanged', () => {
+    expect(maskAccountId('default')).toBe('default');
+  });
+});
 
 describe('displayAccountName', () => {
   it('returns the trimmed label when present', () => {
@@ -23,6 +44,13 @@ describe('displayAccountName', () => {
     expect(displayAccountName({ account_id: 'alice@example.com', account_label: null })).toBe(
       'alice@example.com',
     );
+  });
+
+  it('masks a raw credential-hash account_id instead of showing the full hex', () => {
+    const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret
+    const name = displayAccountName({ account_id: hash, account_label: null });
+    expect(name).toBe('72ca8b00…a9f5');
+    expect(name).not.toContain(hash);
   });
 });
 
@@ -58,6 +86,11 @@ describe('accountSubtitle', () => {
         account_label: null,
       }),
     ).toBeNull();
+  });
+
+  it('returns a masked hash in the subtitle when the label differs from a hash id', () => {
+    const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret
+    expect(accountSubtitle({ account_id: hash, account_label: 'Work' })).toBe('72ca8b00…a9f5');
   });
 
   it('returns null when label equals account_id (no useful secondary line)', () => {
