@@ -39,6 +39,13 @@ describe('ArchivedCard', () => {
     expect(screen.getByText('archived')).toBeInTheDocument();
   });
 
+  it('matches the normal provider card min height', () => {
+    renderWithProviders(<ArchivedCard item={makeItem()} providerName="Claude" />);
+    const cardEl = screen.getByRole('button');
+    expect(cardEl.className).toContain('min-h-36');
+    expect(cardEl.className).toContain('flex-col');
+  });
+
   it('shows lifetime stats when lifetime is present', () => {
     renderWithProviders(<ArchivedCard item={makeItem()} providerName="Claude" />);
     expect(screen.getByText('Tokens')).toBeInTheDocument();

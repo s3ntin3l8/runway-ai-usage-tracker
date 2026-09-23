@@ -26,7 +26,7 @@ export function ArchivedSection() {
       <h2 className="text-xs font-semibold tracking-wide text-fg-subtle uppercase">
         Archived
       </h2>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {items.map((item) => (
           <ArchivedCard
             key={`${item.provider_id}:${item.account_id}`}

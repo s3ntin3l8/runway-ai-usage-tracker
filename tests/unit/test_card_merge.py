@@ -166,6 +166,16 @@ class TestCardMerge:
         assert "remaining" not in parsed
         assert parsed["used_value"] == 51.0
 
+    def test_fresh_quota_clears_sticky_stale_flag(self):
+        # SmartCollector stamps stale=True when serving aged cache; a later
+        # successful collect omits the key entirely (exclude_none), so merge
+        # must pop residual stale or the card stays dimmed forever.
+        existing = json.dumps({"pct_used": 0.0, "stale": True, "health": "good"})
+        incoming = {"pct_used": 42.0, "health": "good"}
+        parsed = json.loads(merge_card_json(existing, incoming))
+        assert "stale" not in parsed
+        assert parsed["pct_used"] == 42.0
+
     def test_token_only_enrichment_preserves_error_type(self):
         # Negative case: a local token-breakdown push without quota fields must
         # NOT mask a genuinely-still-erroring quota row. Only fresh quota signal

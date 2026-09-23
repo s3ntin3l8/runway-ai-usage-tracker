@@ -32,7 +32,7 @@ import { StatusDot } from '@/components/ui/StatusDot';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
-import { cardKind, cardPct, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardKind, cardPct, cardStale, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
@@ -154,7 +154,7 @@ function SortableProviderCard({
       className={
         'cursor-pointer touch-manipulation p-3.5 transition-colors duration-150 hover:border-edge-strong ' +
         (isDragging ? 'z-10 opacity-80 shadow-lg' : '') +
-        (gauge.stale ? ' opacity-60' : '')
+        (cardStale(gauge) ? ' opacity-60' : '')
       }
     >
       <div className="flex items-center gap-2.5">
@@ -241,7 +241,13 @@ function SortableProviderCard({
         ) : (
           <span />
         )}
-        <span>{timeAgo(gauge.updated_at)}</span>
+        {cardStale(gauge) ? (
+          <span className="text-warning" title="Collection failing — showing cached data">
+            Stale
+          </span>
+        ) : (
+          <span>{timeAgo(gauge.updated_at)}</span>
+        )}
       </div>
     </Card>
   );

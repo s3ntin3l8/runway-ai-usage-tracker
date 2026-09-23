@@ -106,6 +106,32 @@ describe('ProviderGrid', () => {
     expect(cardEl.className).toContain('opacity-60');
   });
 
+  it('shows a Stale footer label when the gauge is stale', () => {
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ stale: true }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
+  it('treats Collection-failing detail as stale for opacity and footer', () => {
+    const items = buildRiskItems(
+      [
+        entry({
+          critical_gauge: card({
+            detail: '⚠ Collection failing — timeout [Cached 346.1m ago]',
+          }),
+        }),
+      ],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    const cardEl = screen.getByRole('button', { name: /claude/i });
+    expect(cardEl.className).toContain('opacity-60');
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
   it('does not apply opacity to non-stale cards', () => {
     const items = buildRiskItems([entry()], []);
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);

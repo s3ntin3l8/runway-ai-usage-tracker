@@ -98,6 +98,10 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     )
     if not is_error_card and incoming_has_fresh_quota:
         merged.pop("error_type", None)
+        # Sticky stale: SmartCollector stamps stale=True when serving aged cache;
+        # a later successful collect omits the key (exclude_none), so merge must
+        # drop residual stale or the card stays dimmed forever.
+        merged.pop("stale", None)
         if merged.get("data_source") == "error":
             merged.pop("data_source", None)
         if merged.get("remaining") == "ERR":
