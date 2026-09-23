@@ -148,6 +148,51 @@ class TestCollectorManagerInitialization:
         assert "anthropic:alice@example.com" not in manager.smart_collectors
         assert "anthropic:default" not in manager.smart_collectors
 
+    @pytest.mark.asyncio
+    async def test_step2_does_not_respawn_default_from_cache(self, manager):
+        """Sidecar may stamp the token cache with account_id="default"
+        (`_gemini_account_email` / `_ag_account_email` fallbacks). When config
+        rows exist without a default sentinel, step 2 must not spawn
+        {pid}:default — that would re-collect after the user disabled the
+        only account (Hermes review on PR #309)."""
+        manager.smart_collectors = {}  # step 1 never spawned the default
+
+        class _Cfg:
+            provider_id = "anthropic"
+            account_id = "alice@example.com"
+            enabled = False  # sole account disabled
+            poll_interval_seconds = None
+            account_label = None
+            strategies = None
+            api_key = None
+            session_cookie = None
+
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+            ) as mock_accounts,
+            patch("sqlmodel.Session") as mock_session_cls,
+        ):
+            # Cache still holds a literal "default" identity (sidecar fallback).
+            mock_accounts.return_value = [
+                ("anthropic", "default", "default"),
+                ("anthropic", "alice@example.com", "Alice"),
+            ]
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [
+                [_Cfg()],
+                [],
+            ]
+            inner.exec.return_value.first.return_value = None
+            mock_session_cls.return_value.__enter__.return_value = inner
+
+            manager._last_sync_time = 0
+            await manager._sync_collectors(force=True)
+
+        assert "anthropic:default" not in manager.smart_collectors
+        assert "anthropic:alice@example.com" not in manager.smart_collectors
+
 
 class TestCollectorManagerWarmup:
     @pytest.mark.skip(reason="keychain warmup removed; keychain access moved to sidecar")

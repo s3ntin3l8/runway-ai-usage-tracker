@@ -636,8 +636,10 @@ export interface ProviderConfig {
   session_cookie_help?: string | null;
   supported_strategies?: CollectionStrategy[];
   collection_strategies?: CollectionStrategy[];
-  // Multi-account view (one entry per ProviderConfig DB row).
+  // Multi-account view (one entry per ProviderConfig DB row, plus any
+  // discovered-only identities — see ProviderAccount.source).
   accounts: ProviderAccount[];
+  // Total entries in `accounts` (config-backed + discovered).
   account_count: number;
 }
 

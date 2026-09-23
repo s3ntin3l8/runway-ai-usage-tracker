@@ -77,7 +77,10 @@ def test_get_provider_configs_merges_cache_seeded_accounts(client: TestClient):
 
     from app.services.token_cache import token_cache
 
-    # Seed directly (store() is async; TestClient may own the running loop).
+    # Seed the in-memory dict directly rather than await store(): store() is
+    # async, and running it on a throwaway loop would bind token_cache._lock
+    # to that loop so the TestClient portal cannot acquire it on the GET below.
+    # The tuple layout matches what store() writes (tokens, meta, last_seen).
     token_cache._cache.setdefault("antigravity", {})["user@example.com"] = (
         {"refresh_token": "ag-refresh-token"},  # pragma: allowlist secret
         {"account_label": "User", "source": "sidecar"},

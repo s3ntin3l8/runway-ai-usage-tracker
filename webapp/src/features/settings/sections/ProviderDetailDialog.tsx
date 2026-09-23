@@ -53,13 +53,17 @@ export function ProviderDetailDialog({
   // partial failure still refetches true DB state; full per-account
   // rollback (or a server-side batch endpoint) is left for a follow-up.
   const queryClient = useQueryClient();
-  const masterEnabled =
-    provider !== null && provider.accounts.length > 0 && provider.accounts.every((a) => a.enabled);
+  // Discovered rows have no provider_configs row — PUT would *create* one
+  // (persisting an opaque hash), and Remove has nothing to delete. Master
+  // toggle therefore only drives config-backed accounts; discovered rows
+  // are read-only "auto" entries (Hermes review on PR #309).
+  const configAccounts = (provider?.accounts ?? []).filter((a) => a.source !== 'discovered');
+  const masterEnabled = configAccounts.length > 0 && configAccounts.every((a) => a.enabled);
 
   const setMasterEnabled = useMutation({
     mutationFn: async (next: boolean) => {
       if (!provider) return;
-      const updates = provider.accounts
+      const updates = configAccounts
         .filter((a) => a.enabled !== next)
         .map((a) =>
           putProviderConfig(provider.provider_id, a.account_id, { enabled: next }),
@@ -73,7 +77,7 @@ export function ProviderDetailDialog({
       // useMutation's onSuccess callback.)
       if (provider) {
         toast.success(
-          provider.accounts.length === 0
+          configAccounts.length === 0
             ? 'No accounts to update'
             : `${provider.name} · all accounts ${next ? 'enabled' : 'disabled'}`,
         );
@@ -140,7 +144,7 @@ export function ProviderDetailDialog({
               </div>
               <Switch
                 checked={masterEnabled}
-                disabled={provider.accounts.length === 0 || setMasterEnabled.isPending}
+                disabled={configAccounts.length === 0 || setMasterEnabled.isPending}
                 onCheckedChange={(v) => setMasterEnabled.mutate(v)}
                 aria-label="All accounts enabled"
               />
@@ -200,54 +204,56 @@ export function ProviderDetailDialog({
                           </Badge>
                         )}
                       </div>
-                      <div className="relative">
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label={`Actions for ${displayAccountName(account)}`}
-                          aria-haspopup="menu"
-                          aria-expanded={isMenuOpen}
-                          onClick={() =>
-                            setMenuFor((current) =>
-                              current === account.account_id ? null : account.account_id,
-                            )
-                          }
-                        >
-                          <MoreHorizontal className="size-4" />
-                        </Button>
-                        {isMenuOpen ? (
-                          <div
-                            role="menu"
-                            className="absolute top-full right-0 z-10 mt-1 min-w-[10rem] rounded-md border border-edge bg-overlay p-1 shadow-lg"
-                            onMouseLeave={() => setMenuFor(null)}
+                      {account.source === 'discovered' ? null : (
+                        <div className="relative">
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            aria-label={`Actions for ${displayAccountName(account)}`}
+                            aria-haspopup="menu"
+                            aria-expanded={isMenuOpen}
+                            onClick={() =>
+                              setMenuFor((current) =>
+                                current === account.account_id ? null : account.account_id,
+                              )
+                            }
                           >
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
-                              onClick={() => {
-                                setMenuFor(null);
-                                setEditingAccount(account);
-                              }}
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                          {isMenuOpen ? (
+                            <div
+                              role="menu"
+                              className="absolute top-full right-0 z-10 mt-1 min-w-[10rem] rounded-md border border-edge bg-overlay p-1 shadow-lg"
+                              onMouseLeave={() => setMenuFor(null)}
                             >
-                              <Pencil className="size-3.5 text-fg-muted" />
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
-                              onClick={() => {
-                                setMenuFor(null);
-                                setPendingDelete(account);
-                              }}
-                            >
-                              <Trash2 className="size-3.5" />
-                              Remove
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  setEditingAccount(account);
+                                }}
+                              >
+                                <Pencil className="size-3.5 text-fg-muted" />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  setPendingDelete(account);
+                                }}
+                              >
+                                <Trash2 className="size-3.5" />
+                                Remove
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                     </li>
                   );
                 })}

@@ -126,6 +126,42 @@ describe('ProviderDetailDialog — master enabled toggle', () => {
     expect(toggle).toBeDisabled();
   });
 
+  it('disables the toggle when every account is discovered-only', async () => {
+    // Discovered rows have no provider_configs row — PUT would create one
+    // (Hermes review on PR #309).
+    const discoveredOnly: ProviderConfig = {
+      ...singleAccount,
+      accounts: [{ ...alice, source: 'discovered' }],
+      account_count: 1,
+    };
+    renderDialog(discoveredOnly);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    expect(toggle).toBeDisabled();
+    expect(toggle).not.toBeChecked();
+  });
+
+  it('never PUTs a discovered account when toggling a mixed provider', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const mixed: ProviderConfig = {
+      ...multiAccount,
+      accounts: [alice, { ...bob, source: 'discovered' }],
+      account_count: 2,
+    };
+    renderDialog(mixed);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    // alice enabled, discovered ignored → checked; toggle only targets config rows.
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    const calls = vi.mocked(api.putProviderConfig).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['anthropic', 'alice@example.com', { enabled: false }]);
+    // The discovered bob id must never appear in a PUT (would create a config row).
+    expect(calls.every((c) => c[1] !== 'bob@example.com')).toBe(true);
+  });
+
   it('toggling ON fires one PUT per currently-disabled account', async () => {
     vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
     renderDialog(multiAccount);
@@ -182,6 +218,20 @@ describe('ProviderDetailDialog — master enabled toggle', () => {
 
 describe('ProviderDetailDialog — account list + menu', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('hides the actions menu for discovered accounts (Hermes #309)', async () => {
+    const discoveredOnly: ProviderConfig = {
+      ...singleAccount,
+      accounts: [{ ...alice, source: 'discovered' }],
+      account_count: 1,
+    };
+    renderDialog(discoveredOnly);
+    expect(await screen.findByLabelText('Provider accounts')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /actions for alice/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('auto')).toBeInTheDocument();
+  });
 
   it('renders one row per account with badges', async () => {
     renderDialog(multiAccount);

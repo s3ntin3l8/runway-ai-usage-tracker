@@ -203,6 +203,19 @@ class CollectorManager:
 
                     # For dynamic account, check for specific override OR fallback to default provider override
                     provider_acc_configs = db_configs.get(p_id, {})
+                    if (
+                        acc_id == "default"
+                        and provider_acc_configs
+                        and "default" not in provider_acc_configs
+                    ):
+                        # Config rows exist but none is the default sentinel —
+                        # collection is account-keyed. The sidecar can still
+                        # stamp a literal "default" into the token cache
+                        # (`_gemini_account_email` / `_ag_account_email`
+                        # fallbacks); spawning {pid}:default here would keep
+                        # collecting after the user disabled the only account.
+                        self.smart_collectors.pop(f"{p_id}:default", None)
+                        continue
                     db_cfg = provider_acc_configs.get(acc_id) or provider_acc_configs.get("default")
 
                     if db_cfg is not None and not db_cfg.enabled:
