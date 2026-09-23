@@ -14,10 +14,11 @@ import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.db import get_session
 from app.main import app
+from app.models.db import LatestUsage
 
 
 @pytest.fixture(name="session")
@@ -557,3 +558,177 @@ def test_apply_provider_config_extracts_session_key_from_cookie_paste(client: Te
     anthropic = next(p for p in listing if p["provider_id"] == "anthropic")
     default = next(a for a in anthropic["accounts"] if a["account_id"] == "default")
     assert default["session_cookie_set"] is True
+
+
+# ---------------------------------------------------------------------------
+# DELETE /provider-config/{provider_id}/{account_id}
+# ---------------------------------------------------------------------------
+
+
+def test_delete_provider_config_removes_row(client: TestClient, session: Session) -> None:
+    """Per-account DELETE removes the row + its LatestUsage cards.
+
+    Pins the contract that the webapp's ProviderDetailDialog Remove action
+    depends on — without it, the front-end surfaces a 'Method Not Allowed'
+    toast (FastAPI 405). The endpoint also evicts LatestUsage rows so the
+    dashboard doesn't show ghost cards for an account the operator just
+    removed.
+    """
+    # Seed a row.
+    r = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    # Seed a LatestUsage card that should be evicted by the delete.
+    _seed_latest_usage(session, "openrouter", "alice@example.com")
+    assert (
+        session.exec(
+            select(LatestUsage).where(
+                LatestUsage.provider_id == "openrouter",
+                LatestUsage.account_id == "alice@example.com",
+            )
+        ).first()
+        is not None
+    )
+
+    # Delete.
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "deleted"
+    assert body["provider_id"] == "openrouter"
+    assert body["account_id"] == "alice@example.com"
+
+    # Row is gone from provider_configs.
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+    assert openrouter["account_count"] == 0
+    assert openrouter["accounts"] == []
+
+    # LatestUsage card was evicted.
+    assert (
+        session.exec(
+            select(LatestUsage).where(
+                LatestUsage.provider_id == "openrouter",
+                LatestUsage.account_id == "alice@example.com",
+            )
+        ).first()
+        is None
+    )
+
+
+def test_delete_provider_config_returns_404_for_unknown_provider(
+    client: TestClient,
+) -> None:
+    """Unknown provider → 404, not 405."""
+    r = client.delete(
+        "/api/v1/system/provider-config/no-such-provider/alice@example.com",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 404
+    assert "no-such-provider" in r.json()["detail"]
+
+
+def test_delete_provider_config_returns_404_for_missing_row(
+    client: TestClient,
+) -> None:
+    """Known provider but no row at this account_id → 404."""
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/nonexistent@example.com",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 404
+    assert "nonexistent@example.com" in r.json()["detail"]
+
+
+def test_delete_provider_config_requires_admin_key(client: TestClient, monkeypatch) -> None:
+    """With ADMIN_API_KEY configured and APP_HOST bound off-loopback,
+    unauthenticated requests are rejected.
+
+    Pins the auth gate that ``require_admin_key`` enforces on every
+    state-changing endpoint — without it, an attacker on the same host
+    could delete arbitrary provider configs.
+
+    Patches via dotted paths into both ``app.core.config`` and
+    ``app.core.security``: ``resolve_auth`` reads ``settings`` from the
+    latter's module-level binding, which can diverge from
+    ``app.core.config.settings`` after another test reloads the config
+    module (PR #297 round-1 regression guard).
+    """
+    # Seed a row first (the test fixture leaves ADMIN_API_KEY unset, so the
+    # admin gate is effectively a no-op — we use the unauth path).
+    client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+
+    # Flip auth on: bind off-loopback so the localhost trust bypass
+    # doesn't mask the missing-X-Admin-Key rejection we want to assert.
+    for dotted in (
+        "app.core.config.settings",
+        "app.core.security.settings",
+    ):
+        monkeypatch.setattr(f"{dotted}.ADMIN_API_KEY", "admin-secret")
+        monkeypatch.setattr(f"{dotted}.APP_HOST", "0.0.0.0")
+
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+    )
+    assert r.status_code in (401, 403), (
+        f"unauthenticated DELETE must be rejected, got {r.status_code}"
+    )
+
+
+def test_delete_provider_config_default_row_removes_orphan(
+    client: TestClient, session: Session
+) -> None:
+    """The exact bug behind the user's 'Method Not Allowed' toast: deleting
+    a default provider_config row that's been shadowed by a non-default
+    sibling succeeds end-to-end and the orphan disappears from the listing.
+
+    Uses openrouter because Gemini's collector mixin auto-stores a
+    cookie-derived email in token_cache during the post-PUT force-sync,
+    which would surface as a "discovered" account and pollute the count
+    assertion. OpenRouter has no such mixin, so the listing mirrors
+    exactly what we put in provider_configs."""
+    # Two rows: a labeled one + a "default" row left over from initial setup.
+    r = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, f"PUT alice failed: {r.text}"
+    r = client.put(
+        "/api/v1/system/provider-config/openrouter/default",
+        json={"account_label": "Default"},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, f"PUT default failed: {r.text}"
+
+    # The default row is flagged orphan (sibling has live data).
+    _seed_latest_usage(session, "openrouter", "alice@example.com")
+
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+    by_id = {row["account_id"]: row for row in openrouter["accounts"]}
+    assert by_id["default"]["is_orphaned"] is True
+
+    # Delete the orphan.
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/default",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, f"DELETE failed: {r.text}"
+
+    # Only alice remains.
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+    assert openrouter["account_count"] == 1
+    assert openrouter["accounts"][0]["account_id"] == "alice@example.com"

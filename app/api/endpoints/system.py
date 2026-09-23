@@ -1170,6 +1170,82 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
 
 
+@router.delete("/provider-config/{provider_id}/{account_id}")
+@limiter.limit("20/minute")
+async def delete_provider_config_for_account(
+    request: Request,
+    provider_id: str,
+    account_id: str,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Delete one ``(provider_id, account_id)`` row and its live ``LatestUsage`` cards.
+
+    The webapp's ``ProviderDetailDialog`` Remove action calls this endpoint
+    to clean up orphan ``default`` rows left over from initial setup, and
+    any other labeled account the operator no longer wants to track. The
+    in-memory token cache is invalidated for the same key so collectors
+    don't keep fetching credentials for an account that no longer exists
+    on disk (mirrors the ``clear_api_key`` path in
+    ``_apply_provider_config_update``).
+
+    Mirrors the existing ``sidecar.delete`` audit-log pattern: every
+    successful state-changing admin call lands in ``audit_log``.
+    """
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == provider_id,
+            ProviderConfig.account_id == account_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No provider_config for {provider_id}/{account_id}",
+        )
+
+    # Evict matching LatestUsage rows so the dashboard doesn't show ghost cards
+    # for an account the operator just removed. usage_events / rollups are
+    # intentionally left in place — they're event-sourced history and stay
+    # readable via /usage/cumulative even without a live card.
+    session.exec(
+        delete(LatestUsage).where(
+            col(LatestUsage.provider_id) == provider_id,
+            col(LatestUsage.account_id) == account_id,
+        )
+    )
+
+    session.delete(row)
+    session.commit()
+
+    # Drop the in-memory token cache entry. The async lock is held inside
+    # ``remove()``; safe to call from an async endpoint because FastAPI runs
+    # the handler on a loop and the cache uses asyncio.Lock.
+    await token_cache.remove(provider_id, account_id)
+
+    audit_log.record(
+        session,
+        request,
+        action="provider_config.delete",
+        target_id=f"{provider_id}/{account_id}",
+    )
+
+    # Invalidate cached fleet/limits responses so the next dashboard poll
+    # reflects the deletion immediately.
+    from app.core.cache import cache_clear
+
+    cache_clear()
+
+    return {
+        "status": "deleted",
+        "provider_id": provider_id,
+        "account_id": account_id,
+    }
+
+
 @router.post("/provider-config/preview-account")
 @limiter.limit("30/minute")
 async def preview_account_identity(
