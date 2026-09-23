@@ -20,6 +20,9 @@ The data JSON contains:
   - cost: float (USD — authoritative; skip pricing table lookup)
   - tokens: {input, output, reasoning, cache: {read, write}, total}
   - finish: stop reason
+  - variant: "high" | "medium" | absent — per-message intensity level, mapped
+    to usage_events.effort (session.model.variant is session-level only and
+    is not a per-turn source)
   - error: {name, data: {message, statusCode, ...}} — present when the
     request to the upstream backend failed (no tokens/cost were incurred)
 
@@ -216,6 +219,15 @@ def parse_opencode_events(
 
         model_id = data.get("modelID") or "unknown"
         stop_reason = data.get("finish") or None
+        # Per-message intensity (OpenCode's `variant`) → effort. Absent → None.
+        # Normalize: non-strings are dropped (UsageEventPush would ValidationError),
+        # and casing/whitespace are canonicalized to the documented lowercase form.
+        raw_effort = data.get("variant")
+        effort = (
+            raw_effort.strip().lower()
+            if isinstance(raw_effort, str) and raw_effort.strip()
+            else None
+        )
 
         # Working directory (path.cwd, falling back to the repo root) and request
         # latency (completed − created, both ms epoch) — OpenCode is the only
@@ -295,6 +307,7 @@ def parse_opencode_events(
                 tokens_reasoning=tokens_reasoning,
                 stop_reason=stop_reason,
                 tool_calls=0,
+                effort=effort,
                 cost_usd=cost_usd,
             )
         )

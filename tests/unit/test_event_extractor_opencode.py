@@ -182,6 +182,158 @@ def test_nonexistent_db_returns_empty():
 
 
 # ---------------------------------------------------------------------------
+# variant -> effort (issue #301)
+# ---------------------------------------------------------------------------
+
+
+def test_extracts_variant_as_effort():
+    """Fixture messages carry variant; effort mirrors it on the push."""
+    db_path, _ = _make_db()
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="user@opencode.test",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        msg1 = next(e for e in evts if e.event_id == "msg_opencode_001")
+        assert msg1.effort == "high"
+        msg2 = next(e for e in evts if e.event_id == "msg_opencode_002")
+        assert msg2.effort == "medium"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def _base_data(**overrides) -> dict:
+    data = {
+        "role": "assistant",
+        "path": {"cwd": "/home/user/project"},
+        "cost": 0.001,
+        "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+        "modelID": "claude-3-5-sonnet",
+        "providerID": "opencode-go",
+        "time": {"created": 1746709260000, "completed": 1746709262000},
+        "finish": "end_turn",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_absent_variant_yields_null_effort():
+    db_path = _build_db(
+        [
+            {
+                "id": "msg_no_variant",
+                "session_id": "s",
+                "time_created": 1778248860000,
+                "data": _base_data(),
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].effort is None
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "raw_variant,expected",
+    [
+        ("High", "high"),
+        (" high ", "high"),
+        ("MEDIUM", "medium"),
+        ("", None),
+        ("   ", None),
+        (None, None),
+        (42, None),
+        (True, None),
+    ],
+)
+def test_variant_is_normalized_to_lowercase_effort(raw_variant, expected):
+    """variant is strip().lower()'d; non-strings / blanks become None (not ValidationError)."""
+    db_path = _build_db(
+        [
+            {
+                "id": "msg_norm",
+                "session_id": "s",
+                "time_created": 1778248860000,
+                "data": _base_data(variant=raw_variant),
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].effort == expected
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "oc_provider_id,expected_provider",
+    [
+        ("opencode-go", "opencode"),
+        ("open-design-byok", "opencode-byok"),
+        ("minimax-coding-plan", "minimax"),
+        ("kimi-code-plan-global", "kimi_coding"),
+    ],
+)
+def test_effort_set_on_retag_paths(oc_provider_id, expected_provider):
+    """variant maps to effort regardless of the providerID retag path."""
+    db_path = _build_db(
+        [
+            {
+                "id": f"msg_retag_{oc_provider_id}",
+                "session_id": "s",
+                "time_created": 1778248860000,
+                "data": _base_data(providerID=oc_provider_id, variant="high", cost=0),
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@opencode.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == expected_provider
+        assert evts[0].effort == "high"
+        assert evts[0].kind == "message"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_error_push_has_no_effort():
+    """kind='error' pushes leave effort at its default (None) even with variant set."""
+    db_path = _build_db(
+        [
+            {
+                "id": "msg_err",
+                "session_id": "s",
+                "time_created": 1778248860000,
+                "data": _base_data(
+                    variant="high",
+                    error={"name": "APIError", "data": {"message": "boom", "statusCode": 429}},
+                ),
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].kind == "error"
+        assert evts[0].effort is None
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
 # providerID -> runway provider_id mapping (issue #182)
 # ---------------------------------------------------------------------------
 
