@@ -192,32 +192,122 @@ def test_call_site_default_raw_is_empty_string():
 
 
 # ---------------------------------------------------------------------------
-# Claude KV branches — regression pin (PR #302 owns the real changes)
+# Claude: raw model id wins over used_claude* flags (issue #302)
 # ---------------------------------------------------------------------------
 
 
-def test_used_claude_conservative_maps_to_opus():
-    """Pin current behavior: conservative=true wins over used_claude and
-    ignores raw/display entirely."""
+def test_raw_claude_sonnet_family_collapses():
+    """claude-sonnet-4-6 + both flags → claude-sonnet (not opus)."""
     assert (
         _normalize_ag_model(
-            "gemini-3.5-flash",
-            "Gemini 3.5 Flash (Low)",
+            "claude-sonnet-4-6",
+            "",
+            {"used_claude_conservative": "true", "used_claude": "true"},
+        )
+        == "claude-sonnet"
+    )
+
+
+def test_raw_claude_opus_family_collapses():
+    assert (
+        _normalize_ag_model(
+            "claude-opus-4-6",
+            "Claude Opus 4.6 (Thinking)",
             {"used_claude_conservative": "true", "used_claude": "true"},
         )
         == "claude-opus"
     )
 
 
-def test_used_claude_maps_to_sonnet():
+def test_raw_claude_without_flags_maps_to_family():
+    assert _normalize_ag_model("claude-sonnet-4-6", "", {}) == "claude-sonnet"
+    assert _normalize_ag_model("claude-opus-4-5", "", {}) == "claude-opus"
+
+
+def test_raw_claude_other_tier_falls_to_opus():
+    """Unseeded tiers (haiku, …) share the seeded claude-opus row (issue #302)."""
+    assert _normalize_ag_model("claude-haiku-4-5", "", {}) == "claude-opus"
+
+
+def test_raw_claude_case_insensitive():
+    """Uppercase slug must not fall through to the Gemini path."""
+    assert _normalize_ag_model("CLAUDE-SONNET-4-6", "", {}) == "claude-sonnet"
+    assert _normalize_ag_model("Claude-Opus-4-6", "", {}) == "claude-opus"
+
+
+def test_raw_aliased_claude_slug_collapses():
+    """Prefixed aliases (anthropic-claude-…) still hit the family bucket."""
+    assert _normalize_ag_model("anthropic-claude-sonnet-4-6", "", {}) == "claude-sonnet"
+    assert _normalize_ag_model("anthropic-claude-opus-4-6", "", {}) == "claude-opus"
+
+
+def test_empty_raw_display_wins_over_latched_flags():
+    """Empty raw + Gemini display + flags → Gemini bucket (display first)."""
+    assert (
+        _normalize_ag_model(
+            "",
+            "Gemini 3.8 Flash",
+            {"used_claude_conservative": "true", "used_claude": "true"},
+        )
+        == "flash-3.8"
+    )
+
+
+def test_raw_gemini_wins_over_claude_flags():
+    """Sticky used_claude* flags must not stamp Gemini-raw turns as Claude."""
+    assert (
+        _normalize_ag_model(
+            "gemini-3.8-flash",
+            "Gemini 3.8 Flash",
+            {"used_claude_conservative": "true", "used_claude": "true"},
+        )
+        == "flash-3.8"
+    )
+
+
+def test_raw_generic_gemini_wins_over_claude_flags():
+    """gemini-pro-default + flags → Gemini path, not claude-opus."""
     assert (
         _normalize_ag_model(
             "gemini-pro-default",
             "Gemini 3.1 Pro (High)",
             {"used_claude": "true"},
         )
-        == "claude-sonnet"
+        == "pro-3.1"
     )
+
+
+def test_raw_non_family_wins_over_claude_flags():
+    assert (
+        _normalize_ag_model(
+            "gpt-oss",
+            "",
+            {"used_claude_conservative": "true", "used_claude": "true"},
+        )
+        == "gpt-oss"
+    )
+
+
+def test_empty_raw_conservative_flag_maps_to_opus():
+    """Flags are only consulted when raw is empty (defensive fallback)."""
+    assert (
+        _normalize_ag_model(
+            "",
+            "",
+            {"used_claude_conservative": "true", "used_claude": "true"},
+        )
+        == "claude-opus"
+    )
+
+
+def test_empty_raw_used_claude_only_maps_to_sonnet():
+    assert _normalize_ag_model("", "", {"used_claude": "true"}) == "claude-sonnet"
+
+
+def test_empty_raw_no_flags_takes_display_path():
+    """Empty raw + no flags → display-only Gemini path (flags not required)."""
+    assert _normalize_ag_model("", "Gemini 3.5 Flash", {}) == "flash-3.5"
+    assert _normalize_ag_model("", "", {}) == "unknown"
 
 
 def test_used_claude_false_is_ignored():
