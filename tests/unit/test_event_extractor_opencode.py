@@ -423,6 +423,15 @@ def test_map_opencode_canonical_kimi():
     )  # case-insensitive
 
 
+def test_map_opencode_canonical_ollama():
+    """Ollama Cloud (ollama-cloud backend) folds onto the canonical "ollama"
+    provider. The account override is None: events keep OpenCode's resolved
+    account, matching the grain the Ollama Cloud quota card resolves to via
+    resolve_account_id(account_label from the settings page)."""
+    assert map_opencode_canonical("ollama-cloud") == ("ollama", None)
+    assert map_opencode_canonical("OLLAMA-CLOUD") == ("ollama", None)  # case-insensitive
+
+
 def _minimax_message(msg_id: str) -> dict:
     return {
         "id": msg_id,
@@ -560,6 +569,66 @@ def test_kimi_code_plan_global_without_identity_lands_on_default():
         db_path.unlink(missing_ok=True)
 
 
+def _ollama_message(msg_id: str, model_id: str = "nemotron-3-ultra") -> dict:
+    return {
+        "id": msg_id,
+        "session_id": "ses_ollama",
+        "time_created": 1778248860000,
+        "data": {
+            "role": "assistant",
+            "path": {"cwd": "/home/user/project"},
+            "cost": 0,  # Ollama Cloud free tier — OpenCode logs $0
+            "tokens": {
+                "input": 90000,
+                "output": 2800,
+                "reasoning": 0,
+                "cache": {"read": 0, "write": 0},
+            },
+            "modelID": model_id,
+            "providerID": "ollama-cloud",
+            "time": {"created": 1746709260000, "completed": 1746709262000},
+        },
+    }
+
+
+def test_ollama_cloud_retagged_onto_canonical_card():
+    """Events from OpenCode's ollama-cloud backend land on provider_id 'ollama'
+    with their own account_id kept (pass-through) — the same account the Ollama
+    Cloud quota card resolves to via resolve_account_id(account_label) — and
+    their $0 logged cost is dropped so the server reprices them."""
+    db_path = _build_db([_ollama_message("msg_ollama_001")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@ollama.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "ollama"
+        assert evts[0].account_id == "user@ollama.test"
+        assert evts[0].model_id == "nemotron-3-ultra"
+        assert evts[0].cost_usd is None
+        assert evts[0].tokens_input == 90000
+        assert evts[0].tokens_output == 2800
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_ollama_cloud_without_identity_lands_on_default():
+    """With no OpenCode account identity the event keeps account_id 'default' —
+    the enrichment lands on (ollama, default) grain even though the quota card
+    resolves to the user's email. This is the same pass-through tradeoff
+    kimi_coding accepts (see test_kimi_code_plan_global_without_identity_lands_on_default)."""
+    db_path = _build_db([_ollama_message("msg_ollama_001")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "ollama"
+        assert evts[0].account_id == "default"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # Failed-request handling (issue #182): errors don't count as usage
 # ---------------------------------------------------------------------------
@@ -619,7 +688,7 @@ def test_failed_request_pushed_as_error_kind_not_usage():
         assert or_evt.cost_usd is None
 
         ol_evt = by_id["msg_ollama_403"]
-        assert ol_evt.provider_id == "opencode-ollama"
+        assert ol_evt.provider_id == "ollama"
         assert ol_evt.kind == "error"
         assert ol_evt.error_reason == "quota_exceeded"
     finally:

@@ -98,3 +98,17 @@ def test_dry_run_writes_nothing(monkeypatch):
 
     assert bf.backfill(s, ["anthropic"], dry_run=True) == 1
     assert s.exec(select(UsageEvent)).first().cwd is None  # nothing persisted
+
+
+def test_opencode_canonical_targets_route_to_opencode_log(monkeypatch):
+    """Every _OC_CANONICAL_MAP target is backfilled from the opencode log."""
+    calls: list[str] = []
+    monkeypatch.setattr(bf, "_collect_pushes", lambda provider: calls.append(provider) or {})
+
+    # All fold-in targets are in the default provider list…
+    for provider in bf._OPENCODE_SOURCED_PROVIDERS:
+        assert provider in bf._PROVIDERS
+    assert bf.backfill(s := _session(), list(bf._OPENCODE_SOURCED_PROVIDERS), dry_run=True) == 0
+
+    # …and each one is routed through the "opencode" log source, not itself.
+    assert calls == ["opencode"] * len(bf._OPENCODE_SOURCED_PROVIDERS)
