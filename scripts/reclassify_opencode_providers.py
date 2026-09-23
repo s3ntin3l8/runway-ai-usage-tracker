@@ -47,6 +47,16 @@ touching a large "opencode"/"opencode-free" legacy backlog:
 
   python scripts/reclassify_opencode_providers.py \\
       --providers opencode-minimax-coding-plan --apply
+
+The Ollama Cloud fold-in needs a dedupe pass first because some pre-fix
+ingest streams pushed the same message under both "default" and the real
+account email — collapse those into the email copy before retagging:
+
+  # 1. collapse the default-vs-email duplication
+  python scripts/collapse_default_account_events.py --provider opencode-ollama --apply
+  # 2. retag provider to "ollama" and rebuild rollups
+  python scripts/reclassify_opencode_providers.py \\
+      --providers opencode-ollama --apply
 """
 
 from __future__ import annotations
@@ -71,16 +81,24 @@ from app.models.db import UsageEvent  # noqa: E402
 from scripts.backfill_rollups import backfill  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.opencode import (  # noqa: E402
     _OC_CANONICAL_MAP,
+    _OC_PROVIDER_MAP,
     _classify_opencode_error,
     map_opencode_canonical,
     map_opencode_provider_id,
 )
 
 # provider_ids to rescan: the two the old (buggy) extractor ever wrote to,
-# plus every opencode-<slug> id that _OC_CANONICAL_MAP now folds into a
-# canonical provider (e.g. "opencode-minimax-coding-plan" -> "minimax").
+# plus every *current* derived id that _OC_CANONICAL_MAP now folds into a
+# canonical provider. Resolve through _OC_PROVIDER_MAP first because some
+# canonical keys have an explicit sibling id (e.g. "ollama-cloud" ->
+# "opencode-ollama") rather than the opencode-<slug> fallback used by
+# minimax-coding-plan / kimi-code-plan-global. Without this lookup the
+# rescan list would scan the wrong id and --providers would reject the
+# actual tag.
 _OLD_PROVIDERS = ("opencode", "opencode-free")
-_RESCAN_PROVIDERS = _OLD_PROVIDERS + tuple(f"opencode-{k}" for k in _OC_CANONICAL_MAP)
+_RESCAN_PROVIDERS = _OLD_PROVIDERS + tuple(
+    _OC_PROVIDER_MAP.get(k, f"opencode-{k}") for k in _OC_CANONICAL_MAP
+)
 
 # {msg_id: (correct_provider_id, account_id_override_or_None, kind, error_reason)}
 _ReclassifyMap = dict[str, tuple[str, str | None, str, str | None]]

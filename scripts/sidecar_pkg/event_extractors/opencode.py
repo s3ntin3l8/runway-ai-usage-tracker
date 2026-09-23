@@ -36,7 +36,8 @@ providerID -> runway provider_id mapping (see _OC_PROVIDER_MAP below):
                                                    the web-scraper quota gauges)
   - "open-design-byok"  -> "opencode-byok"      (bring-your-own-key)
   - "openrouter"        -> "opencode-openrouter"
-  - "ollama-cloud"      -> "opencode-ollama"
+  - "ollama-cloud"      -> "opencode-ollama"    (folded onto "ollama" by
+                                                 _OC_CANONICAL_MAP below)
   - anything else       -> "opencode-<slug>"    (never silently folds into Go)
   - missing/empty       -> "opencode"           (historical default)
 
@@ -111,6 +112,12 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # enrichment events and quota cards into two rows (issue: label-set
     # account).
     "kimi-code-plan-global": ("kimi_coding", None),
+    # Ollama Cloud — OllamaCloud quota cards resolve to the user's ollama.com
+    # email via resolve_account_id(account_label from the settings page).
+    # Pass the account through (kimi-style), so OpenCode's resolved email
+    # lands on the same grain. Forcing "default" would split enrichment from
+    # the quota card because the card account is the email, not "default".
+    "ollama-cloud": ("ollama", None),
 }
 
 

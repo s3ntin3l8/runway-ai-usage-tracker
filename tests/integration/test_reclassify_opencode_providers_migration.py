@@ -330,6 +330,79 @@ def test_migration_retags_kimi_code_plan_global_onto_kimi_coding(engine):
         assert "opencode-kimi-code-plan-global" not in rollup_providers
 
 
+def test_migration_retags_ollama_cloud_onto_ollama_and_recognises_scan_id(engine):
+    """Events under 'opencode-ollama' (the derived id _OC_PROVIDER_MAP mints
+    before _OC_CANONICAL_MAP catches it) move to the canonical 'ollama' provider
+    with their own account_id kept (pass-through) — the same account the Ollama
+    Cloud quota card resolves to via resolve_account_id(account_label).
+
+    The scan list must include 'opencode-ollama' specifically, not the
+    'opencode-ollama-cloud' id the naive `f"opencode-{k}"` derivation would
+    produce. This test pins both the migration result and that the rescan
+    list resolves through _OC_PROVIDER_MAP."""
+    from scripts.reclassify_opencode_providers import _RESCAN_PROVIDERS
+
+    assert "opencode-ollama" in _RESCAN_PROVIDERS
+    assert "opencode-ollama-cloud" not in _RESCAN_PROVIDERS  # would never match real rows
+
+    with Session(engine) as s:
+        s.add(
+            UsageEvent(
+                provider_id="opencode-ollama",
+                account_id="user@ollama.test",
+                sidecar_id="local",
+                event_id="msg_ollama",
+                ts=NOW,
+                kind="message",
+                model_id="nemotron-3-ultra",
+                tokens_input=90000,
+                tokens_output=2800,
+                cost_usd=0.0,
+            )
+        )
+        s.commit()
+
+    db_path = _make_opencode_db(
+        [
+            {
+                "id": "msg_ollama",
+                "data": {
+                    "role": "assistant",
+                    "providerID": "ollama-cloud",
+                    "modelID": "nemotron-3-ultra",
+                    "cost": 0,
+                    "tokens": {"input": 90000, "output": 2800, "cache": {"read": 0, "write": 0}},
+                },
+            }
+        ]
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            changed = migrate(db_path, apply=True, source_providers=["opencode-ollama"])
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert changed == 1
+    with Session(engine) as s:
+        ev = s.exec(select(UsageEvent)).one()
+        assert ev.provider_id == "ollama"
+        assert ev.account_id == "user@ollama.test"  # pass-through
+        assert ev.kind == "message"
+        assert ev.cost_usd == 0.0
+
+        rollup_providers = {
+            r.provider_id for r in s.exec(select(UsagePeriodRollup)).all() if r.msgs > 0
+        }
+        assert "ollama" in rollup_providers
+        assert "opencode-ollama" not in rollup_providers
+
+
 def test_migration_survives_and_restores_a_genuine_collision(engine):
     """Two usage_events rows sharing the same event_id under different old
     provider_ids (a pre-existing duplicate-ingestion artifact seen in real

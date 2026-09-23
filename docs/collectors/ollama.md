@@ -70,6 +70,40 @@ The Ollama collector supports the following authentication methods:
 
 Sidecar can extract cookies. See [sidecar documentation](../sidecar.md).
 
+## OpenCode traffic
+
+Ollama Cloud usage driven through [OpenCode](opencode.md) is folded into these
+same cards rather than showing up as a separate `opencode-ollama` entry. See
+`_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py` —
+events with `providerID: "ollama-cloud"` are retagged to
+`provider_id="ollama"` with their own account_id kept (pass-through, since the
+Ollama Cloud quota card resolves to the same email via
+`resolve_account_id(account_label)`) at ingest, with their logged $0 free-tier
+cost dropped so the server reprices them from the table below (currently no
+pricing rows — folded events land at $0, same as the existing logged value).
+
+Already-ingested events under the old `opencode-ollama` id need a one-time
+migration, with the server **stopped** (SQLite is single-writer) and
+`APP_HOST=127.0.0.1`. The default-vs-email duplication must be collapsed first
+(some pre-fix ingest streams pushed the same message under both accounts):
+
+```bash
+# 1. Dedupe the default-vs-email split left over from before the sidecar
+#    resolved account identity consistently — see
+#    scripts/collapse_default_account_events.py for the full rationale.
+python scripts/collapse_default_account_events.py --provider opencode-ollama --dry-run
+python scripts/collapse_default_account_events.py --provider opencode-ollama --apply
+
+# 2. Retag provider to "ollama" and rebuild rollups for both ids.
+python scripts/reclassify_opencode_providers.py --providers opencode-ollama --dry-run
+python scripts/reclassify_opencode_providers.py --providers opencode-ollama --apply
+```
+
+No pricing reprice step is needed (no provider_pricing rows exist for ollama,
+cost is $0 today) and no gauge-card cleanup script is needed (no `latest_usage`
+rows exist for `opencode-ollama` — the synthesized fleet entry derives from
+`usage_events` directly and disappears once the events move).
+
 ## Troubleshooting
 
 ### "API Key detected" error

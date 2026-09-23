@@ -88,7 +88,11 @@ def _apply(ev: UsageEvent, push: UsageEventPush) -> None:
 # map_opencode_provider_id in scripts/sidecar_pkg/event_extractors/opencode.py.
 # All of them map back to the same "opencode" log source (the sqlite DB), so
 # use the id prefix rather than an exact-id set to also cover new siblings.
+# The Ollama Cloud fold-in is provider "ollama" post-reclassify
+# (_OC_CANONICAL_MAP) but its events still come from the opencode log, so
+# route it through the same source.
 _OPENCODE_PROVIDER_PREFIX = "opencode"
+_OPENCODE_SOURCED_PROVIDERS = {"ollama"}
 _PROVIDERS = [
     "anthropic",
     "chatgpt",
@@ -97,7 +101,7 @@ _PROVIDERS = [
     "opencode-free",
     "opencode-byok",
     "opencode-openrouter",
-    "opencode-ollama",
+    "ollama",
 ]
 
 
@@ -107,7 +111,12 @@ def backfill(session: Session, providers: list[str], dry_run: bool) -> int:
     push_cache: dict[str, dict[str, UsageEventPush]] = {}
 
     for provider in providers:
-        source = "opencode" if provider.startswith(_OPENCODE_PROVIDER_PREFIX) else provider
+        source = (
+            "opencode"
+            if provider.startswith(_OPENCODE_PROVIDER_PREFIX)
+            or provider in _OPENCODE_SOURCED_PROVIDERS
+            else provider
+        )
         pushes = push_cache.setdefault(source, _collect_pushes(source))
         if not pushes:
             print(f"{provider}: no log events found, skipping", flush=True)
