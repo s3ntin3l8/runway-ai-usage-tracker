@@ -10,7 +10,7 @@ import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { cn } from '@/lib/cn';
 import { formatPct } from '@/lib/format';
-import { cardPct, cardStatus, chipLabel, windowLabel } from '@/lib/quota';
+import { cardPct, cardStale, cardStatus, chipLabel, windowLabel } from '@/lib/quota';
 import { formatLocalDateTime } from '@/lib/tz';
 
 function statusColor(status: ForecastStatus | undefined): string {
@@ -75,7 +75,7 @@ export function QuotaWindowRow({
         </span>
       </div>
       <Gauge pct={used} status={cardStatus(card)} glide={glide} size="xl" className="mt-1.5" />
-      {card.stale ? (
+      {cardStale(card) ? (
         <div className="mt-1">
           <Badge variant="outline" className="text-[10px]">Stale</Badge>
         </div>
