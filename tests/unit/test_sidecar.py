@@ -1315,6 +1315,16 @@ def test_run_collection_events_use_server_hint_when_local_default(
     card-split bug for providers like MiniMax where the quota gauge
     lives at the operator-labeled row but the sidecar's local
     discovery returned nothing useful.
+
+    Uses the realistic ``_EVENT_PROVIDERS = frozenset({"opencode"})``
+    rather than the synthetic minimax iteration: in production, the
+    events branch iterates under the iterating provider (opencode),
+    and ``parse_opencode_events`` retags minimax-coding-plan rows to
+    ``(provider_id="minimax", account_id=<hint>)`` via the new
+    ``canonical_hints`` kwarg. Asserting on the captured ``scoped_accounts``
+    pins the events branch's hint-application contract; the canonical
+    retag is exercised by ``test_parse_opencode_events_applies_canonical_hint_after_retag``
+    in ``tests/unit/test_event_extractor_opencode.py``.
     """
     from scripts.sidecar_pkg.credentials import CredentialCache
 
@@ -1322,7 +1332,9 @@ def test_run_collection_events_use_server_hint_when_local_default(
     cache.replace(
         # No matching provider account on the server for the local "default"
         # identity, but a tag-hint tells the sidecar where these events belong.
-        accounts={"minimax": []},
+        # The server emits the hint under the canonical provider key
+        # (``minimax``) because that's the provider the quota gauge lives on.
+        accounts={"opencode": []},
         tokens={},
         tag_hints={
             "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
@@ -1331,16 +1343,16 @@ def test_run_collection_events_use_server_hint_when_local_default(
     monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
     monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
 
-    # Mark minimax as an event-only provider (no token-card path) and
-    # give it a stubbed legacy discovery that returns "default" — the
-    # sentinel that the OpenCode extractor passes when local discovery
-    # found no identity on the host.
+    # The events branch's iterating provider is opencode (not minimax);
+    # local discovery returns "default" when the host has no usable
+    # identity for that provider (the OpenCode DB carries no email for
+    # coding-plan subscriptions).
     monkeypatch.setattr(
         sidecar,
         "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
-        {"minimax": lambda: "default"},
+        {"opencode": lambda: "default"},
     )
-    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"minimax"}))
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
 
     captured_account_ids: list[str] = []
 
@@ -1351,6 +1363,7 @@ def test_run_collection_events_use_server_hint_when_local_default(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        server_account_tag_hints=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
         # Emit a single synthetic event so the loop completes.
@@ -1374,11 +1387,14 @@ def test_run_collection_events_use_server_hint_when_local_default(
 
     sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
-        providers=["minimax"],
+        providers=["opencode"],
     )
 
     # The hint unblocked the events — they were extracted with the
-    # operator's chosen account_id, NOT the synthetic "default".
+    # operator's chosen account_id, NOT the synthetic "default". The
+    # opencode extractor then retags each event to (provider_id="minimax",
+    # account_id="s3ntin318@gmail.com") via the canonical_hints kwarg,
+    # so the events land on the labeled quota card.
     assert captured_account_ids == ["s3ntin318@gmail.com"]
     # And no untagged-origin report fired (the hint resolved the identity).
     assert posted.get("entries") == []
@@ -1393,14 +1409,20 @@ def test_run_collection_events_reported_untagged_when_no_hint(
     manifest POST the token-card branch uses. The operator can then
     tag it via the Untagged Credentials dialog to retarget future
     events onto the labeled quota card.
+
+    Mirrors the production flow: iterating provider is ``opencode``,
+    local discovery returns ``"default"``, no canonical-provider hint
+    is present. The events still ship (under the legacy "default"
+    sentinel) so they don't disappear, but the opencode origin is
+    surfaced untagged for operator resolution.
     """
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
     cache.replace(
-        accounts={"minimax": []},
+        accounts={"opencode": []},
         tokens={},
-        tag_hints={},  # No hint yet.
+        tag_hints={},  # No hint yet — neither canonical nor iterating.
     )
     monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
     monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
@@ -1408,9 +1430,9 @@ def test_run_collection_events_reported_untagged_when_no_hint(
     monkeypatch.setattr(
         sidecar,
         "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
-        {"minimax": lambda: "default"},
+        {"opencode": lambda: "default"},
     )
-    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"minimax"}))
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
 
     captured_account_ids: list[str] = []
 
@@ -1421,6 +1443,7 @@ def test_run_collection_events_reported_untagged_when_no_hint(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        server_account_tag_hints=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
         out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
@@ -1441,15 +1464,22 @@ def test_run_collection_events_reported_untagged_when_no_hint(
 
     sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
-        providers=["minimax"],
+        providers=["opencode"],
     )
 
     # Events still shipped (under the legacy "default" sentinel) so
     # they don't disappear.
     assert captured_account_ids == ["default"]
     # But the origin was reported untagged so the operator can tag it.
+    # The events branch reports under the iterating provider (opencode),
+    # NOT the canonical provider (minimax) — see comment at the
+    # events-block origin-append for why this is the right key. The
+    # operator then tags ``(opencode, "provider:opencode")`` via the
+    # Untagged Credentials dialog, and the opencode extractor applies
+    # the canonical hint to retarget minimax-coding-plan events onto
+    # the labeled quota card.
     assert posted["entries"] == [
-        {"provider_id": "minimax", "credential_origin": "provider:minimax"},
+        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
     ]
 
 

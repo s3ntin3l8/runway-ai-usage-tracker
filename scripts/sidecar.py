@@ -1691,12 +1691,21 @@ def _extract_events_for_provider(
     watermark: Any,
     bootstrap_days: int,
     out_events: list[dict[str, Any]],
+    server_account_tag_hints: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Run the event extractor for ``provider_id`` once per ``account_ids``,
     stamping each event with the resolved identity. Errors on one account
     don't block the others (issue #272 acceptance: "Handle partial
     failure: if one account's credentials fail to fetch / decrypt, others
     continue.").
+
+    ``server_account_tag_hints`` carries the operator's resolved /
+    auto-hints fetched from ``/fleet/config``'s ``account_tag_hints``
+    payload. The opencode extractor needs them so events that
+    ``_OC_CANONICAL_MAP`` retags to a canonical provider (e.g.
+    ``minimax-coding-plan`` → ``minimax``) can land on the operator's
+    chosen account_id rather than the synthetic ``"default"`` card —
+    closes the MiniMax card-split.
     """
     if not account_ids:
         return
@@ -1705,7 +1714,10 @@ def _extract_events_for_provider(
     from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
     from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
     from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
-    from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
+    from scripts.sidecar_pkg.event_extractors.opencode import (
+        _OC_CANONICAL_MAP,
+        parse_opencode_events,
+    )
 
     dispatch: dict[str, Any] = {
         "anthropic": _make_account_extractor(parse_anthropic_events, _discover_anthropic_log_paths),
@@ -1718,9 +1730,46 @@ def _extract_events_for_provider(
     extractor = dispatch.get(provider_id)
     if extractor is None:
         return
+    # Forward the canonical-provider hints so the opencode extractor
+    # can retarget events onto the operator's chosen account_id when
+    # their _OC_CANONICAL_MAP entry maps to a canonical provider (e.g.
+    # minimax, kimi_coding, ollama). The server emits auto-hints under
+    # the canonical key (``provider:minimax``), but the events branch
+    # iterates under the iterating provider (``provider:opencode``) —
+    # without this forward, an event retagged to ``minimax`` would
+    # land at ``(minimax, "default")`` even when the operator has a
+    # configured ``s3ntin318@gmail.com`` row. The opencode dispatch
+    # builder picks the hints up internally; other extractors ignore
+    # the kwarg via **-unpacking shims below.
+    canonical_hints: dict[str, dict[str, str]] | None = None
+    if provider_id == "opencode":
+        canonical_hints = {}
+        for canonical_provider_id, _ in _OC_CANONICAL_MAP.values():
+            canonical_hint_map = (server_account_tag_hints or {}).get(canonical_provider_id, {})
+            if canonical_hint_map:
+                canonical_hints[canonical_provider_id] = dict(canonical_hint_map)
+
     for account_id in account_ids:
         try:
-            evts = extractor(account_id, watermark, bootstrap_days)
+            evts = extractor(
+                account_id,
+                watermark,
+                bootstrap_days,
+                canonical_hints=canonical_hints,
+            )
+        except TypeError as e:
+            # Backwards-compat shim for pre-fix extractor wrappers that
+            # don't accept the ``canonical_hints`` kwarg. Re-invoke
+            # without it so the dispatch keeps working until callers
+            # migrate. Other TypeErrors (signature mismatches, etc.)
+            # fall through to the generic Exception handler below.
+            if "canonical_hints" not in str(e):
+                raise
+            try:
+                evts = extractor(account_id, watermark, bootstrap_days)
+            except Exception as inner:
+                logging.warning(f"  [{provider_id}/{account_id}] event extraction error: {inner}")
+                continue
         except Exception as e:
             logging.warning(f"  [{provider_id}/{account_id}] event extraction error: {e}")
             continue
@@ -1762,20 +1811,37 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
 
 
 def _make_account_extractor_opencode(parser: Any) -> Any:
-    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,
+    ) -> list:
         db_path = _discover_opencode_db_path()
         if db_path is None:
             return []
         since = watermark.last_pushed("opencode", account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
-        return parser(db_path, account_id=account_id, since=since)
+        return parser(
+            db_path,
+            account_id=account_id,
+            since=since,
+            canonical_hints=canonical_hints,
+        )
 
     return _extract
 
 
 def _make_account_extractor_antigravity(parser: Any) -> Any:
-    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
+    ) -> list:
         db_paths = _discover_antigravity_db_paths()
         if not db_paths:
             return []
@@ -2620,12 +2686,46 @@ def run_collection(
                 # shipped under "default" with no surface in the
                 # Untagged Credentials dialog). Apply the same hint /
                 # block pattern as the token-card branch above, so a
+                # Silent-listener for events (PR #290 follow-up — the
+                # token-card path has had this since #288, but events
+                # shipped under "default" with no surface in the
+                # Untagged Credentials dialog). Apply the same hint /
+                # block pattern as the token-card branch above, so a
                 # provider like MiniMax whose quota gauge lives at the
                 # operator's chosen account_id (not "default") merges
                 # with the sidecar's event stream the moment the
                 # operator tags the origin via the dashboard.
+                #
+                # The hint lookup covers BOTH the iterating provider's
+                # key and every canonical provider that this iterating
+                # provider's extractor (opencode) might retag events
+                # to — the server's auto-hint
+                # (``CredentialTagRepo.auto_hints_for_single_account_providers``)
+                # is keyed on the canonical provider, but the events
+                # branch iterates under the iterating provider. Without
+                # this dual-key lookup, a single-account MiniMax
+                # config would never trigger the hint path here, even
+                # though the extractor retags the event to minimax.
                 event_origin = credential_origin_for_provider(provider_id)
                 event_hint = server_account_tag_hints.get(provider_id, {}).get(event_origin)
+                if event_hint is None and provider_id == "opencode":
+                    # Lazy import: only loaded on the events branch,
+                    # not on the token-card branch.
+                    from scripts.sidecar_pkg.event_extractors.opencode import (
+                        _OC_CANONICAL_MAP,
+                    )
+
+                    for canonical_provider_id, _ in _OC_CANONICAL_MAP.values():
+                        canonical_hint = server_account_tag_hints.get(
+                            canonical_provider_id, {}
+                        ).get(f"provider:{canonical_provider_id}")
+                        if canonical_hint:
+                            event_hint = canonical_hint
+                            logging.debug(
+                                f"  [opencode] event hint sourced from canonical "
+                                f"provider {canonical_provider_id} → account_id={event_hint}"
+                            )
+                            break
 
                 if provider_accounts and local_account_id and local_account_id in provider_accounts:
                     # Best case: server knows about us, and our local
@@ -2663,12 +2763,17 @@ def run_collection(
                         f"  [{provider_id}] events stamped via server hint "
                         f"(origin={event_origin}) → account_id={event_hint}"
                     )
-                elif local_account_id:
-                    # Local discovery returned "default" (or some other
-                    # sentinel); server has no hint yet. Ship under
-                    # "default" so events don't disappear, but report
-                    # the origin so the operator can tag it.
-                    scoped_accounts = [local_account_id]
+                else:
+                    # Neither local discovery nor the server hint
+                    # resolved a real account_id — ship under the
+                    # legacy "default" sentinel so events don't
+                    # disappear, but surface the iterating provider's
+                    # origin via the same manifest POST the token-card
+                    # branch uses. The operator can then tag it via
+                    # the Untagged Credentials dialog; the opencode
+                    # extractor will apply the canonical hint for any
+                    # retagged rows on the very next cycle.
+                    scoped_accounts = [local_account_id or "default"]
                     blocked_origins_this_cycle.append(
                         {
                             "provider_id": provider_id,
@@ -2677,21 +2782,11 @@ def run_collection(
                     )
                     logging.warning(
                         f"  [{provider_id}] events untagged (origin={event_origin}) — "
-                        "no account_id resolved (local discovery + server hint both empty); "
+                        "neither local discovery nor the server hint resolved a real account_id; "
                         "shipping under 'default' so events don't disappear. "
                         "Operator will see this in the fleet view's Untagged "
                         "Credentials panel and can tag it to land events on the "
                         "labeled quota card."
-                    )
-                else:
-                    # Local discovery truly empty — same "default"
-                    # fallback as before, also report untagged.
-                    scoped_accounts = ["default"]
-                    blocked_origins_this_cycle.append(
-                        {
-                            "provider_id": provider_id,
-                            "credential_origin": event_origin,
-                        }
                     )
 
                 _extract_events_for_provider(
@@ -2700,6 +2795,7 @@ def run_collection(
                     watermark=_watermark,
                     bootstrap_days=bootstrap_days,
                     out_events=all_events,
+                    server_account_tag_hints=server_account_tag_hints,
                 )
 
         except Exception as e:

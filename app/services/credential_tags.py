@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, or_, select
 
 from app.models.db import CredentialTag, PendingCredentialTag
 
@@ -201,9 +201,6 @@ class CredentialTagRepo:
         # one enabled non-default row. A GROUP BY + HAVING COUNT(*) = 1
         # would also work, but two queries is clearer here — and the
         # row set is tiny (one entry per configured account).
-        from sqlmodel import col as sqlcol
-        from sqlmodel import or_
-
         from app.models.db import ProviderConfig
 
         rows = list(
@@ -211,7 +208,7 @@ class CredentialTagRepo:
                 select(ProviderConfig).where(
                     or_(*(ProviderConfig.provider_id == pid for pid in providers)),
                     ProviderConfig.enabled == True,  # noqa: E712 — SQLModel needs the ==
-                    sqlcol(ProviderConfig.account_id) != "default",
+                    col(ProviderConfig.account_id) != "default",
                 )
             ).all()
         )

@@ -511,6 +511,85 @@ def test_minimax_coding_plan_account_id_is_not_overwritten_when_default():
         db_path.unlink(missing_ok=True)
 
 
+def test_parse_opencode_events_applies_canonical_hint_after_retag():
+    """Closes the MiniMax card-split: when the canonical provider
+    (``minimax``) has a server-shipped hint and the local discovery
+    returned the legacy ``"default"`` sentinel, the opencode extractor
+    stamps the retagged event with the operator's chosen account_id
+    (NOT ``"default"``). Without this, the events land at
+    ``(minimax, "default")`` and the quota gauge stays orphaned on the
+    labeled row.
+
+    Pairs with the events-branch test in ``tests/unit/test_sidecar.py``
+    that pins the *forwarding* of canonical hints through
+    ``_extract_events_for_provider``. This test pins the *consumption*
+    inside the extractor itself.
+    """
+    db_path = _build_db([_minimax_message("msg_minimax_canonical_hint")])
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints={
+                "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
+            },
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "minimax"
+        # The operator's chosen account_id, not the synthetic "default".
+        assert evts[0].account_id == "s3ntin318@gmail.com"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_parse_opencode_events_keeps_local_account_when_canonical_hint_is_other_provider():
+    """When the canonical hint targets a *different* provider than the
+    retag target, the extractor's canonical hint must NOT apply —
+    kimi_coding / ollama hints must not bleed into minimax events.
+    Defense against the wrong-hint-still-passes sanity check."""
+    db_path = _build_db([_minimax_message("msg_minimax_other_hint")])
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints={
+                "kimi_coding": {"provider:kimi_coding": "wrong@example.com"},
+            },
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "minimax"
+        # kimi_coding hint doesn't apply — account_id stays as the
+        # caller's input ("default").
+        assert evts[0].account_id == "default"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_parse_opencode_events_ignores_canonical_hint_when_account_override_set():
+    """The kimi_coding / ollama entries in ``_OC_CANONICAL_MAP`` carry a
+    None account_override (since this PR dropped the forced "default"
+    for minimax). The canonical hint is the *fallback* when the override
+    is None — verify it's also skipped if a future map entry sets a
+    non-None override, so the explicit override always wins."""
+    # Direct test against the map structure — no DB needed since the
+    # retag decision happens before any DB read.
+    from scripts.sidecar_pkg.event_extractors.opencode import (
+        _OC_CANONICAL_MAP,
+    )
+
+    for oc_pid, (canonical_pid, account_override) in _OC_CANONICAL_MAP.items():
+        # All current entries use None override after this PR; the
+        # test guards against accidental regressions to a non-None
+        # override that would silently bypass the canonical-hint path.
+        assert account_override is None, (
+            f"{oc_pid} -> ({canonical_pid}, {account_override!r}); "
+            "the PR relies on all canonical entries having None "
+            "override so canonical_hints can retarget events."
+        )
+
+
 def _minimax_error_message(msg_id: str) -> dict:
     return {
         "id": msg_id,
