@@ -350,9 +350,12 @@ def _scrub_residual_stale_health(conn: Any) -> None:
     Before PR #293, collectors used health="critical" as a stale marker and never
     set `stale`. Rows that stopped being rewritten (collection failed → error card
     suppressed by upsert) keep that residual health forever — 0% cards land in the
-    at-risk rail with no stale dimming. Idempotent: only rewrites cards whose
-    `detail` still carries the Collection-failing prefix and whose health no longer
-    matches the percentage.
+    at-risk rail with no stale dimming. Detection matches the Collection-failing
+    detail prefix (the legacy marker for pre-#293 rows) or an already-set
+    `collection_failing` flag; matching rows are stamped `stale` +
+    `collection_failing` and their residual health is reconciled. Idempotent: a
+    fully-stamped row whose health already matches the percentage is left
+    untouched (changed=False → no write).
     """
     import json as _json
 
@@ -372,11 +375,14 @@ def _scrub_residual_stale_health(conn: Any) -> None:
         if not isinstance(card, dict):
             continue
         detail = card.get("detail") or ""
-        if "Collection failing" not in detail:
+        if "Collection failing" not in detail and card.get("collection_failing") is not True:
             continue
         changed = False
         if card.get("stale") is not True:
             card["stale"] = True
+            changed = True
+        if card.get("collection_failing") is not True:
+            card["collection_failing"] = True
             changed = True
         if HealthCalculator.reconcile_residual_health(card):
             changed = True

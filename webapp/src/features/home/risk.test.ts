@@ -117,6 +117,48 @@ describe('atRiskItems', () => {
     const rail = atRiskItems(items);
     expect(rail.map((i) => i.entry.provider_id)).toEqual(['hot']);
   });
+
+  it('excludes residual critical 0% cards carrying collection_failing without detail prefix', () => {
+    // Flag-only residual: collection_failing=true, no stale flag, no prefix.
+    const residual: FleetEntry = {
+      provider_id: 'ollama',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Ollama',
+        pct_used: 0,
+        health: 'critical',
+        collection_failing: true,
+      } as LimitCard,
+      secondary_limits: [],
+    };
+    const items = buildRiskItems([residual, entry('hot', 96)], []);
+    expect(items[0].level).toBe('ok');
+    const rail = atRiskItems(items);
+    expect(rail.map((i) => i.entry.provider_id)).toEqual(['hot']);
+  });
+
+  it('excludes residual used/limit-only critical cards (derivable pct, no pct_used)', () => {
+    // Residual pre-#293 baked critical at 20% used/limit with no pct_used:
+    // cardPct derives 20 → not critical → must leave the rail (the scrub
+    // cannot rewrite health without explicit pct_used, so the frontend
+    // gate is the only thing that can demote it).
+    const residual: FleetEntry = {
+      provider_id: 'ollama',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Ollama',
+        health: 'critical',
+        used_value: 20,
+        limit_value: 100,
+        stale: true,
+      } as LimitCard,
+      secondary_limits: [],
+    };
+    const items = buildRiskItems([residual, entry('hot', 96)], []);
+    expect(items[0].level).toBe('ok');
+    const rail = atRiskItems(items);
+    expect(rail.map((i) => i.entry.provider_id)).toEqual(['hot']);
+  });
 });
 
 describe('applyLayoutOrder', () => {

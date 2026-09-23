@@ -3,6 +3,7 @@ import type { LimitCard } from '@/api/types';
 import {
   cardKind,
   cardPct,
+  cardStale,
   cardStatus,
   chipLabel,
   clusterModelLabel,
@@ -113,6 +114,93 @@ describe('status semantics', () => {
         }),
       ),
     ).toBe('warning');
+  });
+  it('stale used/limit-only residual card leaves the at-risk rail (derivable pct)', () => {
+    // Residual pre-#293 baked critical with only used/limit: the derived pct
+    // is the only evidence the baked critical is genuine, and the scrub
+    // cannot rewrite health without explicit pct_used — so the card must
+    // leave the rail rather than stick at 20% forever.
+    expect(
+      cardStatus(
+        card({
+          stale: true,
+          health: 'critical',
+          used_value: 20,
+          limit_value: 100,
+          pct_used: null,
+        }),
+      ),
+    ).toBe('ok');
+    // Same via the migration-fallback detail prefix, no stale flag.
+    expect(
+      cardStatus(
+        card({
+          health: 'critical',
+          used_value: 20,
+          limit_value: 100,
+          pct_used: null,
+          detail: '⚠ Collection failing — whatever [Cached 346.1m ago]',
+        }),
+      ),
+    ).toBe('ok');
+    // And via the structured flag alone.
+    expect(
+      cardStatus(
+        card({
+          collection_failing: true,
+          health: 'critical',
+          used_value: 20,
+          limit_value: 100,
+          pct_used: null,
+        }),
+      ),
+    ).toBe('ok');
+  });
+  it('explicit pct_used still skips the critical override when used/limit present', () => {
+    expect(
+      cardStatus(
+        card({
+          stale: true,
+          health: 'critical',
+          pct_used: 20,
+          used_value: 20,
+          limit_value: 100,
+        }),
+      ),
+    ).toBe('ok');
+  });
+  it('stale spend card at the limit stays critical', () => {
+    // used/limit → derived pct 100; cardPct is non-null so the health
+    // override is skipped, and the derived percentage still maps critical.
+    expect(
+      cardStatus(
+        card({
+          stale: true,
+          health: 'critical',
+          used_value: 100,
+          limit_value: 100,
+          pct_used: null,
+        }),
+      ),
+    ).toBe('critical');
+  });
+  it('collection_failing alone drives cardStale and both health gates', () => {
+    // Structured flag without stale=true or the detail prefix.
+    expect(cardStale(card({ collection_failing: true }))).toBe(true);
+    expect(cardStale(card({}))).toBe(false);
+    // Critical gate: explicit pct_used / derivable cardPct skips the override.
+    expect(
+      cardStatus(card({ collection_failing: true, health: 'critical', pct_used: 20 })),
+    ).toBe('ok');
+    expect(
+      cardStatus(card({ collection_failing: true, health: 'critical', pct_used: 95 })),
+    ).toBe('critical');
+    // Warning gate: low explicit pct downgrades residual warning via the flag.
+    expect(cardStatus(card({ collection_failing: true, health: 'warning', pct_used: 10 }))).toBe(
+      'ok',
+    );
+    // No derivable pct (balance card) → collector-asserted health retained.
+    expect(cardStatus(card({ collection_failing: true, health: 'critical' }))).toBe('critical');
   });
 });
 

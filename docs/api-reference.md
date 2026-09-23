@@ -144,6 +144,8 @@ interface LimitCard {
   variant?: string;       // Disambiguates multiple windows of the same type (e.g. "sonnet" vs "opus" weekly)
   quota_pool_id?: string; // Cards sharing this non-null id draw from one physical quota bucket
   error_type?: string;    // Populated when collection fails — surfaces as an Error Card
+  stale?: boolean;        // Cache served past STALE_CEILING — real but old data (since #293)
+  collection_failing?: boolean;  // Collection is failing; set alongside `stale`, drives frontend cardStale()
   tier?: string;          // "Free" | "Pro" | "Enterprise"
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp

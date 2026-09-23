@@ -77,6 +77,17 @@ describe('Banners collection failure', () => {
     expect(screen.getByText(/collection failing/i)).toBeInTheDocument();
   });
 
+  it('treats collection_failing=true as collection failing without stale or prefix', () => {
+    renderWithProviders(
+      <Banners
+        tokens={[]}
+        anomalies={[]}
+        fleet={[entry({ critical_gauge: card({ collection_failing: true }) })]}
+      />,
+    );
+    expect(screen.getByText(/collection failing/i)).toBeInTheDocument();
+  });
+
   it('dismisses the banner', async () => {
     renderWithProviders(
       <Banners

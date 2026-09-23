@@ -64,6 +64,37 @@ def test_scrub_sets_stale_and_reconciles_residual_critical():
         _scrub_residual_stale_health(conn)
         card = _read(conn, row_id)
         assert card["stale"] is True
+        assert card["collection_failing"] is True
+        assert card["health"] == "good"
+    finally:
+        conn.close()
+        engine.dispose()
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+def test_scrub_flags_flag_only_row_without_detail_prefix():
+    """collection_failing=True alone (no detail prefix, no stale) is scrubbed.
+
+    The flag-only detection arm is what frontend cardStale() relies on for
+    rows that already carry the structured field but not the display prefix.
+    """
+    engine, conn, db_path = _engine_and_conn()
+    try:
+        row_id = _insert(
+            conn,
+            {
+                "service_name": "Ollama",
+                "pct_used": 10.0,
+                "health": "critical",
+                "detail": "old data",
+                "collection_failing": True,
+            },
+        )
+        _scrub_residual_stale_health(conn)
+        card = _read(conn, row_id)
+        assert card["stale"] is True
+        assert card["collection_failing"] is True
         assert card["health"] == "good"
     finally:
         conn.close()
@@ -117,6 +148,7 @@ def test_scrub_ignores_healthy_rows_without_failure_detail():
         _scrub_residual_stale_health(conn)
         card = _read(conn, row_id)
         assert "stale" not in card
+        assert "collection_failing" not in card
         assert card["health"] == "good"
     finally:
         conn.close()
@@ -149,6 +181,7 @@ def test_init_db_runs_residual_scrub(monkeypatch):
         with engine.connect() as verify_conn:
             card = _read(verify_conn, row_id)
         assert card["stale"] is True
+        assert card["collection_failing"] is True
         assert card["health"] == "good"
     finally:
         engine.dispose()
