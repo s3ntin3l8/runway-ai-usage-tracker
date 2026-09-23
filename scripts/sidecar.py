@@ -2615,13 +2615,25 @@ def run_collection(
                 local_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
                 provider_accounts = server_accounts_by_provider.get(provider_id) or []
 
+                # Silent-listener for events (PR #290 follow-up — the
+                # token-card path has had this since #288, but events
+                # shipped under "default" with no surface in the
+                # Untagged Credentials dialog). Apply the same hint /
+                # block pattern as the token-card branch above, so a
+                # provider like MiniMax whose quota gauge lives at the
+                # operator's chosen account_id (not "default") merges
+                # with the sidecar's event stream the moment the
+                # operator tags the origin via the dashboard.
+                event_origin = credential_origin_for_provider(provider_id)
+                event_hint = server_account_tag_hints.get(provider_id, {}).get(event_origin)
+
                 if provider_accounts and local_account_id and local_account_id in provider_accounts:
                     # Best case: server knows about us, and our local
                     # identity matches one of its rows.
                     scoped_accounts = [local_account_id]
-                elif local_account_id:
+                elif local_account_id and local_account_id != "default":
                     # Server has rows, none of which are us (e.g. local
-                    # is "default" but the server registered
+                    # is some-other-id but the server registered
                     # ``alice@example.com`` only). Falling back to
                     # ``provider_accounts[0]`` would attribute our
                     # events to someone else's account (PR #283 review).
@@ -2637,11 +2649,50 @@ def run_collection(
                             provider_accounts,
                         )
                     scoped_accounts = [local_account_id]
+                elif event_hint:
+                    # Local discovery returned the legacy "default"
+                    # sentinel (no real identity on this host), but the
+                    # operator has tagged this provider's events via
+                    # the Untagged Credentials dialog (or the server's
+                    # auto-hint fired for a single-account provider).
+                    # Stamp with the operator's choice so the events
+                    # land on the quota gauge instead of a standalone
+                    # "default" card.
+                    scoped_accounts = [event_hint]
+                    logging.info(
+                        f"  [{provider_id}] events stamped via server hint "
+                        f"(origin={event_origin}) → account_id={event_hint}"
+                    )
+                elif local_account_id:
+                    # Local discovery returned "default" (or some other
+                    # sentinel); server has no hint yet. Ship under
+                    # "default" so events don't disappear, but report
+                    # the origin so the operator can tag it.
+                    scoped_accounts = [local_account_id]
+                    blocked_origins_this_cycle.append(
+                        {
+                            "provider_id": provider_id,
+                            "credential_origin": event_origin,
+                        }
+                    )
+                    logging.warning(
+                        f"  [{provider_id}] events untagged (origin={event_origin}) — "
+                        "no account_id resolved (local discovery + server hint both empty); "
+                        "shipping under 'default' so events don't disappear. "
+                        "Operator will see this in the fleet view's Untagged "
+                        "Credentials panel and can tag it to land events on the "
+                        "labeled quota card."
+                    )
                 else:
-                    # Either the server has rows but local discovery came
-                    # back empty, or both are empty — either way, fall
-                    # back to legacy "default" so events don't disappear.
+                    # Local discovery truly empty — same "default"
+                    # fallback as before, also report untagged.
                     scoped_accounts = ["default"]
+                    blocked_origins_this_cycle.append(
+                        {
+                            "provider_id": provider_id,
+                            "credential_origin": event_origin,
+                        }
+                    )
 
                 _extract_events_for_provider(
                     provider_id=provider_id,

@@ -396,10 +396,19 @@ def test_byok_provider_gets_its_own_id():
 
 
 def test_map_opencode_canonical_minimax():
-    assert map_opencode_canonical("minimax-coding-plan") == ("minimax", "default")
+    """MiniMax coding plan folds onto the canonical 'minimax' provider.
+    The account override is None (NOT "default"): the sidecar must let
+    events flow through with whatever account_id the local discovery
+    resolved — server-side tag-hints (PR #290) carry the operator's
+    chosen account_id back via /fleet/config's account_tag_hints. The
+    Untagged Credentials dialog surfaces them when no hint is available.
+
+    Forcing "default" here previously split the operator-labeled quota
+    gauge from the sidecar's event stream into two Fleet entries."""
+    assert map_opencode_canonical("minimax-coding-plan") == ("minimax", None)
     assert map_opencode_canonical("MINIMAX-CODING-PLAN") == (
         "minimax",
-        "default",
+        None,
     )  # case-insensitive
 
 
@@ -455,10 +464,16 @@ def _minimax_message(msg_id: str) -> dict:
 
 
 def test_minimax_coding_plan_retagged_onto_canonical_card():
-    """Events from OpenCode's MiniMax coding-plan backend land on provider_id
-    'minimax' / account_id 'default' — the same key the server-side MiniMax
-    collector's quota card uses — not a standalone 'opencode-minimax-coding-plan'
-    entry, and their $0 logged cost is dropped so the server prices them."""
+    """Events from OpenCode's MiniMax coding-plan backend land on
+    provider_id 'minimax' — the same provider the server-side MiniMax
+    collector emits cards on — and their $0 logged cost is dropped so
+    the server prices them. The account_id flows through (NOT forced
+    to "default"): server-side tag-hints (PR #290) carry the operator's
+    chosen account_id back to the sidecar via /fleet/config, and the
+    Untagged Credentials dialog surfaces the events for tagging when
+    no hint is available. Forcing "default" here previously split the
+    operator-labeled quota gauge from the sidecar's event stream into
+    two Fleet entries (the bug behind this PR)."""
     db_path = _build_db([_minimax_message("msg_minimax_001")])
     try:
         evts = parse_opencode_events(
@@ -466,11 +481,32 @@ def test_minimax_coding_plan_retagged_onto_canonical_card():
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "minimax"
-        assert evts[0].account_id == "default"
+        # account_id flows through — tag-hint carries the operator's choice.
+        assert evts[0].account_id == "user@opencode.test"
         assert evts[0].model_id == "MiniMax-M3"
         assert evts[0].cost_usd is None
         assert evts[0].tokens_input == 90429
         assert evts[0].tokens_cache_read == 23355693
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_minimax_coding_plan_account_id_is_not_overwritten_when_default():
+    """When the sidecar's local discovery returns no email and falls
+    back to account_id='default', the minimax-coding-plan canonical
+    remap must NOT overwrite that to a different sentinel — the
+    operator's Untagged Credentials flow depends on 'default' arriving
+    on the server intact so the auto-hint can re-target it."""
+    db_path = _build_db([_minimax_message("msg_minimax_002")])
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "minimax"
+        assert evts[0].account_id == "default"
     finally:
         db_path.unlink(missing_ok=True)
 
@@ -502,7 +538,8 @@ def test_minimax_coding_plan_error_also_retagged():
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "minimax"
-        assert evts[0].account_id == "default"
+        # Pass-through: server-side tag-hints retarget this if available.
+        assert evts[0].account_id == "user@opencode.test"
         assert evts[0].kind == "error"
         assert evts[0].error_reason == "rate_limit"
     finally:

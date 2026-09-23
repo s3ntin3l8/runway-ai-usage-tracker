@@ -276,6 +276,128 @@ def test_list_pending_payload_handles_unknown_provider_only(session: Session):
 
 
 # ---------------------------------------------------------------------------
+# auto_hints_for_single_account_providers — single-row heuristic that
+# closes the MiniMax card-split. The repo method ships a
+# ``provider:<provider_id>`` → ``account_id`` hint when exactly one
+# enabled non-default row exists for a provider; the sidecar consumes
+# the hint on its next cycle and stamps events onto the labeled quota
+# card instead of the synthetic-default card.
+# ---------------------------------------------------------------------------
+
+
+def test_auto_hints_single_labeled_row_ships_hint(session: Session) -> None:
+    """The MiniMax card-split scenario: one enabled non-default row."""
+    from app.models.db import ProviderConfig
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    assert out == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
+
+
+def test_auto_hints_empty_when_no_rows(session: Session) -> None:
+    assert (
+        CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+        == {}
+    )
+
+
+def test_auto_hints_skips_default_only_account(session: Session) -> None:
+    """A single ``account_id="default"`` row → no hint. The sidecar's
+    events already land at ``("default")``; no benefit to retargeting
+    them to themselves."""
+    from app.models.db import ProviderConfig
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="default",
+            enabled=True,
+        )
+    )
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    assert out == {}
+
+
+def test_auto_hints_skips_multi_account_ambiguity(session: Session) -> None:
+    """Two non-default rows for the same provider → no hint.
+
+    The operator must tag explicitly via the Untagged Credentials
+    dialog; the auto-hint heuristic refuses to guess which account
+    the sidecar's events belong to."""
+    from app.models.db import ProviderConfig
+
+    for aid in ("alice@example.com", "bob@example.com"):
+        session.add(
+            ProviderConfig(
+                provider_id="minimax",
+                account_id=aid,
+                enabled=True,
+            )
+        )
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    assert out == {}
+
+
+def test_auto_hints_skips_disabled_labeled_row(session: Session) -> None:
+    """A disabled row → no hint. The collector isn't running, so
+    shipping events there would land on a card the user can't see."""
+    from app.models.db import ProviderConfig
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=False,
+        )
+    )
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    assert out == {}
+
+
+def test_auto_hints_independent_per_provider(session: Session) -> None:
+    """Single-account hints are scoped per-provider — a single labeled
+    MiniMax row fires only the MiniMax hint."""
+    from app.models.db import ProviderConfig
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session,
+        providers=["minimax", "anthropic", "opencode"],
+    )
+    assert "minimax" in out
+    assert "anthropic" not in out
+    assert "opencode" not in out
+
+
+def test_auto_hints_empty_providers_returns_empty(session: Session) -> None:
+    """Defensive: empty input → empty output (caller treats it as no
+    hints at all)."""
+    assert CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=[]) == {}
+
+
+# ---------------------------------------------------------------------------
 # PendingCredentialTagRepo — silent-listener reconcile table
 # ---------------------------------------------------------------------------
 

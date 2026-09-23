@@ -1296,6 +1296,163 @@ def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, 
     }
 
 
+# ---------------------------------------------------------------------------
+# Events-path tag-hint application + untagged reporting (PR for MiniMax
+# card-split). Mirrors TestRunCollectionManifestPostConsumesResolvedIntoCache
+# above for the events branch: server tag-hints retarget events onto the
+# operator's chosen account_id, and no-resolvable-identity events surface
+# in the same Untagged Credentials dialog.
+# ---------------------------------------------------------------------------
+
+
+def test_run_collection_events_use_server_hint_when_local_default(
+    monkeypatch,
+) -> None:
+    """Local discovery returns the legacy 'default' sentinel (no real
+    identity on this host), but the server has shipped a tag-hint for
+    the provider's events. The events land on the operator's chosen
+    account_id instead of the synthetic-default card — closes the
+    card-split bug for providers like MiniMax where the quota gauge
+    lives at the operator-labeled row but the sidecar's local
+    discovery returned nothing useful.
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        # No matching provider account on the server for the local "default"
+        # identity, but a tag-hint tells the sidecar where these events belong.
+        accounts={"minimax": []},
+        tokens={},
+        tag_hints={
+            "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
+        },
+    )
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    # Mark minimax as an event-only provider (no token-card path) and
+    # give it a stubbed legacy discovery that returns "default" — the
+    # sentinel that the OpenCode extractor passes when local discovery
+    # found no identity on the host.
+    monkeypatch.setattr(
+        sidecar,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"minimax": lambda: "default"},
+    )
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"minimax"}))
+
+    captured_account_ids: list[str] = []
+
+    def _capture_extract(
+        provider_id: str,
+        account_ids: list[str],
+        *,
+        watermark: Any,
+        bootstrap_days: int,
+        out_events: list[dict[str, Any]],
+    ) -> None:
+        captured_account_ids.extend(account_ids)
+        # Emit a single synthetic event so the loop completes.
+        out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+
+    # No token cards → collect_provider returns nothing blocked.
+    monkeypatch.setattr(
+        sidecar.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: ([], []),
+    )
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["minimax"],
+    )
+
+    # The hint unblocked the events — they were extracted with the
+    # operator's chosen account_id, NOT the synthetic "default".
+    assert captured_account_ids == ["s3ntin318@gmail.com"]
+    # And no untagged-origin report fired (the hint resolved the identity).
+    assert posted.get("entries") == []
+
+
+def test_run_collection_events_reported_untagged_when_no_hint(
+    monkeypatch,
+) -> None:
+    """Local discovery returns nothing (or 'default') AND no server
+    hint — the events still ship (so they don't disappear) but the
+    provider's events-origin is reported as untagged via the same
+    manifest POST the token-card branch uses. The operator can then
+    tag it via the Untagged Credentials dialog to retarget future
+    events onto the labeled quota card.
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        accounts={"minimax": []},
+        tokens={},
+        tag_hints={},  # No hint yet.
+    )
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    monkeypatch.setattr(
+        sidecar,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"minimax": lambda: "default"},
+    )
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"minimax"}))
+
+    captured_account_ids: list[str] = []
+
+    def _capture_extract(
+        provider_id: str,
+        account_ids: list[str],
+        *,
+        watermark: Any,
+        bootstrap_days: int,
+        out_events: list[dict[str, Any]],
+    ) -> None:
+        captured_account_ids.extend(account_ids)
+        out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+    monkeypatch.setattr(
+        sidecar.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: ([], []),
+    )
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["minimax"],
+    )
+
+    # Events still shipped (under the legacy "default" sentinel) so
+    # they don't disappear.
+    assert captured_account_ids == ["default"]
+    # But the origin was reported untagged so the operator can tag it.
+    assert posted["entries"] == [
+        {"provider_id": "minimax", "credential_origin": "provider:minimax"},
+    ]
+
+
 class _StubCache:
     """Minimal stand-in for ``CredentialCache`` so the test can stub
     ``_get_credential_cache`` without dragging in the full cache.

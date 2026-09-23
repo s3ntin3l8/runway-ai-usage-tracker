@@ -163,6 +163,75 @@ class CredentialTagRepo:
                     out.setdefault(pid, {})[origin] = account_id
         return out
 
+    @staticmethod
+    def auto_hints_for_single_account_providers(
+        session: Session,
+        *,
+        providers: list[str],
+    ) -> dict[str, dict[str, str]]:
+        """Pre-ship tag-hints for providers with exactly one enabled
+        non-default ``provider_configs`` row.
+
+        Closes the MiniMax card-split: when the operator has a single
+        labeled MiniMax account (e.g. ``s3ntin318@gmail.com``), the
+        sidecar's event stream has nothing to discover upstream and
+        would otherwise ship events under the synthetic ``"default"``
+        sentinel. Without an auto-hint the events land on a
+        standalone synthetic-default card and the quota gauge stays
+        orphaned on the labeled row.
+
+        The hint key is ``"provider:<provider_id>"`` (matches
+        ``scripts/sidecar.py:credential_origin_for_provider``), and the
+        value is the operator's chosen ``account_id``. The hint is
+        non-persistent — it lives in the ``/fleet/config`` payload only
+        and the operator can still override it via the Untagged
+        Credentials dialog if their multi-account setup requires it.
+
+        Skips providers with 0 rows (nothing to retarget), 2+ rows
+        (multi-account ambiguity — operator should tag explicitly),
+        or where the single row is the ``"default"`` sentinel (the
+        sidecar's ``"default"``-tagged events already land on it).
+
+        Empty ``providers`` returns an empty map. Defensively filters
+        empty / non-string ``account_id`` values.
+        """
+        if not providers:
+            return {}
+        # Group by provider_id, keeping only providers with exactly
+        # one enabled non-default row. A GROUP BY + HAVING COUNT(*) = 1
+        # would also work, but two queries is clearer here — and the
+        # row set is tiny (one entry per configured account).
+        from sqlmodel import col as sqlcol
+        from sqlmodel import or_
+
+        from app.models.db import ProviderConfig
+
+        rows = list(
+            session.exec(
+                select(ProviderConfig).where(
+                    or_(*(ProviderConfig.provider_id == pid for pid in providers)),
+                    ProviderConfig.enabled == True,  # noqa: E712 — SQLModel needs the ==
+                    sqlcol(ProviderConfig.account_id) != "default",
+                )
+            ).all()
+        )
+        # Bucket by provider_id, skip ambiguous multi-row buckets.
+        by_pid: dict[str, list[str]] = {}
+        for r in rows:
+            by_pid.setdefault(r.provider_id, []).append(r.account_id)
+        out: dict[str, dict[str, str]] = {}
+        for pid, account_ids in by_pid.items():
+            if len(account_ids) != 1:
+                continue  # multi-account ambiguity — defer to the operator dialog
+            aid = account_ids[0]
+            if not isinstance(aid, str) or not aid:
+                continue
+            # The hint key matches ``scripts/sidecar.py:credential_origin_for_provider``,
+            # which is the same descriptor the sidecar reports to
+            # /fleet/credentials/manifest when an origin is untagged.
+            out.setdefault(pid, {})[f"provider:{pid}"] = aid
+        return out
+
 
 class PendingCredentialTagRepo:
     """Read/write operations on the ``pending_credential_tags`` table.

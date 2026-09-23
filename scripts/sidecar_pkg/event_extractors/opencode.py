@@ -101,9 +101,18 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 # own account). Keep in sync with scripts/reclassify_opencode_providers.py,
 # which reapplies this mapping to already-ingested events.
 _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
-    # MiniMax's coding-plan collector is API-key-only (no account email), so
-    # every card it emits is account_id="default" — match that here.
-    "minimax-coding-plan": ("minimax", "default"),
+    # MiniMax's coding-plan collector has no per-user identity upstream
+    # (API-key-only, no email in the API response), so quota cards live at
+    # whatever account_id the operator configured in provider_configs.
+    # Pass the event's own account through (None override) and let the
+    # server's tag-hint flow (PR #290) carry the operator's chosen
+    # account_id back to the sidecar via /fleet/config's
+    # account_tag_hints. When no hint is available, the sidecar reports
+    # the events as untagged (see sidecar._extract_events_for_provider)
+    # and the operator can tag them in the Untagged Credentials dialog.
+    # Forcing "default" here would split the quota gauge from the
+    # sidecar's event stream — see the issue: label-set account split.
+    "minimax-coding-plan": ("minimax", None),
     # Kimi For Coding (kimi-code-plan-global backend in OpenCode; modelIDs
     # "k3-256k" / "kimi-for-coding"). Pass the account through: OpenCode
     # resolves the real account identity (usually the user's email), which
