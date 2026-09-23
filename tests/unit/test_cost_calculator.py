@@ -664,6 +664,115 @@ def test_antigravity_pro3_cost():
     assert cost == 14.00
 
 
+def test_antigravity_flash_37_cost():
+    """flash-3.7 has its own row — must not fall back to flash-3 ($0.50/$3.00).
+
+    1M input + 1M output on flash-3.7 = $0.75 + $3.75 = $4.50.
+    """
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="flash-3.7",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 4.50
+
+
+def test_antigravity_flash_35_cost():
+    """1M input + 1M output on flash-3.5 = $1.50 + $9.00 = $10.50."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="flash-3.5",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 10.50
+
+
+def test_antigravity_bare_pro_cost():
+    """1M input + 1M output on bare pro = $1.25 + $10.00 = $11.25.
+
+    Distinct from pro-3 ($14.00) — a miss here would mean the bare-family
+    seed row is absent and the segment-trim fallback is hitting pro-3.
+    """
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="pro",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 11.25
+
+
+def test_antigravity_bare_flash_cost():
+    """1M input + 1M output on bare flash = $0.30 + $2.50 = $2.80."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 2.80
+
+
+def test_antigravity_gemini_default_cost():
+    """1M input + 1M output on gemini-default = $1.50 + $9.00 = $10.50."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="gemini-default",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 10.50
+
+
+def test_antigravity_pro31_cost():
+    """1M input + 1M output on pro-3.1 = $2.00 + $12.00 = $14.00."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="antigravity",
+        model_id="pro-3.1",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 14.00
+
+
 def test_antigravity_claude_opus_cost():
     """1M input + 1M output on claude-opus = $5.00 + $25.00 = $30.00.
 
