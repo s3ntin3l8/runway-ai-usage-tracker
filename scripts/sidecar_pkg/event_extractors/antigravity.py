@@ -232,12 +232,14 @@ def _normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -
 
     # Claude family bucket from the raw slug (raw wins over used_claude*).
     # Keeps family ids only — no claude-sonnet-4.6 versioned pricing rows.
+    # Case-insensitive: an uppercase slug must not fall through to Gemini.
     lower_raw = raw.lower()
     if lower_raw.startswith("claude"):
         if "sonnet" in lower_raw:
             return "claude-sonnet"
-        # opus and any other Claude tier (haiku, …) fall on the seeded
-        # claude-opus row — same conservative choice the flag made.
+        # Opus and unseeded tiers (haiku, …) share the seeded claude-opus
+        # row (issue #302 accepted policy): better to overbill at Opus than
+        # land on $0 via verbatim pass-through with no pricing row.
         return "claude-opus"
 
     # Flags only as fallback when raw is empty: empty raw + conservative →

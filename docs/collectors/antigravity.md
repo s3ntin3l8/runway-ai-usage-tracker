@@ -62,7 +62,7 @@ The raw model id (f1.19) is authoritative whenever present. Claude slugs collaps
 | Condition | `model_id` |
 |---|---|
 | raw starts with `claude` + `sonnet` | `claude-sonnet` |
-| raw starts with `claude` (opus/other) | `claude-opus` |
+| raw starts with `claude` (opus, haiku, other unseeded tiers) | `claude-opus` (accepted overbill vs $0 — issue #302) |
 | empty raw, `used_claude_conservative=true` | `claude-opus` |
 | empty raw, `used_claude=true` (no conservative) | `claude-sonnet` |
 | family flash-lite, 3.x signal | `flash-lite-3` (never versioned) |

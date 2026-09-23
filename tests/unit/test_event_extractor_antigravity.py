@@ -225,8 +225,14 @@ def test_raw_claude_without_flags_maps_to_family():
 
 
 def test_raw_claude_other_tier_falls_to_opus():
-    """Unseeded tiers (haiku, …) share the conservative claude-opus row."""
+    """Unseeded tiers (haiku, …) share the seeded claude-opus row (issue #302)."""
     assert _normalize_ag_model("claude-haiku-4-5", "", {}) == "claude-opus"
+
+
+def test_raw_claude_case_insensitive():
+    """Uppercase slug must not fall through to the Gemini path."""
+    assert _normalize_ag_model("CLAUDE-SONNET-4-6", "", {}) == "claude-sonnet"
+    assert _normalize_ag_model("Claude-Opus-4-6", "", {}) == "claude-opus"
 
 
 def test_raw_gemini_wins_over_claude_flags():
