@@ -74,18 +74,22 @@ class CollectorManager:
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
 
-    async def _sync_collectors(self):  # noqa: PLR0915 — known-debt: smart-collector lifecycle, refactor tracked separately
+    async def _sync_collectors(  # noqa: PLR0915 — known-debt: smart-collector lifecycle, refactor tracked separately
+        self, *, force: bool = False
+    ):
         """Synchronize active SmartCollectors with discovered accounts.
 
         Throttled to run at most once every 60 seconds to avoid redundant
-        TokenCache lookups on every /api/limits request.
+        TokenCache lookups on every /api/limits request. Config mutations
+        pass ``force=True`` so an enable/disable takes effect immediately
+        instead of waiting out the throttle.
         """
-        if time.time() - self._last_sync_time < 60.0:
+        if not force and time.time() - self._last_sync_time < 60.0:
             return
         async with self._sync_lock:
             # Re-check inside lock to avoid double-sync when multiple requests
             # are waiting on the lock simultaneously.
-            if time.time() - self._last_sync_time < 60.0:
+            if not force and time.time() - self._last_sync_time < 60.0:
                 return
             # Load DB provider configs: provider_id -> account_id -> ProviderConfig
             # We use a nested map to handle multi-account overrides correctly.
@@ -117,7 +121,6 @@ class CollectorManager:
                     # LatestUsage.  This seeds the account_id for default collectors whose
                     # OAuth token may be stale at startup — the once-resolved email persists
                     # across restarts without any special write-back to provider_configs.
-                    durable_identities: dict[str, str] = {}
                     for pid, aid in _s.exec(
                         sqlselect(LatestUsage.provider_id, LatestUsage.account_id)
                         .where(LatestUsage.account_id != "default")
@@ -137,6 +140,14 @@ class CollectorManager:
 
                 if db_cfg is not None and not db_cfg.enabled:
                     # Remove existing collector if it was previously running
+                    self.smart_collectors.pop(f"{p_id}:default", None)
+                    continue
+                if db_cfg is None and provider_acc_configs:
+                    # Config rows exist but none is the "default" sentinel —
+                    # collection is account-keyed (wizard-created emails).
+                    # Spawning a blanket default here would shadow step 2's
+                    # per-account `enabled` checks and keep collecting after
+                    # the user disables the only account.
                     self.smart_collectors.pop(f"{p_id}:default", None)
                     continue
                 effective_ttl = (
@@ -192,6 +203,19 @@ class CollectorManager:
 
                     # For dynamic account, check for specific override OR fallback to default provider override
                     provider_acc_configs = db_configs.get(p_id, {})
+                    if (
+                        acc_id == "default"
+                        and provider_acc_configs
+                        and "default" not in provider_acc_configs
+                    ):
+                        # Config rows exist but none is the default sentinel —
+                        # collection is account-keyed. The sidecar can still
+                        # stamp a literal "default" into the token cache
+                        # (`_gemini_account_email` / `_ag_account_email`
+                        # fallbacks); spawning {pid}:default here would keep
+                        # collecting after the user disabled the only account.
+                        self.smart_collectors.pop(f"{p_id}:default", None)
+                        continue
                     db_cfg = provider_acc_configs.get(acc_id) or provider_acc_configs.get("default")
 
                     if db_cfg is not None and not db_cfg.enabled:

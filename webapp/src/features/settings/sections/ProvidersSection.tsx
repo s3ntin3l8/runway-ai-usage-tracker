@@ -190,7 +190,11 @@ function ProvidersSectionV2({
 }) {
   const providers = configs.data?.providers ?? [];
   const isDesktop = useIsDesktop();
-  const [detailProvider, setDetailProvider] = useState<ProviderConfig | null>(null);
+  // Hold only the provider_id — resolving the object from `configs.data`
+  // each render keeps the open dialog in sync after invalidateQueries
+  // (a one-shot object snapshot froze the switch/badges on stale state).
+  const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
+  const detailProvider = providers.find((p) => p.provider_id === detailProviderId) ?? null;
   // Wizard (#287) — null = closed, otherwise the provider we pre-scoped to
   // (undefined/null = open at step 1 with no pre-scope).
   const [wizardScope, setWizardScope] = useState<ProviderConfig | null | undefined>(undefined);
@@ -341,7 +345,7 @@ function ProvidersSectionV2({
                   <SortableProviderCard
                     key={p.provider_id}
                     provider={p}
-                    onOpen={() => setDetailProvider(p)}
+                    onOpen={() => setDetailProviderId(p.provider_id)}
                   />
                 ))}
             </SortableContext>
@@ -368,9 +372,9 @@ function ProvidersSectionV2({
 
       <ProviderDetailDialog
         provider={detailProvider}
-        onClose={() => setDetailProvider(null)}
+        onClose={() => setDetailProviderId(null)}
         onAccountDeleted={(providerId) => {
-          if (detailProvider?.provider_id === providerId) {
+          if (detailProviderId === providerId) {
             // Refresh so the dialog's account list reflects the deletion.
             configs.refetch();
           }
@@ -408,6 +412,12 @@ function SortableProviderCard({
   const hasCookie = provider.session_cookie_set;
   const allEnabled = provider.accounts.every((a: ProviderConfig['accounts'][number]) => a.enabled);
   const anyEnabled = provider.accounts.some((a: ProviderConfig['accounts'][number]) => a.enabled);
+  // Discovered-only = every account came from token_cache / latest_usage
+  // (no provider_configs row). Passive providers (antigravity, …) never get
+  // a config row — show "auto" instead of "unconfigured" / "enabled".
+  const onlyDiscovered =
+    provider.accounts.length > 0 &&
+    provider.accounts.every((a) => a.source === 'discovered');
 
   return (
     <Card
@@ -458,25 +468,29 @@ function SortableProviderCard({
         <div className="flex shrink-0 items-center gap-1.5">
           {hasKey ? <Badge variant="ok">key</Badge> : null}
           {hasCookie ? <Badge variant="ok">cookie</Badge> : null}
-          <Badge
-            variant={
-              provider.accounts.length === 0
-                ? 'neutral'
+          {onlyDiscovered ? (
+            <Badge variant="ok">auto</Badge>
+          ) : (
+            <Badge
+              variant={
+                provider.accounts.length === 0
+                  ? 'neutral'
+                  : allEnabled
+                    ? 'accent'
+                    : anyEnabled
+                      ? 'warning'
+                      : 'neutral'
+              }
+            >
+              {provider.accounts.length === 0
+                ? 'unconfigured'
                 : allEnabled
-                  ? 'accent'
+                  ? 'enabled'
                   : anyEnabled
-                    ? 'warning'
-                    : 'neutral'
-            }
-          >
-            {provider.accounts.length === 0
-              ? 'unconfigured'
-              : allEnabled
-                ? 'enabled'
-                : anyEnabled
-                  ? 'partial'
-                  : 'disabled'}
-          </Badge>
+                    ? 'partial'
+                    : 'disabled'}
+            </Badge>
+          )}
         </div>
       </button>
     </Card>

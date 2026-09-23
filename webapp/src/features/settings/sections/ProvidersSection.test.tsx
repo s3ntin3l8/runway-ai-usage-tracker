@@ -745,6 +745,83 @@ describe('ProvidersSection (v2 — ?providers=v2)', () => {
     expect(screen.getByText('OpenRouter')).toBeInTheDocument();
   });
 
+  it('keeps an open detail dialog in sync after an invalidate (#294 Bug 2A)', async () => {
+    // Initial snapshot: one enabled account.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({ provider_id: 'gemini', name: 'Gemini', account_count: 1 })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByText('Gemini'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('enabled')).toBeInTheDocument();
+
+    // Toggle fires putProviderConfig, which invalidates provider-configs.
+    // Second fetch returns the updated (disabled) snapshot.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          provider_id: 'gemini',
+          name: 'Gemini',
+          account_count: 1,
+          accounts: [
+            {
+              account_id: 'default',
+              account_label: null,
+              enabled: false,
+              api_key_set: true,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+          ],
+        }),
+      ],
+    });
+
+    const master = within(dialog).getByRole('switch', { name: /all accounts enabled/i });
+    await userEvent.click(master);
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    // Dialog derives from configs.data each render — must re-sync to disabled.
+    await waitFor(() => expect(within(dialog).getByText('disabled')).toBeInTheDocument());
+    expect(within(dialog).queryByText('enabled')).not.toBeInTheDocument();
+  });
+
+  it('shows an "auto" badge for discovered-only accounts (#294 Bug 3)', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          provider_id: 'antigravity',
+          name: 'Antigravity',
+          account_count: 1,
+          accounts: [
+            {
+              account_id: 'user@example.com',
+              account_label: 'user@example.com',
+              enabled: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+              source: 'discovered',
+            },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Antigravity')).toBeInTheDocument();
+    // Discovered-only → "auto", never "unconfigured".
+    expect(screen.getByText('auto')).toBeInTheDocument();
+    expect(screen.queryByText('unconfigured')).not.toBeInTheDocument();
+  });
+
   it('opens the per-account edit dialog and saves via putProviderConfig', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });

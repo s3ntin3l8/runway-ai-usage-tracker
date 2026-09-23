@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router';
 import { Card } from '@/components/ui/Card';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { formatCurrency, formatNumber, formatTokens, timeAgo } from '@/lib/format';
+import { maskAccountId } from '@/lib/accountDisplay';
 import type { ArchivedProvider } from '@/api/endpoints';
 
 export function ArchivedCard({
@@ -39,7 +40,7 @@ export function ArchivedCard({
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium">{providerName}</p>
           {item.account_id && item.account_id !== 'default' ? (
-            <p className="truncate text-[11px] text-fg-subtle">{item.account_id}</p>
+            <p className="truncate text-[11px] text-fg-subtle">{maskAccountId(item.account_id)}</p>
           ) : null}
         </div>
         <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted">
