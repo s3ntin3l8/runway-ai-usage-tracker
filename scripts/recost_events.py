@@ -55,10 +55,13 @@ from app.services.period_rollups import update_rollups_for_event  # noqa: E402
 from app.services.window_closer import close_window  # noqa: E402
 
 # "opencode" itself plus every opencode-* sub-provider (opencode-free,
-# opencode-byok, opencode-openrouter, opencode-ollama, and any future
-# opencode-<slug> derived by map_opencode_provider_id) — matched via a LIKE
-# prefix below rather than an exact-id tuple so new siblings are covered
-# automatically.
+# opencode-byok, opencode-openrouter, and any future opencode-<slug> derived
+# by map_opencode_provider_id) — matched via a LIKE prefix below rather than
+# an exact-id tuple so new siblings are covered automatically. The
+# _OC_CANONICAL_MAP fold-in targets (minimax, kimi_coding, ollama, ...) are
+# NOT skipped: post-fold their events are canonical provider ids and get
+# recomputed from provider_pricing like any other provider (currently $0 —
+# no pricing rows exist for them, matching the free-tier cost OpenCode logged).
 _SKIP_PROVIDER_PREFIX = "opencode"
 
 # Phase D commits and expunges every _WINDOW_BATCH window rebuilds. close_window()
