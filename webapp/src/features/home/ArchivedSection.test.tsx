@@ -64,4 +64,13 @@ describe('ArchivedSection', () => {
     expect(screen.getAllByText('Msgs').length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('Cost').length).toBeGreaterThanOrEqual(2);
   });
+
+  it('uses the same responsive grid as the provider grid', async () => {
+    const { container } = renderWithProviders(<ArchivedSection />);
+    await screen.findByText('Archived');
+    const grid = container.querySelector('[aria-label="Archived providers"] > div');
+    expect(grid?.className).toContain('sm:grid-cols-2');
+    expect(grid?.className).toContain('xl:grid-cols-3');
+    expect(grid?.className).toContain('2xl:grid-cols-4');
+  });
 });

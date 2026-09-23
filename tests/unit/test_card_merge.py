@@ -166,6 +166,30 @@ class TestCardMerge:
         assert "remaining" not in parsed
         assert parsed["used_value"] == 51.0
 
+    def test_fresh_quota_clears_sticky_stale_flag(self):
+        # Partial dict (documented merge_card_json API): fresh quota omits the
+        # stale key entirely — the recovery pop must drop residual stale=True.
+        existing = json.dumps({"pct_used": 0.0, "stale": True, "health": "good"})
+        incoming = {"pct_used": 42.0, "health": "good"}
+        parsed = json.loads(merge_card_json(existing, incoming))
+        assert "stale" not in parsed
+        assert parsed["pct_used"] == 42.0
+
+    def test_fresh_quota_overwrites_stale_false_from_model_dump(self):
+        # Real upsert path: LimitCard.model_dump(exclude_none=True) always
+        # emits stale=False (bool default is not None) — the merge loop clears
+        # residual stale even without the recovery pop.
+        from app.models.schemas import LimitCard
+
+        existing = json.dumps({"pct_used": 0.0, "stale": True, "health": "good"})
+        incoming = LimitCard(
+            service_name="Test", pct_used=42.0, health="good", stale=False
+        ).model_dump(exclude_none=True)
+        assert incoming["stale"] is False
+        parsed = json.loads(merge_card_json(existing, incoming))
+        assert parsed["stale"] is False
+        assert parsed["pct_used"] == 42.0
+
     def test_token_only_enrichment_preserves_error_type(self):
         # Negative case: a local token-breakdown push without quota fields must
         # NOT mask a genuinely-still-erroring quota row. Only fresh quota signal

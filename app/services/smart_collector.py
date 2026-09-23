@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import error_card
+from app.core.utils import HealthCalculator, error_card
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -344,10 +344,10 @@ class SmartCollector:
 
         Past `STALE_CEILING_SECONDS`, the card is flagged with `stale=True`
         and a "Collection failing" prefix so a long-running outage reads as
-        visibly degraded rather than confidently healthy. We deliberately do
-        NOT override `health` here — the frontend uses `stale` to skip the
-        health→critical override so old-but-valid data doesn't land in the
-        at-risk rail unless quota is genuinely near the limit.
+        visibly degraded rather than confidently healthy. Residual
+        collector-baked `health` that no longer matches the percentage is
+        reconciled (via `HealthCalculator.reconcile_residual_health`) so the
+        frontend stale gate can drop false at-risk alerts.
 
         Args:
             result: Original result from collector
@@ -375,6 +375,11 @@ class SmartCollector:
             if is_stale:
                 card_copy["stale"] = True
                 card_copy["detail"] = f"⚠ Collection failing — {card_copy['detail']}"
+                # Pre-#293 caches baked health="critical" into last_result as the
+                # stale marker. Don't re-assert it at a percentage that doesn't
+                # warrant critical — the frontend stale-gate only helps when
+                # health is honest (or already good) alongside stale=True.
+                HealthCalculator.reconcile_residual_health(card_copy)
             tagged.append(card_copy)
 
         return tagged

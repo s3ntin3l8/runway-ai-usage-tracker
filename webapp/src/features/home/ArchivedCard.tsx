@@ -33,7 +33,7 @@ export function ArchivedCard({
           navigate(`/provider/${item.provider_id}?account=${item.account_id}`);
         }
       }}
-      className="cursor-pointer p-3.5 transition-colors duration-150 hover:border-edge-strong opacity-70 hover:opacity-100"
+      className="flex min-h-36 cursor-pointer flex-col p-3.5 transition-colors duration-150 hover:border-edge-strong opacity-70 hover:opacity-100"
     >
       <div className="flex items-center gap-2.5">
         <ProviderGlyph providerId={item.provider_id} name={providerName} className="size-6 text-[10px]" />
@@ -48,30 +48,32 @@ export function ArchivedCard({
         </span>
       </div>
 
-      {life ? (
-        <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-          <div>
-            <p className="text-fg-muted">Tokens</p>
-            <p className="font-mono font-medium tabular">{formatTokens(tokensTotal)}</p>
+      <div className="mt-auto pt-3">
+        {life ? (
+          <div className="grid grid-cols-3 gap-2 text-[11px]">
+            <div>
+              <p className="text-fg-muted">Tokens</p>
+              <p className="font-mono font-medium tabular">{formatTokens(tokensTotal)}</p>
+            </div>
+            <div>
+              <p className="text-fg-muted">Msgs</p>
+              <p className="font-mono font-medium tabular">{formatNumber(life.msgs)}</p>
+            </div>
+            <div>
+              <p className="text-fg-muted">Cost</p>
+              <p className="font-mono font-medium tabular">{formatCurrency(life.cost_usd)}</p>
+            </div>
           </div>
-          <div>
-            <p className="text-fg-muted">Msgs</p>
-            <p className="font-mono font-medium tabular">{formatNumber(life.msgs)}</p>
-          </div>
-          <div>
-            <p className="text-fg-muted">Cost</p>
-            <p className="font-mono font-medium tabular">{formatCurrency(life.cost_usd)}</p>
-          </div>
-        </div>
-      ) : (
-        <p className="mt-3 text-[11px] text-fg-muted">No usage data</p>
-      )}
+        ) : (
+          <p className="text-[11px] text-fg-muted">No usage data</p>
+        )}
 
-      {item.last_activity_ts ? (
-        <p className="mt-2 text-[10px] text-fg-subtle">
-          Last active {timeAgo(item.last_activity_ts)}
-        </p>
-      ) : null}
+        {item.last_activity_ts ? (
+          <p className="mt-2 text-[10px] text-fg-subtle">
+            Last active {timeAgo(item.last_activity_ts)}
+          </p>
+        ) : null}
+      </div>
     </Card>
   );
 }

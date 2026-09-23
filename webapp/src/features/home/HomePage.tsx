@@ -108,7 +108,11 @@ export function HomePage() {
         }
       />
       <div className="flex flex-col gap-5 p-4 lg:p-8">
-        <Banners tokens={tokenHealth.data?.tokens} anomalies={anomalies.data?.anomalies} />
+        <Banners
+          tokens={tokenHealth.data?.tokens}
+          anomalies={anomalies.data?.anomalies}
+          fleet={fleet.data?.fleet}
+        />
 
         {fleet.isPending ? (
           <HomeSkeleton />

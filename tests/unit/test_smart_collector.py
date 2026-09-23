@@ -374,9 +374,9 @@ class TestSmartCollectorCacheTags:
     def test_stale_ceiling_degrades_card_visibly(self, mock_collector):
         """Past STALE_CEILING_SECONDS, a cache-served card must flag `stale=True`
         so the frontend can skip the health→critical override. The "Collection
-        failing" prefix stays in detail for visual feedback. We deliberately do
-        NOT touch health — stale cards should not land in the at-risk rail
-        unless quota is genuinely near the limit.
+        failing" prefix stays in detail for visual feedback. Residual
+        collector-baked health that no longer matches the percentage is
+        reconciled so pre-#293 rows don't stick at critical forever.
 
         data_source/error_type/remaining are untouched so
         accumulator.upsert_latest_usage's error-card suppression does NOT
@@ -390,12 +390,52 @@ class TestSmartCollectorCacheTags:
         tagged = smart._tag_as_cached(data, time.time())
 
         assert tagged[0]["stale"] is True
-        assert "health" not in tagged[0]  # must NOT override health
+        assert "health" not in tagged[0]  # no residual health → leave absent
         assert "Collection failing" in tagged[0]["detail"]
         assert "[Cached" in tagged[0]["detail"]
         # Must NOT flip these — accumulator would suppress the write entirely.
         assert tagged[0].get("data_source") != "error"
         assert tagged[0].get("remaining") == "55%"
+
+    def test_stale_ceiling_reconciles_residual_critical_health(self, mock_collector):
+        """Pre-#293 residual: health=critical baked with pct_used=0 and no stale
+        flag. When re-serving past the ceiling, drop health to match the
+        percentage so the frontend stale gate + status agree."""
+        smart = SmartCollector(mock_collector, "TestCollector")
+        smart.last_success_time = time.time() - 7200
+        data = [
+            {
+                "service_name": "Ollama",
+                "detail": "Real data",
+                "health": "critical",
+                "pct_used": 0.0,
+            }
+        ]
+
+        tagged = smart._tag_as_cached(data, time.time())
+
+        assert tagged[0]["stale"] is True
+        assert tagged[0]["health"] == "good"
+        assert "Collection failing" in tagged[0]["detail"]
+
+    def test_stale_ceiling_keeps_genuine_critical_health(self, mock_collector):
+        """A near-limit card stays critical when re-served stale — only residual
+        health that disagrees with the percentage is rewritten."""
+        smart = SmartCollector(mock_collector, "TestCollector")
+        smart.last_success_time = time.time() - 7200
+        data = [
+            {
+                "service_name": "Claude",
+                "detail": "Real data",
+                "health": "critical",
+                "pct_used": 95.0,
+            }
+        ]
+
+        tagged = smart._tag_as_cached(data, time.time())
+
+        assert tagged[0]["stale"] is True
+        assert tagged[0]["health"] == "critical"
 
     def test_below_stale_ceiling_does_not_degrade_card(self, mock_collector):
         """A recently-served cached card (under the ceiling) stays untouched

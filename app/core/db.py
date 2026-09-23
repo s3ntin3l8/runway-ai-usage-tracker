@@ -128,6 +128,7 @@ def init_db() -> None:
         _rebuild_quota_snapshot_indexes(conn)
         _backfill_quota_snapshot_variant(conn)
         _migrate_webhook_uniqueness(conn)
+        _scrub_residual_stale_health(conn)
 
     from app.services.pricing_seed import seed_pricing_table
 
@@ -341,3 +342,51 @@ def get_session() -> Iterator[Session]:
     """FastAPI dependency for DB session."""
     with Session(engine) as session:
         yield session
+
+
+def _scrub_residual_stale_health(conn: Any) -> None:
+    """Mark residual pre-#293 collection-failure cards as `stale` and reconcile health.
+
+    Before PR #293, collectors used health="critical" as a stale marker and never
+    set `stale`. Rows that stopped being rewritten (collection failed → error card
+    suppressed by upsert) keep that residual health forever — 0% cards land in the
+    at-risk rail with no stale dimming. Idempotent: only rewrites cards whose
+    `detail` still carries the Collection-failing prefix and whose health no longer
+    matches the percentage.
+    """
+    import json as _json
+
+    from sqlalchemy import text as _text
+
+    from app.core.utils import HealthCalculator
+
+    rows = conn.execute(_text("SELECT id, card_json FROM latest_usage")).fetchall()
+    scrubbed = 0
+    for row_id, card_json in rows:
+        if not card_json:
+            continue
+        try:
+            card = _json.loads(card_json)
+        except (_json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(card, dict):
+            continue
+        detail = card.get("detail") or ""
+        if "Collection failing" not in detail:
+            continue
+        changed = False
+        if card.get("stale") is not True:
+            card["stale"] = True
+            changed = True
+        if HealthCalculator.reconcile_residual_health(card):
+            changed = True
+        if not changed:
+            continue
+        conn.execute(
+            _text("UPDATE latest_usage SET card_json = :card_json WHERE id = :id"),
+            {"card_json": _json.dumps(card), "id": row_id},
+        )
+        scrubbed += 1
+    if scrubbed:
+        conn.commit()
+        logger.info(f"Scrubbed residual stale health on {scrubbed} latest_usage card(s)")
