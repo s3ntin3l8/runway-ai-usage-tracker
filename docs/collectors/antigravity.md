@@ -57,14 +57,14 @@ Workspace path (→ `cwd`) comes from `trajectory_metadata_blob` table, field 7,
 
 **Model normalization** (`_normalize_ag_model`):
 
-The raw model id (f1.19) is authoritative whenever present. Claude slugs collapse to their family (`claude-sonnet-4-6` → `claude-sonnet`); Gemini and other non-claude slugs ignore the `used_claude*` KV flags (they latch per-conversation once Claude is touched and otherwise stamp Gemini-raw turns as `claude-opus`). Flags are only consulted when raw is empty (defensive — never observed with a flag set). Family + minor version are then resolved from the raw id and display name (a 3.x minor from either field wins, display first; otherwise display preferred for the minor). Gemini 3.x minor versions get their own cost bucket when seeded; unseeded 3.x minors clamp to the major bucket; flash-lite stays major-only; non-family raw ids pass through verbatim.
+The raw model id (f1.19) is authoritative whenever present. Claude slugs (including aliases like `anthropic-claude-sonnet-4-6`) collapse to their family (`claude-sonnet-4-6` → `claude-sonnet`); Gemini and other non-claude slugs ignore the `used_claude*` KV flags (they latch per-conversation once Claude is touched and otherwise stamp Gemini-raw turns as `claude-opus`). When raw is empty, the display path runs first; flags are only consulted if that path would return `unknown` (defensive — never observed with a flag set). Family + minor version are then resolved from the raw id and display name (a 3.x minor from either field wins, display first; otherwise display preferred for the minor). Gemini 3.x minor versions get their own cost bucket when seeded; unseeded 3.x minors clamp to the major bucket; flash-lite stays major-only; non-family raw ids pass through verbatim.
 
 | Condition | `model_id` |
 |---|---|
-| raw starts with `claude` + `sonnet` | `claude-sonnet` |
-| raw starts with `claude` (opus, haiku, other unseeded tiers) | `claude-opus` (accepted overbill vs $0 — issue #302) |
-| empty raw, `used_claude_conservative=true` | `claude-opus` |
-| empty raw, `used_claude=true` (no conservative) | `claude-sonnet` |
+| raw contains `claude` + `sonnet` | `claude-sonnet` |
+| raw contains `claude` (opus, haiku, other unseeded tiers) | `claude-opus` (accepted overbill vs $0 — issue #302) |
+| empty raw + empty/unknown display, `used_claude_conservative=true` | `claude-opus` |
+| empty raw + empty/unknown display, `used_claude=true` (no conservative) | `claude-sonnet` |
 | family flash-lite, 3.x signal | `flash-lite-3` (never versioned) |
 | family flash/pro, seeded 3.x minor (flash 3.5–3.8, pro 3.1) | `flash-3.5` / `flash-3.6` / `flash-3.7` / `flash-3.8` / `pro-3.1` |
 | family flash/pro, 3.x minor without its own pricing row | `flash-3` / `pro-3` (clamped) |

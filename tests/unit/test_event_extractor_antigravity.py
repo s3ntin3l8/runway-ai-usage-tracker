@@ -235,6 +235,24 @@ def test_raw_claude_case_insensitive():
     assert _normalize_ag_model("Claude-Opus-4-6", "", {}) == "claude-opus"
 
 
+def test_raw_aliased_claude_slug_collapses():
+    """Prefixed aliases (anthropic-claude-…) still hit the family bucket."""
+    assert _normalize_ag_model("anthropic-claude-sonnet-4-6", "", {}) == "claude-sonnet"
+    assert _normalize_ag_model("anthropic-claude-opus-4-6", "", {}) == "claude-opus"
+
+
+def test_empty_raw_display_wins_over_latched_flags():
+    """Empty raw + Gemini display + flags → Gemini bucket (display first)."""
+    assert (
+        _normalize_ag_model(
+            "",
+            "Gemini 3.8 Flash",
+            {"used_claude_conservative": "true", "used_claude": "true"},
+        )
+        == "flash-3.8"
+    )
+
+
 def test_raw_gemini_wins_over_claude_flags():
     """Sticky used_claude* flags must not stamp Gemini-raw turns as Claude."""
     assert (
