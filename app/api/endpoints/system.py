@@ -1239,6 +1239,21 @@ async def delete_provider_config_for_account(
 
     cache_clear()
 
+    # Trigger an immediate collector sync so the just-removed account's
+    # SmartCollector instance (if any) drops out of
+    # ``manager.smart_collectors`` — otherwise the next poll could re-
+    # write a ``LatestUsage`` card and undo the eviction above. Mirrors
+    # the PUT helper's post-commit sync (the ``try/except`` swallows
+    # any background error so the user's mutation still succeeds even
+    # if the sync itself flakes).
+    try:
+        await manager._sync_collectors(force=True)
+    except Exception as e:
+        logger.warning(
+            f"Failed to trigger sync after provider_config delete for "
+            f"{scrub_log(provider_id)}/{scrub_log(account_id)}: {e}"
+        )
+
     return {
         "status": "deleted",
         "provider_id": provider_id,

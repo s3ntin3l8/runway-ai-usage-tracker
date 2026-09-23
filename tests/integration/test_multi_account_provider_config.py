@@ -572,7 +572,8 @@ def test_delete_provider_config_removes_row(client: TestClient, session: Session
     depends on — without it, the front-end surfaces a 'Method Not Allowed'
     toast (FastAPI 405). The endpoint also evicts LatestUsage rows so the
     dashboard doesn't show ghost cards for an account the operator just
-    removed.
+    removed, and clears the in-memory token_cache entry so collectors
+    don't keep hitting the deleted account's credentials.
     """
     # Seed a row.
     r = client.put(
@@ -593,6 +594,26 @@ def test_delete_provider_config_removes_row(client: TestClient, session: Session
         ).first()
         is not None
     )
+
+    # Pre-seed the in-memory token cache so the DELETE's
+    # ``await token_cache.remove(...)`` path is exercised. Use
+    # ``seed_sync`` rather than ``store`` — awaiting ``store()`` from a
+    # throwaway loop binds the cache's asyncio.Lock to that loop so
+    # later TestClient requests can't acquire it. See the
+    # ``test_get_provider_configs_merges_cache_seeded_accounts`` test
+    # above for the same pattern.
+    import time
+
+    from app.services.token_cache import token_cache
+
+    token_cache.seed_sync(
+        "openrouter",
+        "alice@example.com",
+        {"api_key": "sk-or-test-alice"},  # pragma: allowlist secret
+        {"account_label": "Alice", "source": "config"},
+        time.time(),
+    )
+    assert token_cache._cache.get("openrouter", {}).get("alice@example.com") is not None
 
     # Delete.
     r = client.delete(
@@ -621,6 +642,10 @@ def test_delete_provider_config_removes_row(client: TestClient, session: Session
         ).first()
         is None
     )
+
+    # Token-cache entry was cleared — collectors won't keep fetching
+    # credentials for the deleted account.
+    assert token_cache._cache.get("openrouter", {}).get("alice@example.com") is None
 
 
 def test_delete_provider_config_returns_404_for_unknown_provider(
