@@ -100,6 +100,34 @@ class CredentialTagRepo:
         return True
 
     @staticmethod
+    def delete_by_account(session: Session, *, provider_id: str, account_id: str) -> int:
+        """Drop every tag whose ``(provider_id, account_id)`` matches.
+
+        Called when the operator removes a ``provider_configs`` row so the
+        sidecar stops receiving ``origin -> account_id`` hints for the
+        just-deleted account (otherwise the next heartbeat re-asserts
+        the identity via ``list_pending_payload`` and keeps stamping
+        cards with it — see PR #317 review warning). Unique key on the
+        table is ``(provider_id, credential_origin)`` so multiple rows
+        can share the same ``account_id``; this removes all of them.
+
+        Returns the number of rows actually removed (0 if none matched).
+        """
+        rows = list(
+            session.exec(
+                select(CredentialTag).where(
+                    CredentialTag.provider_id == provider_id,
+                    CredentialTag.account_id == account_id,
+                )
+            ).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
     def list_by_provider(session: Session, *, provider_id: str) -> list[CredentialTag]:
         """All tags for one provider, ordered by origin for deterministic UI."""
         return list(

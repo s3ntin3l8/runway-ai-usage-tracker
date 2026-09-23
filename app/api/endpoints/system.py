@@ -1179,18 +1179,36 @@ async def delete_provider_config_for_account(
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict:
-    """Delete one ``(provider_id, account_id)`` row and its live ``LatestUsage`` cards.
+    """Remove one ``(provider_id, account_id)`` row and its live ``LatestUsage`` cards.
 
     The webapp's ``ProviderDetailDialog`` Remove action calls this endpoint
     to clean up orphan ``default`` rows left over from initial setup, and
-    any other labeled account the operator no longer wants to track. The
-    in-memory token cache is invalidated for the same key so collectors
-    don't keep fetching credentials for an account that no longer exists
-    on disk (mirrors the ``clear_api_key`` path in
-    ``_apply_provider_config_update``).
+    any other labeled account the operator no longer wants to track.
 
-    Mirrors the existing ``sidecar.delete`` audit-log pattern: every
-    successful state-changing admin call lands in ``audit_log``.
+    Implementation: **soft-archive** rather than hard-delete. The repo
+    convention is that ``provider_configs`` rows never leave the table —
+    ``archived=True`` is the established hide-from-dashboard flag, picked
+    up by ``_fetch_fleet_view_sync`` in ``app/api/endpoints/usage.py`` at
+    both the real-card skip-set (line ~236) and the synthetic-from-events
+    skip-set (line ~260). Hard-deleting a row whose ``usage_events`` still
+    has rows would let the synthetic loop resurrect the pair as a
+    PAYG-style card (PR #317 round-2 review warning).
+
+    Cascades:
+      - ``LatestUsage`` cards evicted from ``latest_usage``.
+      - in-memory ``token_cache`` entry dropped so collectors don't keep
+        fetching credentials for the removed account.
+      - ``credential_tags`` rows whose ``account_id`` matches are deleted
+        so the sidecar stops receiving ``origin -> account_id`` hints for
+        the removed account on subsequent ``/fleet/config`` heartbeats
+        (PR #317 round-2 review warning).
+      - ``audit_log`` records ``action="provider_config.delete"``,
+        ``target_id=f"{provider_id}/{account_id}"`` (mirrors
+        ``sidecar.delete`` + ``credential.tag_set`` conventions).
+
+    ``usage_events`` / rollups are intentionally left in place — they're
+    event-sourced history and stay readable via ``/usage/cumulative`` and
+    ``/usage/archived-providers`` even without a live card.
     """
     if provider_id not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
@@ -1218,7 +1236,23 @@ async def delete_provider_config_for_account(
         )
     )
 
-    session.delete(row)
+    # Drop every credential_tags row tied to this account_id. Otherwise
+    # list_pending_payload (app/services/credential_tags.py:124) keeps
+    # shipping the hint to sidecars and the /fleet/ingest path stamps
+    # every new event with the now-removed account — effectively
+    # resurrecting the pair on the dashboard via the synthetic loop.
+    from app.services.credential_tags import CredentialTagRepo
+
+    tags_cleared = CredentialTagRepo.delete_by_account(
+        session, provider_id=provider_id, account_id=account_id
+    )
+
+    # Soft-archive instead of hard-delete (see docstring). Mirrors the
+    # PUT helper's archived-toggle cascade: archiving forces enabled=False
+    # so no collector keeps polling.
+    row.archived = True
+    row.enabled = False
+    session.add(row)
     session.commit()
 
     # Drop the in-memory token cache entry. The async lock is held inside
@@ -1231,6 +1265,7 @@ async def delete_provider_config_for_account(
         request,
         action="provider_config.delete",
         target_id=f"{provider_id}/{account_id}",
+        payload={"tags_cleared": tags_cleared},
     )
 
     # Invalidate cached fleet/limits responses so the next dashboard poll
@@ -1258,6 +1293,7 @@ async def delete_provider_config_for_account(
         "status": "deleted",
         "provider_id": provider_id,
         "account_id": account_id,
+        "tags_cleared": tags_cleared,
     }
 
 

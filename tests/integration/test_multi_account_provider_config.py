@@ -565,15 +565,23 @@ def test_apply_provider_config_extracts_session_key_from_cookie_paste(client: Te
 # ---------------------------------------------------------------------------
 
 
-def test_delete_provider_config_removes_row(client: TestClient, session: Session) -> None:
-    """Per-account DELETE removes the row + its LatestUsage cards.
+def test_delete_provider_config_archives_row(client: TestClient, session: Session) -> None:
+    """Per-account DELETE soft-archives the row + evicts LatestUsage cards.
 
     Pins the contract that the webapp's ProviderDetailDialog Remove action
     depends on — without it, the front-end surfaces a 'Method Not Allowed'
-    toast (FastAPI 405). The endpoint also evicts LatestUsage rows so the
+    toast (FastAPI 405). The endpoint evicts LatestUsage rows so the
     dashboard doesn't show ghost cards for an account the operator just
     removed, and clears the in-memory token_cache entry so collectors
-    don't keep hitting the deleted account's credentials.
+    don't keep hitting the removed account's credentials.
+
+    PR #317 round-2 review note: we soft-archive (``row.archived=True``,
+    ``row.enabled=False``) rather than hard-delete because ``usage_events``
+    for the pair survives the operation, and the synthetic loop in
+    ``_fetch_fleet_view_sync`` (``app/api/endpoints/usage.py:240``) would
+    re-create the card from those events if the row weren't in the
+    ``archived_pairs`` skip-set. Soft-archive keeps the pair in the
+    skip-set and the dashboard filters it out cleanly.
     """
     # Seed a row.
     r = client.put(
@@ -626,11 +634,18 @@ def test_delete_provider_config_removes_row(client: TestClient, session: Session
     assert body["provider_id"] == "openrouter"
     assert body["account_id"] == "alice@example.com"
 
-    # Row is gone from provider_configs.
+    # Row is gone from the operator-facing listing (soft-archive hides it).
     listing = client.get("/api/v1/system/provider-configs").json()["providers"]
     openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
-    assert openrouter["account_count"] == 0
-    assert openrouter["accounts"] == []
+    by_id = {row["account_id"]: row for row in openrouter["accounts"]}
+    # PR #317 round-2 review: we soft-archive (``archived=True``) rather
+    # than hard-delete — the repo convention keeps archived rows visible
+    # in this listing so the operator can un-archive if they change
+    # their mind. The synthetic loop in /usage/fleet filters via the
+    # ``archived_pairs`` skip-set (app/api/endpoints/usage.py:236,260).
+    assert "alice@example.com" in by_id
+    assert by_id["alice@example.com"]["archived"] is True
+    assert by_id["alice@example.com"]["enabled"] is False
 
     # LatestUsage card was evicted.
     assert (
@@ -644,8 +659,40 @@ def test_delete_provider_config_removes_row(client: TestClient, session: Session
     )
 
     # Token-cache entry was cleared — collectors won't keep fetching
-    # credentials for the deleted account.
+    # credentials for the removed account.
     assert token_cache._cache.get("openrouter", {}).get("alice@example.com") is None
+
+    # PR #317 round-2 review: even with usage_events still holding the
+    # pair, _fetch_fleet_view_sync's synthetic loop must NOT re-create a
+    # card — that's the whole reason we soft-archive instead of
+    # hard-delete. Pin it end-to-end.
+    from app.models.db import UsageEvent
+
+    session.add(
+        UsageEvent(
+            provider_id="openrouter",
+            account_id="alice@example.com",
+            event_id="evt-still-in-history-1",
+            kind="message",
+            ts=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            role="assistant",
+            session_id="sess-after-delete",
+        )
+    )
+    session.commit()
+
+    r = client.get("/api/v1/usage/fleet")
+    fleet = r.json().get("fleet", r.json())  # accept both shapes
+    if isinstance(fleet, dict) and "entries" in fleet:
+        fleet_entries = fleet["entries"]
+    else:
+        fleet_entries = fleet
+    archived_alive = [
+        e
+        for e in fleet_entries
+        if e.get("provider_id") == "openrouter" and e.get("account_id") == "alice@example.com"
+    ]
+    assert archived_alive == [], f"archived pair resurfaced in fleet view: {archived_alive}"
 
 
 def test_delete_provider_config_returns_404_for_unknown_provider(
@@ -674,11 +721,13 @@ def test_delete_provider_config_returns_404_for_missing_row(
 
 def test_delete_provider_config_requires_admin_key(client: TestClient, monkeypatch) -> None:
     """With ADMIN_API_KEY configured and APP_HOST bound off-loopback,
-    unauthenticated requests are rejected.
+    unauthenticated requests are rejected AND no mutation occurs.
 
     Pins the auth gate that ``require_admin_key`` enforces on every
     state-changing endpoint — without it, an attacker on the same host
-    could delete arbitrary provider configs.
+    could delete arbitrary provider configs. The "no mutation on
+    rejection" half follows the pattern at
+    ``tests/integration/test_audit_log.py:124`` (Hermes suggestion #6).
 
     Patches via dotted paths into both ``app.core.config`` and
     ``app.core.security``: ``resolve_auth`` reads ``settings`` from the
@@ -688,11 +737,12 @@ def test_delete_provider_config_requires_admin_key(client: TestClient, monkeypat
     """
     # Seed a row first (the test fixture leaves ADMIN_API_KEY unset, so the
     # admin gate is effectively a no-op — we use the unauth path).
-    client.put(
+    r = client.put(
         "/api/v1/system/provider-config/openrouter/alice@example.com",
         json={"account_label": "Alice"},
         headers=_admin_headers(),
     )
+    assert r.status_code == 200
 
     # Flip auth on: bind off-loopback so the localhost trust bypass
     # doesn't mask the missing-X-Admin-Key rejection we want to assert.
@@ -709,6 +759,13 @@ def test_delete_provider_config_requires_admin_key(client: TestClient, monkeypat
     assert r.status_code in (401, 403), (
         f"unauthenticated DELETE must be rejected, got {r.status_code}"
     )
+
+    # Pin: the rejected request must NOT archive the row.
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+    by_id = {row["account_id"]: row for row in openrouter["accounts"]}
+    assert "alice@example.com" in by_id
+    assert by_id["alice@example.com"]["archived"] is False
 
 
 def test_delete_provider_config_default_row_removes_orphan(
@@ -752,8 +809,198 @@ def test_delete_provider_config_default_row_removes_orphan(
     )
     assert r.status_code == 200, f"DELETE failed: {r.text}"
 
-    # Only alice remains.
+    # Alice is still active; the default row is now soft-archived
+    # (archived=True, enabled=False) per the repo's hide-from-dashboard
+    # convention. The dashboard's /usage/fleet view filters archived
+    # pairs via ``archived_pairs`` so the ghost card never re-appears.
     listing = client.get("/api/v1/system/provider-configs").json()["providers"]
     openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
-    assert openrouter["account_count"] == 1
-    assert openrouter["accounts"][0]["account_id"] == "alice@example.com"
+    by_id = {row["account_id"]: row for row in openrouter["accounts"]}
+    assert by_id["alice@example.com"]["archived"] is False
+    assert by_id["alice@example.com"]["enabled"] is True
+    assert by_id["default"]["archived"] is True
+    assert by_id["default"]["enabled"] is False
+
+
+def test_delete_provider_config_clears_dangling_credential_tags(
+    client: TestClient, session: Session
+) -> None:
+    """PR #317 round-2 review warning: hard-deleting a provider_configs row
+    leaves ``credential_tags.account_id`` rows pointing at the removed
+    account, which the sidecar picks up via ``list_pending_payload`` and
+    re-asserts via ``/fleet/ingest``. The handler must clear any matching
+    tags atomically with the row removal.
+
+    Pins:
+      - ``CredentialTagRepo.delete_by_account`` is called for the pair.
+      - The row count is reported on the response payload so the operator
+        sees what was cleaned up.
+      - A second tag for the SAME provider but a DIFFERENT account stays
+        untouched (the bulk delete must not over-reach).
+    """
+    from app.models.db import CredentialTag
+    from app.services.credential_tags import CredentialTagRepo
+
+    # Seed the provider_config + a few CredentialTag rows.
+    r = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="openrouter",
+        credential_origin="env:OPENROUTER_API_KEY",
+        account_id="alice@example.com",
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="openrouter",
+        credential_origin="file:/etc/openrouter-cookie",
+        account_id="alice@example.com",
+    )
+    # Tag for a different account on the same provider — must survive.
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="openrouter",
+        credential_origin="env:OPENROUTER_API_KEY_BOB",
+        account_id="bob@example.com",
+    )
+    session.commit()
+
+    before = session.exec(
+        select(CredentialTag).where(
+            CredentialTag.provider_id == "openrouter",
+            CredentialTag.account_id == "alice@example.com",
+        )
+    ).all()
+    assert len(before) == 2
+
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tags_cleared"] == 2
+
+    # The alice tags are gone.
+    after = session.exec(
+        select(CredentialTag).where(
+            CredentialTag.provider_id == "openrouter",
+            CredentialTag.account_id == "alice@example.com",
+        )
+    ).all()
+    assert after == []
+
+    # The bob tag survives — bulk delete must not over-reach.
+    survivor = session.exec(
+        select(CredentialTag).where(
+            CredentialTag.provider_id == "openrouter",
+            CredentialTag.account_id == "bob@example.com",
+        )
+    ).first()
+    assert survivor is not None
+    assert survivor.credential_origin == "env:OPENROUTER_API_KEY_BOB"
+
+
+def test_delete_provider_config_writes_audit_row(client: TestClient, session: Session) -> None:
+    """PR #317 round-2 review suggestion: pin the audit-log row.
+
+    Every other admin mutation has an audit assertion
+    (tests/integration/test_audit_log.py:62-124); the new DELETE should
+    too. Also pins the negative case — a 404 does NOT leave a row,
+    matching ``test_failed_mutation_does_not_write_audit_row``.
+    """
+    from app.models.db import AuditLog
+
+    def _rows() -> list[AuditLog]:
+        return list(session.exec(select(AuditLog).order_by(AuditLog.ts)).all())
+
+    # Seed.
+    r = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    # 404 path: a request for a non-existent pair must NOT write an audit row.
+    pre_404 = _rows()
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/nonexistent@example.com",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 404
+    assert _rows() == pre_404, "failed DELETE must not write an audit row"
+
+    # 200 path: a successful DELETE writes exactly one row.
+    r = client.delete(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    rows = _rows()
+    assert len(rows) == 1
+    assert rows[0].action == "provider_config.delete"
+    assert rows[0].target_id == "openrouter/alice@example.com"
+    # Composite-key payload schema documented in PR #317.
+    assert rows[0].payload_json is not None
+    assert "tags_cleared" in rows[0].payload_json
+
+
+def test_delete_provider_config_drops_smart_collector(client: TestClient, session: Session) -> None:
+    """PR #317 round-2 review suggestion: pin the ``_sync_collectors(force=True)``
+    call. Without it, ``manager.smart_collectors`` keeps a SmartCollector
+    for the removed pair alive and the next poll re-writes a
+    ``LatestUsage`` card, undoing the eviction.
+
+    Mirrors the PUT helper's post-commit sync. Rather than mocking the
+    method (the singleton carries monkeypatch state from prior tests via
+    ``manager._sync_collectors`` instance attrs that conflict with class
+    patches — see test_debug_raw_endpoint), we register a real
+    ``SmartCollector`` under the deleted pair's key and assert the DELETE
+    prunes it via the natural ``_sync_collectors`` flow. End-to-end
+    behavior, no method patching.
+    """
+    from app.services.collector_manager import manager
+    from app.services.smart_collector import SmartCollector
+
+    # Use a dedicated provider+account so we don't collide with
+    # other tests' SmartCollectors on the openrouter key.
+    pid = "openrouter"
+    aid = "alice@example.com"
+
+    # Seed.
+    r = client.put(
+        f"/api/v1/system/provider-config/{pid}/{aid}",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    # Force-sync so the SmartCollector for (pid, aid) is registered
+    # before we ask the DELETE to prune it. SmartCollectors are keyed by
+    # provider_id in this manager, so we register one under pid.
+    collector = SmartCollector.__new__(SmartCollector)
+    collector.provider_id = pid
+    manager.smart_collectors[pid] = collector
+    assert pid in manager.smart_collectors
+
+    # Delete.
+    r = client.delete(
+        f"/api/v1/system/provider-config/{pid}/{aid}",
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200
+
+    # The DELETE handler must trigger a sync that prunes the just-removed
+    # pair from manager.smart_collectors — otherwise the next poll would
+    # re-write a LatestUsage card and undo the eviction.
+    assert pid not in manager.smart_collectors, (
+        f"DELETE must drop the SmartCollector for the removed pair; "
+        f"manager.smart_collectors={list(manager.smart_collectors)}"
+    )
