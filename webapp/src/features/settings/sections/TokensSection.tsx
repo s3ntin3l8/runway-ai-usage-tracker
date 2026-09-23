@@ -26,6 +26,7 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTokenHealth } from '@/features/home/queries';
 import { cn } from '@/lib/cn';
+import { maskAccountId } from '@/lib/accountDisplay';
 import { formatDuration } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 
@@ -407,7 +408,9 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
       <TD className="font-medium">{token.provider}</TD>
 
       {/* Identifier */}
-      <TD className="text-fg-subtle">{token.account_label || token.account_id}</TD>
+      <TD className="text-fg-subtle">
+        {token.account_label || maskAccountId(token.account_id)}
+      </TD>
 
       {/* Detail */}
       <TD className="text-fg-subtle">
@@ -555,7 +558,7 @@ function TokenCard({ token }: { token: TokenHealthEntry }) {
 
       {/* Identifier */}
       <p className="mt-1 text-[13px] text-fg-subtle">
-        {token.account_label || token.account_id}
+        {token.account_label || maskAccountId(token.account_id)}
       </p>
 
       {/* Credential types · origin */}

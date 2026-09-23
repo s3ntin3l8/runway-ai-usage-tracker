@@ -220,6 +220,35 @@ describe('AddProviderWizard', () => {
     );
   });
 
+  it('never surfaces the raw credential-hash account_id in the preview UI (#294)', async () => {
+    const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      suggested_account_id: hash,
+      suggested_label: null,
+      label_source: 'credential_hash',
+      already_exists: false,
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+
+    renderPreScopedWizard();
+    await userEvent.type(screen.getByLabelText(/API key/i), 'sk-opaque'); // pragma: allowlist secret
+
+    // Headline must be humanized, badge humanized — full hex never in the DOM.
+    expect(await screen.findByText('No identity in credential')).toBeInTheDocument();
+    expect(screen.getByText('hash')).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(hash))).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(hash);
+
+    // Full id is still used for the PUT (navigation/API path needs it).
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'anthropic',
+      hash,
+      expect.objectContaining({ enabled: true }),
+    );
+  });
+
   it('cuts strategies from the existing account when adding a 2nd account (#287 B2)', async () => {
     // Override the provider's first account to have a customized
     // collection_strategies — when the wizard opens (pre-scoped), the

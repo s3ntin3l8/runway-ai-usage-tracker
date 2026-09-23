@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import { maskAccountId } from '@/lib/accountDisplay';
 import {
   Select,
   SelectContent,
@@ -323,8 +324,8 @@ function UntaggedRow({
                     key={`${entry.provider_id}/${a.account_id}`}
                     value={a.account_id}
                   >
-                    {a.account_label || a.account_id}
-                    {a.account_label ? ` · ${a.account_id}` : ''}
+                    {a.account_label || maskAccountId(a.account_id)}
+                    {a.account_label ? ` · ${maskAccountId(a.account_id)}` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>

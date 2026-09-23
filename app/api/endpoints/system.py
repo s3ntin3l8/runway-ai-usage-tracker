@@ -950,7 +950,9 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     # Pre-compute the set of (provider_id, account_id) pairs that have at
     # least one row in latest_usage — drives the per-account `is_orphaned`
     # flag in the response. Single batched DISTINCT query instead of one
-    # subquery per row; O(1) lookup when building each entry.
+    # subquery per row; O(1) lookup when building each entry. Also used
+    # below as a durable fallback for passive providers whose credentials
+    # live only in token_cache / latest_usage (no provider_configs row).
     from app.models.db import LatestUsage
 
     live_keys: set[tuple[str, str]] = set()
@@ -958,7 +960,17 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         select(LatestUsage.provider_id, LatestUsage.account_id).distinct()
     ).all()
     for provider_id, account_id in live_rows:
-        live_keys.add((provider_id, account_id))
+        if account_id:
+            live_keys.add((provider_id, account_id))
+
+    # Active in-memory credentials (sidecar-discovered / server-local).
+    # Passive providers (antigravity, opencode-free, …) never get a
+    # provider_configs row, so the v2 list must union these in or they
+    # render as "unconfigured" while collecting fine (token health shows
+    # them working).
+    cache_accounts: dict[str, list[tuple[str, str | None]]] = {}
+    for c_pid, c_aid, c_name in await token_cache.get_all_active_accounts():
+        cache_accounts.setdefault(c_pid, []).append((c_aid, c_name))
 
     def _canonical_row(rows: list[ProviderConfig]) -> ProviderConfig | None:
         for r in rows:
@@ -1016,6 +1028,88 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             (p_id, r.account_id) in live_keys and r.account_id != "default" for r in provider_rows
         )
 
+        # Union DB rows with cache-only / latest_usage-only identities so
+        # passive providers (no provider_configs row by design) still show
+        # as configured. DB entries keep `source="config"`; synthetic ones
+        # are `source="discovered"`.
+        accounts_out: list[dict[str, Any]] = [
+            {
+                "account_id": r.account_id,
+                "enabled": r.enabled,
+                "archived": r.archived,
+                "api_key_set": bool(r.api_key_encrypted),
+                "session_cookie_set": bool(r.session_cookie_encrypted),
+                "account_label": r.account_label,
+                "poll_interval_seconds": r.poll_interval_seconds,
+                "collection_strategies": r.strategies,
+                # `is_orphaned` surfaces the orphaned-bookkeeping-row
+                # bug in the settings UI: #286 highlights
+                # `account_id="default"` rows that have been shadowed
+                # by another account on the same provider. The flag
+                # only fires when:
+                #   1. the row is the default sentinel
+                #   2. the row itself has no live data (missing
+                #      from `latest_usage`)
+                #   3. AND at least one *other* account on this
+                #      provider IS in `latest_usage` — without a
+                #      replacement, "just-configured" and
+                #      "collection currently failing" rows would be
+                #      flagged too, and pairing that with the
+                #      destructive Remove button would be a
+                #      data-loss prompt on the user's only credential.
+                "is_orphaned": (
+                    r.account_id == "default"
+                    and (p_id, r.account_id) not in live_keys
+                    and provider_has_live_sibling
+                ),
+                "source": "config",
+            }
+            for r in provider_rows
+        ]
+        seen_account_ids = {r.account_id for r in provider_rows}
+        for c_aid, c_name in cache_accounts.get(p_id, []):
+            if c_aid in seen_account_ids:
+                continue
+            seen_account_ids.add(c_aid)
+            accounts_out.append(
+                {
+                    "account_id": c_aid,
+                    "enabled": True,
+                    "archived": False,
+                    "api_key_set": False,
+                    "session_cookie_set": False,
+                    "account_label": c_name,
+                    "poll_interval_seconds": None,
+                    "collection_strategies": None,
+                    "is_orphaned": False,
+                    "source": "discovered",
+                }
+            )
+        # Durable fallback for passive providers only (no config rows ever):
+        # identities that produced usage but are no longer in the (30-min TTL)
+        # token cache — keeps passive status across a server restart until the
+        # sidecar re-pushes credentials. Skipped when config rows exist so a
+        # deleted account is not resurrected from historical latest_usage.
+        if not provider_rows:
+            for live_pid, live_aid in sorted(live_keys):
+                if live_pid != p_id or live_aid in seen_account_ids:
+                    continue
+                seen_account_ids.add(live_aid)
+                accounts_out.append(
+                    {
+                        "account_id": live_aid,
+                        "enabled": True,
+                        "archived": False,
+                        "api_key_set": False,
+                        "session_cookie_set": False,
+                        "account_label": None,
+                        "poll_interval_seconds": None,
+                        "collection_strategies": None,
+                        "is_orphaned": False,
+                        "source": "discovered",
+                    }
+                )
+
         results.append(
             {
                 "provider_id": p_id,
@@ -1039,44 +1133,12 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 # Strategy configuration
                 "supported_strategies": manager.get_supported_strategies(p_id),
                 "collection_strategies": db.strategies if db else None,
-                # Per-account breakdown (multi-account). Empty list when the
-                # provider has no rows; one entry per row when it does. The
+                # Per-account breakdown: DB rows first (config-backed), then
+                # cache/latest_usage-only identities (discovered). The
                 # canonical row above is the first entry whose account_id is
                 # "default", or the first entry overall when no default exists.
-                "accounts": [
-                    {
-                        "account_id": r.account_id,
-                        "enabled": r.enabled,
-                        "archived": r.archived,
-                        "api_key_set": bool(r.api_key_encrypted),
-                        "session_cookie_set": bool(r.session_cookie_encrypted),
-                        "account_label": r.account_label,
-                        "poll_interval_seconds": r.poll_interval_seconds,
-                        "collection_strategies": r.strategies,
-                        # `is_orphaned` surfaces the orphaned-bookkeeping-row
-                        # bug in the settings UI: #286 highlights
-                        # `account_id="default"` rows that have been shadowed
-                        # by another account on the same provider. The flag
-                        # only fires when:
-                        #   1. the row is the default sentinel
-                        #   2. the row itself has no live data (missing
-                        #      from `latest_usage`)
-                        #   3. AND at least one *other* account on this
-                        #      provider IS in `latest_usage` — without a
-                        #      replacement, "just-configured" and
-                        #      "collection currently failing" rows would be
-                        #      flagged too, and pairing that with the
-                        #      destructive Remove button would be a
-                        #      data-loss prompt on the user's only credential.
-                        "is_orphaned": (
-                            r.account_id == "default"
-                            and (p_id, r.account_id) not in live_keys
-                            and provider_has_live_sibling
-                        ),
-                    }
-                    for r in provider_rows
-                ],
-                "account_count": len(provider_rows),
+                "accounts": accounts_out,
+                "account_count": len(accounts_out),
             }
         )
 
@@ -1459,10 +1521,15 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     from app.core.cache import cache_clear
 
     cache_clear()
-    # Trigger immediate sync and collection to reflect changes in dashboard instantly
+    # Trigger immediate sync and collection to reflect changes in dashboard
+    # instantly. `force=True` bypasses the 60s throttle so a disable takes
+    # effect now; `collect_one` is skipped when no collector remains for
+    # this provider (every account disabled / archived) so we don't refresh
+    # cards for a provider the user just turned off.
     try:
-        await manager._sync_collectors()
-        await manager.collect_one(provider_id)
+        await manager._sync_collectors(force=True)
+        if any(key.startswith(f"{provider_id}:") for key in manager.smart_collectors):
+            await manager.collect_one(provider_id)
     except Exception as e:
         logger.warning(
             f"Failed to trigger sync after config update for {scrub_log(provider_id)}: {e}"

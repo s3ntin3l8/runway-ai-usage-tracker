@@ -39,9 +39,15 @@ def client_fixture(session: Session):
         return session
 
     app.dependency_overrides[get_session] = get_session_override
+    # list_provider_configs unions token_cache into `accounts` — clear the
+    # in-memory cache so empty-state assertions aren't polluted by prior tests.
+    from app.services.token_cache import token_cache
+
+    token_cache._cache.clear()
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+    token_cache._cache.clear()
 
 
 def _admin_headers() -> dict[str, str]:
@@ -62,6 +68,32 @@ def test_get_provider_configs_empty_accounts_field(client: TestClient):
     for p in providers:
         assert p["accounts"] == []
         assert p["account_count"] == 0
+
+
+def test_get_provider_configs_merges_cache_seeded_accounts(client: TestClient):
+    """Sidecar-seeded token_cache accounts (no provider_configs row) appear
+    as source="discovered" with account_count>=1 — the antigravity bug (#294)."""
+    import time
+
+    from app.services.token_cache import token_cache
+
+    # Seed directly (store() is async; TestClient may own the running loop).
+    token_cache._cache.setdefault("antigravity", {})["user@example.com"] = (
+        {"refresh_token": "ag-refresh-token"},  # pragma: allowlist secret
+        {"account_label": "User", "source": "sidecar"},
+        time.time(),
+    )
+    try:
+        r = client.get("/api/v1/system/provider-configs")
+        assert r.status_code == 200
+        antigravity = next(p for p in r.json()["providers"] if p["provider_id"] == "antigravity")
+        assert antigravity["account_count"] >= 1
+        discovered = [a for a in antigravity["accounts"] if a["source"] == "discovered"]
+        assert discovered, antigravity["accounts"]
+        assert any(a["account_id"] == "user@example.com" for a in discovered)
+        assert antigravity["account_count"] > 0
+    finally:
+        token_cache._cache.clear()
 
 
 def test_legacy_put_creates_default_row(client: TestClient):

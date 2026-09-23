@@ -29,6 +29,7 @@ import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Switch } from '@/components/ui/Switch';
 import { cn } from '@/lib/cn';
+import { maskAccountId } from '@/lib/accountDisplay';
 
 const PREVIEW_DEBOUNCE_MS = 300;
 
@@ -551,13 +552,23 @@ function PreviewBlock({
       : preview.label_source === 'credential_hash'
         ? 'Source: derived credential hash'
         : 'Source: fallback (no identity extractable)';
+  // Never surface the raw 64-hex credential-hash id as the headline — the
+  // backend intentionally withholds it as a label (`suggested_label: null`);
+  // falling through to `suggested_account_id` would print the full digest.
+  const headline =
+    preview.suggested_label ??
+    (preview.label_source === 'email'
+      ? preview.suggested_account_id
+      : preview.label_source === 'credential_hash'
+        ? 'No identity in credential'
+        : 'Default account');
+  const badgeLabel =
+    preview.label_source === 'credential_hash' ? 'hash' : preview.label_source;
   return (
     <Card className="flex flex-col gap-1.5 bg-surface-2 px-3 py-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] font-medium">
-          {preview.suggested_label ?? preview.suggested_account_id}
-        </span>
-        <Badge variant="accent">{preview.label_source}</Badge>
+        <span className="text-[12px] font-medium">{headline}</span>
+        <Badge variant="accent">{badgeLabel}</Badge>
       </div>
       <p className="text-[11px] text-fg-subtle">{sourceLabel}</p>
     </Card>
@@ -581,6 +592,7 @@ function Step3({
 }) {
   const queryClient = useQueryClient();
   const accountId = step2Result.preview.suggested_account_id;
+  const maskedAccountId = maskAccountId(accountId);
   const [label, setLabel] = useState<string>(step2Result.preview.suggested_label ?? '');
   const [pollInterval, setPollInterval] = useState('');
   const [strategies, setStrategies] = useState<{ id: string; enabled: boolean }[]>(() =>
@@ -609,7 +621,7 @@ function Step3({
       return putProviderConfig(provider.provider_id, accountId, body);
     },
     onSuccess: () => {
-      toast.success(`${provider.name} · ${accountId} saved`);
+      toast.success(`${provider.name} · ${label.trim() || maskedAccountId} saved`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
       onSaved();
@@ -626,9 +638,9 @@ function Step3({
             id="wiz-label"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder={accountId === 'default' ? 'Default account' : accountId}
+            placeholder={accountId === 'default' ? 'Default account' : maskedAccountId}
           />
-          <HelperText>Saved under account_id={accountId || 'default'}</HelperText>
+          <HelperText>Saved under account_id={maskedAccountId || 'default'}</HelperText>
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="wiz-poll">Poll interval (s)</Label>

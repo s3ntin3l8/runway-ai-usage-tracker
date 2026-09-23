@@ -7,6 +7,7 @@ import { Link } from 'react-router';
 import { KeyRound, TrendingUp, X } from 'lucide-react';
 import type { AnomalyEntry, TokenHealthEntry } from '@/api/types';
 import { cn } from '@/lib/cn';
+import { maskAccountId } from '@/lib/accountDisplay';
 
 interface BannersProps {
   tokens: TokenHealthEntry[] | undefined;
@@ -25,7 +26,7 @@ export function Banners({ tokens, anomalies }: BannersProps) {
         <Banner tone="critical" icon={<KeyRound className="size-4 shrink-0" aria-hidden />}>
           <span>
             {unhealthy.length === 1
-              ? `Credential for ${unhealthy[0].provider} (${unhealthy[0].account_label || unhealthy[0].account_id}) is ${unhealthy[0].status}.`
+              ? `Credential for ${unhealthy[0].provider} (${unhealthy[0].account_label || maskAccountId(unhealthy[0].account_id)}) is ${unhealthy[0].status}.`
               : `${unhealthy.length} credentials are expiring or expired.`}{' '}
             <Link to="/settings/tokens" className="font-medium underline underline-offset-2">
               Review tokens

@@ -602,6 +602,11 @@ export interface ProviderAccount {
   // flagged too, and pairing that with the destructive Remove button would
   // be a data-loss prompt on the user's only credential.
   is_orphaned?: boolean;
+  // Where this account entry came from. "config" = a provider_configs DB
+  // row; "discovered" = only present in token_cache / latest_usage (sidecar
+  // or local discovery — passive providers like antigravity never get a
+  // config row). Optional for backward compatibility with older servers.
+  source?: 'config' | 'discovered';
 }
 
 // Provider envelope returned by GET /api/v1/system/provider-configs. The

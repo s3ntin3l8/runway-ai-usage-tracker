@@ -31,6 +31,7 @@ import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
+import { maskAccountId } from '@/lib/accountDisplay';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { cardKind, cardPct, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
@@ -114,7 +115,7 @@ function SortableProviderCard({
   // account_id, so users with multiple accounts can tell cards apart at a glance.
   const accountLabel =
     gauge.account_label ??
-    (entry.account_id && entry.account_id !== 'default' ? entry.account_id : null);
+    (entry.account_id && entry.account_id !== 'default' ? maskAccountId(entry.account_id) : null);
 
   // Classify the card so each kind renders a fitting hero metric.
   const kind = cardKind(gauge);

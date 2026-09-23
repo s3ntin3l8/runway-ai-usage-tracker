@@ -9,6 +9,7 @@ import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { formatPct } from '@/lib/format';
+import { maskAccountId } from '@/lib/accountDisplay';
 import { cardPct, windowLabel } from '@/lib/quota';
 import { forecastLabel, type RiskItem } from './risk';
 
@@ -69,7 +70,7 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-semibold">{name}</p>
           <p className="truncate text-[11px] text-fg-subtle">
-            {gauge.account_label || entry.account_id}
+            {gauge.account_label || maskAccountId(entry.account_id)}
           </p>
         </div>
         {fLabel ? (

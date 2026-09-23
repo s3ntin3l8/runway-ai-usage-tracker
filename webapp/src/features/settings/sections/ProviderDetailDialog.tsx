@@ -18,7 +18,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Switch } from '@/components/ui/Switch';
-import { displayAccountName, accountSubtitle } from '@/lib/accountDisplay';
+import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
 import { ProviderAccountDialog } from './ProviderAccountDialog';
 
 interface ProviderDetailDialogProps {
@@ -49,10 +49,9 @@ export function ProviderDetailDialog({
   // Known debt (Hermes review on PR #294): the `Promise.all` here leaves
   // accounts split on a mid-batch failure — e.g. 4 of 5 PUTs land before
   // the 5th returns a 4xx. The toast surfaces the raw API error but does
-  // not roll back the partial state, so the UI shows a mix of enabled and
-  // disabled rows until the next refetch. Adding per-account rollback (or a
-  // server-side batch endpoint) is the durable fix; left for a follow-up
-  // so v1 can ship.
+  // not roll back the partial state. Invalidate runs in `onSettled` so a
+  // partial failure still refetches true DB state; full per-account
+  // rollback (or a server-side batch endpoint) is left for a follow-up.
   const queryClient = useQueryClient();
   const masterEnabled =
     provider !== null && provider.accounts.length > 0 && provider.accounts.every((a) => a.enabled);
@@ -72,7 +71,6 @@ export function ProviderDetailDialog({
       // fires, the parent state may have updated and `masterEnabled` reflects
       // the post-toggle value, not the user's intent. (Variable form of
       // useMutation's onSuccess callback.)
-      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       if (provider) {
         toast.success(
           provider.accounts.length === 0
@@ -82,6 +80,11 @@ export function ProviderDetailDialog({
       }
     },
     onError: (err) => toast.error(err.message),
+    // Refetch on success *and* failure so a mid-batch partial failure still
+    // shows the true DB state instead of the pre-toggle snapshot.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+    },
   });
 
   const remove = useMutation({
@@ -90,7 +93,7 @@ export function ProviderDetailDialog({
       return deleteProviderConfig(provider.provider_id, accountId);
     },
     onSuccess: (_data, accountId) => {
-      toast.success(`${provider?.name} · ${accountId} removed`);
+      toast.success(`${provider?.name} · ${maskAccountId(accountId)} removed`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       onAccountDeleted?.(provider?.provider_id ?? '', accountId);
       setPendingDelete(null);
@@ -189,9 +192,13 @@ export function ProviderDetailDialog({
                         {account.session_cookie_set ? (
                           <Badge variant="ok">cookie</Badge>
                         ) : null}
-                        <Badge variant={account.enabled ? 'accent' : 'neutral'}>
-                          {account.enabled ? 'enabled' : 'disabled'}
-                        </Badge>
+                        {account.source === 'discovered' ? (
+                          <Badge variant="ok">auto</Badge>
+                        ) : (
+                          <Badge variant={account.enabled ? 'accent' : 'neutral'}>
+                            {account.enabled ? 'enabled' : 'disabled'}
+                          </Badge>
+                        )}
                       </div>
                       <div className="relative">
                         <Button
@@ -268,7 +275,10 @@ export function ProviderDetailDialog({
               <div className="rounded-md border border-critical/30 bg-critical/5 p-3">
                 <p className="mb-2 text-[12px] text-critical">
                   Remove <strong>{displayAccountName(pendingDelete)}</strong> (
-                  <code className="font-mono text-[11px]">{pendingDelete.account_id}</code>)?
+                  <code className="font-mono text-[11px]">
+                    {maskAccountId(pendingDelete.account_id)}
+                  </code>
+                  )?
                   This deletes the configuration row and its stored credentials.
                 </p>
                 <div className="flex justify-end gap-2">
