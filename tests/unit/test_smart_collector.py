@@ -390,6 +390,7 @@ class TestSmartCollectorCacheTags:
         tagged = smart._tag_as_cached(data, time.time())
 
         assert tagged[0]["stale"] is True
+        assert tagged[0]["collection_failing"] is True
         assert "health" not in tagged[0]  # no residual health → leave absent
         assert "Collection failing" in tagged[0]["detail"]
         assert "[Cached" in tagged[0]["detail"]
@@ -415,6 +416,7 @@ class TestSmartCollectorCacheTags:
         tagged = smart._tag_as_cached(data, time.time())
 
         assert tagged[0]["stale"] is True
+        assert tagged[0]["collection_failing"] is True
         assert tagged[0]["health"] == "good"
         assert "Collection failing" in tagged[0]["detail"]
 
@@ -435,6 +437,7 @@ class TestSmartCollectorCacheTags:
         tagged = smart._tag_as_cached(data, time.time())
 
         assert tagged[0]["stale"] is True
+        assert tagged[0]["collection_failing"] is True
         assert tagged[0]["health"] == "critical"
 
     def test_below_stale_ceiling_does_not_degrade_card(self, mock_collector):
@@ -447,6 +450,7 @@ class TestSmartCollectorCacheTags:
         tagged = smart._tag_as_cached(data, time.time())
 
         assert tagged[0].get("stale") is not True
+        assert tagged[0].get("collection_failing") is not True
         assert "Collection failing" not in tagged[0]["detail"]
 
 

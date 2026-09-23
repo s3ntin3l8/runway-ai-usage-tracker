@@ -132,6 +132,17 @@ describe('ProviderGrid', () => {
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
+  it('treats collection_failing=true as stale for opacity and footer without stale or prefix', () => {
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ collection_failing: true }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    const cardEl = screen.getByRole('button', { name: /claude/i });
+    expect(cardEl.className).toContain('opacity-60');
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
   it('does not apply opacity to non-stale cards', () => {
     const items = buildRiskItems([entry()], []);
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);

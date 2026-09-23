@@ -98,12 +98,14 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     )
     if not is_error_card and incoming_has_fresh_quota:
         merged.pop("error_type", None)
-        # Sticky stale: full model_dump(exclude_none=True) always emits
-        # stale=False (bool default is not None), so the loop below already
-        # clears it on the real upsert path. The pop covers partial dicts
-        # (merge_card_json's documented API) that carry fresh quota but omit
-        # the key entirely — without it, residual stale=True would stick.
+        # Sticky stale/collection_failing: full model_dump(exclude_none=True)
+        # always emits stale=False + collection_failing=False (bool defaults are
+        # not None), so the loop below already clears them on the real upsert
+        # path. The pops cover partial dicts (merge_card_json's documented API)
+        # that carry fresh quota but omit the keys entirely — without them,
+        # residual stale=True / collection_failing=True would stick.
         merged.pop("stale", None)
+        merged.pop("collection_failing", None)
         if merged.get("data_source") == "error":
             merged.pop("data_source", None)
         if merged.get("remaining") == "ERR":

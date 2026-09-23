@@ -57,6 +57,7 @@ export interface LimitCard {
   msgs?: number | null;
   pct_used?: number | null;
   stale?: boolean;
+  collection_failing?: boolean;
 }
 
 // Live aggregation of usage_events over a quota window, split by model and

@@ -74,21 +74,30 @@ export function cardPct(card: LimitCard): number | null {
 
 // Card → semantic status token. Precedence: error cards > unlimited >
 // collector-asserted health > percentage thresholds.
-// Stale cards with a derivable percentage skip the health override so
+// Stale cards with an explicit pct_used skip the health override so
 // old-but-valid quota data doesn't trigger false at-risk alerts for
-// occasionally-used providers. Balance cards (no pct) retain
-// collector-asserted health even when stale. The Collection-failing detail
-// prefix is treated the same as `stale` so residual pre-#293 rows (health
-// baked critical, no stale flag) leave the at-risk rail even before the
-// startup scrub rewrites them.
+// occasionally-used providers. Used/limit-only cards (no explicit pct_used)
+// and balance cards retain collector-asserted critical health even when
+// stale, matching the backend reconcile/scrub gate (which only rewrites
+// health when pct_used is present). The Collection-failing detail prefix is
+// treated the same as `stale` so residual pre-#293 rows (health baked
+// critical, no stale flag) leave the at-risk rail even before the startup
+// scrub rewrites them.
+// cardStale() prefers the structured fields (stale / collection_failing);
+// the detail-regex is a migration fallback for residual rows not yet scrubbed.
 export function cardStale(card: LimitCard): boolean {
-  return card.stale === true || /collection failing/i.test(card.detail ?? '');
+  return (
+    card.stale === true ||
+    card.collection_failing === true ||
+    // Migration fallback: residual pre-flag rows (prefix in detail, flag absent).
+    /collection failing/i.test(card.detail ?? '')
+  );
 }
 
 export function cardStatus(card: LimitCard): QuotaStatus {
   if (card.error_type) return 'critical';
   if (card.is_unlimited) return 'unlimited';
-  if (card.health === 'critical' && !(cardStale(card) && cardPct(card) != null)) return 'critical';
+  if (card.health === 'critical' && !(cardStale(card) && card.pct_used != null)) return 'critical';
   // Warning is only rewritten when an explicit pct_used contradicts it —
   // spend cards (from_spend → warning at remaining <= $5) ship used/limit
   // with no pct_used, and their derived cardPct must not suppress the

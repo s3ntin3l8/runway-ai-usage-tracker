@@ -64,6 +64,7 @@ def test_scrub_sets_stale_and_reconciles_residual_critical():
         _scrub_residual_stale_health(conn)
         card = _read(conn, row_id)
         assert card["stale"] is True
+        assert card["collection_failing"] is True
         assert card["health"] == "good"
     finally:
         conn.close()
@@ -117,6 +118,7 @@ def test_scrub_ignores_healthy_rows_without_failure_detail():
         _scrub_residual_stale_health(conn)
         card = _read(conn, row_id)
         assert "stale" not in card
+        assert "collection_failing" not in card
         assert card["health"] == "good"
     finally:
         conn.close()
@@ -149,6 +151,7 @@ def test_init_db_runs_residual_scrub(monkeypatch):
         with engine.connect() as verify_conn:
             card = _read(verify_conn, row_id)
         assert card["stale"] is True
+        assert card["collection_failing"] is True
         assert card["health"] == "good"
     finally:
         engine.dispose()

@@ -117,6 +117,25 @@ describe('atRiskItems', () => {
     const rail = atRiskItems(items);
     expect(rail.map((i) => i.entry.provider_id)).toEqual(['hot']);
   });
+
+  it('excludes residual critical 0% cards carrying collection_failing without detail prefix', () => {
+    // Flag-only residual: collection_failing=true, no stale flag, no prefix.
+    const residual: FleetEntry = {
+      provider_id: 'ollama',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Ollama',
+        pct_used: 0,
+        health: 'critical',
+        collection_failing: true,
+      } as LimitCard,
+      secondary_limits: [],
+    };
+    const items = buildRiskItems([residual, entry('hot', 96)], []);
+    expect(items[0].level).toBe('ok');
+    const rail = atRiskItems(items);
+    expect(rail.map((i) => i.entry.provider_id)).toEqual(['hot']);
+  });
 });
 
 describe('applyLayoutOrder', () => {

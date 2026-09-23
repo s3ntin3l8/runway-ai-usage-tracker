@@ -342,12 +342,13 @@ class SmartCollector:
         above), the tag stays truthful instead of freezing at whatever value
         it happened to have the first time this card was cache-served.
 
-        Past `STALE_CEILING_SECONDS`, the card is flagged with `stale=True`
-        and a "Collection failing" prefix so a long-running outage reads as
-        visibly degraded rather than confidently healthy. Residual
-        collector-baked `health` that no longer matches the percentage is
-        reconciled (via `HealthCalculator.reconcile_residual_health`) so the
-        frontend stale gate can drop false at-risk alerts.
+        Past `STALE_CEILING_SECONDS`, the card is flagged with `stale=True`,
+        `collection_failing=True`, and a "Collection failing" detail prefix so
+        a long-running outage reads as visibly degraded rather than
+        confidently healthy. Residual collector-baked `health` that no longer
+        matches the percentage is reconciled (via
+        `HealthCalculator.reconcile_residual_health`) so the frontend stale
+        gate can drop false at-risk alerts.
 
         Args:
             result: Original result from collector
@@ -374,6 +375,7 @@ class SmartCollector:
                 card_copy["data_source"] = "cache"
             if is_stale:
                 card_copy["stale"] = True
+                card_copy["collection_failing"] = True
                 card_copy["detail"] = f"⚠ Collection failing — {card_copy['detail']}"
                 # Pre-#293 caches baked health="critical" into last_result as the
                 # stale marker. Don't re-assert it at a percentage that doesn't
