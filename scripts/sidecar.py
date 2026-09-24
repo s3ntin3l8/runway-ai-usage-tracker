@@ -1005,6 +1005,7 @@ def queue_flush(
 ) -> int:
     """Flush all queued payloads to server. Returns count of successful sends."""
     queue_dir = get_queue_dir()
+    dir_fd = -1
     if os.name == "nt" and not queue_dir.exists():
         return 0
 
@@ -1018,7 +1019,7 @@ def queue_flush(
             logging.error(f"Failed to access queue directory: {e}")
             return 0
     if not queue_files:
-        if os.name != "nt":
+        if dir_fd >= 0:
             os.close(dir_fd)
         return 0
 
@@ -1042,7 +1043,7 @@ def queue_flush(
             for line in lines:
                 if stop_event and stop_event.is_set():
                     logging.info("queue_flush: stop requested, aborting flush")
-                    if os.name != "nt":
+                    if dir_fd >= 0:
                         os.close(dir_fd)
                     return count
                 line = line.strip()
@@ -1095,7 +1096,7 @@ def queue_flush(
                 f"Failed to process queue file {getattr(queue_file, 'name', queue_file)}: {e}"
             )
 
-    if os.name != "nt":
+    if dir_fd >= 0:
         os.close(dir_fd)
 
     return count
