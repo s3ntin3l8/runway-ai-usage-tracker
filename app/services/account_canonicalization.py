@@ -30,11 +30,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import CursorResult, text
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session
 
-from app.models.db import UsageEvent, UsagePeriodRollup
 from app.services.account_identity import canonical_account_id
-from app.services.period_rollups import update_rollups_for_event
+from app.services.period_rollups import rebuild_rollups_for_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -82,28 +81,6 @@ def _non_canonical_pairs(session: Session, table: str) -> list[tuple[str, str, s
         if canon != raw:
             out.append((provider_id, raw, canon))
     return out
-
-
-def _rebuild_rollups(session: Session, pairs: set[tuple[str, str]]) -> None:
-    """Recompute rollups for ``(provider, canonical account)`` pairs from events."""
-    for provider_id, account_id in sorted(pairs):
-        session.exec(
-            delete(UsagePeriodRollup).where(
-                col(UsagePeriodRollup.provider_id) == provider_id,
-                col(UsagePeriodRollup.account_id) == account_id,
-            )
-        )
-        events = session.exec(
-            select(UsageEvent)
-            .where(
-                UsageEvent.provider_id == provider_id,
-                UsageEvent.account_id == account_id,
-                UsageEvent.kind == "message",
-            )
-            .order_by(col(UsageEvent.ts))
-        ).all()
-        for ev in events:
-            update_rollups_for_event(session, ev)
 
 
 def canonicalize_stored_account_ids(session: Session) -> CanonicalizationReport:
@@ -160,7 +137,7 @@ def canonicalize_stored_account_ids(session: Session) -> CanonicalizationReport:
                 report.conflicts[table] = report.conflicts.get(table, 0) + leftover
 
     if rollup_pairs:
-        _rebuild_rollups(session, rollup_pairs)
+        rebuild_rollups_for_pairs(session, rollup_pairs)
         report.rebuilt_pairs = sorted(rollup_pairs)
 
     if report.changed or rollup_pairs:
