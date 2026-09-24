@@ -29,6 +29,7 @@ from app.models.db import (
 )
 from app.models.schemas import LimitCard, SidecarDownloadsResponse
 from app.services import audit_log
+from app.services.account_identity import canonical_account_id
 from app.services.collector_manager import manager
 from app.services.credential_provider import CredentialProvider
 from app.services.sidecar_downloads import sidecar_downloads
@@ -1181,6 +1182,9 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     if provider_id not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
 
+    # Store under the canonical form every other write path uses, so a
+    # typed ``Alice@X.com`` lines up with the cards/events for alice@x.com.
+    account_id = canonical_account_id(account_id)
     await _apply_provider_config_update(session, provider_id, account_id, body)
     return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
 
@@ -1242,6 +1246,16 @@ async def delete_provider_config_for_account(
             ProviderConfig.account_id == account_id,
         )
     ).first()
+    if row is None and canonical_account_id(account_id) != account_id:
+        # Accept a non-canonical spelling of a canonical row (PUT stores
+        # canonical ids); exact match above still wins for legacy rows.
+        account_id = canonical_account_id(account_id)
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == provider_id,
+                ProviderConfig.account_id == account_id,
+            )
+        ).first()
     if row is None:
         raise HTTPException(
             status_code=404,

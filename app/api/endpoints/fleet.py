@@ -736,19 +736,24 @@ async def list_pending_credential_tags(
 
 
 def _get_active_identities(session: Session) -> dict[str, str]:
-    """Map provider_id to the most recent 'real' account_id seen in LatestUsage.
+    """Map provider_id to its single 'real' account_id seen in LatestUsage.
 
     Used by sidecars to discover their identity when local logs are anonymous.
     Kept as a single-value-per-provider dict for backward compat with existing
     sidecars. Multi-account consumers should read ``_get_active_identity_lists``
     (the new field) for the full per-provider list.
     """
-    rows = _active_identity_rows(session)
-    identities: dict[str, str] = {}
-    for pid, aid in rows:
-        if pid not in identities:
-            identities[pid] = aid
-    return identities
+    from app.services.credential_tags import live_sidecar_ids
+
+    # Old sidecars prefer this value over their own local discovery, so it
+    # must never name another host's account: ship it only when there is at
+    # most one live sidecar AND the provider has exactly one real account.
+    # Anything else resolves through the per-sidecar tag / auto-hint path.
+    if len(live_sidecar_ids(session)) > 1:
+        return {}
+    return {
+        pid: aids[0] for pid, aids in _get_active_identity_lists(session).items() if len(aids) == 1
+    }
 
 
 def _get_active_identity_lists(session: Session) -> dict[str, list[str]]:

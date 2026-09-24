@@ -139,6 +139,13 @@ def init_db() -> None:
         if inserted:
             logger.info(f"Seeded provider_pricing with {inserted} new rows")
 
+    # Rewrite legacy non-canonical account_ids (e.g. mixed-case emails that
+    # split one account into card + events-only twins). Idempotent.
+    from app.services.account_canonicalization import canonicalize_stored_account_ids
+
+    with Session(engine) as session:
+        canonicalize_stored_account_ids(session)
+
 
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, sql_type_with_default)

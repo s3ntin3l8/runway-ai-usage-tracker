@@ -18,6 +18,29 @@ def normalize_sidecar_id(raw: str) -> str:
     return h.split(".", 1)[0].lower()
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
+
+
+def canonical_account_id(raw: str | None) -> str:
+    """Canonical storage form of an already-resolved ``account_id``.
+
+    The single rule every write path applies (cards via
+    :func:`resolve_account_id`, events on ingest, token-cache keys, operator
+    tags) so the same account never splits on formatting alone:
+
+    - ``None`` / blank → ``"default"``
+    - email-shaped → stripped + lowercased (emails are case-insensitive)
+    - anything else → stripped, otherwise verbatim (opaque ids and hashes
+      are case-sensitive and already stable)
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "default"
+    if _EMAIL_RE.match(s):
+        return s.lower()
+    return s
+
+
 def resolve_account_id(
     provider_id: str,  # reserved for future provider-specific rules
     raw_account_id: str | None,
@@ -25,21 +48,17 @@ def resolve_account_id(
     credential_hint: str | None = None,
 ) -> str:
     """Canonical account_id used by both LatestUsage and CumulativeUsage."""
-    email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
-
     # Pre-process "email @ org" format (e.g. "user@company.com @ MyOrg")
     label = account_label
     if label and " @ " in label:
         label = label.split(" @ ")[0].strip()
 
-    if label and re.match(email_pattern, label):
+    if label and _EMAIL_RE.match(label):
         return label.lower()
 
-    if raw_account_id and raw_account_id != "default" and re.match(email_pattern, raw_account_id):
-        return raw_account_id.lower()
-
-    if raw_account_id and raw_account_id != "default":
-        return raw_account_id
+    raw = canonical_account_id(raw_account_id)
+    if raw != "default":
+        return raw
 
     if credential_hint:
         # PBKDF2-HMAC-SHA256 of the credential — derives an opaque

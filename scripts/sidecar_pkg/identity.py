@@ -1,6 +1,7 @@
 """Sidecar identity helpers.
 
-Deliberate mirror of ``app.services.account_identity.normalize_sidecar_id`` so
+Deliberate mirrors of ``app.services.account_identity.normalize_sidecar_id``
+and ``canonical_account_id`` so
 the frozen sidecar binary stays self-contained and never imports ``app.*`` (same
 pattern as ``update_check.py`` ↔ ``app/services/sidecar_version_checker.py``).
 Keep the two copies in sync.
@@ -25,3 +26,19 @@ def normalize_sidecar_id(raw: str) -> str:
     if not h or _IPV4.match(h):
         return h.lower()
     return h.split(".", 1)[0].lower()
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
+
+
+def canonical_account_id(raw: str | None) -> str:
+    """Canonical ``account_id``: blank → ``"default"``, emails lowercased,
+    anything else stripped but otherwise verbatim. Mirrors the server's rule
+    so the sidecar's stamps, watermark keys and hint comparisons agree with
+    the ids the server stores."""
+    s = (raw or "").strip()
+    if not s:
+        return "default"
+    if _EMAIL_RE.match(s):
+        return s.lower()
+    return s

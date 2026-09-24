@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from app.core.utils import IdentityExtractor, scrub_log
+from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,9 @@ class TokenCache:
 
         if not account_id:
             account_id = self._derive_account_id(tokens)
+        # Key by the canonical form so a sidecar-pushed ``Alice@X.com`` and
+        # the collector's ``alice@x.com`` share one cache slot.
+        account_id = canonical_account_id(account_id)
 
         async with self._lock:
             if provider not in self._cache:
@@ -169,6 +173,7 @@ class TokenCache:
         self, provider: str, account_id: str, name: str | None = None
     ) -> None:
         """Update metadata (like account name/email) for an existing cache entry."""
+        account_id = canonical_account_id(account_id)
         async with self._lock:
             if provider in self._cache and account_id in self._cache[provider]:
                 tokens, metadata, timestamp = self._cache[provider][account_id]
@@ -210,6 +215,7 @@ class TokenCache:
         """
         Get tokens for a specific account, or the first available if account_id is None.
         """
+        account_id = canonical_account_id(account_id) if account_id else None
         async with self._lock:
             self._clear_expired_unlocked()
 
@@ -241,6 +247,7 @@ class TokenCache:
         """
         Get tokens and metadata for a specific account.
         """
+        account_id = canonical_account_id(account_id) if account_id else None
         async with self._lock:
             self._clear_expired_unlocked()
 
@@ -343,6 +350,7 @@ class TokenCache:
         Returns:
             bool: True if removed, False if not found.
         """
+        account_id = canonical_account_id(account_id)
         async with self._lock:
             if provider in self._cache and account_id in self._cache[provider]:
                 del self._cache[provider][account_id]
