@@ -1805,7 +1805,7 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
         # Every path-list parser (anthropic / chatgpt / gemini) takes the
         # whole ``list[Path]`` — passing one ``Path`` at a time made the
         # parser iterate a PosixPath and raise ``TypeError`` (issue #320).
-        paths_list = list(paths) if isinstance(paths, (list, tuple)) else [paths]
+        paths_list = list(paths)
         since = watermark.last_pushed(__extract_provider_id(parser), account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
