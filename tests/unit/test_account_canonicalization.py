@@ -172,8 +172,13 @@ def _lifetime_input(session: Session, account_id: str) -> int:
 
 
 def test_repair_merges_case_split_events_and_rebuilds_rollups(session: Session):
+    from sqlalchemy import text
+
     from app.services.period_rollups import update_rollups_for_event
 
+    # Simulate a pre-migration DB (the (provider, event_id) unique index
+    # would otherwise reject the legacy twin outright).
+    session.execute(text("DROP INDEX uq_usage_events_provider_event"))
     # e1 exists under both spellings (the double count); e2 only mixed-case.
     for ev in (
         _event("alice@example.com", "e1"),

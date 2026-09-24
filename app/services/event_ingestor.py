@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent
@@ -27,6 +27,8 @@ class IngestResult:
     events_received: int = 0
     events_inserted: int = 0
     events_duplicate: int = 0
+    # Already stored under another account and moved to the pushed one.
+    events_reattributed: int = 0
     windows_closed: int = 0
 
 
@@ -63,6 +65,8 @@ class EventIngestor:
                     )
                     if self._try_insert_event(ev):
                         result.events_inserted += 1
+                    elif self._reattribute(ev, rollups=False):
+                        result.events_reattributed += 1
                     else:
                         result.events_duplicate += 1
                     continue  # error events don't roll up
@@ -130,7 +134,10 @@ class EventIngestor:
                     web_fetch_requests=push.web_fetch_requests,
                 )
                 if not self._try_insert_event(ev):
-                    result.events_duplicate += 1
+                    if self._reattribute(ev, rollups=True):
+                        result.events_reattributed += 1
+                    else:
+                        result.events_duplicate += 1
                     continue
                 # Rollups share the same outer transaction; if anything past
                 # this point raises, the whole batch rolls back.
@@ -143,13 +150,47 @@ class EventIngestor:
         self.session.commit()
         return result
 
+    def _reattribute(self, incoming: UsageEvent, *, rollups: bool) -> bool:
+        """Move an already-stored event to ``incoming.account_id`` if warranted.
+
+        Called after the insert hit the ``(provider_id, event_id)`` unique
+        index. The event is re-attributed only when the **same sidecar**
+        now reports it under a different account — that host's identity for
+        the credential changed (operator retag, a tag hint arrived, a hint
+        was withdrawn), and the host is authoritative for its own events.
+        A different sidecar sending the same event (e.g. a shared home
+        directory) keeps the first attribution, so two hosts can't flip it
+        back and forth. Rollups move with the event. Returns True when the
+        row moved.
+        """
+        existing = self.session.exec(
+            select(UsageEvent).where(
+                UsageEvent.provider_id == incoming.provider_id,
+                UsageEvent.event_id == incoming.event_id,
+            )
+        ).first()
+        if (
+            existing is None
+            or existing.account_id == incoming.account_id
+            or existing.sidecar_id != incoming.sidecar_id
+        ):
+            return False
+        if rollups and existing.kind == "message":
+            update_rollups_for_event(self.session, existing, sign=-1)
+        existing.account_id = incoming.account_id
+        self.session.add(existing)
+        self.session.flush()
+        if rollups and existing.kind == "message":
+            update_rollups_for_event(self.session, existing)
+        return True
+
     def _try_insert_event(self, ev: UsageEvent) -> bool:
         """Insert one event inside its own savepoint.
 
-        Returns True on a new row, False when the (provider, account,
-        event_id) unique constraint rejected the row as a duplicate. The
-        savepoint scope keeps a duplicate from invalidating prior events
-        already staged in the outer transaction.
+        Returns True on a new row, False when the ``(provider_id, event_id)``
+        unique index rejected the row as already stored (see
+        :meth:`_reattribute`). The savepoint scope keeps a duplicate from
+        invalidating prior events already staged in the outer transaction.
         """
         sp = self.session.begin_nested()
         try:

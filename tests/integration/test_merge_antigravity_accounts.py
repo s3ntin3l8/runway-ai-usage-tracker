@@ -40,6 +40,11 @@ def engine():
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     SQLModel.metadata.create_all(eng)
+    # Model a pre-migration DB: the scripts under test clean up
+    # cross-account duplicate events that the (provider_id, event_id)
+    # unique index now prevents on fresh databases.
+    with eng.begin() as _conn:
+        _conn.exec_driver_sql("DROP INDEX uq_usage_events_provider_event")
     with Session(eng) as s:
         seed_pricing_table(s)
         s.commit()

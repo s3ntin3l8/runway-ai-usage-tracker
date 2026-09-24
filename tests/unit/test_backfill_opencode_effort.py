@@ -17,6 +17,11 @@ def _session():
     engine = create_engine("sqlite://", connect_args=SQLITE_CONNECT_ARGS, poolclass=StaticPool)
     configure_sqlite_engine(engine)
     SQLModel.metadata.create_all(engine)
+    # Model a pre-migration DB: the scripts under test clean up
+    # cross-account duplicate events that the (provider_id, event_id)
+    # unique index now prevents on fresh databases.
+    with engine.begin() as _conn:
+        _conn.exec_driver_sql("DROP INDEX uq_usage_events_provider_event")
     return Session(engine)
 
 
@@ -265,6 +270,11 @@ def test_run_end_to_end_dry_run_and_apply(tmp_path, monkeypatch):
     test_engine = create_engine(f"sqlite:///{tmp_path}/runway.db", connect_args=SQLITE_CONNECT_ARGS)
     configure_sqlite_engine(test_engine)
     SQLModel.metadata.create_all(test_engine)
+    # Model a pre-migration DB: the scripts under test clean up
+    # cross-account duplicate events that the (provider_id, event_id)
+    # unique index now prevents on fresh databases.
+    with test_engine.begin() as _conn:
+        _conn.exec_driver_sql("DROP INDEX uq_usage_events_provider_event")
     monkeypatch.setattr(bf, "engine", test_engine)
 
     session = Session(test_engine)

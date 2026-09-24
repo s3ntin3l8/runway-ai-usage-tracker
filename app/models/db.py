@@ -212,8 +212,12 @@ class LatestUsage(SQLModel, table=True):  # type: ignore[call-arg]
 class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     """One assistant-message-level usage record. Source of truth.
 
-    Idempotency: (provider_id, account_id, event_id) is UNIQUE — re-pushing
-    the same log entry from a sidecar is a no-op.
+    Idempotency: (provider_id, event_id) is UNIQUE — re-pushing the same log
+    entry from a sidecar is a no-op, and re-pushing it under a *different*
+    account (the operator retagged the credential, a hint arrived) moves the
+    existing row instead of counting it twice (see ``EventIngestor``). The
+    older (provider_id, account_id, event_id) constraint is kept — it is
+    implied by the new index and dropping it would mean rebuilding the table.
     """
 
     __tablename__ = "usage_events"
@@ -224,6 +228,7 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
             "event_id",
             name="uq_usage_events_identity",
         ),
+        Index("uq_usage_events_provider_event", "provider_id", "event_id", unique=True),
         Index("ix_usage_events_account_ts", "provider_id", "account_id", "ts"),
         Index("ix_usage_events_account_model_ts", "provider_id", "account_id", "model_id", "ts"),
         Index("ix_usage_events_sidecar_ts", "sidecar_id", "ts"),

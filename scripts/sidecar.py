@@ -1664,6 +1664,14 @@ def _get_credential_cache() -> Any:
     return _CREDENTIAL_CACHE
 
 
+# (event provider_id, event_id) → (iterating provider_id, account_id) for
+# events whose extractor retags them to another provider (opencode →
+# minimax / ollama / opencode-*). The extractor's watermark is read under the
+# *iterating* key, so after a successful push that key must advance too —
+# otherwise a host whose opencode events all retag re-extracts the whole
+# bootstrap window every cycle. Rebuilt on every extraction.
+_EVENT_WATERMARK_ALIASES: dict[tuple[str, str], tuple[str, str]] = {}
+
 # Provider IDs that have event extractors. Per-account iteration loops over
 # each of these and stamps events with the resolved ``account_id``.
 _EVENT_PROVIDERS: frozenset[str] = frozenset(
@@ -1748,6 +1756,13 @@ def _extract_events_for_provider(
         if evts:
             logging.info(f"  [{provider_id}/{account_id}] {len(evts)} new event(s)")
             out_events.extend(e.model_dump(mode="json") for e in evts)
+            for e in evts:
+                ev_provider = getattr(e, "provider_id", provider_id)
+                if ev_provider != provider_id or getattr(e, "account_id", account_id) != account_id:
+                    _EVENT_WATERMARK_ALIASES[(ev_provider, e.event_id)] = (
+                        provider_id,
+                        account_id,
+                    )
 
 
 def _build_canonical_hints_for_provider(
@@ -2681,6 +2696,7 @@ def run_collection(
 
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
+    _EVENT_WATERMARK_ALIASES.clear()
     error_count = 0
 
     if providers is None:
@@ -3164,6 +3180,11 @@ class DaemonRunner:
                                         ts_str.replace("Z", "+00:00")
                                     )
                                     wm.advance(ev["provider_id"], ev["account_id"], ts)
+                                    alias = _EVENT_WATERMARK_ALIASES.get(
+                                        (ev["provider_id"], ev.get("event_id", ""))
+                                    )
+                                    if alias is not None:
+                                        wm.advance(alias[0], alias[1], ts)
                                 except Exception:
                                     logging.debug(
                                         "Failed to advance event watermark", exc_info=True

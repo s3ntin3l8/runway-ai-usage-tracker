@@ -146,6 +146,14 @@ def init_db() -> None:
     with Session(engine) as session:
         canonicalize_stored_account_ids(session)
 
+    # Account-independent event identity: collapse cross-account duplicate
+    # events (retag double counts), then add the (provider_id, event_id)
+    # unique index. No-op once the index exists.
+    from app.services.event_identity_migration import migrate_to_provider_event_identity
+
+    with Session(engine) as session:
+        migrate_to_provider_event_identity(session)
+
 
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column, sql_type_with_default)

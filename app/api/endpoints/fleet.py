@@ -236,7 +236,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             ingest_result = ingestor.ingest(payload.events, sidecar_id=payload.sidecar_id)
             logger.info(
                 f"Ingested {ingest_result.events_inserted} events "
-                f"({ingest_result.events_duplicate} dup) from {payload.sidecar_id or 'unknown'}"
+                f"({ingest_result.events_duplicate} dup, "
+                f"{ingest_result.events_reattributed} re-attributed) "
+                f"from {payload.sidecar_id or 'unknown'}"
             )
         except Exception as e:
             logger.error(f"Event ingestion failed: {e}")
@@ -301,6 +303,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "events_received": ingest_result.events_received if ingest_result else 0,
         "events_inserted": ingest_result.events_inserted if ingest_result else 0,
         "events_duplicate": ingest_result.events_duplicate if ingest_result else 0,
+        "events_reattributed": ingest_result.events_reattributed if ingest_result else 0,
         "windows_closed": ingest_result.windows_closed if ingest_result else 0,
         "poll_providers": poll_providers,
         "trigger": trigger,
