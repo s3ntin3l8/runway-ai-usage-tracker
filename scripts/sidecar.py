@@ -3333,6 +3333,37 @@ class DaemonRunner:
         logging.info("DaemonRunner loop exited.")
 
 
+def _cli_pair(values: list[str], config_path: str | None) -> int:
+    """``--pair``: redeem a one-time code and write api_url/api_key. Exit code."""
+    from scripts.sidecar_pkg import pairing
+    from scripts.sidecar_pkg.identity import normalize_sidecar_id
+
+    try:
+        if len(values) == 1 and pairing.is_pair_url(values[0]):
+            target = pairing.parse_pair_url(values[0])
+        elif len(values) == 2:
+            target = pairing.PairTarget(
+                server=pairing.normalize_server(values[0]),
+                code=pairing.normalize_code(values[1]),
+            )
+        else:
+            print("usage: --pair 'runway-sidecar://pair?…'  |  --pair SERVER_URL CODE")
+            return 2
+        # The CLI invocation itself is the explicit confirmation, but still say
+        # out loud where this machine's data will go.
+        print(f"Pairing with {target.server} …")
+        creds = pairing.redeem(target, hostname=normalize_sidecar_id(socket.gethostname()))
+    except pairing.PairingError as exc:
+        print(f"Pairing failed: {exc}")
+        return 1
+    ensure_dirs()
+    path = Path(config_path) if config_path else get_sidecar_dir() / "config.json"
+    pairing.write_config(path, creds["api_url"], creds["api_key"])
+    print(f"Paired. Wrote api_url={creds['api_url']} and the ingest key to {path}")
+    print("Restart the sidecar (or its service) to start reporting.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Runway Sidecar")
     parser.add_argument("--config", help="Path to config.json")
@@ -3346,11 +3377,31 @@ def main():
         help="Download, verify and install the latest build, then exit",
     )
     parser.add_argument(
+        "--pair",
+        nargs="+",
+        metavar="LINK_OR_SERVER",
+        help=(
+            "Pair with a Runway server using a one-time code from the dashboard "
+            "(Fleet → Add sidecar → Pair): either the runway-sidecar://pair?… link, "
+            "or SERVER_URL CODE. Writes api_url/api_key to the config, then exits."
+        ),
+    )
+    parser.add_argument(
+        "--rollback",
+        action="store_true",
+        help="Swap the build kept by the last self-update back in, then exit",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {_SIDECAR_VERSION}",
     )
     args = parser.parse_args()
+
+    if args.pair:
+        # Before load_config(): a fresh machine has no usable config yet, and
+        # pairing is exactly what creates one.
+        sys.exit(_cli_pair(args.pair, args.config))
 
     config = load_config(args.config)
     setup_logging(config.get("log_level", "INFO"), config.get("log_file_enabled", True))
@@ -3364,6 +3415,10 @@ def main():
         channel = os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
         ok = self_update(_SIDECAR_VERSION, channel, restart=False)
         sys.exit(0 if ok else 1)
+    if args.rollback:
+        from scripts.sidecar_pkg.self_update import rollback
+
+        sys.exit(0 if rollback(_SIDECAR_VERSION, restart=False) else 1)
 
     # Tri-state local override: explicit true/false wins over the server flag;
     # absent (None) defers to the server's fleet-wide setting.

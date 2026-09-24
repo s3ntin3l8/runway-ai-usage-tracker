@@ -1,0 +1,255 @@
+name: Sidecar Build
+
+# Reusable sidecar build — the single matrix behind every sidecar release:
+#   * release-please.yml  → stable `vX.Y.Z` releases
+#   * sidecar-edge.yml    → the rolling `edge` prerelease
+#   * sidecar-release.yml → manual rebuilds (workflow_dispatch)
+#
+# Per desktop platform it produces a user-facing installer AND the portable
+# payload the self-updater swaps in place:
+#   macOS    Runway-Sidecar-macOS-<label>.dmg            + …-macOS-<label>.zip
+#   Windows  Runway-Sidecar-Windows-<label>-setup.exe    + …-Windows-<label>.zip
+#   Linux    Runway-Sidecar-Linux[-CLI]-<label>.tar.gz   (payload only)
+# Every file name comes from scripts/sidecar_pkg/asset_names.py (the updater's
+# own source of truth) — never spell one out here; the contract test
+# tests/unit/test_sidecar_release_contract.py enforces that.
+#
+# The `attest` job then writes SHA256SUMS.txt and Sigstore keyless signatures
+# (.sig/.cert, GitHub OIDC — no secrets) for every asset, and uploads the whole
+# set as the `sidecar-release-assets` artifact for the caller to publish.
+# Signing is ad-hoc on macOS and absent on Windows (see docs/sidecar.md).
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build.
+        required: true
+        type: string
+      label:
+        description: Release label in asset names — the `vX.Y.Z` tag, or `edge`.
+        required: true
+        type: string
+      allow-partial:
+        description: Attest/publish whatever built even if a platform leg failed (edge).
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      # Let every leg finish; whether a partial set may ship is the caller's
+      # call (allow-partial) and is enforced in `attest`.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS
+            spec: sidecar_app/spec/macos.spec
+          - os: windows-latest
+            platform: Windows
+            spec: sidecar_app/spec/windows.spec
+          - os: ubuntu-latest
+            platform: Linux
+            spec: sidecar_app/spec/linux.spec
+            binary: RunwaySidecar
+          - os: ubuntu-latest
+            platform: Linux-CLI
+            spec: sidecar_app/spec/linux-cli.spec
+            binary: runway-sidecar-cli
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e . pystray Pillow pyinstaller packaging certifi
+
+      - name: Stamp edge version
+        # Mark the bundled package.json so the binary reports `<base>+edge.<sha>`
+        # (update_check.parse_channel keys the edge channel off that suffix).
+        # Working-copy only — never committed.
+        if: inputs.label == 'edge'
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BASE=$(jq -r .version package.json)
+          jq --arg v "${BASE}+edge.${SHORT_SHA}" '.version=$v' package.json > pkg.tmp
+          mv pkg.tmp package.json
+          echo "Stamped version: ${BASE}+edge.${SHORT_SHA}"
+
+      - name: Resolve asset names
+        id: names
+        run: python -m scripts.sidecar_pkg.asset_names "${{ matrix.platform }}" "${{ inputs.label }}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Generate tray icons
+        run: python sidecar_app/assets/generate_icons.py
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm "${{ matrix.spec }}"
+
+      # ---------------------------------------------------------------- macOS
+      - name: Ad-hoc sign the app bundle (macOS)
+        # No Developer ID / notarization (no Apple secrets): an ad-hoc signature
+        # keeps Apple Silicon happy and the bundle seal intact; users confirm
+        # first launch via right-click → Open (docs/sidecar.md).
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - "dist/Runway Sidecar.app"
+          codesign --verify --strict --verbose=2 "dist/Runway Sidecar.app"
+
+      - name: Package self-update payload (macOS)
+        # Same `zip -r` shape the updater has always consumed (symlinks are
+        # followed; Python's zipfile cannot restore them).
+        if: runner.os == 'macOS'
+        run: cd dist && zip -qr "../${{ steps.names.outputs.payload }}" "Runway Sidecar.app"
+
+      - name: Build DMG installer (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install create-dmg
+          # Retina-aware background: one multi-resolution TIFF from the 1x/2x
+          # PNGs rendered from assets/installer/dmg-background.svg.
+          tiffutil -cathidpicheck installer/assets/dmg-background.png \
+            installer/assets/dmg-background@2x.png -out dist/dmg-background.tiff
+          mkdir -p dist/dmg-root
+          cp -R "dist/Runway Sidecar.app" dist/dmg-root/
+          # Coordinates are the icon-slot contract drawn into the background SVG.
+          create-dmg \
+            --volname "Runway Sidecar" \
+            --volicon installer/assets/app.icns \
+            --background dist/dmg-background.tiff \
+            --window-pos 200 120 \
+            --window-size 760 480 \
+            --icon-size 128 \
+            --icon "Runway Sidecar.app" 180 320 \
+            --hide-extension "Runway Sidecar.app" \
+            --app-drop-link 580 320 \
+            --no-internet-enable \
+            "${{ steps.names.outputs.installer }}" \
+            dist/dmg-root/
+          hdiutil verify "${{ steps.names.outputs.installer }}"
+
+      # -------------------------------------------------------------- Windows
+      - name: Package self-update payload (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/RunwaySidecar.exe -DestinationPath "${{ steps.names.outputs.payload }}"
+
+      - name: Build NSIS installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH = "${env:ProgramFiles(x86)}\NSIS;$env:PATH"
+          }
+          # VERSION / PRODUCT_VERSION_QUAD from package.json (edge-stamped above).
+          python sidecar_app/spec/win_version.py | ForEach-Object {
+            $k, $v = $_ -split '=', 2
+            Set-Variable -Name $k -Value $v
+          }
+          # OUTFILE is resolved relative to the .nsi's directory.
+          makensis -V2 "-DVERSION=$VERSION" "-DPRODUCT_VERSION_QUAD=$PRODUCT_VERSION_QUAD" `
+            "-DOUTFILE=..\..\${{ steps.names.outputs.installer }}" installer/windows/runway-sidecar.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ---------------------------------------------------------------- Linux
+      - name: Package self-update payload (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf "${{ steps.names.outputs.payload }}" -C dist "${{ matrix.binary }}"
+
+      # ------------------------------------------------------------------ all
+      - name: Checksums
+        # sha256sum format (`<hex>  <name>`) on every OS; the updater requires
+        # the payload's sibling .sha256. Everything to publish is staged in out/.
+        env:
+          PAYLOAD: ${{ steps.names.outputs.payload }}
+          INSTALLER: ${{ steps.names.outputs.installer }}
+        run: |
+          mkdir -p out
+          for f in "$PAYLOAD" ${INSTALLER:+"$INSTALLER"}; do
+            mv "$f" out/
+            python -c "import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); print(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name)" "out/$f" > "out/$f.sha256"
+            cat "out/$f.sha256"
+          done
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sidecar-${{ matrix.platform }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 3
+
+  attest:
+    needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || inputs.allow-partial) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Sigstore keyless signing via GitHub OIDC
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: sidecar-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        working-directory: release-assets
+        run: |
+          shopt -s nullglob
+          assets=(Runway-Sidecar-*.{dmg,exe,zip,tar.gz})
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::No sidecar assets were built."; exit 1
+          fi
+          # Unversioned on purpose — a stable URL for `sha256sum -c`.
+          sha256sum "${assets[@]}" | sort -k2 > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+          for f in "${assets[@]}"; do sha256sum -c "$f.sha256"; done
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign assets (Sigstore keyless)
+        working-directory: release-assets
+        run: |
+          shopt -s nullglob
+          for f in Runway-Sidecar-*.{dmg,exe,zip,tar.gz} SHA256SUMS.txt; do
+            cosign sign-blob --yes \
+              --output-signature "$f.sig" --output-certificate "$f.cert" "$f"
+          done
+
+      - name: Verify signatures
+        working-directory: release-assets
+        run: |
+          shopt -s nullglob
+          for f in Runway-Sidecar-*.{dmg,exe,zip,tar.gz} SHA256SUMS.txt; do
+            cosign verify-blob \
+              --signature "$f.sig" --certificate "$f.cert" \
+              --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY//./\\.}/\.github/workflows/sidecar-build\.yml@" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$f"
+          done
+
+      - name: Upload release asset set
+        uses: actions/upload-artifact@v7
+        with:
+          name: sidecar-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3

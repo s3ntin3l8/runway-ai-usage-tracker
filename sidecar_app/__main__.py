@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import traceback
 import webbrowser
@@ -19,8 +20,14 @@ from sidecar_app.config import (
 )
 from sidecar_app.daemon import TrayDaemon
 from sidecar_app.settings_server import SettingsServer
-from sidecar_app.tray import SidecarTray, _open_in_editor
+from sidecar_app.tray import MOVE_TO_APPLICATIONS_MSG, SidecarTray, _notify, _open_in_editor
 from sidecar_app.updater import UpdateChecker
+from sidecar_app.url_events import (
+    CONTROL_FILE,
+    forward_to_running,
+    install_macos_url_handler,
+    pair_url_from_argv,
+)
 
 _FALLBACK_CONFIG: dict = {
     "api_url": "http://localhost:8765",
@@ -39,7 +46,13 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
     from sidecar_app.daemon import _sidecar  # same module instance the daemon uses
 
     _sidecar.ensure_dirs()  # get_sidecar_dir() must exist before the O_EXCL open
+    control_path = _sidecar.get_sidecar_dir() / CONTROL_FILE
+    # A runway-sidecar:// link that launched us (Windows protocol handler).
+    pending_pair_url = pair_url_from_argv(sys.argv)
     if not _sidecar.write_pid_file():
+        if pending_pair_url and forward_to_running(control_path, pending_pair_url):
+            logging.info("Handed the pairing link to the running sidecar.")
+            return
         logging.warning("Another Runway sidecar is already running; this instance will exit.")
         return
     atexit.register(_sidecar.remove_pid_file)
@@ -181,6 +194,16 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
     )
     settings_server.start()
     tray._settings_server = settings_server
+    settings_server.notify = lambda msg: _notify(tray._icon, msg)
+    try:
+        settings_server.write_control_file(control_path)
+    except OSError:
+        logging.warning(
+            "Could not write %s; pairing links from a second launch won't work", control_path
+        )
+    # macOS delivers runway-sidecar:// links as Apple Events to this process;
+    # the handler must be registered before the tray's run loop starts.
+    install_macos_url_handler(settings_server.open_pair)
 
     # 9. Start daemon only when credentials are present
     api_key = config.get("api_key", "")
@@ -188,21 +211,27 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         daemon.start()
 
     # 10. Run tray — blocks main thread
-    if needs_setup_notification:
+    from scripts.sidecar_pkg.self_update import running_from_disk_image
 
-        def notify_setup() -> None:
-            if tray._icon is not None:
-                try:
-                    tray._icon.notify(
-                        "Edit config.json to connect to your Runway server, then restart.",
-                        "Runway Sidecar — Setup Required",
-                    )
-                except Exception:
-                    pass  # notifications not supported on all platforms
+    from_disk_image = running_from_disk_image()
+    if from_disk_image:
+        logging.warning(
+            "Running from the disk image (%s); updates and login item disabled", sys.executable
+        )
 
-        tray.run(after_start=notify_setup)
-    else:
-        tray.run()
+    def notify_on_start() -> None:
+        if pending_pair_url:
+            settings_server.open_pair(pending_pair_url)
+        if from_disk_image:
+            _notify(tray._icon, MOVE_TO_APPLICATIONS_MSG, "Runway Sidecar — Move to Applications")
+        elif needs_setup_notification:
+            _notify(
+                tray._icon,
+                "Edit config.json to connect to your Runway server, then restart.",
+                "Runway Sidecar — Setup Required",
+            )
+
+    tray.run(after_start=notify_on_start)
 
     # 11. Tray exited — stop background threads
     checker.stop()

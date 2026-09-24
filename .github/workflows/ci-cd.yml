@@ -33,6 +33,26 @@ jobs:
       strict-checks: true
     secrets: inherit
 
+  installer-check:
+    # Compile the Windows NSIS installer on every PR (placeholder exe — the real
+    # one is built on windows-latest by sidecar-build.yml) so a broken .nsi or
+    # a missing installer asset fails here, not at release time.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install NSIS
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nsis
+      - name: Compile installer
+        run: |
+          mkdir -p dist
+          printf 'MZ placeholder' > dist/RunwaySidecar.exe
+          eval "$(python3 sidecar_app/spec/win_version.py)"
+          makensis -V2 -WX -DVERSION="$VERSION" -DPRODUCT_VERSION_QUAD="$PRODUCT_VERSION_QUAD" \
+            installer/windows/runway-sidecar.nsi
+          ls -l dist/runway-sidecar-setup.exe
+
   build-docker:
     needs: [test-python, test-frontend]
     if: github.event_name == 'push'

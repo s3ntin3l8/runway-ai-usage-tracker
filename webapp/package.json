@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "generate-pwa-assets": "pwa-assets-generator",
+    "render-brand-rasters": "node scripts/render-brand-rasters.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -51,6 +52,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "@vitest/coverage-v8": "^5.0.0",
     "jsdom": "^29.1.1",
+    "sharp": "0.33.5",
     "tailwindcss": "^4.1.10",
     "typescript": "~5.8.3",
     "vite": "^8.0.16",

@@ -1,10 +1,11 @@
 name: Sidecar Edge Build
 
 # Rolling per-commit sidecar build — the sidecar analog of the Docker :edge tag.
-# Publishes Linux, macOS and Windows binaries to a single, always-overwritten
-# `edge` GitHub *prerelease* so the download URLs stay constant. Because it is a
-# prerelease, GitHub's /releases/latest never returns it, so the stable
-# update-notify channel is untouched.
+# Publishes the macOS .dmg, Windows setup.exe, and the Linux/macOS/Windows
+# self-update payloads (built by the shared sidecar-build.yml matrix) to a
+# single, always-overwritten `edge` GitHub *prerelease* so the download URLs
+# stay constant. Because it is a prerelease, GitHub's /releases/latest never
+# returns it, so the stable update-notify channel is untouched.
 on:
   push:
     branches: [main]
@@ -13,6 +14,9 @@ on:
       - 'scripts/sidecar_pkg/**'
       - 'sidecar_app/**'
       - 'package.json'
+      - 'installer/**'
+      - '.github/workflows/sidecar-build.yml'
+      - '.github/workflows/sidecar-edge.yml'
   workflow_dispatch:
 
 concurrency:
@@ -46,96 +50,25 @@ jobs:
 
   build:
     needs: guard
-    strategy:
-      # Don't let a flaky macOS/Windows runner cancel the Linux legs — the
-      # publish job below tolerates a partial set.
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux
-            spec: sidecar_app/spec/linux.spec
-            artifact_path: dist/RunwaySidecar
-            archive: Runway-Sidecar-Linux-edge.tar.gz
-          - os: ubuntu-latest
-            name: Linux-CLI
-            spec: sidecar_app/spec/linux-cli.spec
-            artifact_path: dist/runway-sidecar-cli
-            archive: Runway-Sidecar-Linux-CLI-edge.tar.gz
-          - os: macos-latest
-            name: macOS
-            spec: sidecar_app/spec/macos.spec
-            artifact_path: dist/Runway Sidecar.app
-            archive: Runway-Sidecar-macOS-edge.zip
-          - os: windows-latest
-            name: Windows
-            spec: sidecar_app/spec/windows.spec
-            artifact_path: dist/RunwaySidecar.exe
-            archive: Runway-Sidecar-Windows-edge.zip
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -e . pystray Pillow pyinstaller packaging certifi
-
-      - name: Stamp edge version
-        # Mark the bundled package.json so the binary reports `<base>+edge.<sha>`.
-        # Working-copy only — never committed. bash + jq ship on all GH runners.
-        shell: bash
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          BASE=$(jq -r .version package.json)
-          jq --arg v "${BASE}+edge.${SHORT_SHA}" '.version=$v' package.json > pkg.tmp
-          mv pkg.tmp package.json
-          echo "Stamped version: ${BASE}+edge.${SHORT_SHA}"
-
-      - name: Generate icons
-        run: python sidecar_app/assets/generate_icons.py
-
-      - name: Build with PyInstaller
-        run: pyinstaller ${{ matrix.spec }}
-
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        run: cd dist && zip -r "../${{ matrix.archive }}" "Runway Sidecar.app"
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        run: Compress-Archive -Path "${{ matrix.artifact_path }}" -DestinationPath "${{ matrix.archive }}"
-
-      - name: Package (Linux)
-        if: runner.os == 'Linux'
-        run: tar -czf "${{ matrix.archive }}" -C dist "$(basename '${{ matrix.artifact_path }}')"
-
-      - name: Checksum
-        # Python (already installed) keeps this identical across all three OSes;
-        # output is sha256sum-compatible (`<hex>  <name>`).
-        shell: bash
-        run: |
-          python -c "import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); print(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name)" "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: edge-${{ matrix.name }}
-          path: |
-            ${{ matrix.archive }}
-            ${{ matrix.archive }}.sha256
-          retention-days: 1
+    permissions:
+      contents: read
+      id-token: write  # Sigstore signing in sidecar-build.yml's attest job
+    uses: ./.github/workflows/sidecar-build.yml
+    with:
+      ref: ${{ github.sha }}
+      label: edge
+      # A flaky macOS/Windows runner must not hold back the rest of the
+      # rolling channel — publish whatever built.
+      allow-partial: true
 
   publish:
     needs: [guard, build]
     # Publish whatever built — a single failed platform leg shouldn't hold back
-    # the rest of the rolling edge channel — but a failed guard must stop the
-    # force-tag + prerelease entirely (without the explicit guard check `!cancelled()`
+    # the rest of the rolling edge channel (sidecar-build's attest job still
+    # runs on a partial set) — but a failed guard must stop the force-tag +
+    # prerelease entirely (without the explicit guard check `!cancelled()`
     # would still run publish when build was skipped because the guard failed).
+    # The signed set only exists if attest succeeded; download fails otherwise.
     if: ${{ !cancelled() && needs.guard.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -143,12 +76,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download build artifacts
+      - name: Download signed asset set
         uses: actions/download-artifact@v8
         with:
-          pattern: edge-*
+          name: sidecar-release-assets
           path: edge-dist
-          merge-multiple: true
 
       - name: Move rolling edge tag
         # softprops/action-gh-release does not move an existing tag; force it to

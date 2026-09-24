@@ -312,3 +312,26 @@ class TopToolEntry(BaseModel):
 class TopToolsResponse(BaseModel):
     tools: list[TopToolEntry]
     generated_at: str
+
+
+class SidecarDownloadAsset(BaseModel):
+    """One downloadable sidecar build on a GitHub release."""
+
+    platform: str  # macOS | Windows | Linux | Linux-CLI
+    kind: str  # "installer" (.dmg / -setup.exe) | "payload" (portable .zip / .tar.gz)
+    name: str
+    url: str
+    size: int | None = None
+    sha256_url: str | None = None
+
+
+class SidecarDownloadsResponse(BaseModel):
+    """Sidecar builds for one release channel, for the Fleet page's download card."""
+
+    channel: str  # "stable" | "edge"
+    version: str | None = None  # release tag ("v2.13.0") or "edge"
+    published_at: str | None = None
+    release_url: str
+    checksums_url: str | None = None  # SHA256SUMS.txt
+    assets: list[SidecarDownloadAsset] = Field(default_factory=list)
+    error: str | None = None  # set (with empty assets) when GitHub was unreachable

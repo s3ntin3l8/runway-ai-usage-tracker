@@ -92,3 +92,39 @@ def test_check_updates_writes_audit_row(client, session, monkeypatch):
     assert len(rows) == 1
     assert rows[0].action == "system.check_updates"
     assert rows[0].target_id is None
+
+
+def test_sidecar_downloads_endpoint(client, monkeypatch):
+    from app.models.schemas import SidecarDownloadAsset, SidecarDownloadsResponse
+    from app.services.sidecar_downloads import sidecar_downloads
+
+    seen: list[str] = []
+
+    async def fake_get(channel):
+        seen.append(channel)
+        return SidecarDownloadsResponse(
+            channel=channel,
+            version="edge",
+            release_url="https://example/releases/tag/edge",
+            assets=[
+                SidecarDownloadAsset(
+                    platform="macOS",
+                    kind="installer",
+                    name="Runway-Sidecar-macOS-edge.dmg",
+                    url="https://example/Runway-Sidecar-macOS-edge.dmg",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(sidecar_downloads, "get", fake_get)
+    # Public: no admin key / session needed.
+    resp = client.get("/api/v1/system/sidecar-downloads?channel=edge")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert seen == ["edge"]
+    assert body["assets"][0]["kind"] == "installer"
+    assert body["error"] is None
+
+
+def test_sidecar_downloads_rejects_unknown_channel(client):
+    assert client.get("/api/v1/system/sidecar-downloads?channel=nightly").status_code == 422

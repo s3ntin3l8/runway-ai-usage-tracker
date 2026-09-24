@@ -16,8 +16,9 @@ Safety model:
     asset is fully downloaded, verified, and extracted, so a failure leaves the
     running install intact.
   * **Single-flight.** An exclusive lock file prevents two updates at once.
-  * The previous binary/bundle is renamed aside as ``.old`` — a rollback
-    breadcrumb the user can restore by hand if a build misbehaves.
+  * **Single-slot rollback.** The replaced binary/bundle is kept as
+    ``<install>.previous`` with its version in ``<install>.previous.version``;
+    ``rollback()`` (tray "Roll back to …", CLI ``--rollback``) swaps it back.
 
 The OS-mutating ``apply_update`` is a thin per-platform shell, mostly verified
 manually during release QA; the pure parts (asset-name resolution, checksum,
@@ -45,6 +46,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from urllib import error, request
 
+from scripts.sidecar_pkg import asset_names
 from scripts.sidecar_pkg.update_check import (
     _LATEST_URL,
     check_once,
@@ -125,15 +127,31 @@ def _is_docker() -> bool:
     return pathlib.Path("/.dockerenv").exists()
 
 
+def running_from_disk_image(executable: str | None = None, plat: str | None = None) -> bool:
+    """True when the macOS app is running straight off the mounted ``.dmg``.
+
+    That happens when someone double-clicks the app inside the DMG window
+    instead of dragging it to Applications first — or when Gatekeeper App
+    Translocation runs a quarantined copy from a randomised read-only path.
+    Either way the bundle is read-only and will vanish (unmount / reboot), so
+    self-update and the login item must not target it.
+    """
+    if (plat or sys.platform) != "darwin":
+        return False
+    path = executable if executable is not None else sys.executable
+    return path.startswith("/Volumes/") or "/AppTranslocation/" in path
+
+
 def self_update_supported() -> bool:
     """True when this build can replace its own binary in place.
 
     Frozen PyInstaller builds only — Docker images update by repulling and
-    from-source checkouts update via git, so both report False. Mirrors the
-    gate in ``self_update()`` so the server is told the same thing the apply
-    path enforces, and won't offer a meaningless update push.
+    from-source checkouts update via git, so both report False, as does a
+    macOS app still running off its read-only disk image. Mirrors the gate in
+    ``self_update()`` so the server is told the same thing the apply path
+    enforces, and won't offer a meaningless update push.
     """
-    return _is_frozen() and not _is_docker()
+    return _is_frozen() and not _is_docker() and not running_from_disk_image()
 
 
 def _detect_target() -> str:
@@ -166,37 +184,37 @@ def _sidecar_dir() -> pathlib.Path:
 
 
 def resolve_asset_name(target: str, channel: str, version: str | None) -> str:
-    """Return the GitHub release asset base name for this platform/target/channel.
+    """Return the self-update payload asset name for this platform/target/channel.
 
-    *version* is the latest tag (without ``v``) for the stable channel; the edge
-    channel uses a single rolling asset per platform, so *version* is ignored
-    there.
+    *version* is the latest release tag for the stable channel (``v`` prefix
+    optional — the published names always carry it); the edge channel uses a
+    single rolling asset per platform, so *version* is ignored there. Names
+    come from ``asset_names`` — the same module the release-workflow contract
+    test checks — and are always the ``.zip`` / ``.tar.gz`` payload, never the
+    ``.dmg`` / ``-setup.exe`` installers.
 
     Raises ``SelfUpdateUnsupportedError`` for combinations with no published asset.
     """
-    plat = sys.platform
-    if channel == "edge":
-        # Edge publishes a rolling per-platform asset (no version in the name).
-        if plat == "darwin":
-            return "Runway-Sidecar-macOS-edge.zip"
-        if plat == "win32":
-            return "Runway-Sidecar-Windows-edge.zip"
-        if plat == "linux":
-            suffix = "CLI-edge" if target == "cli" else "edge"
-            return f"Runway-Sidecar-Linux-{suffix}.tar.gz"
-        raise SelfUpdateUnsupportedError(f"unsupported platform: {plat}")
+    plat = asset_names.platform_key(sys.platform, target)
+    if plat is None:
+        raise SelfUpdateUnsupportedError(f"unsupported platform: {sys.platform}")
+    try:
+        label = asset_names.release_label(channel, version)
+    except ValueError as exc:
+        raise SelfUpdateError("missing latest version for stable asset name") from exc
+    return asset_names.payload_name(plat, label)
 
-    ver = (version or "").lstrip("v").strip()
-    if not ver:
-        raise SelfUpdateError("missing latest version for stable asset name")
-    if plat == "darwin":
-        return f"Runway-Sidecar-macOS-{ver}.zip"
-    if plat == "win32":
-        return f"Runway-Sidecar-Windows-{ver}.zip"
-    if plat == "linux":
-        kind = "Linux-CLI" if target == "cli" else "Linux"
-        return f"Runway-Sidecar-{kind}-{ver}.tar.gz"
-    raise SelfUpdateUnsupportedError(f"unsupported platform: {plat}")
+
+def _asset_name_candidates(target: str, channel: str, version: str | None) -> list[str]:
+    """Primary payload name, then the legacy ``v``-less spelling as a fallback."""
+    primary = resolve_asset_name(target, channel, version)
+    plat = asset_names.platform_key(sys.platform, target)
+    legacy = (
+        asset_names.legacy_payload_name(plat, asset_names.release_label(channel, version))
+        if plat
+        else None
+    )
+    return [primary] + ([legacy] if legacy and legacy != primary else [])
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +246,17 @@ def _get_release_json(channel: str) -> dict:
     return _get_json(_EDGE_RELEASE_URL if channel == "edge" else _LATEST_URL)
 
 
-def find_asset_urls(release: dict, asset_name: str) -> tuple[str, str]:
+def find_asset_urls(release: dict, asset_name: str | list[str]) -> tuple[str, str]:
     """Return ``(asset_url, sha256_url)`` for *asset_name* within *release*.
 
-    Raises ``SelfUpdateError`` if either the asset or its ``.sha256`` sibling is
-    absent — the checksum is mandatory.
+    *asset_name* may be a list of candidate names tried in order (primary name
+    first, legacy spelling after). Raises ``SelfUpdateError`` if no candidate is
+    present, or the matched asset lacks its ``.sha256`` sibling — the checksum
+    is mandatory.
     """
     by_name = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])}
+    candidates = [asset_name] if isinstance(asset_name, str) else list(asset_name)
+    asset_name = next((n for n in candidates if by_name.get(n)), candidates[0])
     asset_url = by_name.get(asset_name)
     sha_url = by_name.get(f"{asset_name}.sha256")
     if not asset_url:
@@ -439,26 +461,95 @@ def _find_staged(staged_dir: pathlib.Path, install: pathlib.Path) -> pathlib.Pat
     raise SelfUpdateError("no binary found in downloaded archive")
 
 
-def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> bool:
+# Windows installer's Apps & Features entry (installer/windows/runway-sidecar.nsi).
+# Self-updates refresh its DisplayVersion; portable installs have no such key.
+_WIN_UNINSTALL_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Runway Sidecar"
+_PREVIOUS_SUFFIX = ".previous"
+_VERSION_SUFFIX = ".version"
+
+
+def _previous_path(install: pathlib.Path) -> pathlib.Path:
+    return install.with_name(install.name + _PREVIOUS_SUFFIX)
+
+
+def _previous_version_path(install: pathlib.Path) -> pathlib.Path:
+    return install.with_name(install.name + _PREVIOUS_SUFFIX + _VERSION_SUFFIX)
+
+
+def _write_previous_version(install: pathlib.Path, version: str | None) -> None:
+    """Record which version the ``.previous`` backup is (for the rollback label)."""
+    try:
+        _previous_version_path(install).write_text((version or "").strip() + "\n")
+    except OSError:
+        logger.debug("Could not write previous-version marker", exc_info=True)
+
+
+def rollback_available() -> str | None:
+    """Version string of the kept backup when a rollback is possible, else ``None``.
+
+    ``""`` means a backup exists but its version is unknown.
+    """
+    if not self_update_supported():
+        return None
+    install = _install_path()
+    if not _previous_path(install).exists():
+        return None
+    try:
+        return _previous_version_path(install).read_text().strip()
+    except OSError:
+        return ""
+
+
+def apply_update(
+    target: str,
+    staged_dir: pathlib.Path,
+    *,
+    restart: bool,
+    current_version: str | None = None,
+    new_version: str | None = None,
+) -> bool:
     """Swap the running install with the staged copy and optionally relaunch.
 
-    Returns True on a successful swap. On a non-writable install path it logs
-    and returns False without leaving partial state.
+    The replaced copy is kept as ``<install>.previous`` (tagged with
+    *current_version*) for ``rollback()``. *new_version* refreshes the Windows
+    installer's Apps & Features entry. Returns True on a successful swap. On a
+    non-writable install path it logs and returns False without leaving
+    partial state.
     """
     install = _install_path()
     staged = _find_staged(staged_dir, install)
-    old = install.with_name(install.name + ".old")
 
     if sys.platform == "win32":
-        return _apply_windows(install, staged, restart=restart)
+        new_exe = install.with_name(install.stem + ".new" + install.suffix)
+        try:
+            if new_exe.exists():
+                _rm(new_exe)
+            shutil.move(str(staged), str(new_exe))
+        except OSError:
+            logger.exception("Self-update staging failed")
+            return False
+        _write_previous_version(install, current_version)
+        return _apply_windows(install, new_exe, restart=restart, display_version=new_version)
 
-    # POSIX (Linux + macOS): rename the running file/bundle aside, move the new
-    # one into place. A running file's open inode survives the unlink.
+    return _swap_posix(target, install, staged, restart=restart, backup_version=current_version)
+
+
+def _swap_posix(
+    target: str,
+    install: pathlib.Path,
+    incoming: pathlib.Path,
+    *,
+    restart: bool,
+    backup_version: str | None,
+) -> bool:
+    """POSIX (Linux + macOS) swap: move the running file/bundle to ``.previous``
+    and *incoming* into place. A running file's open inode survives the move."""
+    previous = _previous_path(install)
     try:
-        if old.exists():
-            _rm(old)
-        os.rename(install, old)
-        shutil.move(str(staged), str(install))
+        if previous.exists():
+            _rm(previous)
+        os.rename(install, previous)
+        shutil.move(str(incoming), str(install))
         if install.is_file():
             # Owner-only rwx: the binary is re-exec'd as the user that runs it,
             # so it needs no group/world bits.
@@ -481,9 +572,9 @@ def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> boo
             "Self-update aborted: install path %s is not writable; update manually", install
         )
         # Best-effort restore if we moved the original aside.
-        if not install.exists() and old.exists():
+        if not install.exists() and previous.exists():
             try:
-                os.rename(old, install)
+                os.rename(previous, install)
             except OSError:
                 # Restore is best-effort; nothing more we can do if it also fails.
                 pass
@@ -492,28 +583,35 @@ def apply_update(target: str, staged_dir: pathlib.Path, *, restart: bool) -> boo
         logger.exception("Self-update swap failed")
         return False
 
-    logger.info("Installed update at %s (previous kept at %s)", install, old)
+    _write_previous_version(install, backup_version)
+    # Pre-rollback builds kept a `.old` breadcrumb; it is superseded now.
+    _rm(install.with_name(install.name + ".old"))
+    logger.info("Installed %s (previous kept at %s)", install, previous)
     if restart:
         _relaunch_posix(target, install)
     return True
 
 
-def _apply_windows(install: pathlib.Path, staged: pathlib.Path, *, restart: bool) -> bool:
-    """Windows swap: a running .exe can't be overwritten, so a detached helper
-    waits for us to exit, replaces the exe, and relaunches."""
-    new_exe = install.with_name(install.stem + ".new" + install.suffix)
-    try:
-        if new_exe.exists():
-            _rm(new_exe)
-        shutil.move(str(staged), str(new_exe))
-    except OSError:
-        logger.exception("Self-update staging failed")
-        return False
-
-    pid = os.getpid()
-    helper = install.with_name("runway-self-update.bat")
+def _windows_swap_script(
+    pid: int,
+    install: pathlib.Path,
+    incoming: pathlib.Path,
+    backup: pathlib.Path,
+    *,
+    restart: bool,
+    display_version: str | None,
+) -> str:
+    """Batch helper: wait for *pid* to exit, move *install* → *backup* and
+    *incoming* → *install* (restoring on failure), refresh the installer's
+    DisplayVersion, relaunch, and delete itself."""
     relaunch = f'start "" "{install}"' if restart else "rem no relaunch"
-    script = (
+    reg = (
+        f'reg query "{_WIN_UNINSTALL_KEY}" >NUL 2>&1 && '
+        f'reg add "{_WIN_UNINSTALL_KEY}" /v DisplayVersion /t REG_SZ /d "{display_version}" /f >NUL\r\n'
+        if display_version
+        else ""
+    )
+    return (
         "@echo off\r\n"
         ":waitloop\r\n"
         f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
@@ -521,15 +619,40 @@ def _apply_windows(install: pathlib.Path, staged: pathlib.Path, *, restart: bool
         "  timeout /t 1 /nobreak >NUL\r\n"
         "  goto waitloop\r\n"
         ")\r\n"
-        f'move /Y "{new_exe}" "{install}" >NUL\r\n'
+        f'move /Y "{install}" "{backup}" >NUL\r\n'
+        f'move /Y "{incoming}" "{install}" >NUL\r\n'
         "if errorlevel 1 (\r\n"
-        # Replacement failed — relaunch the old exe so the user isn't stranded.
+        # Replacement failed — put the old exe back and relaunch it so the
+        # user isn't stranded.
+        f'  if not exist "{install}" move /Y "{backup}" "{install}" >NUL\r\n'
         f"  {relaunch}\r\n"
         '  del "%~f0"\r\n'
         "  exit /b 1\r\n"
         ")\r\n"
+        f"{reg}"
         f"{relaunch}\r\n"
         'del "%~f0"\r\n'
+    )
+
+
+def _apply_windows(
+    install: pathlib.Path,
+    incoming: pathlib.Path,
+    *,
+    restart: bool,
+    display_version: str | None = None,
+) -> bool:
+    """Windows swap: a running .exe can't be overwritten, so a detached helper
+    waits for us to exit, swaps *incoming* in (keeping the old exe as
+    ``.previous``), and relaunches."""
+    helper = install.with_name("runway-self-update.bat")
+    script = _windows_swap_script(
+        os.getpid(),
+        install,
+        incoming,
+        _previous_path(install),
+        restart=restart,
+        display_version=display_version,
     )
     try:
         helper.write_text(script)
@@ -551,6 +674,58 @@ def _apply_windows(install: pathlib.Path, staged: pathlib.Path, *, restart: bool
         _release_lock()
         os._exit(0)
     return True
+
+
+def rollback(current_version: str, *, restart: bool = True) -> bool:
+    """Swap the kept ``.previous`` build back in (and keep the current one as
+    the new ``.previous``, so a rollback can itself be undone).
+
+    Returns False when there is nothing to roll back to or the swap fails.
+    """
+    if not self_update_supported():
+        logger.info("Rollback skipped: not a self-updatable install")
+        return False
+    with _single_flight() as acquired:
+        if not acquired:
+            return False
+        install = _install_path()
+        previous = _previous_path(install)
+        if not previous.exists():
+            logger.info("Rollback skipped: no previous build kept next to %s", install)
+            return False
+        try:
+            target_version = _previous_version_path(install).read_text().strip() or None
+        except OSError:
+            target_version = None
+
+        # Move the backup out of the `.previous` slot first so the swap can
+        # refill that slot with the build we're rolling back from.
+        incoming = install.with_name(install.name + ".rollback")
+        try:
+            if incoming.exists():
+                _rm(incoming)
+            os.rename(previous, incoming)
+        except OSError:
+            logger.exception("Rollback staging failed")
+            return False
+
+        logger.info("Rolling back %s to %s", install, target_version or "previous build")
+        if sys.platform == "win32":
+            _write_previous_version(install, current_version)
+            return _apply_windows(
+                install, incoming, restart=restart, display_version=target_version
+            )
+        ok = _swap_posix(
+            _detect_target(), install, incoming, restart=restart, backup_version=current_version
+        )
+        if not ok and not previous.exists() and incoming.exists():
+            try:
+                os.rename(incoming, previous)  # leave the backup where we found it
+            except OSError:
+                # Best-effort: the failed swap is already logged; the backup
+                # stays at `<install>.rollback` for manual recovery.
+                pass
+        return ok
 
 
 def _relaunch_posix(target: str, install: pathlib.Path) -> None:
@@ -602,6 +777,11 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
     if _is_docker():
         logger.info("Self-update skipped: running in Docker (repull the image instead)")
         return False
+    if running_from_disk_image():
+        logger.info(
+            "Self-update skipped: running from the disk image; move the app to Applications"
+        )
+        return False
 
     with _single_flight() as acquired:
         if not acquired:
@@ -622,8 +802,10 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
 
         try:
             release = _with_retries(lambda: _get_release_json(eff_channel), what="release fetch")
-            latest_ver = str(release.get("tag_name", "")).lstrip("v").strip()
-            asset_name = resolve_asset_name(target, eff_channel, latest_ver)
+            latest_tag = str(release.get("tag_name", "")).strip()
+            candidates = _asset_name_candidates(target, eff_channel, latest_tag)
+            published = {a.get("name") for a in release.get("assets", [])}
+            asset_name = next((n for n in candidates if n in published), candidates[0])
             asset_url, sha_url = find_asset_urls(release, asset_name)
         except SelfUpdateUnsupportedError as exc:
             logger.warning("Self-update unsupported: %s", exc)
@@ -644,7 +826,13 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             extracted = tmp / "extracted"
             extracted.mkdir()
             _extract(archive, extracted)
-            return apply_update(target, extracted, restart=restart)
+            return apply_update(
+                target,
+                extracted,
+                restart=restart,
+                current_version=version,
+                new_version=latest_tag.lstrip("vV") or None,
+            )
         except (
             error.URLError,
             OSError,

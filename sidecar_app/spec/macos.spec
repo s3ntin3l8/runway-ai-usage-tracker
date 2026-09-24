@@ -4,6 +4,7 @@
 
 import json as _json
 import os
+import re as _re
 
 # PyInstaller 6+ resolves relative paths against the spec's directory.
 # Anchor everything to the repo root regardless of the invoking CWD.
@@ -11,6 +12,10 @@ _ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Read version from package.json so CFBundleVersion stays in sync with releases.
 _VERSION = _json.loads(open(os.path.join(_ROOT, "package.json")).read()).get("version", "0.0.0")
+# CFBundleVersion / CFBundleShortVersionString must be dotted integers: drop a
+# pre-release or ``+edge.<sha>`` suffix (the full string still ships in the
+# bundled package.json, which is what the updater reads).
+_BUNDLE_VERSION = _re.split(r"[-+]", _VERSION.lstrip("vV"), maxsplit=1)[0] or "0.0.0"
 
 a = Analysis(
     [os.path.join(_ROOT, "sidecar_app", "__main__.py")],
@@ -19,11 +24,13 @@ a = Analysis(
     datas=[
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
-        (os.path.join(_ROOT, "assets", "logo_reference.png"), "assets"),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=[
         "pystray._darwin",
+        # runway-sidecar:// Apple Event handler (sidecar_app/url_events.py).
+        "objc",
+        "Foundation",
         "PIL.Image",
         "PIL.PngImagePlugin",
         "pkg_resources",
@@ -49,6 +56,8 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
+        # One-time pairing (runway-sidecar://pair links, --pair).
+        "scripts.sidecar_pkg.pairing",
         # Shared TLS trust-store helper + bundled CA store (certifi). The
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.
@@ -76,6 +85,9 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    # URL events are handled in-process via NSAppleEventManager; argv
+    # emulation would swallow the launch-time GURL event instead.
+    argv_emulation=False,
 )
 
 coll = COLLECT(
@@ -91,13 +103,26 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Runway Sidecar.app",
-    icon=None,
+    # Rendered from assets/logo.svg by `make logo` (installer/generate_app_icons.py).
+    icon=os.path.join(_ROOT, "installer", "assets", "app.icns"),
     bundle_identifier="com.runway.sidecar",
     info_plist={
         "LSUIElement": True,
+        "CFBundleName": "Runway Sidecar",
         "CFBundleDisplayName": "Runway Sidecar",
-        "CFBundleVersion": _VERSION,
-        "CFBundleShortVersionString": _VERSION,
+        "CFBundleVersion": _BUNDLE_VERSION,
+        "CFBundleShortVersionString": _BUNDLE_VERSION,
+        "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
+        "NSHumanReadableCopyright": "Runway contributors. Licensed under AGPL-3.0.",
+        # runway-sidecar://pair?… deep links from the dashboard's "Pair a
+        # sidecar" button (sidecar_app/url_events.py). Keep the scheme in sync
+        # with installer/windows/runway-sidecar.nsi (contract-tested).
+        "CFBundleURLTypes": [
+            {
+                "CFBundleURLName": "com.runway.sidecar.pair",
+                "CFBundleURLSchemes": ["runway-sidecar"],
+            }
+        ],
     },
 )

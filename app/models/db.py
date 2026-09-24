@@ -571,3 +571,27 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     credential_origin: str
     first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SidecarPairingCode(SQLModel, table=True):  # type: ignore[call-arg]
+    """One-time codes that let a fresh sidecar fetch its server URL + ingest key.
+
+    Minted by an admin on the Fleet page (``POST /fleet/pairing-codes``) and
+    carried to the sidecar via a ``runway-sidecar://pair`` deep link or typed
+    in by hand; redeemed once over TLS by ``POST /fleet/pair``. Only the SHA-256
+    of the code is stored, codes expire after a few minutes, and a redeemed
+    row is kept (``used_at``) for the audit trail until the next sweep.
+    """
+
+    __tablename__ = "sidecar_pairing_codes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    code_hash: str = Field(index=True, unique=True)
+    # Canonical server URL the sidecar should talk to (what the admin's
+    # browser saw, or PUBLIC_URL) — returned on redeem as the new api_url.
+    server_url: str
+    created_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: UTCDateTime = Field(index=True)
+    created_by: str | None = None
+    used_at: UTCDateTime | None = None
+    used_by_hostname: str | None = None

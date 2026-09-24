@@ -5,15 +5,19 @@ Serves a self-contained dark-themed settings form; saves changes to
 config.json and hot-reloads the daemon without a restart.
 """
 
+import hmac
 import json
 import logging
+import os
+import pathlib
+import secrets
 import socketserver
 import threading
 import webbrowser
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from string import Template
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +28,7 @@ _DEFAULT_PORT = 17653
 # HTML — self-contained, no external CDN, matches Runway dark aesthetic
 # ---------------------------------------------------------------------------
 
-_HTML = Template(r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Runway Sidecar — Settings</title>
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+_CSS = r"""*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -147,6 +144,7 @@ select {
   cursor: pointer;
   transition: all 0.15s;
   outline: none;
+  text-decoration: none;
 }
 .btn-primary {
   background: #7c3aed;
@@ -190,7 +188,16 @@ select {
   white-space: pre-wrap; word-break: break-all;
   font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
 }
-</style>
+"""
+
+_HTML = Template(r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Runway Sidecar — Settings</title>
+<style>
+$css</style>
 </head>
 <body>
 <div class="page">
@@ -222,7 +229,8 @@ select {
       <label for="api_url">API URL</label>
       <input type="url" id="api_url" name="api_url" value="$api_url"
              placeholder="http://localhost:8765" required>
-      <span class="field-hint">The address of your Runway server.</span>
+      <span class="field-hint">The address of your Runway server. Have a pairing code from the
+        dashboard's Fleet page? <a class="link" href="/pair">Pair with a code…</a></span>
     </div>
 
     <div class="field">
@@ -400,6 +408,96 @@ setInterval(() => {
 """)
 
 
+# Confirmation page for runway-sidecar://pair links (and manual code entry).
+# Pairing re-points where this machine sends usage data and provider
+# credentials, so it never happens without this explicit, server-naming click.
+_PAIR_HTML = Template(r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Runway Sidecar — Pair</title>
+<style>$css
+.target { font-size: 1.05rem; font-weight: 700; color: #f4f4f5; word-break: break-all; margin: 0.25rem 0 0.75rem; }
+.warn { font-size: 0.75rem; line-height: 1.5; color: #fcd34d; background: rgba(245,158,11,0.08);
+        border: 1px solid rgba(245,158,11,0.25); border-radius: 0.5rem; padding: 0.6rem 0.75rem; margin-top: 0.75rem; }
+.muted { font-size: 0.75rem; color: #a1a1aa; line-height: 1.5; }
+input[readonly] { color: #a1a1aa; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <span class="header-hex">⬡</span>
+    <div>
+      <div class="header-title">Runway Sidecar</div>
+      <div class="header-sub">Pair with a server</div>
+    </div>
+  </div>
+
+  <form class="card" id="pair-form" onsubmit="pair(event)">
+    <div class="section-label">Connect this machine to</div>
+    <div class="target" id="target">$server_display</div>
+    <div class="field">
+      <label for="server">Server address</label>
+      <input type="url" id="server" name="server" value="$server" $readonly
+             placeholder="https://runway.example.com" required>
+    </div>
+    <div class="field">
+      <label for="code">Pairing code</label>
+      <input type="text" id="code" name="code" value="$code" $readonly
+             placeholder="XXXXX-XXXXX" autocomplete="off" spellcheck="false" required>
+      <span class="field-hint">From <em>Fleet → Add sidecar → Pair</em> in the Runway dashboard. Codes work once and expire after a few minutes.</span>
+    </div>
+    $replace_note
+    <div class="warn">Only continue if you just asked for this pairing in <strong>your own</strong>
+      Runway dashboard. Once paired, this sidecar sends AI usage data and provider sign-in
+      tokens from this machine to the server above.</div>
+    <div style="margin-top:1.25rem" class="actions">
+      <button type="submit" class="btn btn-primary" id="pair-btn">Pair</button>
+      <a class="btn btn-ghost" href="/">Cancel</a>
+      <div class="toast toast-ok" id="toast-ok">✓ <span id="toast-ok-msg">Paired</span></div>
+      <div class="toast toast-err" id="toast-err">⚠ <span id="toast-err-msg">Error</span></div>
+    </div>
+  </form>
+  <div class="footer">Runway Sidecar v$version</div>
+</div>
+<script>
+const serverInput = document.getElementById('server');
+serverInput.addEventListener('input', () => {
+  document.getElementById('target').textContent = serverInput.value || '—';
+});
+async function pair(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById('pair-btn');
+  const ok = document.getElementById('toast-ok');
+  const err = document.getElementById('toast-err');
+  ok.classList.remove('show'); err.classList.remove('show');
+  btn.disabled = true; btn.textContent = 'Pairing…';
+  try {
+    const r = await fetch('/pair', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams(new FormData(document.getElementById('pair-form'))),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    document.getElementById('toast-ok-msg').textContent =
+      'Paired with ' + j.api_url + '. Collection starts now; you can close this tab.';
+    ok.classList.add('show');
+    btn.textContent = 'Paired';
+  } catch (e) {
+    document.getElementById('toast-err-msg').textContent = e.message;
+    err.classList.add('show');
+    btn.disabled = false; btn.textContent = 'Pair';
+  }
+}
+</script>
+</body>
+</html>
+""")
+
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
@@ -415,6 +513,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             self._serve_settings_page()
+        elif path == "/pair":
+            self._serve_pair_page()
         elif path == "/status":
             self._serve_status()
         elif path == "/logs":
@@ -423,6 +523,14 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        # Hand-off from a second sidecar process that was launched with a
+        # runway-sidecar:// URL (Windows protocol handler). Authenticated by the
+        # per-run token in the owner-only control file, not by Origin — it is
+        # not a browser request. A browser can't forge it: the custom header
+        # forces a CORS preflight we never answer, and it can't read the token.
+        if urlparse(self.path).path == "/pair-request":
+            self._handle_pair_request()
+            return
         # CSRF guard: modern browsers send Origin on EVERY POST (same- or
         # cross-origin) since ~2020. We require it to be present AND match
         # our bound address — falling back to "missing = trusted" was the
@@ -436,6 +544,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/save":
             self._handle_save()
+        elif path == "/pair":
+            self._handle_pair()
         elif path.startswith("/action/"):
             self._handle_action(path[len("/action/") :])
         else:
@@ -449,6 +559,7 @@ class _Handler(BaseHTTPRequestHandler):
         config = self.server.get_config()
         status = self.server.get_status()
         html = _HTML.substitute(
+            css=_CSS,
             api_url=_esc(config.get("api_url", "")),
             api_key=_esc(config.get("api_key", "")),
             version=_esc(status.get("version", "?")),
@@ -496,6 +607,91 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             logger.error(f"Settings save error: {exc}")
             self._send_json({"ok": False, "error": str(exc)}, 500)
+
+    def _serve_pair_page(self) -> None:
+        from scripts.sidecar_pkg import pairing
+
+        query = parse_qs(urlparse(self.path).query)
+        server = (query.get("server") or [""])[0]
+        code = (query.get("code") or [""])[0]
+        from_link = bool(server and code)
+        try:
+            shown = pairing.normalize_server(server) if server else ""
+        except pairing.PairingError:
+            shown = server
+        config = self.server.get_config()
+        current = str(config.get("api_url") or "")
+        has_key = bool(config.get("api_key")) and config.get("api_key") != "REPLACE_ME"
+        replace_note = ""
+        if has_key and current and shown and current.rstrip("/") != shown:
+            replace_note = (
+                '<div class="warn">This replaces the server this sidecar currently reports to: '
+                f"<strong>{_esc(current)}</strong></div>"
+            )
+        status = self.server.get_status()
+        self._send_html(
+            _PAIR_HTML.substitute(
+                css=_CSS,
+                server=_esc(server),
+                code=_esc(code),
+                server_display=_esc(shown or "—"),
+                readonly="readonly" if from_link else "",
+                replace_note=replace_note,
+                version=_esc(status.get("version", "?")),
+            )
+        )
+
+    def _handle_pair(self) -> None:
+        from scripts.sidecar_pkg import pairing
+
+        length = int(self.headers.get("Content-Length", 0))
+        params = parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
+        try:
+            target = pairing.PairTarget(
+                server=pairing.normalize_server((params.get("server") or [""])[0]),
+                code=pairing.normalize_code((params.get("code") or [""])[0]),
+            )
+            hostname = self.server.get_status().get("sidecar_id") or None
+            creds = pairing.redeem(target, hostname=hostname)
+        except pairing.PairingError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        new_config = dict(self.server.get_config())
+        new_config.update(creds)
+        try:
+            self.server.save_config(new_config)
+        except Exception as exc:
+            logger.error(f"Pairing save error: {exc}")
+            self._send_json({"ok": False, "error": f"Paired, but saving failed: {exc}"}, 500)
+            return
+        logger.info(f"Paired with {creds['api_url']}")
+        self._send_json({"ok": True, "api_url": creds["api_url"]})
+
+    def _handle_pair_request(self) -> None:
+        token = self.headers.get("X-Runway-Control", "")
+        if not self.server.control_token or not hmac.compare_digest(
+            token, self.server.control_token
+        ):
+            self.send_error(403, "Forbidden")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = -1
+        # A hand-off body is one small JSON object. Refuse anything else
+        # outright rather than reading part of it and leaving the rest unread.
+        if not 0 <= length <= 8192:
+            self.send_error(413 if length > 8192 else 400)
+            return
+        try:
+            url = str(json.loads(self.rfile.read(length) or b"{}").get("url", ""))
+        except ValueError:
+            url = ""
+        if self.server.on_pair_url is None or not url:
+            self.send_error(400)
+            return
+        self.server.on_pair_url(url)
+        self._send_json({"ok": True})
 
     def _handle_action(self, action: str) -> None:
         try:
@@ -563,6 +759,8 @@ class _SettingsServer(socketserver.TCPServer):
         open_config: Callable[[], None],
     ) -> None:
         super().__init__((host, port), _Handler)
+        self.control_token = ""
+        self.on_pair_url: Callable[[str], None] | None = None
         self.get_config = get_config
         self.get_status = get_status
         self.save_config = save_config
@@ -598,6 +796,11 @@ class SettingsServer:
         self._port = port
         self._server: _SettingsServer | None = None
         self._thread: threading.Thread | None = None
+        # Authenticates /pair-request hand-offs from a second process; shared
+        # with it through the owner-only control file (see write_control_file).
+        self.control_token = secrets.token_urlsafe(32)
+        # Called with a user-facing message when a pairing link is unusable.
+        self.notify: Callable[[str], None] = lambda msg: logger.warning(msg)
 
     def start(self) -> int:
         """Start the server. Returns the actual port it bound to."""
@@ -620,22 +823,69 @@ class SettingsServer:
         else:
             raise RuntimeError("Settings server: could not bind to any port in range")
 
-        self._port = port
+        self._port = self._server.server_address[1]  # the bound port (port=0 → OS-assigned)
+        self._server.control_token = self.control_token
+        self._server.on_pair_url = self.open_pair
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name="SettingsServer",
             daemon=True,
         )
         self._thread.start()
-        logger.info(f"Settings server at http://127.0.0.1:{port}")
-        return port
+        logger.info(f"Settings server at http://127.0.0.1:{self._port}")
+        return self._port
+
+    @property
+    def port(self) -> int:
+        return self._port
 
     def open(self) -> None:
         """Open the settings page in the default browser."""
         webbrowser.open(f"http://127.0.0.1:{self._port}/")
 
+    def open_pair(self, url: str | None = None) -> None:
+        """Show the pairing confirmation page for a runway-sidecar:// *url*.
+
+        Never pairs by itself: it only opens the page on which the user
+        confirms (or cancels) after seeing the target server. With no *url*
+        it opens the manual "pair with a code" form.
+        """
+        from scripts.sidecar_pkg import pairing
+
+        query = ""
+        if url:
+            try:
+                target = pairing.parse_pair_url(url)
+            except pairing.PairingError as exc:
+                self.notify(f"Couldn't use that pairing link: {exc}")
+                return
+            query = "?" + urlencode({"server": target.server, "code": target.code})
+        webbrowser.open(f"http://127.0.0.1:{self._port}/pair{query}")
+
+    def write_control_file(self, path: pathlib.Path) -> None:
+        """Publish ``{port, token, pid}`` so a second process can hand off a link.
+
+        Owner-only (0600), written atomically; removed by ``stop()``.
+        """
+        payload = json.dumps({"port": self._port, "token": self.control_token, "pid": os.getpid()})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp, path)
+        self._control_file = path
+
     def stop(self) -> None:
         """Shut down the server gracefully."""
+        control = getattr(self, "_control_file", None)
+        if control is not None:
+            try:
+                control.unlink()
+            except OSError:
+                # Already removed; a stale file is harmless (its token dies
+                # with this process and the port is re-probed on connect).
+                pass
         if self._server:
             self._server.shutdown()
             self._server = None

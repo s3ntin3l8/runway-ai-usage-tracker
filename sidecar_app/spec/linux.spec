@@ -15,7 +15,6 @@ a = Analysis(
     datas=[
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
-        (os.path.join(_ROOT, "assets", "logo_reference.png"), "assets"),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=[
@@ -49,6 +48,8 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
+        # One-time pairing (runway-sidecar://pair links, --pair).
+        "scripts.sidecar_pkg.pairing",
         # Shared TLS trust-store helper + bundled CA store (certifi). The
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.

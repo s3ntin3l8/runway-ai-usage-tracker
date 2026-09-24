@@ -2,30 +2,66 @@
 
 ## Desktop App (macOS, Windows, Linux)
 
-### Download
+### Download & install
 
-Download the latest release from the [GitHub Releases page](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/latest):
-- **macOS**: `Runway-Sidecar-macOS.zip` → unzip → drag `Runway Sidecar.app` to `/Applications`
-- **Windows**: `Runway-Sidecar-Windows.zip` → unzip → run `RunwaySidecar.exe`
-- **Linux (desktop tray)**: `Runway-Sidecar-Linux.tar.gz` → `tar -xzf …` → run `./RunwaySidecar`. Requires a tray host (AppIndicator on GNOME/Unity, GTK on KDE/Xfce) and a DBus session. For headless servers / Docker, use the CLI binary below instead.
-- **Linux (headless CLI)**: `Runway-Sidecar-Linux-CLI.tar.gz` → `tar -xzf …` → run `./runway-sidecar-cli --daemon`. Single-file binary, no Python install needed, no GUI dependencies. Use this on servers, in Docker, and on CI agents.
+Grab the latest build from the [GitHub Releases page](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/latest) (the Runway dashboard's **Fleet** page also links the right installer for your OS). `<version>` below is the release tag, e.g. `v2.13.0`.
 
-Each release asset ships a matching `*.sha256` checksum file. Verify with `shasum -a 256 -c <file>.sha256` (macOS/Linux).
+| Platform | Download | Install |
+|---|---|---|
+| **macOS** (Apple Silicon) | `Runway-Sidecar-macOS-<version>.dmg` | Open the DMG and drag **Runway Sidecar** onto **Applications**, then launch it from Applications (first launch: see *Unsigned app warning* below). |
+| **Windows** | `Runway-Sidecar-Windows-<version>-setup.exe` | Run the installer. It installs per-user (no admin prompt) into `%LOCALAPPDATA%\Programs\Runway Sidecar`, adds Start Menu entries, and offers **Start automatically when I sign in** on the last page. |
+| **Linux (desktop tray)** | `Runway-Sidecar-Linux-<version>.tar.gz` | `tar -xzf …` → run `./RunwaySidecar`. Requires a tray host (AppIndicator on GNOME/Unity, GTK on KDE/Xfce) and a DBus session. For headless servers / Docker, use the CLI binary instead. |
+| **Linux (headless CLI)** | `Runway-Sidecar-Linux-CLI-<version>.tar.gz` | `tar -xzf …` → run `./runway-sidecar-cli --daemon`. Single-file binary, no Python or GUI dependencies. Use this on servers, in Docker, and on CI agents. |
 
-### Edge builds (rolling, Linux)
+The release also carries `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`: portable builds (unzip and run, no installer) that the sidecar's self-updater downloads. You normally never need them.
+
+**Windows silent install** (fleet rollout / scripting):
+
+```powershell
+.\Runway-Sidecar-Windows-v2.13.0-setup.exe /S /AUTOSTART=1   # /D=C:\path overrides the install dir (must be last)
+```
+
+**Uninstalling:**
+- **macOS**: quit the app from the menu bar, turn off **Launch at Login** first if you enabled it, then drag `Runway Sidecar.app` from Applications to the Trash.
+- **Windows**: *Settings → Apps → Runway Sidecar → Uninstall* (or *Uninstall Runway Sidecar* in the Start Menu). The uninstaller also removes the login item. Silent: `"%LOCALAPPDATA%\Programs\Runway Sidecar\uninstall.exe" /S`.
+
+Neither removes your config, offline queue or logs (`~/.config/runway/sidecar`, `%APPDATA%\runway\sidecar`), so reinstalling picks up where you left off. Delete that folder by hand for a clean slate.
+
+### Verify your download
+
+Every asset has a sibling `<asset>.sha256`, and each release has one `SHA256SUMS.txt` covering all of them:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS.txt      # Linux   (macOS: shasum -a 256 -c …)
+```
+
+Each asset and `SHA256SUMS.txt` is also signed with [Sigstore](https://www.sigstore.dev/) keyless signing from the release workflow (`<asset>.sig` + `<asset>.cert`). To prove a file was built by this repository's CI:
+
+```bash
+cosign verify-blob \
+  --signature Runway-Sidecar-macOS-v2.13.0.dmg.sig \
+  --certificate Runway-Sidecar-macOS-v2.13.0.dmg.cert \
+  --certificate-identity-regexp '^https://github\.com/s3ntin3l8/runway-ai-usage-tracker/\.github/workflows/sidecar-build\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  Runway-Sidecar-macOS-v2.13.0.dmg
+```
+
+### Edge builds (rolling)
 
 Edge is the sidecar analog of the Docker `:edge` image — a rolling build published on every push to `main` that touches sidecar code. It lives in a single, always-overwritten `edge` **prerelease**, so the download URLs are stable:
 
+- **macOS**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-macOS-edge.dmg>
+- **Windows**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Windows-edge-setup.exe>
 - **Linux (desktop tray)**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-edge.tar.gz>
 - **Linux (headless CLI)**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz>
-- **macOS**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-macOS-edge.zip>
-- **Windows**: <https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Windows-edge.zip>
+
+(The portable `Runway-Sidecar-{macOS,Windows}-edge.zip` payloads sit alongside.)
 
 ```bash
 # Deploy the latest edge CLI sidecar to another Linux box:
 curl -fsSL -O https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz
 curl -fsSL -O https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
-shasum -a 256 -c Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
+sha256sum -c Runway-Sidecar-Linux-CLI-edge.tar.gz.sha256
 tar -xzf Runway-Sidecar-Linux-CLI-edge.tar.gz
 ./runway-sidecar-cli --daemon
 ```
@@ -34,7 +70,13 @@ Edge binaries report their version as `<base>+edge.<short-sha>` (e.g. `1.1.0+edg
 
 ### First Run
 
-On first launch, if no config file exists, the app creates a template config and opens it in the default editor.
+**Easiest: pair from the dashboard.** In Runway, go to *Fleet → Add sidecar → Generate pairing link* and click **Open in Runway Sidecar**. The sidecar opens a confirmation page naming your server. Check the address and click **Pair**. The sidecar fetches the server URL and ingest key itself and starts reporting straight away. Codes are one-time and expire after 10 minutes.
+
+- If the link doesn't open the app (e.g. a Linux tray build, or the browser blocks it): open **Settings…** from the tray icon → **Pair with a code…** and enter the server address and code shown in the dashboard.
+- Headless / CLI: `runway-sidecar-cli --pair https://your-server CODE` (or pass the whole `runway-sidecar://pair?…` link). It writes the config and exits; then (re)start the daemon.
+- Only pair with a link you just generated in **your own** dashboard: pairing points this machine's usage data and provider sign-ins at that server.
+
+**Manual setup:** on first launch, if no config file exists, the app creates a template config and opens it in the default editor.
 
 The config is located at:
 - **macOS/Linux**: `~/.config/runway/sidecar/config.json`
@@ -46,15 +88,13 @@ Set the following required fields:
 
 Restart the app after editing the config for changes to take effect.
 
-### Unsigned Binary Warning
+### Unsigned app warning
 
-**macOS (Gatekeeper):**
+The sidecar is not signed with a paid Apple Developer ID or Windows code-signing certificate, so each OS asks once before the first launch.
 
-The app is not code-signed. On first launch, right-click `Runway Sidecar.app` → **Open**, then click **Open** in the dialog that appears to bypass Gatekeeper.
+**macOS (Gatekeeper):** the app is ad-hoc signed but not notarized. The first time, right-click **Runway Sidecar** in Applications → **Open**, then **Open** in the dialog (on macOS 15+: try to open it once, then *System Settings → Privacy & Security → Open Anyway*). Launch it from **Applications**, not from inside the DMG window: a copy running off the disk image can't update itself or register Launch at Login, and the sidecar tells you so.
 
-**Windows (SmartScreen):**
-
-Click **More info** → **Run anyway** to bypass SmartScreen on first launch.
+**Windows (SmartScreen):** on the installer's blue *Windows protected your PC* screen, click **More info** → **Run anyway**.
 
 ### Tray / Menubar
 
@@ -75,11 +115,12 @@ The sidecar runs as a background app with a menu icon showing its status:
 - **View Logs**: Open the log file for debugging
 - **Check for Updates…**: Open the releases page to download a newer version manually
 - **Download & Install Update**: Appears only when an update is available — downloads, verifies, installs, and relaunches in place
+- **Roll Back to vX.Y.Z**: Appears only after a self-update. It restores the build that update replaced and relaunches.
 - **Quit**: Exit the app
 
 ### Automatic Startup
 
-Click **Launch at Login** in the menu to register the sidecar as a login item (macOS) or startup task (Windows). Click again to remove it.
+Click **Launch at Login** in the menu to register the sidecar as a login item (macOS LaunchAgent, Windows `HKCU\…\Run` entry, Linux XDG autostart). Click again to remove it. On Windows this is the same setting as the installer's *Start automatically when I sign in* checkbox, so the two always agree.
 
 ### Updates
 
@@ -98,9 +139,10 @@ You can install the update without leaving the app:
 **Constraints & safety:**
 - Self-update only runs for the packaged (PyInstaller) binaries. **From-source runs (`python3 scripts/sidecar.py`) and Docker containers are notify-only** — update them with `git pull` / by repulling the image.
 - The checksum is **mandatory**: a missing or mismatched `.sha256` aborts the install, leaving the running copy untouched.
-- The previous binary/bundle is kept alongside as `*.old` — a rollback breadcrumb you can restore by hand if a build misbehaves.
-- Edge-channel self-update is **Linux-only** (edge builds are published for Linux only).
-- If the install path isn't writable (e.g. a system-wide `/Applications` or `/usr/local/bin` location), the update is skipped with a log message and you update manually via **Check for Updates…**.
+- **Rollback:** the build an update replaced is kept next to the install as `<name>.previous` (e.g. `Runway Sidecar.app.previous`, `RunwaySidecar.exe.previous`), with its version in `<name>.previous.version`. If a new build misbehaves, use the tray's **Roll Back to vX.Y.Z** item (shown only when a backup exists) or `runway-sidecar-cli --rollback`. A rollback keeps the newer build as the backup, so you can undo it. Only one backup is kept.
+- On Windows, installs made with the setup.exe also get their *Apps & Features* version refreshed after each self-update or rollback.
+- Self-update always downloads the portable `.zip` / `.tar.gz` payload, never the `.dmg` / `-setup.exe`, and swaps it in place. It works on every platform and both channels.
+- If the install path isn't writable (e.g. `/Applications` for a non-admin macOS account, or `/usr/local/bin`), the update is skipped with a log message and you install the new DMG / setup.exe via **Check for Updates…**. The Windows installer's per-user location is always writable.
 
 ---
 
