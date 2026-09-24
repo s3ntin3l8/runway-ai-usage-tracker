@@ -674,7 +674,15 @@ class _Handler(BaseHTTPRequestHandler):
         ):
             self.send_error(403, "Forbidden")
             return
-        length = min(int(self.headers.get("Content-Length", 0)), 8192)
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = -1
+        # A hand-off body is one small JSON object. Refuse anything else
+        # outright rather than reading part of it and leaving the rest unread.
+        if not 0 <= length <= 8192:
+            self.send_error(413 if length > 8192 else 400)
+            return
         try:
             url = str(json.loads(self.rfile.read(length) or b"{}").get("url", ""))
         except ValueError:

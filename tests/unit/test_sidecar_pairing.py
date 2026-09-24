@@ -292,3 +292,11 @@ def test_macos_handler_is_noop_elsewhere(monkeypatch):
 
     monkeypatch.setattr(sys, "platform", "linux")
     assert url_events.install_macos_url_handler(lambda url: None) is False
+
+
+def test_pair_request_rejects_oversized_body(settings_srv):
+    token = settings_srv.control_token
+    body = json.dumps({"url": LINK, "pad": "x" * 9000}).encode()
+    status, _ = _http(settings_srv, "POST", "/pair-request", body, {"X-Runway-Control": token})
+    assert status == 413
+    assert settings_srv.opened == []

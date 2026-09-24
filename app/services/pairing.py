@@ -118,9 +118,10 @@ def redeem(session: Session, code: str, *, hostname: str | None) -> SidecarPairi
         .where(col(SidecarPairingCode.expires_at) > now)
         .values(used_at=now, used_by_hostname=(hostname or "")[:255] or None)
     )
-    session.commit()
     if result.rowcount != 1:  # type: ignore[attr-defined]
+        session.rollback()  # nothing matched; don't commit an empty transaction
         raise PairingError("invalid or expired pairing code")
+    session.commit()
     row = session.exec(
         select(SidecarPairingCode).where(col(SidecarPairingCode.code_hash) == digest)
     ).one()
