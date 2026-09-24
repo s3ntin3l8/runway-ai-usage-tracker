@@ -123,7 +123,7 @@ class TokenCache:
                 # CLI OAuth token) pushed for this same account.
                 for key, value in tokens.items():
                     if key not in _OAUTH_CREDENTIAL_KEYS:
-                        kept_tokens[key] = value
+                        kept_tokens.setdefault(key, value)
                 if tokens.get("refresh_token"):
                     kept_tokens["refresh_token"] = tokens["refresh_token"]
                 if account_label and not kept_meta.get("account_label"):

@@ -110,7 +110,11 @@ async def test_same_account_stale_oauth_push_keeps_fresh_oauth_and_browser_cooki
     cache = TokenCache()
     await cache.store(
         "chatgpt",
-        {"oauth_token": "fresh", "expiry_date": "9999999999999"},
+        {
+            "oauth_token": "fresh",
+            "expiry_date": "9999999999999",
+            "cookie_session": "fresh-cookie",
+        },
         account_id="a@example.com",
     )
     await cache.store(
@@ -118,10 +122,10 @@ async def test_same_account_stale_oauth_push_keeps_fresh_oauth_and_browser_cooki
         {
             "oauth_token": "expired",
             "expiry_date": "1",
-            "cookie_session": "browser-cookie",
+            "cookie_session": "stale-cookie",
         },
         account_id="a@example.com",
     )
     stored = await cache.get("chatgpt", "a@example.com")
     assert stored["oauth_token"] == "fresh"
-    assert stored["cookie_session"] == "browser-cookie"
+    assert stored["cookie_session"] == "fresh-cookie"

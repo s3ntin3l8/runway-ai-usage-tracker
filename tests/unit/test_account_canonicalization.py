@@ -393,6 +393,44 @@ class TestSidecarIdentityPrecedence:
             {"provider_id": "anthropic", "credential_origin": "cookie:anthropic/session"}
         ]
 
+    def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import scripts.sidecar as sidecar
+
+        monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            sidecar.subprocess,
+            "run",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "claudeAiOauth": {"accessToken": "sk-ant-keychain"},
+                        "oauthAccount": {"emailAddress": "Keychain@Example.com"},
+                    }
+                ),
+            ),
+        )
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "anthropic",
+            {
+                "name": "Claude",
+                "rules": [
+                    {
+                        "type": "keychain",
+                        "service_name": "Claude Code-credentials",
+                        "format": "json",
+                        "mapping": {
+                            "claudeAiOauth.accessToken": "oauth_token",
+                        },
+                    }
+                ],
+            },
+        )
+        assert [card["account_id"] for card in cards] == ["keychain@example.com"]
+        assert blocked == []
+
     def test_gemini_stamp_reads_collected_id_token(self, tmp_path, monkeypatch):
         """Covers creds under {{CONFIG_DIR:gemini}}, not just ~/.gemini."""
         import base64

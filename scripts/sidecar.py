@@ -2113,6 +2113,14 @@ class GenericCollector:
                                 val = GenericCollector.get_nested(data, key_path)
                                 if val:
                                     candidate_tokens[target] = val
+                            if provider_id == "anthropic" and isinstance(data, dict):
+                                oauth_account = data.get("oauthAccount", {})
+                                if isinstance(oauth_account, dict):
+                                    email = oauth_account.get("emailAddress") or oauth_account.get(
+                                        "email"
+                                    )
+                                    if email:
+                                        candidate_tokens["account_id"] = email
                         else:
                             target = mapping.get("value")
                             if target:
@@ -2313,6 +2321,19 @@ class GenericCollector:
 
         if browser_tokens:
             token_candidates.append((browser_tokens, f"cookie:{provider_id}/session", "cookie"))
+            # Some providers expose the same cookie through an environment
+            # variable and browser storage. Keep the browser value as the
+            # single candidate for that credential field so it cannot be
+            # pushed twice with conflicting account hints.
+            token_candidates = [
+                candidate
+                for candidate in token_candidates
+                if not (
+                    candidate[2] == "env"
+                    and candidate[0]
+                    and candidate[0].keys() <= browser_tokens.keys()
+                )
+            ]
 
         # Convert antigravity's raw ISO8601 token.expiry into expiry_date (ms
         # epoch, matching gemini's oauth_creds.json convention) so the server's

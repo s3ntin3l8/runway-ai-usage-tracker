@@ -658,7 +658,6 @@ class TestCredentialCandidateOwnership:
     @staticmethod
     def _jwt(email: str) -> str:
         import base64
-        import json
 
         payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode())
         return "header." + payload.decode().rstrip("=") + ".signature"
@@ -804,6 +803,38 @@ class TestCredentialCandidateOwnership:
             "env:CLAUDE_CODE_OAUTH_TOKEN",
             "cookie:anthropic/session",
         }
+
+    def test_env_cookie_alias_does_not_emit_duplicate_cookie_candidate(self, monkeypatch):
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("OLLAMA_SESSION_TOKEN", "env-cookie")
+        monkeypatch.setattr(
+            sc.BrowserCookieExtractor,
+            "get_cookie",
+            staticmethod(lambda _domain, _name: "browser-cookie"),
+        )
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "ollama",
+            {
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "OLLAMA_SESSION_TOKEN",
+                        "mapping": {"value": "cookie_session"},
+                    },
+                    {
+                        "type": "cookie",
+                        "domains": ["ollama.com"],
+                        "name": "session",
+                        "mapping": {"value": "cookie_session"},
+                    },
+                ]
+            },
+            account_label_hints={"ollama": {"cookie:ollama/session": "a@example.com"}},
+        )
+        assert len(cards) == 1
+        assert cards[0]["metadata"]["cookie_session"] == "browser-cookie"
+        assert blocked == []
 
 
 class TestCredentialCache:
