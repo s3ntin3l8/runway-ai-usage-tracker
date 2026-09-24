@@ -154,11 +154,75 @@ describe('UntaggedCredentialsDialog', () => {
         provider_id: 'anthropic',
         credential_origin: 'provider:anthropic',
         account_id: 'alice@example.com',
+        // #319: default scope is "This machine" (sidecar-scoped).
+        scope: 'sidecar',
       }),
     );
     // Successful save closes the dialog and toasts success.
     expect(onClose).toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith('Credential tagged');
+  });
+
+  it('sends scope=deployment when "All machines" is selected (#319)', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [anthropicRow],
+    });
+    vi.mocked(api.tagCredential).mockResolvedValue({ status: 'ok' });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    // Flip the dialog-level scope switch to "All machines".
+    await user.click(within(dialog).getByRole('radio', { name: /all machines/i }));
+    const trigger = within(dialog).getByRole('combobox');
+    await user.click(trigger);
+    await user.click(await screen.findByText('Alice · alice@example.com'));
+    await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
+
+    await waitFor(() =>
+      expect(api.tagCredential).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'deployment' }),
+      ),
+    );
+  });
+
+  it('defaults the scope switch to "This machine" and resets on reopen', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [anthropicRow],
+    });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const { rerender } = renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    const thisMachine = within(dialog).getByRole('radio', { name: /this machine/i });
+    expect(thisMachine).toHaveAttribute('aria-checked', 'true');
+
+    await user.click(within(dialog).getByRole('radio', { name: /all machines/i }));
+    expect(
+      within(dialog).getByRole('radio', { name: /all machines/i }),
+    ).toHaveAttribute('aria-checked', 'true');
+
+    // Close and reopen: scope resets to the "This machine" default.
+    rerender(<UntaggedCredentialsDialog open={false} onClose={() => {}} />);
+    rerender(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+    const reopened = await screen.findByRole('dialog');
+    expect(
+      within(reopened).getByRole('radio', { name: /this machine/i }),
+    ).toHaveAttribute('aria-checked', 'true');
   });
 
   it('toasts an error and keeps the dialog open when the save fails', async () => {

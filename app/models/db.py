@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 from app.core.encryption import encryption_service
@@ -498,33 +498,57 @@ class AuditLog(SQLModel, table=True):  # type: ignore[call-arg]
 class CredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     """Operator-set mapping from a host-side credential origin to a server-side identity.
 
-    Phase-1 silent-listener storage. The sidecar reads ``/fleet/config`` to
+    Silent-listener storage. The sidecar reads ``/fleet/config`` to
     discover tag hints (one per ``credential_origin``); if no tag exists,
     the matching credential card is blocked from the ingest queue and the
     sidecar reports the origin via ``POST /fleet/credentials/manifest`` so
     the operator can resolve it in the fleet UI. Resolutions persist here
-    keyed on ``(provider_id, credential_origin)``. See PR #288.
+    keyed on ``(provider_id, credential_origin, sidecar_id)``. See PR #288.
 
     ``credential_origin`` is a stable host-side descriptor like
     ``"path:/home/user/.claude/.credentials.json"`` or ``"env:ANTHROPIC_API_KEY"`` —
-    never a credential value, never a hash of one. Two sidecars sharing
-    the same origin (e.g. NFS-shared home dir) intentionally resolve to
-    one tag, since the credential itself is genuinely one identity.
+    never a credential value, never a hash of one.
 
-    Phase-2 widens with an optional ``sidecar_id`` column for hosts that
-    hold the same logical origin but want different per-host tags.
+    ``sidecar_id`` scopes the tag: ``NULL`` = deployment-wide (legacy
+    rows and the dialog's "All machines" scope — two sidecars sharing
+    the same origin, e.g. an NFS-shared home dir, intentionally resolve
+    to one tag, since the credential itself is genuinely one identity);
+    a concrete id = that sidecar only (the dialog's default — hosts that
+    hold the same logical origin but carry different per-host
+    credentials). Reads resolve scoped-first, then fall back to the
+    deployment-wide row. Partial unique indexes keep both forms
+    collision-free (SQLite treats NULLs as distinct, so the split is
+    required — see ``_migrate_credential_tag_scoping`` in
+    ``app/core/db.py``). Tracking issue: #319.
     """
 
     __tablename__ = "credential_tags"
     __table_args__ = (
-        UniqueConstraint("provider_id", "credential_origin", name="uq_credential_tag_identity"),
+        Index(
+            "uq_credential_tag_deployment",
+            "provider_id",
+            "credential_origin",
+            unique=True,
+            sqlite_where=text("sidecar_id IS NULL"),
+        ),
+        Index(
+            "uq_credential_tag_sidecar",
+            "provider_id",
+            "credential_origin",
+            "sidecar_id",
+            unique=True,
+            sqlite_where=text("sidecar_id IS NOT NULL"),
+        ),
         Index("ix_credential_tags_provider", "provider_id"),
+        Index("ix_credential_tags_sidecar", "sidecar_id"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     provider_id: str = Field(index=True)
     credential_origin: str
     account_id: str  # matches provider_configs.account_id
+    # NULL = deployment-wide; otherwise the sidecar this tag is scoped to.
+    sidecar_id: str | None = Field(default=None, index=True)
     set_by: str = "operator"
     set_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -542,11 +566,12 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     offers a tag action that creates a :class:`CredentialTag` and deletes
     the pending row.
 
-    ``pending_credential_tags`` is the only place where the per-sidecar
-    identity matters in phase-1 — a CredentialTag is global (resolved
-    per origin, not per sidecar), but the pending state needs to know
-    which sidecar reported it so the operator can answer "which host is
-    this credential from?" before resolving.
+    The pending state is keyed per-sidecar so the operator can answer
+    "which host is this credential from?" before resolving, and so the
+    auto-hint heuristic can scope ``provider:<pid>`` hints to the hosts
+    that actually reported the credential (#319). A resolved
+    :class:`CredentialTag` may itself be sidecar-scoped or
+    deployment-wide — see that model's ``sidecar_id`` column.
     """
 
     __tablename__ = "pending_credential_tags"

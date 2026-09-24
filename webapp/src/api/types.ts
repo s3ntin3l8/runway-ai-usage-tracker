@@ -535,11 +535,15 @@ export interface UntaggedCredentialsList {
 // Body for POST /api/v1/fleet/credentials/tags — operator resolves a
 // pending entry into a server-side account_id by selecting one of the
 // provider_configs rows for the entry's provider_id.
+// ``scope`` (#319): "sidecar" (default) persists the tag for
+// ``sidecar_id`` only ("This machine"); "deployment" persists a
+// deployment-wide tag (sidecar_id NULL) that applies to every machine.
 export interface CredentialTagRequest {
   sidecar_id: string;
   provider_id: string;
   credential_origin: string;
   account_id: string;
+  scope?: 'sidecar' | 'deployment';
 }
 
 export interface SystemSettings {

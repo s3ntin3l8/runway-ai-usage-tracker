@@ -42,6 +42,7 @@ def _fetch_config_payload(
     api_url: str,
     *,
     timeout: int = 10,
+    sidecar_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Single ``GET /api/v1/fleet/config`` round-trip.
 
@@ -52,12 +53,20 @@ def _fetch_config_payload(
     The two public fetchers share this so they don't double-round-trip
     when both are needed by ``refresh_from_config(fetch_tokens=True)``
     (PR #283 round-3 review).
+
+    ``sidecar_id`` (#319) is appended as ``?sidecar_id=`` when given, so
+    the server can scope ``account_tag_hints`` to this machine's
+    credential tags. Omitting it (old call sites) keeps the
+    deployment-wide view for single-host deployments.
     """
     from urllib import error, request
 
     from scripts.sidecar_pkg.tls import build_context
 
     url = f"{api_url.rstrip('/')}/api/v1/fleet/config"
+    if sidecar_id:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sidecar_id={sidecar_id}"
     req = request.Request(url)
     try:
         with request.urlopen(req, timeout=timeout, context=build_context(url)) as resp:
@@ -158,6 +167,7 @@ def fetch_identity_hints(
     api_url: str,
     *,
     timeout: int = 10,
+    sidecar_id: str | None = None,
 ) -> tuple[dict[str, list[str]], dict[str, dict[str, str]] | None] | None:
     """Fetch per-account identity hints + operator tag-hint map from ``GET /api/v1/fleet/config``.
 
@@ -182,8 +192,12 @@ def fetch_identity_hints(
     with no enabled rows; ``None`` is an outage where the prior cache
     should be retained and the next cycle should retry (PR #283
     round-3 review).
+
+    ``sidecar_id`` (#319) identifies this machine so the server scopes
+    ``account_tag_hints`` to machine-local credential tags. Keyword-only
+    for backward compatibility with positional callers.
     """
-    payload = _fetch_config_payload(api_url, timeout=timeout)
+    payload = _fetch_config_payload(api_url, timeout=timeout, sidecar_id=sidecar_id)
     if payload is None:
         return None
     accounts = _parse_identity_hints(payload)
@@ -195,14 +209,19 @@ def fetch_credential_tokens(
     api_url: str,
     *,
     timeout: int = 10,
+    sidecar_id: str | None = None,
 ) -> dict[tuple[str, str], str] | None:
     """Fetch per-account credential tokens from ``GET /api/v1/fleet/config``.
 
     Returns ``None`` on a fetch failure (caller should keep the prior
     cache, retry on the next cycle). Returns an empty dict on success
     with no tokens issued.
+
+    ``sidecar_id`` (#319) is forwarded for symmetry with
+    :func:`fetch_identity_hints` — tokens are not machine-scoped yet,
+    but sending it keeps both fetchers on the same request shape.
     """
-    payload = _fetch_config_payload(api_url, timeout=timeout)
+    payload = _fetch_config_payload(api_url, timeout=timeout, sidecar_id=sidecar_id)
     if payload is None:
         return None
     return _parse_credential_tokens(payload)
@@ -257,6 +276,7 @@ class CredentialCache:
         api_url: str,
         *,
         fetch_tokens: bool = False,
+        sidecar_id: str | None = None,
     ) -> tuple[int, int] | None:
         """Re-fetch ``/fleet/config`` and replace the cached snapshot.
 
@@ -270,8 +290,11 @@ class CredentialCache:
         or ``None`` on a fetch failure. ``None`` is the canonical signal
         to the caller that the prior snapshot is still in the cache and
         should be reused as-is.
+
+        ``sidecar_id`` (#319) forwards this machine's identity for
+        machine-scoped account_tag_hints.
         """
-        payload = _fetch_config_payload(api_url)
+        payload = _fetch_config_payload(api_url, sidecar_id=sidecar_id)
         if payload is None:
             # Outage — leave the cache untouched. ``is_fresh`` stays at
             # its prior value (likely False), so the next cycle retries.

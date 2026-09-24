@@ -574,22 +574,16 @@ def test_pending_delete_returns_true_when_present_false_when_absent(session: Ses
 
 
 def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> None:
-    """PR #318 round-2 review (Hermes warning #2): auto-hints are
-    deployment-wide — they would cross-contaminate hosts in a multi-
-    sidecar deployment. Gating: when ``sidecar_registry`` has 2+ rows
-    with ``last_seen`` inside the last 7 days, the auto-hint is
-    suppressed. Operators must tag explicitly via the Untagged
-    Credentials dialog.
+    """#319 replaces the PR #318 blanket suppression with a per-sidecar
+    pending gate: auto-hints are deployment-wide candidates, so in a
+    multi-host deployment they only reach a sidecar that has a
+    ``pending_credential_tags`` row for ``provider:<pid>`` — the host
+    that actually reported the credential. A host that never reported
+    it never receives the hint (cross-host attribution block).
 
-    PR #318 round-2 re-review S: only *live* rows count — rows default
-    ``last_seen`` to now (so both fixtures here are live) and stale/retired
-    rows age out of the window instead of suppressing forever; see
-    ``test_auto_hints_not_suppressed_by_stale_sidecar_rows``.
-
-    Tracking: ``credential_tags`` is planned to gain a ``sidecar_id``
-    column (#319) which will let this heuristic resume
-    per-host scoping. Until then, the multi-host deployment is the
-    safer default — explicit tags never cross-contaminate.
+    Two LIVE sidecars registered; the requester has no pending row →
+    no hint. See the sibling tests for the pending-row path and the
+    unidentified-requester path.
     """
     from app.models.db import ProviderConfig, SidecarRegistry
 
@@ -607,8 +601,74 @@ def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> 
     session.add(SidecarRegistry(sidecar_id="beta", hostname="beta-host"))
     session.commit()
 
-    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
-    # Auto-hint suppressed because two LIVE sidecars are registered.
+    # Identified requester (alpha) but no pending row for provider:minimax.
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session, providers=["minimax"], sidecar_id="alpha"
+    )
+    assert out == {}
+
+
+def test_auto_hints_ships_to_sidecar_with_pending_row_in_multi_sidecar(session: Session) -> None:
+    """Multi-host + identified requester WITH a pending
+    ``provider:<pid>`` row → the hint ships (that host reported the
+    credential; it's the one that needs the auto-resolution)."""
+    from app.models.db import ProviderConfig, SidecarRegistry
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    session.add(SidecarRegistry(sidecar_id="alpha", hostname="alpha-host"))
+    session.add(SidecarRegistry(sidecar_id="beta", hostname="beta-host"))
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="minimax",
+        credential_origin="provider:minimax",
+    )
+    session.commit()
+
+    out_alpha = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session, providers=["minimax"], sidecar_id="alpha"
+    )
+    assert out_alpha == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
+
+    # beta never reported it → no hint for beta.
+    out_beta = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session, providers=["minimax"], sidecar_id="beta"
+    )
+    assert out_beta == {}
+
+
+def test_auto_hints_withheld_when_unidentified_in_multi_sidecar(session: Session) -> None:
+    """Multi-host + unidentified requester (old sidecar binary that
+    doesn't send ``?sidecar_id=``): ship nothing — the safe pre-#319
+    behavior for multi-host deployments."""
+    from app.models.db import ProviderConfig, SidecarRegistry
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    session.add(SidecarRegistry(sidecar_id="alpha", hostname="alpha-host"))
+    session.add(SidecarRegistry(sidecar_id="beta", hostname="beta-host"))
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="minimax",
+        credential_origin="provider:minimax",
+    )
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session, providers=["minimax"], sidecar_id=None
+    )
     assert out == {}
 
 
@@ -623,7 +683,7 @@ def test_auto_hints_not_suppressed_by_stale_sidecar_rows(session: Session) -> No
     permanently with no log line. The gate now counts only rows whose
     ``last_seen`` is within 7 days — beyond the ~60s heartbeat cadence
     and the 60-min staleness threshold, but short enough that retired
-    machines age out — and logs at DEBUG when it suppresses.
+    machines age out — and logs at DEBUG when it withholds.
     """
     from datetime import UTC, datetime, timedelta
 
@@ -651,7 +711,8 @@ def test_auto_hints_not_suppressed_by_stale_sidecar_rows(session: Session) -> No
 
 def test_auto_hints_unaffected_when_only_one_sidecar(session: Session) -> None:
     """The single-host happy path: one sidecar registered, one labeled
-    row → auto-hint fires (matches the pre-multi-host-gate contract)."""
+    row → auto-hint fires unconditionally (no pending row required —
+    the MiniMax first-cycle fix for single-host deployments)."""
     from app.models.db import ProviderConfig, SidecarRegistry
 
     session.add(
@@ -666,3 +727,393 @@ def test_auto_hints_unaffected_when_only_one_sidecar(session: Session) -> None:
 
     out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
     assert out == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
+
+
+# ---------------------------------------------------------------------------
+# Per-sidecar tag scoping (#319) — credential_tags.sidecar_id
+# ---------------------------------------------------------------------------
+
+
+def test_set_tag_scoped_and_deployment_rows_are_distinct(session: Session):
+    """A scoped row and a deployment-wide row for the same (provider,
+    origin) coexist — the partial unique indexes allow both forms."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    rows = CredentialTagRepo.list_by_provider(session, provider_id="anthropic")
+    assert len(rows) == 2
+    scoped = [r for r in rows if r.sidecar_id == "alpha-host"]
+    deployment = [r for r in rows if r.sidecar_id is None]
+    assert len(scoped) == 1 and scoped[0].account_id == "alice-work@example.com"
+    assert len(deployment) == 1 and deployment[0].account_id == "alice@example.com"
+
+
+def test_get_scoped_row_wins_over_deployment_row(session: Session):
+    """Read precedence: with ``sidecar_id`` given, the scoped row wins
+    over a deployment-wide row for the same origin."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    # alpha's own scoped row wins.
+    assert (
+        CredentialTagRepo.get_account_id(
+            session,
+            provider_id="anthropic",
+            credential_origin="path:/shared",
+            sidecar_id="alpha-host",
+        )
+        == "alice-work@example.com"
+    )
+    # beta falls back to the deployment-wide row.
+    assert (
+        CredentialTagRepo.get_account_id(
+            session,
+            provider_id="anthropic",
+            credential_origin="path:/shared",
+            sidecar_id="beta-host",
+        )
+        == "alice@example.com"
+    )
+    # Unidentified reader sees only the deployment-wide row.
+    assert (
+        CredentialTagRepo.get_account_id(
+            session,
+            provider_id="anthropic",
+            credential_origin="path:/shared",
+            sidecar_id=None,
+        )
+        == "alice@example.com"
+    )
+
+
+def test_set_tag_idempotent_within_same_scope(session: Session):
+    """Re-tagging the same (provider, origin, sidecar_id) updates in
+    place — no duplicate row within one scope."""
+    first = CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+    first_id = first.id
+
+    second = CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    assert second.id == first_id
+    assert second.account_id == "alice-work@example.com"
+    rows = CredentialTagRepo.list_by_provider(session, provider_id="anthropic")
+    assert len(rows) == 1
+
+
+def test_unique_constraint_blocks_duplicate_scoped_insert(session: Session):
+    """Direct insert of a second scoped row for the same
+    (provider, origin, sidecar_id) fails the partial unique index."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    duplicate = CredentialTag(
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="bob@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.add(duplicate)
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
+
+
+def test_list_pending_payload_scoped_read(session: Session):
+    """``list_pending_payload(sidecar_id=...)``: scoped + deployment rows
+    ship (scoped winning on conflict); ``sidecar_id=None`` ships only
+    deployment-wide rows."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/alpha-only",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    # alpha sees both — shared origin falls back to the deployment row
+    # (no scoped override exists for it here), alpha-only comes scoped.
+    out_alpha = CredentialTagRepo.list_pending_payload(
+        session, providers=["anthropic"], sidecar_id="alpha-host"
+    )
+    assert out_alpha == {
+        "anthropic": {
+            "path:/shared": "alice@example.com",
+            "path:/alpha-only": "alice-work@example.com",
+        }
+    }
+    # beta sees only the deployment-wide row.
+    out_beta = CredentialTagRepo.list_pending_payload(
+        session, providers=["anthropic"], sidecar_id="beta-host"
+    )
+    assert out_beta == {"anthropic": {"path:/shared": "alice@example.com"}}
+    # Unidentified reader: deployment-wide only.
+    out_none = CredentialTagRepo.list_pending_payload(
+        session, providers=["anthropic"], sidecar_id=None
+    )
+    assert out_none == {"anthropic": {"path:/shared": "alice@example.com"}}
+
+
+def test_list_pending_payload_scoped_overrides_deployment(session: Session):
+    """When both a scoped and a deployment-wide row exist for the same
+    origin, the scoped row wins in the payload."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    out = CredentialTagRepo.list_pending_payload(
+        session, providers=["anthropic"], sidecar_id="alpha-host"
+    )
+    assert out == {"anthropic": {"path:/shared": "alice-work@example.com"}}
+
+
+def test_delete_tag_scoped_leaves_deployment_row(session: Session):
+    """``delete_tag(sidecar_id=...)`` removes only that sidecar's row."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    removed = CredentialTagRepo.delete_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+    assert removed is True
+
+    remaining = CredentialTagRepo.list_by_provider(session, provider_id="anthropic")
+    assert len(remaining) == 1
+    assert remaining[0].sidecar_id is None
+
+
+def test_delete_tag_without_sidecar_removes_all_scopes(session: Session):
+    """``delete_tag(sidecar_id=None)`` removes every row for the pair —
+    the "forget this origin entirely" cleanup."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/x",
+        account_id="alice-work@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    removed = CredentialTagRepo.delete_tag(
+        session, provider_id="anthropic", credential_origin="path:/x"
+    )
+    session.commit()
+    assert removed is True
+    assert CredentialTagRepo.list_by_provider(session, provider_id="anthropic") == []
+
+
+def test_pending_delete_by_origin_clears_all_sidecars(session: Session):
+    """``delete_by_origin`` removes every sidecar's pending row for a
+    (provider, origin) pair — used by the dialog's deployment scope."""
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="alpha", provider_id="anthropic", credential_origin="path:/x"
+    )
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="beta", provider_id="anthropic", credential_origin="path:/x"
+    )
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="alpha", provider_id="chatgpt", credential_origin="path:/y"
+    )
+    session.commit()
+
+    removed = PendingCredentialTagRepo.delete_by_origin(
+        session, provider_id="anthropic", credential_origin="path:/x"
+    )
+    session.commit()
+
+    assert removed == 2
+    remaining = PendingCredentialTagRepo.list_all(session)
+    assert [(r.sidecar_id, r.provider_id, r.credential_origin) for r in remaining] == [
+        ("alpha", "chatgpt", "path:/y")
+    ]
+
+
+# ---------------------------------------------------------------------------
+# _migrate_credential_tag_scoping (#319) — rebuild pre-#319 tables
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_credential_tag_scoping_upgrades_legacy_table():
+    """Functional upgrade: pre-#319 table (table-level UNIQUE on
+    (provider_id, credential_origin), no sidecar_id) is rebuilt with the
+    post-#319 shape; existing rows become deployment-wide (sidecar_id
+    NULL). Idempotent on second run. Fresh DBs skip (no legacy constraint).
+    """
+    from sqlalchemy import text
+
+    from app.core.db import _migrate_credential_tag_scoping
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    with engine.connect() as conn:
+        # Rebuild credential_tags as a pre-#319 legacy table.
+        conn.execute(text("DROP TABLE credential_tags"))
+        conn.execute(
+            text(
+                "CREATE TABLE credential_tags ("
+                "id INTEGER PRIMARY KEY, provider_id VARCHAR NOT NULL, "
+                "credential_origin VARCHAR NOT NULL, account_id VARCHAR NOT NULL, "
+                "set_by VARCHAR NOT NULL, set_at TIMESTAMP NOT NULL, "
+                "UNIQUE (provider_id, credential_origin) "
+                "CONSTRAINT uq_credential_tag_identity)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO credential_tags "
+                "(id, provider_id, credential_origin, account_id, set_by, set_at) "
+                "VALUES (1, 'anthropic', 'path:/a', 'alice@example.com', "
+                "'operator', '2026-01-01 00:00:00'),"
+                "(2, 'minimax', 'provider:minimax', 's3ntin318@gmail.com', "
+                "'operator', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.commit()
+
+        _migrate_credential_tag_scoping(conn)
+
+        # sidecar_id column exists; legacy rows are deployment-wide.
+        rows = conn.execute(
+            text("SELECT id, provider_id, account_id, sidecar_id FROM credential_tags ORDER BY id")
+        ).fetchall()
+        assert [(r[0], r[1], r[2], r[3]) for r in rows] == [
+            (1, "anthropic", "alice@example.com", None),
+            (2, "minimax", "s3ntin318@gmail.com", None),
+        ]
+
+        # Legacy table constraint is gone; partial unique indexes present.
+        table_sql = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='credential_tags'")
+        ).first()
+        assert table_sql is not None and "uq_credential_tag_identity" not in table_sql[0]
+        index_names = {r[1] for r in conn.execute(text("PRAGMA index_list(credential_tags)"))}
+        assert "uq_credential_tag_deployment" in index_names
+        assert "uq_credential_tag_sidecar" in index_names
+
+        # Second run is a no-op (no legacy constraint in DDL).
+        _migrate_credential_tag_scoping(conn)
+        rows_again = conn.execute(
+            text("SELECT id, sidecar_id FROM credential_tags ORDER BY id")
+        ).fetchall()
+        assert [(r[0], r[1]) for r in rows_again] == [(1, None), (2, None)]
+
+
+def test_fresh_db_skips_credential_tag_scoping_migration():
+    """create_all already builds the post-#319 shape — migration is a no-op."""
+    from sqlalchemy import text
+
+    from app.core.db import _migrate_credential_tag_scoping
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    with engine.connect() as conn:
+        before = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='credential_tags'")
+        ).first()
+        _migrate_credential_tag_scoping(conn)
+        after = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='credential_tags'")
+        ).first()
+        assert before == after
+        index_names = {r[1] for r in conn.execute(text("PRAGMA index_list(credential_tags)"))}
+        assert "uq_credential_tag_deployment" in index_names
+        assert "uq_credential_tag_sidecar" in index_names
