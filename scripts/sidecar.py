@@ -2312,10 +2312,16 @@ class GenericCollector:
         # account than the CLI login, so it stays on the hint/tag path.
         if tokens and not tokens.get("account_id"):
             cli_identity: str = ""
-            if provider_id == "anthropic" and tokens.get("oauth_token"):
+            has_cookie = any(k.startswith("cookie_") for k in tokens)
+            if provider_id == "anthropic" and tokens.get("oauth_token") and not has_cookie:
                 cli_identity = discover_anthropic_email()
-            elif provider_id == "gemini" and not any(k.startswith("cookie_") for k in tokens):
-                cli_identity = _gemini_account_email()
+            elif provider_id == "gemini" and not has_cookie:
+                # The collected id_token covers every discovered creds path
+                # ({{CONFIG_DIR:gemini}} included); the home-dir helper is
+                # the fallback when the rule didn't carry one.
+                cli_identity = (
+                    _decode_id_token_email(tokens.get("id_token", "")) or _gemini_account_email()
+                )
             if cli_identity and cli_identity != "default":
                 tokens["account_id"] = cli_identity
 

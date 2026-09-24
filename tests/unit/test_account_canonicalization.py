@@ -112,7 +112,8 @@ async def test_token_cache_keys_are_canonical():
     stored = await cache.store("anthropic", {"oauth_token": "t"}, account_id="Alice@X.com")
     assert stored == "alice@x.com"
     assert await cache.get("anthropic", "ALICE@x.com") == {"oauth_token": "t"}
-    assert await cache.remove("anthropic", "Alice@X.com")
+    removed = await cache.remove("anthropic", "Alice@X.com")
+    assert removed
 
 
 def test_provider_config_put_stores_canonical_id(session: Session):
@@ -333,6 +334,66 @@ class TestSidecarIdentityPrecedence:
         # Same (canonical) identity the anthropic events are stamped with.
         assert [c["account_id"] for c in token_cards] == ["alice@example.com"]
         assert blocked == []
+
+    def test_anthropic_stamp_skipped_when_browser_cookie_collected(self, tmp_path, monkeypatch):
+        """A claude.ai cookie may belong to another account than the CLI
+        login — the card stays on the tag/hint path instead."""
+        import scripts.sidecar as sidecar
+
+        creds = tmp_path / ".credentials.json"
+        creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "sk-ant-x"}}))
+        config = {
+            "name": "Claude",
+            "icon": "x",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [str(creds)],
+                    "format": "json",
+                    "mapping": {"claudeAiOauth.accessToken": "oauth_token"},
+                }
+            ],
+        }
+        monkeypatch.setattr(sidecar, "discover_anthropic_email", lambda: "cli@example.com")
+        # A browser cookie collected alongside the CLI token.
+        config["rules"].append(
+            {
+                "type": "env",
+                "variable": "RUNWAY_TEST_CLAUDE_COOKIE",
+                "mapping": {"value": "cookie_sessionKey"},
+            }
+        )
+        monkeypatch.setenv("RUNWAY_TEST_CLAUDE_COOKIE", "sk-ant-sid01-x")
+        cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
+        assert [c for c in cards if c.get("remaining") == "Token"] == []
+        assert [b["provider_id"] for b in blocked] == ["anthropic"]
+
+    def test_gemini_stamp_reads_collected_id_token(self, tmp_path, monkeypatch):
+        """Covers creds under {{CONFIG_DIR:gemini}}, not just ~/.gemini."""
+        import base64
+
+        import scripts.sidecar as sidecar
+
+        claims = base64.urlsafe_b64encode(json.dumps({"email": "G@Example.com"}).encode())
+        id_token = "h." + claims.decode().rstrip("=") + ".s"
+        creds = tmp_path / "oauth_creds.json"
+        creds.write_text(json.dumps({"access_token": "ya29.x", "id_token": id_token}))
+        config = {
+            "name": "Gemini",
+            "icon": "x",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [str(creds)],
+                    "format": "json",
+                    "mapping": {"access_token": "oauth_token", "id_token": "id_token"},
+                }
+            ],
+        }
+        monkeypatch.setattr(sidecar, "_gemini_account_email", lambda: "default")
+        cards, _blocked = sidecar.GenericCollector.collect_provider("gemini", config)
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert [c["account_id"] for c in token_cards] == ["g@example.com"]
 
     def test_opencode_local_db_beats_server_identity(self, tmp_path):
         import sqlite3
