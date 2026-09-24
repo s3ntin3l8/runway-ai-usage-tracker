@@ -1035,6 +1035,10 @@ async def get_fleet_config(
     # Normalize, and collapse an empty ``?sidecar_id=`` to ``None`` so the
     # "exactly one live sidecar" fallback for unidentified callers applies.
     sidecar_id = (normalize_sidecar_id(sidecar_id) if sidecar_id else "") or None
+    # Decided up front (verification consumes the single-use signature):
+    # untrusted callers get a redacted view, so nothing identity-bearing —
+    # including credential tokens — is even computed for them.
+    trusted = verify_config_signature(request) or is_loopback_bind()
 
     rows = session.exec(select(ProviderConfig)).all()
 
@@ -1053,7 +1057,9 @@ async def get_fleet_config(
     # requires INGEST_API_KEY to authenticate, so issuing tokens without it
     # would just produce tokens no one can redeem.
     can_issue_tokens = (
-        bool(_settings.INGEST_API_KEY) and not _settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
+        trusted
+        and bool(_settings.INGEST_API_KEY)
+        and not _settings.INGEST_API_KEY_IS_INSECURE_DEFAULT
     )
 
     for row in rows:
@@ -1142,7 +1148,7 @@ async def get_fleet_config(
         session, list(config["providers"].keys()), sidecar_id=sidecar_id
     )
 
-    if not (verify_config_signature(request) or is_loopback_bind()):
+    if not trusted:
         # Unsigned caller on a network-reachable server: this endpoint is
         # unauthenticated, so strip everything that identifies accounts —
         # account ids / emails, operator tag hints and credential tokens.

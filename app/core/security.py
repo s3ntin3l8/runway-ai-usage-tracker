@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 
@@ -322,12 +323,15 @@ def verify_config_signature(request: Request) -> bool:
     # Single use: a captured signed GET (on-path, within the timestamp
     # window) must not be replayable for the hints + credential tokens.
     now = time.time()
-    for seen_sig, seen_at in list(_SEEN_CONFIG_SIGNATURES.items()):
-        if now - seen_at > _CONFIG_SIGNATURE_TTL:
-            del _SEEN_CONFIG_SIGNATURES[seen_sig]
-    if x_signature in _SEEN_CONFIG_SIGNATURES:
+    with _SEEN_CONFIG_SIGNATURES_LOCK:  # check-then-set must be atomic
+        for seen_sig, seen_at in list(_SEEN_CONFIG_SIGNATURES.items()):
+            if now - seen_at > _CONFIG_SIGNATURE_TTL:
+                del _SEEN_CONFIG_SIGNATURES[seen_sig]
+        replayed = x_signature in _SEEN_CONFIG_SIGNATURES
+        if not replayed:
+            _SEEN_CONFIG_SIGNATURES[x_signature] = now
+    if replayed:
         raise HTTPException(status_code=401, detail="Replayed signature")
-    _SEEN_CONFIG_SIGNATURES[x_signature] = now
     return True
 
 
@@ -335,6 +339,7 @@ def verify_config_signature(request: Request) -> bool:
 # accepted timestamp window (+60s future skew) so each is usable once.
 _CONFIG_SIGNATURE_TTL = 360
 _SEEN_CONFIG_SIGNATURES: dict[str, float] = {}
+_SEEN_CONFIG_SIGNATURES_LOCK = threading.Lock()
 
 
 def is_loopback_bind() -> bool:

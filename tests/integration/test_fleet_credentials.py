@@ -1333,3 +1333,16 @@ def test_config_signature_is_single_use(client: TestClient, monkeypatch) -> None
     assert client.get(f"/api/v1/fleet/config?{query}", headers=headers).status_code == 200
     replay = client.get(f"/api/v1/fleet/config?{query}", headers=headers)
     assert replay.status_code == 401
+
+
+def test_config_issues_no_credential_tokens_for_unsigned_remote_caller(
+    client: TestClient, session: Session, monkeypatch
+) -> None:
+    """Redacted callers don't even cost a token issuance (#327 review)."""
+    from unittest.mock import patch
+
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    _seed_identity_state(session)
+    with patch("app.api.endpoints.fleet.issue_credential_token") as issue:
+        assert client.get("/api/v1/fleet/config").status_code == 200
+    issue.assert_not_called()
