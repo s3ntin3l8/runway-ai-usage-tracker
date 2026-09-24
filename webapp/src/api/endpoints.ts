@@ -37,6 +37,7 @@ import type {
   TopProjectsResponse,
   TopToolsResponse,
   UntaggedCredentialsList,
+  CredentialTagList,
   UpdateCheckResult,
   Webhook,
   DebugRawResponse,
@@ -140,6 +141,24 @@ export const tagCredential = (body: CredentialTagRequest) =>
     method: 'POST',
     body: JSON.stringify(body),
   });
+
+export const fetchCredentialTags = () =>
+  api<CredentialTagList>('/api/v1/fleet/credentials/tags');
+
+export const deleteCredentialTag = (tag: {
+  provider_id: string;
+  credential_origin: string;
+  sidecar_id: string | null;
+}) => {
+  const qs = new URLSearchParams({
+    provider_id: tag.provider_id,
+    credential_origin: tag.credential_origin,
+  });
+  if (tag.sidecar_id) qs.set('sidecar_id', tag.sidecar_id);
+  return api<{ status: string }>(`/api/v1/fleet/credentials/tags?${qs.toString()}`, {
+    method: 'DELETE',
+  });
+};
 
 export const patchSidecar = (sidecarId: string, body: { custom_name?: string; tags?: string[] }) =>
   api<Sidecar>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {

@@ -539,6 +539,13 @@ async def post_credential_tag(
     deployment-wide scope clears every sidecar's pending row for the
     origin; a sidecar scope clears only that sidecar's.
     """
+    sidecar_id = normalize_sidecar_id(body.sidecar_id) if body.sidecar_id else ""
+    if body.scope == "sidecar" and not sidecar_id:
+        raise HTTPException(
+            status_code=422,
+            detail="sidecar_id is required for a machine-scoped tag (scope='sidecar').",
+        )
+
     row = session.exec(
         select(ProviderConfig).where(
             ProviderConfig.provider_id == body.provider_id,
@@ -560,12 +567,20 @@ async def post_credential_tag(
         provider_id=body.provider_id,
         credential_origin=body.credential_origin,
         account_id=body.account_id,
-        sidecar_id=body.sidecar_id if body.scope == "sidecar" else None,
+        sidecar_id=sidecar_id if body.scope == "sidecar" else None,
         set_by=getattr(request.state.auth, "actor", "operator")
         if hasattr(request.state, "auth")
         else "operator",
     )
     if body.scope == "deployment":
+        # "All machines" must actually win on every machine: drop any
+        # machine-scoped override for this origin, otherwise it keeps
+        # resolving first (scoped > deployment) and stays invisible.
+        CredentialTagRepo.delete_scoped_for_origin(
+            session,
+            provider_id=body.provider_id,
+            credential_origin=body.credential_origin,
+        )
         PendingCredentialTagRepo.delete_by_origin(
             session,
             provider_id=body.provider_id,
@@ -574,10 +589,14 @@ async def post_credential_tag(
     else:
         PendingCredentialTagRepo.delete(
             session,
-            sidecar_id=body.sidecar_id,
+            sidecar_id=sidecar_id,
             provider_id=body.provider_id,
             credential_origin=body.credential_origin,
         )
+    # Commit the tag explicitly — ``audit_log.record`` swallows its own
+    # errors, so relying on its commit could drop the tag while still
+    # answering ``ok``.
+    session.commit()
 
     audit_log.record(
         session,
@@ -586,12 +605,80 @@ async def post_credential_tag(
         target_id=f"{body.provider_id}/{body.account_id}",
         payload={
             "credential_origin": body.credential_origin,
-            "sidecar_id": body.sidecar_id,
+            "sidecar_id": sidecar_id or None,
             "scope": body.scope,
         },
     )
 
     return {"status": "ok"}
+
+
+@router.get("/credentials/tags")
+async def list_credential_tags(
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """List every resolved credential tag (both scopes).
+
+    Once an origin is tagged it never shows up as pending again, so this
+    is the only way for the operator to see — and correct — an existing
+    mapping. ``sidecar_id`` is ``None`` for deployment-wide ("All
+    machines") tags.
+    """
+    return {
+        "items": [
+            {
+                "provider_id": t.provider_id,
+                "credential_origin": t.credential_origin,
+                "account_id": t.account_id,
+                "sidecar_id": t.sidecar_id,
+                "set_by": t.set_by,
+                "set_at": t.set_at.isoformat() if t.set_at else None,
+            }
+            for t in CredentialTagRepo.list_all(session)
+        ]
+    }
+
+
+@router.delete("/credentials/tags")
+async def delete_credential_tag(
+    request: Request,
+    provider_id: str = Query(...),
+    credential_origin: str = Query(...),
+    sidecar_id: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Remove one resolved tag (exactly one scope).
+
+    ``sidecar_id`` omitted = the deployment-wide ("All machines") row;
+    otherwise that machine's row. The sidecar stops receiving the hint on
+    its next ``/fleet/config`` refresh; if the origin still has no local
+    identity it re-appears as pending on the following manifest, so the
+    operator can re-tag it.
+    """
+    scoped_id = (normalize_sidecar_id(sidecar_id) if sidecar_id else "") or None
+    if sidecar_id and scoped_id is None:
+        # A sidecar_id that normalizes to nothing must not silently fall
+        # through to deleting the deployment-wide ("All machines") row.
+        raise HTTPException(status_code=422, detail=f"Invalid sidecar_id: {sidecar_id!r}")
+    removed = CredentialTagRepo.delete_tag_in_scope(
+        session,
+        provider_id=provider_id,
+        credential_origin=credential_origin,
+        sidecar_id=scoped_id,
+    )
+    if not removed:
+        raise HTTPException(status_code=404, detail="No such credential tag")
+    session.commit()
+    audit_log.record(
+        session,
+        request,
+        action="credential.tag_delete",
+        target_id=provider_id,
+        payload={"credential_origin": credential_origin, "sidecar_id": scoped_id},
+    )
+    return {"status": "deleted"}
 
 
 @router.get("/credentials/tags/pending")
@@ -929,8 +1016,9 @@ async def get_fleet_config(
     """
     from app.models.db import ProviderConfig
 
-    if sidecar_id:
-        sidecar_id = normalize_sidecar_id(sidecar_id)
+    # Normalize, and collapse an empty ``?sidecar_id=`` to ``None`` so the
+    # "exactly one live sidecar" fallback for unidentified callers applies.
+    sidecar_id = (normalize_sidecar_id(sidecar_id) if sidecar_id else "") or None
 
     rows = session.exec(select(ProviderConfig)).all()
 

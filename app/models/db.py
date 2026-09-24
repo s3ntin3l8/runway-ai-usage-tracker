@@ -544,11 +544,13 @@ class CredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    provider_id: str = Field(index=True)
+    # Indexed via the explicit ``ix_credential_tags_*`` entries above —
+    # no ``index=True`` here, which would add a second, identical index.
+    provider_id: str
     credential_origin: str
     account_id: str  # matches provider_configs.account_id
     # NULL = deployment-wide; otherwise the sidecar this tag is scoped to.
-    sidecar_id: str | None = Field(default=None, index=True)
+    sidecar_id: str | None = Field(default=None)
     set_by: str = "operator"
     set_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -591,7 +593,7 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    sidecar_id: str = Field(index=True)
+    sidecar_id: str  # indexed via ``ix_pending_credential_tags_sidecar``
     provider_id: str
     credential_origin: str
     first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))

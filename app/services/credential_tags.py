@@ -186,6 +186,75 @@ class CredentialTagRepo:
         return bool(rows)
 
     @staticmethod
+    def delete_tag_in_scope(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None,
+    ) -> bool:
+        """Delete exactly one scope's tag for the (provider, origin) pair.
+
+        Unlike :meth:`delete_tag` (where ``sidecar_id=None`` means "every
+        scope"), ``None`` here targets only the deployment-wide row — the
+        operator removes the one mapping they are looking at.
+        """
+        stmt = select(CredentialTag).where(
+            CredentialTag.provider_id == provider_id,
+            CredentialTag.credential_origin == credential_origin,
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(CredentialTag.sidecar_id == sidecar_id)
+        rows = list(session.exec(stmt).all())
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return bool(rows)
+
+    @staticmethod
+    def delete_scoped_for_origin(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+    ) -> int:
+        """Drop every machine-scoped tag for the (provider, origin) pair.
+
+        Used when the operator tags the origin for "All machines": scoped
+        rows resolve before the deployment-wide one, so leaving them would
+        keep those machines on the old mapping with no way to see why.
+        """
+        rows = list(
+            session.exec(
+                select(CredentialTag).where(
+                    CredentialTag.provider_id == provider_id,
+                    CredentialTag.credential_origin == credential_origin,
+                    col(CredentialTag.sidecar_id).is_not(None),
+                )
+            ).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
+    def delete_for_sidecar(session: Session, *, sidecar_id: str) -> int:
+        """Drop every tag scoped to ``sidecar_id`` (sidecar removed from the fleet)."""
+        rows = list(
+            session.exec(select(CredentialTag).where(CredentialTag.sidecar_id == sidecar_id)).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
     def delete_by_account(session: Session, *, provider_id: str, account_id: str) -> int:
         """Drop every tag whose ``(provider_id, account_id)`` matches.
 
@@ -549,6 +618,20 @@ class PendingCredentialTagRepo:
         return True
 
     @staticmethod
+    def delete_for_sidecar(session: Session, *, sidecar_id: str) -> int:
+        """Drop every pending row reported by ``sidecar_id``."""
+        rows = list(
+            session.exec(
+                select(PendingCredentialTag).where(PendingCredentialTag.sidecar_id == sidecar_id)
+            ).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
     def delete_by_origin(
         session: Session,
         *,
@@ -575,18 +658,3 @@ class PendingCredentialTagRepo:
         if rows:
             session.flush()
         return len(rows)
-
-    @staticmethod
-    def pending_count_by_sidecar(session: Session) -> dict[str, int]:
-        """Aggregate pending counts per sidecar_id. Powers the fleet banner total."""
-        from sqlmodel import func
-
-        rows = list(
-            session.exec(
-                select(
-                    PendingCredentialTag.sidecar_id,
-                    func.count(),
-                ).group_by(PendingCredentialTag.sidecar_id)
-            ).all()
-        )
-        return {sidecar_id: int(count) for sidecar_id, count in rows}

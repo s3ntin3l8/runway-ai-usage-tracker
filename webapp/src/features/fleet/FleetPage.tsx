@@ -37,6 +37,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
+import { CredentialMappingsCard } from './CredentialMappingsCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
@@ -178,6 +179,9 @@ export function FleetPage() {
               description="Install the Runway sidecar on a machine you work from; it will register here on its first check-in."
             />
             <AddSidecarCard className="mx-auto max-w-2xl" />
+            {/* "All machines" mappings outlive the last sidecar and apply to
+                the next one — keep them visible and removable here too. */}
+            <CredentialMappingsCard className="mx-auto mt-4 max-w-2xl" />
           </>
         ) : (
           <>
@@ -205,6 +209,7 @@ export function FleetPage() {
                 />
               ))}
             </div>
+            <CredentialMappingsCard className="mt-4" />
           </>
         )}
       </div>

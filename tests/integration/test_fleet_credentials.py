@@ -1041,3 +1041,207 @@ def test_pending_endpoint_hides_origin_with_effective_hint(
 # first real caller in the follow-up PR; until then this file asserts only
 # the issuer (`GET /fleet/config`) and the token verify contract above.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# #322 review follow-ups: tag management + scope edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_config_empty_sidecar_id_treated_as_unidentified(
+    client: TestClient, session: Session
+) -> None:
+    """``?sidecar_id=`` (empty) must behave like an omitted id: with exactly
+    one live sidecar, that sidecar's scoped tags still ship."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config?sidecar_id=")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {
+        "anthropic": {"provider:anthropic": "alice@example.com"},
+    }
+
+
+def test_tag_endpoint_rejects_empty_sidecar_id_for_machine_scope(
+    client: TestClient, session: Session
+) -> None:
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "  ",
+            "provider_id": "anthropic",
+            "credential_origin": "provider:anthropic",
+            "account_id": "alice@example.com",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+
+def test_tag_endpoint_normalizes_sidecar_id(client: TestClient, session: Session) -> None:
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "Alpha-Host.example.com",
+            "provider_id": "anthropic",
+            "credential_origin": "provider:anthropic",
+            "account_id": "alice@example.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    rows = CredentialTagRepo.list_by_provider(session, provider_id="anthropic")
+    assert [r.sidecar_id for r in rows] == ["alpha-host"]
+
+
+def test_deployment_tag_replaces_machine_scoped_overrides(
+    client: TestClient, session: Session
+) -> None:
+    """Tagging "All machines" must win on every machine — scoped rows
+    would otherwise keep resolving first, invisibly."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="anthropic", account_id="team@example.com")
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alice@example.com",
+        sidecar_id="beta",
+    )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha",
+            "provider_id": "anthropic",
+            "credential_origin": "provider:anthropic",
+            "account_id": "team@example.com",
+            "scope": "deployment",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    r_beta = client.get("/api/v1/fleet/config?sidecar_id=beta")
+    assert r_beta.json()["account_tag_hints"]["anthropic"] == {
+        "provider:anthropic": "team@example.com"
+    }
+
+
+def test_list_and_delete_credential_tags(client: TestClient, session: Session) -> None:
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="team@example.com",
+    )
+    session.commit()
+
+    listed = client.get("/api/v1/fleet/credentials/tags")
+    assert listed.status_code == 200
+    assert sorted((t["sidecar_id"] or "", t["account_id"]) for t in listed.json()["items"]) == [
+        ("", "team@example.com"),
+        ("alpha", "alice@example.com"),
+    ]
+
+    # Omitted sidecar_id deletes only the deployment-wide row.
+    resp = client.delete(
+        "/api/v1/fleet/credentials/tags",
+        params={"provider_id": "anthropic", "credential_origin": "provider:anthropic"},
+    )
+    assert resp.status_code == 200, resp.text
+    remaining = client.get("/api/v1/fleet/credentials/tags").json()["items"]
+    assert [(t["sidecar_id"], t["account_id"]) for t in remaining] == [
+        ("alpha", "alice@example.com")
+    ]
+
+    resp = client.delete(
+        "/api/v1/fleet/credentials/tags",
+        params={
+            "provider_id": "anthropic",
+            "credential_origin": "provider:anthropic",
+            "sidecar_id": "alpha",
+        },
+    )
+    assert resp.status_code == 200
+    assert client.get("/api/v1/fleet/credentials/tags").json()["items"] == []
+
+    missing = client.delete(
+        "/api/v1/fleet/credentials/tags",
+        params={"provider_id": "anthropic", "credential_origin": "provider:anthropic"},
+    )
+    assert missing.status_code == 404
+
+
+def test_deleting_sidecar_drops_its_scoped_tags_and_pending_rows(
+    client: TestClient, session: Session
+) -> None:
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    PendingCredentialTagRepo.upsert(
+        session, sidecar_id="alpha", provider_id="chatgpt", credential_origin="provider:chatgpt"
+    )
+    session.commit()
+
+    resp = client.delete("/api/v1/fleet/sidecars/alpha")
+    assert resp.status_code == 200, resp.text
+    assert CredentialTagRepo.list_all(session) == []
+    assert PendingCredentialTagRepo.list_all(session) == []
+
+
+def test_delete_tag_rejects_sidecar_id_that_normalizes_to_empty(
+    client: TestClient, session: Session
+) -> None:
+    """A malformed sidecar_id must 422, not fall through to deleting the
+    deployment-wide row (#324 review)."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="team@example.com",
+    )
+    session.commit()
+
+    resp = client.delete(
+        "/api/v1/fleet/credentials/tags",
+        params={
+            "provider_id": "anthropic",
+            "credential_origin": "provider:anthropic",
+            "sidecar_id": "..",
+        },
+    )
+    assert resp.status_code == 422
+    assert len(CredentialTagRepo.list_all(session)) == 1

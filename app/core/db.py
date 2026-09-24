@@ -129,6 +129,7 @@ def init_db() -> None:
         _backfill_quota_snapshot_variant(conn)
         _migrate_webhook_uniqueness(conn)
         _migrate_credential_tag_scoping(conn)
+        _drop_redundant_credential_tag_indexes(conn)
         _scrub_residual_stale_health(conn)
 
     from app.services.pricing_seed import seed_pricing_table
@@ -398,6 +399,33 @@ def _migrate_credential_tag_scoping(conn: Any) -> None:
         conn.execute(text(index_sql))
     conn.commit()
     logger.info("Migrated: rebuilt credential_tags for per-sidecar scoping (#319)")
+
+
+# Auto-generated ``Field(index=True)`` indexes that duplicated the explicit
+# ``__table_args__`` indexes on the credential-tag tables (#322 review).
+_REDUNDANT_CREDENTIAL_TAG_INDEXES = (
+    "ix_credential_tags_provider_id",
+    "ix_credential_tags_sidecar_id",
+    "ix_pending_credential_tags_sidecar_id",
+)
+
+
+def _drop_redundant_credential_tag_indexes(conn: Any) -> None:
+    """Drop duplicate single-column indexes left by earlier model versions.
+
+    Idempotent (``DROP INDEX IF EXISTS``); fresh databases never create them.
+    """
+    from sqlalchemy import text
+
+    existing = {
+        row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+    }
+    dropped = [name for name in _REDUNDANT_CREDENTIAL_TAG_INDEXES if name in existing]
+    for name in dropped:
+        conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+    if dropped:
+        conn.commit()
+        logger.info("Dropped redundant credential-tag indexes: %s", ", ".join(dropped))
 
 
 def _scrub_residual_stale_health(conn: Any) -> None:
