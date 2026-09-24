@@ -351,6 +351,10 @@ def test_wrap_cookie_bare_and_named_values():
     assert collector._wrap_cookie("__Secure-session=abc123") == "__Secure-session=abc123"
     assert collector._wrap_cookie("session=abc123") == "session=abc123"
     assert collector._wrap_cookie("a=1; b=2") == "a=1; b=2"
+    # A nameless pair makes it a header, not a bare value — never wrap it
+    # (wrapping would produce `session=a=1; flag; …`, which validation accepts).
+    assert collector._wrap_cookie("a=1; flag") == "a=1; flag"
+    assert collector._validate_cookie_header("a=1; flag") is False
 
 
 @pytest.mark.asyncio
@@ -435,10 +439,18 @@ def test_validate_cookie_header_rejects_wrapped_api_key():
 
 
 def test_workos_meter_parsing():
-    """WorkOS redesign: aria-label meters, `Included usage` badge, monthly window."""
-    collector = OllamaCollector()
+    """WorkOS redesign: aria-label meters, `Included usage` badge, monthly window.
 
-    cards = collector._parse_html(WORKOS_SETTINGS_HTML)
+    The reset date is injected relative to today so the horizon bucket stays
+    stable (a fixed date would rot into `daily` once it passes).
+    """
+    collector = OllamaCollector()
+    reset_dt = datetime.now(UTC).replace(microsecond=0) + timedelta(days=18)
+    html = WORKOS_SETTINGS_HTML.replace(
+        "2026-10-12T06:45:12Z", reset_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+
+    cards = collector._parse_html(html)
 
     assert len(cards) == 1
     card = cards[0]
@@ -446,7 +458,7 @@ def test_workos_meter_parsing():
     assert card["used_value"] == 0.0
     assert card["remaining"] == "100.0%"
     assert card["tier"] == "free"
-    assert card["reset_at"] == "2026-10-12T06:45:12+00:00"
+    assert card["reset_at"] == reset_dt.isoformat()
     assert "s3ntin3l8@gmail.com" in card["detail"]
     assert collector._last_error_reason == "unknown"
 
@@ -464,6 +476,29 @@ def test_workos_meter_unknown_label_uses_reset_horizon():
     assert len(cards) == 1
     assert cards[0]["window_type"] == "weekly"
     assert cards[0]["used_value"] == 50.0
+
+
+def test_workos_duplicate_window_meter_deduped_with_log(caplog):
+    """Two meters mapping to the same window type: first wins, drop is logged."""
+    collector = OllamaCollector()
+    stamp = (datetime.now(UTC) + timedelta(days=18)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    html = WORKOS_SETTINGS_HTML.replace("2026-10-12T06:45:12Z", stamp).replace(
+        "</body>",
+        f"""
+    <div data-usage-meter>
+      <div data-usage-track aria-label="Balance 50% used"></div>
+      <div class="local-time" data-time="{stamp}">Resets later.</div>
+    </div>
+    </body>""",
+    )
+
+    with caplog.at_level("DEBUG", logger="app.services.collectors.ollama"):
+        cards = collector._parse_html(html)
+
+    assert len(cards) == 1
+    assert cards[0]["window_type"] == "monthly"
+    assert cards[0]["used_value"] == 0.0
+    assert any("Balance 50% used" in message for message in caplog.messages)
 
 
 def test_workos_signin_page_detected():
@@ -492,6 +527,12 @@ def test_workos_signin_page_detected():
         ("Session usage 10% used", None, "session"),
         ("Weekly usage 10% used", None, "weekly"),
         ("Free usage 0% used", None, "monthly"),
+        # Strong keywords beat the horizon even when it disagrees
+        ("Weekly usage 10% used", 0.2, "weekly"),
+        # The weak `free` keyword yields to a concrete reset horizon
+        ("Free usage 0% used", 0.5, "daily"),
+        ("Free usage 0% used", 5, "weekly"),
+        ("Free usage 0% used", 18, "monthly"),
         ("Mystery quota", 0.2, "daily"),
         ("Mystery quota", 5, "weekly"),
         ("Mystery quota", 18, "monthly"),

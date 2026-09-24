@@ -2,7 +2,7 @@
 
 **File:** `app/services/collectors/ollama.py`
 
-The Ollama provider scrapes the **Plan & Settings** page at `https://ollama.com/settings` to extract included-usage limits (one card per usage meter; the window type is inferred from the meter label, falling back to the reset horizon).
+The Ollama provider scrapes the **Plan & Settings** page at `https://ollama.com/settings` to extract included-usage limits (one card per usage meter; the window type comes from a concrete meter label — `Hourly usage` → session, `Weekly usage` → weekly — else the reset horizon; vague plan-name labels like `Free usage` only count when no reset timestamp is shown).
 
 ## Overview
 

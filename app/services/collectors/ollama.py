@@ -62,15 +62,17 @@ class OllamaCollector(BaseCollector):
     RE_USAGE_TRACK_TAG = re.compile(r"<[^>]*\bdata-usage-track\b[^>]*>", re.IGNORECASE)
     RE_ARIA_LABEL = re.compile(r'aria-label="([^"]+)"', re.IGNORECASE)
 
-    # Meter label → window_type; labels with no keyword fall back to reset horizon.
+    # Meter label → window_type. Strong keywords win outright; labels with no
+    # keyword fall back to the reset horizon.
     WINDOW_TYPE_KEYWORDS = (
         ("hourly", "session"),
         ("session", "session"),
         ("weekly", "weekly"),
         ("daily", "daily"),
         ("monthly", "monthly"),
-        ("free", "monthly"),
     )
+    # Vague plan-name keywords only apply when no concrete reset is available.
+    WINDOW_TYPE_WEAK_KEYWORDS = (("free", "monthly"),)
 
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
@@ -149,9 +151,9 @@ class OllamaCollector(BaseCollector):
         """
         if self.RE_COOKIE_PATTERN.search(token):
             return token
-        # A full Cookie header under other names still passes through untouched
-        parts = [part.strip() for part in token.split(";") if part.strip()]
-        if len(parts) > 1 and all("=" in part for part in parts):
+        # Any `;` means a multi-pair Cookie header (possibly with nameless
+        # pairs like `a=1; flag`) — never a bare value, so never wrap it.
+        if ";" in token:
             return token
         return f"session={token}; __Secure-session={token}"
 
@@ -389,16 +391,20 @@ class OllamaCollector(BaseCollector):
         for keyword, window_type in self.WINDOW_TYPE_KEYWORDS:
             if keyword in lower_label:
                 return window_type
-        if resets_at is None:
-            return self.DEFAULT_WINDOW_TYPE
-        horizon = resets_at - now
-        if horizon <= timedelta(days=1.5):
-            return "daily"
-        if horizon <= timedelta(days=8):
-            return "weekly"
-        if horizon <= timedelta(days=35):
-            return "monthly"
-        return "rolling"
+        # A concrete reset beats a vague plan-name keyword ("Free usage")
+        if resets_at is not None:
+            horizon = resets_at - now
+            if horizon <= timedelta(days=1.5):
+                return "daily"
+            if horizon <= timedelta(days=8):
+                return "weekly"
+            if horizon <= timedelta(days=35):
+                return "monthly"
+            return "rolling"
+        for keyword, window_type in self.WINDOW_TYPE_WEAK_KEYWORDS:
+            if keyword in lower_label:
+                return window_type
+        return self.DEFAULT_WINDOW_TYPE
 
     def _get_meter_blocks(self, html: str, now: datetime) -> list[dict[str, Any]]:
         """Parse WorkOS `data-usage-track` meters (aria-label carries the %)."""
@@ -422,6 +428,11 @@ class OllamaCollector(BaseCollector):
             resets_at = self._parse_reset(window)
             window_type = self._window_type_for(label, resets_at, now)
             if window_type in seen_types:
+                logger.debug(
+                    "Ollama: skipping meter %r — window_type %r already collected",
+                    label,
+                    window_type,
+                )
                 continue
             seen_types.add(window_type)
             blocks.append({"used_percent": pct, "resets_at": resets_at, "window_type": window_type})
