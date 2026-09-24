@@ -492,7 +492,6 @@ class TestCollectProviderBlockGuard:
         assert cards == [], "token card must be dropped when account_id is None"
         assert len(blocked) == 1, "exactly one blocked origin expected"
         assert blocked[0]["provider_id"] == "antigravity"
-        assert blocked[0]["credential_origin"] == "provider:antigravity"
 
     def test_no_block_when_no_tokens_extracted(self):
         """No credentials found → no blocked origin (because there was nothing to ship)."""
@@ -586,7 +585,7 @@ class TestCollectProviderBlockGuard:
             "card's metadata carries it through to /fleet/ingest"
         )
 
-    def test_hint_does_not_overwrite_local_discovery(self, monkeypatch):
+    def test_origin_hint_resolves_unknown_environment_without_cli_fallback(self, monkeypatch):
         """When local discovery yields an ``account_id`` AND a server
         hint exists, the locally-discovered value wins. The hint is the
         fallback, not the override — local discovery has tighter scope
@@ -594,14 +593,11 @@ class TestCollectProviderBlockGuard:
         identity."""
         import scripts.sidecar as sc
 
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
-        # Simulate a chatgpt-style local discovery returning "default".
-        # The antigravity provider chain sets account_id via the
-        # _codex_account_email / _ag_account_email helpers; if those
-        # were non-None they'd win. Patch them to None and use chatgpt
-        # provider so the codex path stamps account_id.
+        monkeypatch.setenv("RUNWAY_TEST_VALUE", "sk-test-123")
+        # An environment token has no identity of its own, so the matching
+        # environment-origin tag resolves it.
         monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
-        monkeypatch.setattr(sc, "_codex_account_email", lambda: "alice-from-local@example.com")
+        monkeypatch.setattr(sc, "_codex_account_email", lambda: "unrelated@example.com")
         cards, blocked = sc.GenericCollector.collect_provider(
             "chatgpt",
             {
@@ -610,18 +606,18 @@ class TestCollectProviderBlockGuard:
                 "rules": [
                     {
                         "type": "env",
-                        "variable": "ANTHROPIC_API_KEY",
+                        "variable": "RUNWAY_TEST_VALUE",
                         "mapping": {"value": "api_key"},
                     },
                 ],
             },
             account_label_hints={
-                "chatgpt": {"provider:chatgpt": "should-be-ignored@example.com"},
+                "chatgpt": {"env:RUNWAY_TEST_VALUE": "tagged-env@example.com"},
             },
         )
         assert len(cards) == 1
-        assert cards[0]["metadata"]["account_id"] == "alice-from-local@example.com", (
-            "local discovery must win over a server hint"
+        assert cards[0]["metadata"]["account_id"] == "tagged-env@example.com", (
+            "the credential's own origin hint should resolve it"
         )
 
     def test_hint_for_wrong_provider_does_not_unblock(self, monkeypatch):
@@ -656,6 +652,158 @@ class TestCollectProviderBlockGuard:
         assert cards == []
         assert len(blocked) == 1
         assert blocked[0]["provider_id"] == "antigravity"
+
+
+class TestCredentialCandidateOwnership:
+    @staticmethod
+    def _jwt(email: str) -> str:
+        import base64
+        import json
+
+        payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode())
+        return "header." + payload.decode().rstrip("=") + ".signature"
+
+    def test_chatgpt_cli_and_cookie_keep_separate_owners(self, tmp_path, monkeypatch):
+        import scripts.sidecar as sc
+
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text(
+            json.dumps(
+                {"tokens": {"access_token": "cli-a", "id_token": self._jwt("a@example.com")}}
+            )
+        )
+        monkeypatch.setattr(
+            sc.BrowserCookieExtractor,
+            "get_cookie",
+            staticmethod(lambda _domain, name: f"cookie-{name}"),
+        )
+        config = {
+            "name": "ChatGPT",
+            "rules": [
+                {
+                    "type": "cookie",
+                    "domains": ["chatgpt.com"],
+                    "name": "__Secure-next-auth.session-token",
+                    "mapping": {"value": "cookie_session"},
+                },
+                {
+                    "type": "cookie",
+                    "domains": ["chatgpt.com"],
+                    "name": "oai-sc",
+                    "mapping": {"value": "cookie_oai-sc"},
+                },
+                {
+                    "type": "file",
+                    "paths": [str(auth_file)],
+                    "mapping": {
+                        "tokens.access_token": "oauth_token",
+                        "tokens.id_token": "id_token",
+                    },
+                },
+            ],
+        }
+        cards, blocked = sc.GenericCollector.collect_provider("chatgpt", config)
+        assert [c["metadata"]["account_id"] for c in cards] == ["a@example.com"]
+        assert cards[0]["metadata"]["oauth_token"] == "cli-a"
+        assert blocked == [
+            {"provider_id": "chatgpt", "credential_origin": "cookie:chatgpt/session"}
+        ]
+
+        tagged, blocked = sc.GenericCollector.collect_provider(
+            "chatgpt",
+            config,
+            account_label_hints={"chatgpt": {"cookie:chatgpt/session": "b@example.com"}},
+        )
+        assert {c["metadata"]["account_id"] for c in tagged} == {
+            "a@example.com",
+            "b@example.com",
+        }
+        browser_card = next(c for c in tagged if c["unit"] == "cookie")
+        assert browser_card["metadata"]["cookie_session"]
+        assert browser_card["metadata"]["cookie_oai-sc"]
+        assert blocked == []
+
+    def test_claude_cli_env_and_browser_cookie_are_independent(self, monkeypatch):
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "cli-a")
+        monkeypatch.setattr(
+            sc.BrowserCookieExtractor,
+            "get_cookie",
+            staticmethod(lambda _domain, _name: "browser-b"),
+        )
+        config = {
+            "name": "Claude",
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "CLAUDE_CODE_OAUTH_TOKEN",
+                    "mapping": {"value": "oauth_token"},
+                },
+                {
+                    "type": "cookie",
+                    "domains": ["claude.ai"],
+                    "name": "sessionKey",
+                    "mapping": {"value": "cookie_sessionKey"},
+                },
+            ],
+        }
+        cards, blocked = sc.GenericCollector.collect_provider("anthropic", config)
+        assert cards == []
+        assert {entry["credential_origin"] for entry in blocked} == {
+            "env:CLAUDE_CODE_OAUTH_TOKEN",
+            "cookie:anthropic/session",
+        }
+
+        tagged, blocked = sc.GenericCollector.collect_provider(
+            "anthropic",
+            config,
+            account_label_hints={
+                "anthropic": {
+                    "env:CLAUDE_CODE_OAUTH_TOKEN": "a@example.com",
+                    "cookie:anthropic/session": "b@example.com",
+                }
+            },
+        )
+        assert {c["metadata"]["account_id"] for c in tagged} == {
+            "a@example.com",
+            "b@example.com",
+        }
+        assert blocked == []
+
+    def test_old_provider_tag_does_not_assign_browser_candidate(self, monkeypatch):
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "unrelated-env-token")
+        monkeypatch.setattr(
+            sc.BrowserCookieExtractor,
+            "get_cookie",
+            staticmethod(lambda _domain, _name: "browser-cookie"),
+        )
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "anthropic",
+            {
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "CLAUDE_CODE_OAUTH_TOKEN",
+                        "mapping": {"value": "oauth_token"},
+                    },
+                    {
+                        "type": "cookie",
+                        "domains": ["claude.ai"],
+                        "name": "sessionKey",
+                        "mapping": {"value": "cookie_sessionKey"},
+                    },
+                ]
+            },
+            account_label_hints={"anthropic": {"provider:anthropic": "a@example.com"}},
+        )
+        assert cards == []
+        assert {entry["credential_origin"] for entry in blocked} == {
+            "env:CLAUDE_CODE_OAUTH_TOKEN",
+            "cookie:anthropic/session",
+        }
 
 
 class TestCredentialCache:

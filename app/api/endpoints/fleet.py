@@ -127,6 +127,21 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         ):
                             provider_tokens[key] = val
 
+                # Older sidecars combined browser cookies and CLI OAuth in
+                # one card, then assigned the CLI account to the whole card.
+                # That identity does not prove the cookie owner. Keep the
+                # independently identified CLI family and discard the cookie
+                # fields from this legacy mixed payload.
+                if any(key.startswith("cookie_") for key in provider_tokens) and any(
+                    key in provider_tokens
+                    for key in ("oauth_token", "refresh_token", "id_token", "api_key")
+                ):
+                    provider_tokens = {
+                        key: value
+                        for key, value in provider_tokens.items()
+                        if not key.startswith("cookie_")
+                    }
+
                 if provider_tokens:
                     tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_label))
                     logger.debug(

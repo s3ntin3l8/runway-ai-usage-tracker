@@ -19,6 +19,14 @@ from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)
 
+_OAUTH_CREDENTIAL_KEYS = {
+    "oauth_token",
+    "refresh_token",
+    "id_token",
+    "expiry_date",
+    "client_id",
+}
+
 
 class TokenCache:
     """
@@ -110,6 +118,12 @@ class TokenCache:
                 # the fresher tokens, but absorb a rotated refresh_token and fill
                 # in identity metadata, and bump last-seen so it stays TTL-alive.
                 kept_tokens, kept_meta, _ = existing
+                # Keep the fresher OAuth family, while retaining independent
+                # credential families (for example a browser cookie beside a
+                # CLI OAuth token) pushed for this same account.
+                for key, value in tokens.items():
+                    if key not in _OAUTH_CREDENTIAL_KEYS:
+                        kept_tokens[key] = value
                 if tokens.get("refresh_token"):
                     kept_tokens["refresh_token"] = tokens["refresh_token"]
                 if account_label and not kept_meta.get("account_label"):
@@ -129,15 +143,16 @@ class TokenCache:
             # still wins (fresher push from another sidecar, a `source="config"`
             # store, etc.).
             prev_meta = existing[1] if existing is not None else {}
+            stored_tokens = {**existing[0], **tokens} if existing is not None else tokens
             metadata = {
                 "account_label": account_label or prev_meta.get("account_label"),
                 "source": source or prev_meta.get("source"),
             }
-            self._cache[provider][account_id] = (tokens, metadata, time.time())
+            self._cache[provider][account_id] = (stored_tokens, metadata, time.time())
 
             logger.info(
                 "Stored %d token(s) for provider %s",
-                len(tokens),
+                len(stored_tokens),
                 scrub_log(provider),
             )
             return account_id
