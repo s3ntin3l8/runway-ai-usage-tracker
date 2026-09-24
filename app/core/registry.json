@@ -355,9 +355,9 @@
     "ollama": {
       "name": "Ollama Cloud",
       "icon": "🦙",
-      "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (ollama_session) from ollama.com, not an API key.",
+      "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (__Secure-session, or a bare value from the Cookie header) from ollama.com, not an API key.",
       "session_cookie_label": "Web Session (web)",
-      "session_cookie_help": "Paste the 'session' or 'ollama_session' cookie value from ollama.com",
+      "session_cookie_help": "Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings",
       "rules": [
         {
           "type": "env",
