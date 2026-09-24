@@ -337,9 +337,27 @@ def _account_tag_hints_for_providers(
     the lookup key lives in the repo so future callers (and the
     sidecar's ``GenericCollector.collect_provider`` block-guard unit
     tests) all read through the same SQL shape (PR #290 round-2
-    review, Hermes suggestion #6).
+    review Hermes body suggestion #6).
+
+    Merges the operator-resolved ``credential_tags`` rows on top of the
+    auto-hints for single-account providers — the auto-hint is the
+    fallback for a fresh provider like MiniMax whose quota gauge lives
+    at the operator's chosen account but whose upstream has no per-
+    user identity, so the sidecar's local discovery returns nothing
+    useful. The hint unblocks the events on the very next cycle so
+    the quota gauge and the sidecar events merge into one Fleet
+    entry. Operator tags (when present) always win, since they're
+    explicit and the auto-hint is implicit.
     """
-    return CredentialTagRepo.list_pending_payload(session, providers=providers)
+    resolved = CredentialTagRepo.list_pending_payload(session, providers=providers)
+    auto = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=providers)
+    # Operator tags win over auto-hints — explicit operator choice is
+    # never overridden by the implicit single-account heuristic.
+    for pid, by_origin in auto.items():
+        bucket = resolved.setdefault(pid, {})
+        for origin, account_id in by_origin.items():
+            bucket.setdefault(origin, account_id)
+    return resolved
 
 
 # ---------------------------------------------------------------------------

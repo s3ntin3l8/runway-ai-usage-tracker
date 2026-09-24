@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, or_, select
 
 from app.models.db import CredentialTag, PendingCredentialTag
 
@@ -189,6 +189,122 @@ class CredentialTagRepo:
             if isinstance(pid, str) and isinstance(origin, str) and isinstance(account_id, str):
                 if pid and origin and account_id:
                     out.setdefault(pid, {})[origin] = account_id
+        return out
+
+    @staticmethod
+    def auto_hints_for_single_account_providers(
+        session: Session,
+        *,
+        providers: list[str],
+    ) -> dict[str, dict[str, str]]:
+        """Pre-ship tag-hints for providers with exactly one enabled
+        non-default ``provider_configs`` row.
+
+        Closes the MiniMax card-split: when the operator has a single
+        labeled MiniMax account (e.g. ``s3ntin318@gmail.com``), the
+        sidecar's event stream has nothing to discover upstream and
+        would otherwise ship events under the synthetic ``"default"``
+        sentinel. Without an auto-hint the events land on a
+        standalone synthetic-default card and the quota gauge stays
+        orphaned on the labeled row.
+
+        The hint key is ``"provider:<provider_id>"`` (matches
+        ``scripts/sidecar.py:credential_origin_for_provider``), and the
+        value is the operator's chosen ``account_id``. The hint is
+        non-persistent — it lives in the ``/fleet/config`` payload only
+        and the operator can still override it via the Untagged
+        Credentials dialog if their multi-account setup requires it.
+
+        Skips providers with 0 rows (nothing to retarget), 2+ rows
+        (multi-account ambiguity — operator should tag explicitly),
+        or where the single row is the ``"default"`` sentinel (the
+        sidecar's ``"default"``-tagged events already land on it).
+
+        **Multi-host assumption (PR #318 round-2 review, Hermes
+        warning #2):** ``provider_configs`` is deployment-wide (no
+        ``sidecar_id`` column), so the auto-hint is shipped to every
+        sidecar via ``/fleet/config``. In a multi-host deployment, a
+        second host whose local discovery returns ``default``/``None``
+        would adopt the single account's identity for its events AND
+        its token cards — i.e. attribute another host's usage to its
+        own card. This heuristic is therefore gated on a single-host
+        detection: when ``sidecar_registry`` has 2+ rows whose
+        ``last_seen`` is within the last 7 days (sidecars heartbeat
+        ~every 60s; stale/retired rows age out of the count instead
+        of suppressing forever), the auto-hint is suppressed and
+        operators must tag explicitly via the Untagged Credentials
+        dialog. Tracking: the ``credential_tags`` table is planned to
+        gain a ``sidecar_id`` column (#319) which will let this
+        heuristic resume per-host scoping.
+
+        Empty ``providers`` returns an empty map. Defensively filters
+        empty / non-string ``account_id`` values.
+        """
+        if not providers:
+            return {}
+        # Multi-host gate: see docstring. Auto-hints are deployment-
+        # wide, so they would cross-contaminate hosts in a multi-
+        # sidecar deployment. Only *live* sidecars count toward the
+        # threshold — ``sidecar_registry`` rows are never pruned
+        # automatically, so counting every row ever created would let
+        # one retired/second machine (PR #318 round-2 re-review S: rows
+        # accumulate forever) permanently disable the auto-hint for a
+        # single-host operator who once ran a second box. Window: 7
+        # days, comfortably beyond the ~60s heartbeat cadence
+        # (``fleet_registry``) and the 60-min staleness threshold, but
+        # short enough that retired machines age out. Sidecar-scoped
+        # hints need the ``sidecar_id`` column on ``credential_tags``
+        # (#319), which will remove the need for this gate.
+        import logging
+        from datetime import timedelta
+
+        from app.models.db import SidecarRegistry
+
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        live_sidecar_ids = session.exec(
+            select(SidecarRegistry.sidecar_id).where(  # type: ignore[arg-type]
+                SidecarRegistry.last_seen >= cutoff
+            )
+        ).all()
+        if len(live_sidecar_ids) > 1:
+            logging.debug(
+                "auto-hint suppressed: %d live sidecar(s) in registry "
+                "(7-day last_seen window); operators must tag explicitly "
+                "via the Untagged Credentials dialog until credential_tags "
+                "gains per-sidecar scoping (#319)",
+                len(live_sidecar_ids),
+            )
+            return {}
+        # Group by provider_id, keeping only providers with exactly
+        # one enabled non-default row. A GROUP BY + HAVING COUNT(*) = 1
+        # would also work, but two queries is clearer here — and the
+        # row set is tiny (one entry per configured account).
+        from app.models.db import ProviderConfig
+
+        rows = list(
+            session.exec(
+                select(ProviderConfig).where(
+                    or_(*(ProviderConfig.provider_id == pid for pid in providers)),
+                    ProviderConfig.enabled == True,  # noqa: E712 — SQLModel needs the ==
+                    col(ProviderConfig.account_id) != "default",
+                )
+            ).all()
+        )
+        # Bucket by provider_id, skip ambiguous multi-row buckets.
+        by_pid: dict[str, list[str]] = {}
+        for r in rows:
+            by_pid.setdefault(r.provider_id, []).append(r.account_id)
+        out: dict[str, dict[str, str]] = {}
+        for pid, account_ids in by_pid.items():
+            if len(account_ids) != 1:
+                continue  # multi-account ambiguity — defer to the operator dialog
+            aid = account_ids[0]
+            if not isinstance(aid, str) or not aid:
+                continue
+            # The hint key matches ``scripts/sidecar.py:credential_origin_for_provider``,
+            # which is the same descriptor the sidecar reports to
+            # /fleet/credentials/manifest when an origin is untagged.
+            out.setdefault(pid, {})[f"provider:{pid}"] = aid
         return out
 
 

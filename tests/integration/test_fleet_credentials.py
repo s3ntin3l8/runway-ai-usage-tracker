@@ -542,6 +542,172 @@ def test_config_response_account_tag_hints_empty_when_no_tags(client: TestClient
 
 
 # ---------------------------------------------------------------------------
+# Auto-hints for single-account providers (closes the MiniMax card-split).
+#
+# When the operator has a single labeled MiniMax account (no upstream per-
+# user identity), the sidecar's event stream has nothing to discover and
+# would ship events under the synthetic "default" sentinel. Without an
+# auto-hint the events land on a standalone synthetic-default card and
+# the quota gauge stays orphaned on the labeled row. The
+# auto_hints_for_single_account_providers repo method + its wiring in
+# ``_account_tag_hints_for_providers`` ships the operator's chosen
+# account_id as the hint so the next sidecar cycle stamps the events
+# onto the labeled quota card.
+# ---------------------------------------------------------------------------
+
+
+def test_auto_hint_ships_when_provider_has_single_labeled_account(
+    client: TestClient, session: Session
+) -> None:
+    """The MiniMax card-split scenario: one enabled non-default row.
+
+    Pins the contract that /fleet/config exposes
+    ``provider:<provider_id>`` → ``<account_id>`` for the sidecar's
+    silent-listener block guard. The sidecar consumes it on the next
+    cycle and stamps events under the operator's account_id, so the
+    synthetic-default card is suppressed (the existing
+    ``app/api/endpoints/usage.py:264`` short-circuit).
+    """
+    row = ProviderConfig(
+        provider_id="minimax",
+        account_id="s3ntin318@gmail.com",
+        enabled=True,
+    )
+    session.add(row)
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert hints == {
+        "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
+    }
+
+
+def test_auto_hint_skips_provider_with_no_labeled_rows(
+    client: TestClient, session: Session
+) -> None:
+    """No rows for the provider → no hint (the sidecar can't be told
+    where to land events that don't exist)."""
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_auto_hint_skips_provider_with_only_default_row(
+    client: TestClient, session: Session
+) -> None:
+    """A single ``account_id="default"`` row → no hint. The sidecar's
+    events already land at ``("default")``; no auto-hint needed and no
+    benefit to retargeting them to themselves."""
+    row = ProviderConfig(
+        provider_id="minimax",
+        account_id="default",
+        enabled=True,
+    )
+    session.add(row)
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_auto_hint_skips_provider_with_multiple_labeled_accounts(
+    client: TestClient, session: Session
+) -> None:
+    """Two non-default rows for the same provider → no auto-hint.
+
+    Multi-account ambiguity: the operator must tag explicitly via the
+    Untagged Credentials dialog. The auto-hint heuristic refuses to
+    guess which account the sidecar's events belong to.
+    """
+    for aid in ("alice@example.com", "bob@example.com"):
+        row = ProviderConfig(
+            provider_id="minimax",
+            account_id=aid,
+            enabled=True,
+        )
+        session.add(row)
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_auto_hint_skips_disabled_labeled_account(client: TestClient, session: Session) -> None:
+    """A disabled row → no hint. The collector isn't running, so
+    shipping events there would land on a card the user can't see."""
+    row = ProviderConfig(
+        provider_id="minimax",
+        account_id="s3ntin318@gmail.com",
+        enabled=False,
+    )
+    session.add(row)
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_explicit_operator_tag_wins_over_auto_hint(client: TestClient, session: Session) -> None:
+    """Explicit operator tags always win over the implicit single-account
+    auto-hint. The merge order in ``_account_tag_hints_for_providers``
+    is operator-tags-first — even when an operator tag targets a
+    different account_id than the auto-hint, the operator tag stays
+    intact (the auto-hint never overwrites)."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    # Operator explicitly tags this origin to a *different* account
+    # than the auto-hint would derive from provider_configs.
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="minimax",
+        credential_origin="path:/home/runway/.minimax/credentials",
+        account_id="work@example.com",
+    )
+    # Provider has a single labeled row — auto-hint would point at
+    # s3ntin318@gmail.com. The merge keeps both, with the explicit
+    # operator tag on its own origin untouched.
+    row = ProviderConfig(
+        provider_id="minimax",
+        account_id="s3ntin318@gmail.com",
+        enabled=True,
+    )
+    session.add(row)
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    # Operator tag preserved + auto-hint on its own origin.
+    assert hints["minimax"]["path:/home/runway/.minimax/credentials"] == ("work@example.com")
+    assert hints["minimax"]["provider:minimax"] == "s3ntin318@gmail.com"
+
+
+def test_auto_hint_independent_per_provider(client: TestClient, session: Session) -> None:
+    """Single-account auto-hints are scoped per-provider — a single
+    labeled MiniMax row fires only the MiniMax hint, leaving the
+    other providers' hint maps empty."""
+    row = ProviderConfig(
+        provider_id="minimax",
+        account_id="s3ntin318@gmail.com",
+        enabled=True,
+    )
+    session.add(row)
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert "minimax" in hints
+    assert "anthropic" not in hints
+    assert "opencode" not in hints
+
+
+# ---------------------------------------------------------------------------
 # Note on redeem endpoint coverage: POST /api/v1/fleet/credentials/redeem is
 # intentionally not implemented in this PR. Adding the endpoint without a
 # production caller would ship unused authenticated surface — see the PR

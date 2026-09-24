@@ -1296,6 +1296,402 @@ def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, 
     }
 
 
+# ---------------------------------------------------------------------------
+# Events-path tag-hint application + untagged reporting (PR for MiniMax
+# card-split). Mirrors TestRunCollectionManifestPostConsumesResolvedIntoCache
+# above for the events branch: server tag-hints retarget events onto the
+# operator's chosen account_id, and no-resolvable-identity events surface
+# in the same Untagged Credentials dialog.
+# ---------------------------------------------------------------------------
+
+
+def test_run_collection_events_use_server_hint_when_local_default(
+    monkeypatch,
+) -> None:
+    """Local discovery returns the legacy 'default' sentinel (no real
+    identity on this host). The events branch keeps iterating under
+    ``"default"`` so unrelated opencode sub-providers aren't mis-
+    attributed to the canonical-provider's tagged identity (PR #318
+    round-2 review, Hermes warning #1). The actual card-split close
+    for MiniMax happens inside ``parse_opencode_events`` via the
+    ``canonical_hints`` kwarg — events that retag to minimax get
+    stamped with the operator's chosen account_id at extract time,
+    not at the events-branch level.
+
+    Pins the post-PR contract:
+      - ``scoped_accounts`` stays at ``["default"]`` (the branch
+        does NOT apply the canonical provider's hint to the whole
+        iteration).
+      - The canonical hint is forwarded into the extractor as
+        ``canonical_hints={"minimax": {"provider:minimax": "<email>"}}``
+        so events that retag to minimax land on the labeled card.
+      - The extractor test
+        (``test_parse_opencode_events_applies_canonical_hint_after_retag``
+        in ``tests/unit/test_event_extractor_opencode.py``) pins the
+        per-event retag.
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        # No matching provider account on the server for the local "default"
+        # identity, but a tag-hint tells the sidecar where these events belong.
+        # The server emits the hint under the canonical provider key
+        # (``minimax``) because that's the provider the quota gauge lives on.
+        accounts={"opencode": []},
+        tokens={},
+        tag_hints={
+            "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
+        },
+    )
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    # The events branch's iterating provider is opencode (not minimax);
+    # local discovery returns "default" when the host has no usable
+    # identity for that provider (the OpenCode DB carries no email for
+    # coding-plan subscriptions).
+    monkeypatch.setattr(
+        sidecar,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"opencode": lambda: "default"},
+    )
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
+
+    captured_account_ids: list[str] = []
+    captured_canonical_hints: list[dict[str, dict[str, str]] | None] = []
+
+    def _capture_extract(
+        provider_id: str,
+        account_ids: list[str],
+        *,
+        watermark: Any,
+        bootstrap_days: int,
+        out_events: list[dict[str, Any]],
+        server_account_tag_hints=None,
+    ) -> None:
+        captured_account_ids.extend(account_ids)
+        # Capture the canonical_hints the events branch forwards into
+        # the opencode extractor — the per-event retag depends on this.
+        canonical_hints = sidecar._build_canonical_hints_for_provider(
+            provider_id, server_account_tag_hints or {}
+        )
+        captured_canonical_hints.append(canonical_hints)
+        # Emit a single synthetic event so the loop completes.
+        out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+
+    # No token cards → collect_provider returns nothing blocked.
+    monkeypatch.setattr(
+        sidecar.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: ([], []),
+    )
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["opencode"],
+    )
+
+    # PR #318 round-2 review (W1): events branch keeps iterating under
+    # "default" — the canonical-provider hint is NOT applied to the
+    # whole opencode iteration, only to events that actually retag to
+    # that canonical provider (in the extractor). This avoids spreading
+    # the MiniMax identity to unrelated sub-providers.
+    assert captured_account_ids == ["default"]
+
+    # The canonical_hints map IS forwarded into the opencode extractor
+    # so events that retag to minimax land on the labeled quota card.
+    # Opencode is the iterating provider; minimax is one of the
+    # canonical providers in _OC_CANONICAL_MAP, so it must appear in
+    # the forwarded map with the operator's hint under
+    # ``provider:minimax``.
+    assert captured_canonical_hints, "no canonical_hints forwarded to extractor"
+    assert captured_canonical_hints[0].get("minimax") == {"provider:minimax": "s3ntin318@gmail.com"}
+
+    # And the manifest gets one entry — the events branch falls through
+    # to "default" and reports opencode's origin as untagged, which the
+    # operator can resolve via the dialog. The per-event canonical_hints
+    # forwarding is what closes the actual card-split.
+    assert posted.get("entries") == [
+        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
+    ]
+
+
+def test_run_collection_events_reported_untagged_when_no_hint(
+    monkeypatch,
+) -> None:
+    """Local discovery returns nothing (or 'default') AND no server
+    hint — the events still ship (so they don't disappear) but the
+    provider's events-origin is reported as untagged via the same
+    manifest POST the token-card branch uses. The operator can then
+    tag it via the Untagged Credentials dialog to retarget future
+    events onto the labeled quota card.
+
+    Mirrors the production flow: iterating provider is ``opencode``,
+    local discovery returns ``"default"``, no canonical-provider hint
+    is present. The events still ship (under the legacy "default"
+    sentinel) so they don't disappear, but the opencode origin is
+    surfaced untagged for operator resolution.
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        accounts={"opencode": []},
+        tokens={},
+        tag_hints={},  # No hint yet — neither canonical nor iterating.
+    )
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    monkeypatch.setattr(
+        sidecar,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"opencode": lambda: "default"},
+    )
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
+
+    captured_account_ids: list[str] = []
+
+    def _capture_extract(
+        provider_id: str,
+        account_ids: list[str],
+        *,
+        watermark: Any,
+        bootstrap_days: int,
+        out_events: list[dict[str, Any]],
+        server_account_tag_hints=None,
+    ) -> None:
+        captured_account_ids.extend(account_ids)
+        out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+    monkeypatch.setattr(
+        sidecar.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: ([], []),
+    )
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["opencode"],
+    )
+
+    # Events still shipped (under the legacy "default" sentinel) so
+    # they don't disappear.
+    assert captured_account_ids == ["default"]
+    # But the origin was reported untagged so the operator can tag it.
+    # The events branch reports under the iterating provider (opencode),
+    # NOT the canonical provider (minimax) — see comment at the
+    # events-block origin-append for why this is the right key. The
+    # operator then tags ``(opencode, "provider:opencode")`` via the
+    # Untagged Credentials dialog, and the opencode extractor applies
+    # the canonical hint to retarget minimax-coding-plan events onto
+    # the labeled quota card.
+    assert posted["entries"] == [
+        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
+    ]
+
+
+def test_run_collection_events_untagged_only_when_events_extracted(
+    monkeypatch,
+) -> None:
+    """PR #318 round-2 review (Hermes warning #3): the events branch
+    must NOT report an untagged origin when no events were extracted
+    this cycle. Without this gate, a host with no Claude/Codex
+    artifacts publishes a permanent ``provider:anthropic`` /
+    ``provider:chatgpt`` Untagged entry for a credential it never had
+    — and the operator can never resolve it via the dialog (no local
+    artifact to map from).
+
+    Pins: when the extractor returns an empty list for the provider
+    (no local credential backing, no log path), the manifest entry
+    must NOT be added. We exercise this with the realistic opencode
+    iterating provider + ``collect_provider -> ([], [])`` to simulate
+    "host has no opencode DB at all".
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(
+        accounts={"opencode": []},
+        tokens={},
+        tag_hints={},  # No operator tag yet.
+    )
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    monkeypatch.setattr(
+        sidecar,
+        "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+        {"opencode": lambda: "default"},
+    )
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
+
+    # The extractor returns NO events — simulates a host with no opencode
+    # DB at all, OR a host whose opencode DB has no events in the
+    # bootstrap window. Either way: no credential evidence.
+    def _capture_extract(
+        provider_id: str,
+        account_ids: list[str],
+        *,
+        watermark: Any,
+        bootstrap_days: int,
+        out_events: list[dict[str, Any]],
+        server_account_tag_hints=None,
+    ) -> None:
+        return  # emits nothing
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+
+    # No token cards.
+    monkeypatch.setattr(
+        sidecar.GenericCollector,
+        "collect_provider",
+        lambda *a, **kw: ([], []),
+    )
+
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+    sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"},
+        providers=["opencode"],
+    )
+
+    # PR #318 W3: when no events were extracted, the manifest entry
+    # must NOT be added — the operator has nothing to resolve because
+    # no local credential backs the origin.
+    assert posted.get("entries") == []
+
+
+def test_run_collection_events_no_untagged_when_identity_resolved(
+    monkeypatch,
+) -> None:
+    """PR #318 round-2 re-review (Hermes W): the evidence gate must not
+    fire for the *resolved* branches.
+
+    The previous gate used the proxy
+    ``scoped_accounts == [local_account_id or "default"]
+    and event_hint is None`` — which was ALSO true for branches 1 and 2
+    whenever ``local_account_id`` was truthy (branch 2 always stamps
+    ``[local]``; branch 1 does too when local is in the server's list,
+    including the ``default``/``[default]`` case). A host whose identity
+    the server already knew therefore posted a phantom Untagged entry
+    plus a misleading "shipping under 'default'" warning even though
+    events shipped under the resolved account_id.
+
+    Pins the explicit ``untagged`` flag: only the else-arm (no server
+    match, no local identity, no hint) may report. Covers the reviewer's
+    table:
+      - branch 1  (local in server accounts)          → no entry
+      - branch 1b (default, server has [default])     → no entry
+      - branch 2  (local non-default, not in server)  → no entry
+    Each case still ships its events under the resolved scoped_accounts.
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cases = [
+        # (label, server accounts, local identity, expected scoped_accounts)
+        (
+            "branch 1: local in server accounts",
+            ["alice@example.com"],
+            "alice@example.com",
+            ["alice@example.com"],
+        ),
+        (
+            "branch 1b: default local, server has default row",
+            ["default"],
+            "default",
+            ["default"],
+        ),
+        (
+            "branch 2: local non-default not in server accounts",
+            ["alice@example.com"],
+            "bob@example.com",
+            ["bob@example.com"],
+        ),
+    ]
+
+    for label, server_accounts, local_identity, expected_scoped in cases:
+        cache = CredentialCache()
+        cache.replace(
+            accounts={"opencode": list(server_accounts)},
+            tokens={},
+            tag_hints={},  # no hint — isolation is on the branch chain
+        )
+        monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+        monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+        monkeypatch.setattr(
+            sidecar,
+            "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+            {"opencode": (lambda li=local_identity: li)},
+        )
+        monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
+
+        captured_account_ids: list[str] = []
+
+        def _capture_extract(
+            provider_id: str,
+            account_ids: list[str],
+            *,
+            watermark: Any,
+            bootstrap_days: int,
+            out_events: list[dict[str, Any]],
+            server_account_tag_hints=None,
+        ) -> None:
+            captured_account_ids.clear()
+            captured_account_ids.extend(account_ids)
+            out_events.append({"event_id": "msg_resolved_001", "kind": "message"})
+
+        monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+        monkeypatch.setattr(
+            sidecar.GenericCollector,
+            "collect_provider",
+            lambda *a, **kw: ([], []),
+        )
+
+        posted: dict[str, Any] = {}
+
+        def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+            posted["entries"] = entries
+
+        monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+        sidecar.run_collection(
+            config={"api_url": "http://x", "api_key": "k"},
+            providers=["opencode"],
+        )
+
+        assert captured_account_ids == expected_scoped, f"{label}: scoped_accounts"
+        # Identity resolved → no Untagged manifest entry, even though
+        # events were extracted this cycle.
+        assert posted.get("entries") == [], (
+            f"{label}: resolved identity must not post an untagged entry, "
+            f"got {posted.get('entries')!r}"
+        )
+
+
 class _StubCache:
     """Minimal stand-in for ``CredentialCache`` so the test can stub
     ``_get_credential_cache`` without dragging in the full cache.

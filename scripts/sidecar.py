@@ -1691,12 +1691,21 @@ def _extract_events_for_provider(
     watermark: Any,
     bootstrap_days: int,
     out_events: list[dict[str, Any]],
+    server_account_tag_hints: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Run the event extractor for ``provider_id`` once per ``account_ids``,
     stamping each event with the resolved identity. Errors on one account
     don't block the others (issue #272 acceptance: "Handle partial
     failure: if one account's credentials fail to fetch / decrypt, others
     continue.").
+
+    ``server_account_tag_hints`` carries the operator's resolved /
+    auto-hints fetched from ``/fleet/config``'s ``account_tag_hints``
+    payload. The opencode extractor needs them so events that
+    ``_OC_CANONICAL_MAP`` retags to a canonical provider (e.g.
+    ``minimax-coding-plan`` → ``minimax``) can land on the operator's
+    chosen account_id rather than the synthetic ``"default"`` card —
+    closes the MiniMax card-split.
     """
     if not account_ids:
         return
@@ -1718,9 +1727,16 @@ def _extract_events_for_provider(
     extractor = dispatch.get(provider_id)
     if extractor is None:
         return
+    canonical_hints = _build_canonical_hints_for_provider(provider_id, server_account_tag_hints)
+
     for account_id in account_ids:
         try:
-            evts = extractor(account_id, watermark, bootstrap_days)
+            evts = extractor(
+                account_id,
+                watermark,
+                bootstrap_days,
+                canonical_hints=canonical_hints,
+            )
         except Exception as e:
             logging.warning(f"  [{provider_id}/{account_id}] event extraction error: {e}")
             continue
@@ -1729,10 +1745,56 @@ def _extract_events_for_provider(
             out_events.extend(e.model_dump(mode="json") for e in evts)
 
 
+def _build_canonical_hints_for_provider(
+    provider_id: str,
+    server_account_tag_hints: dict[str, dict[str, str]] | None,
+) -> dict[str, dict[str, str]] | None:
+    """Forward the canonical-provider hints so the opencode extractor
+    can retarget events onto the operator's chosen account_id when
+    their ``_OC_CANONICAL_MAP`` entry maps to a canonical provider
+    (e.g. ``minimax``, ``kimi_coding``, ``ollama``).
+
+    The server emits auto-hints under the canonical key
+    (``provider:minimax``), but the events branch iterates under the
+    iterating provider (``provider:opencode``). Without this forward,
+    an event retagged to ``minimax`` would land at ``(minimax,
+    "default")`` even when the operator has a configured
+    ``s3ntin318@gmail.com`` row.
+
+    PR #318 round-2 review (Hermes warning #1): this forwarding is
+    what closes the card-split. The branch-level ``scoped_accounts``
+    previously walked every canonical provider too — that spread the
+    MiniMax identity to unrelated opencode sub-providers
+    (``opencode-openai``, ``opencode-anthropic``). The fix keeps
+    ``scoped_accounts`` at the local identity and lets THIS forward
+    (per-event inside the extractor) do the retag.
+
+    Returns ``None`` for non-opencode providers — they don't have a
+    canonical retag concept, so the extractor gets nothing to look up.
+    """
+    if provider_id != "opencode":
+        return None
+    # Lazy import: only loaded on the events branch, not on the token-card branch.
+    from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP
+
+    canonical_hints: dict[str, dict[str, str]] = {}
+    for canonical_provider_id, _ in _OC_CANONICAL_MAP.values():
+        canonical_hint_map = (server_account_tag_hints or {}).get(canonical_provider_id, {})
+        if canonical_hint_map:
+            canonical_hints[canonical_provider_id] = dict(canonical_hint_map)
+    return canonical_hints or None
+
+
 def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
     """Bind a parser to a path-discovery callable so we can pass ``account_id``."""
 
-    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
+    ) -> list:
         paths = paths_finder()
         if not paths:
             return []
@@ -1762,20 +1824,37 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
 
 
 def _make_account_extractor_opencode(parser: Any) -> Any:
-    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,
+    ) -> list:
         db_path = _discover_opencode_db_path()
         if db_path is None:
             return []
         since = watermark.last_pushed("opencode", account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
-        return parser(db_path, account_id=account_id, since=since)
+        return parser(
+            db_path,
+            account_id=account_id,
+            since=since,
+            canonical_hints=canonical_hints,
+        )
 
     return _extract
 
 
 def _make_account_extractor_antigravity(parser: Any) -> Any:
-    def _extract(account_id: str, watermark: Any, bootstrap_days: int) -> list:
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
+    ) -> list:
         db_paths = _discover_antigravity_db_paths()
         if not db_paths:
             return []
@@ -2615,13 +2694,57 @@ def run_collection(
                 local_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
                 provider_accounts = server_accounts_by_provider.get(provider_id) or []
 
+                # Silent-listener for events (PR #290 follow-up — the
+                # token-card path has had this since #288, but events
+                # shipped under "default" with no surface in the
+                # Untagged Credentials dialog). Apply the same hint /
+                # block pattern as the token-card branch above, so a
+                # provider like MiniMax whose quota gauge lives at the
+                # operator's chosen account_id (not "default") merges
+                # with the sidecar's event stream the moment the
+                # operator tags the origin via the dashboard.
+                #
+                # PR #318 round-2 review (Hermes): the branch-level
+                # ``event_hint`` here only consults the iterating
+                # provider's own hint bucket — NOT every canonical
+                # provider that ``_OC_CANONICAL_MAP`` can retag events
+                # to. The earlier dual-key walk spread the MiniMax
+                # identity to unrelated opencode sub-providers
+                # (``opencode-openai``, ``opencode-anthropic``, ...) by
+                # stamping ``scoped_accounts = [event_hint]`` for the
+                # whole iteration. The per-event ``canonical_hints``
+                # forwarding in ``parse_opencode_events`` already
+                # closes the card-split on its own (it applies the
+                # canonical provider's hint to events that actually
+                # retag to that provider), so this branch just needs
+                # to keep iterating under the local identity — events
+                # that don't retag continue to ship under "default".
+                event_origin = credential_origin_for_provider(provider_id)
+                event_hint = server_account_tag_hints.get(provider_id, {}).get(event_origin)
+
+                # PR #318 round-2 re-review (Hermes): the evidence gate below
+                # used a proxy (``scoped_accounts == [local or "default"]``
+                # + ``event_hint is None``) that was ALSO true for the two
+                # *resolved* branches whenever ``local_account_id`` was
+                # truthy — a host whose identity the server already knew
+                # (branch 1) or whose local identity we chose over
+                # cross-host attribution (branch 2) still posted a phantom
+                # Untagged entry + "shipping under 'default'" warning even
+                # though events shipped under the resolved account.
+                # Track untaggedness explicitly instead: only the final
+                # else-arm (no server match, no local identity, no hint)
+                # is genuinely unresolved, and its events always ship under
+                # the legacy ``[local or "default"]`` sentinel — which the
+                # warning log below accurately describes.
+                untagged = False
+
                 if provider_accounts and local_account_id and local_account_id in provider_accounts:
                     # Best case: server knows about us, and our local
                     # identity matches one of its rows.
                     scoped_accounts = [local_account_id]
-                elif local_account_id:
+                elif local_account_id and local_account_id != "default":
                     # Server has rows, none of which are us (e.g. local
-                    # is "default" but the server registered
+                    # is some-other-id but the server registered
                     # ``alice@example.com`` only). Falling back to
                     # ``provider_accounts[0]`` would attribute our
                     # events to someone else's account (PR #283 review).
@@ -2637,19 +2760,79 @@ def run_collection(
                             provider_accounts,
                         )
                     scoped_accounts = [local_account_id]
+                elif event_hint:
+                    # Local discovery returned the legacy "default"
+                    # sentinel (no real identity on this host), but the
+                    # operator has tagged this provider's events via
+                    # the Untagged Credentials dialog (or the server's
+                    # auto-hint fired for a single-account provider).
+                    # Stamp with the operator's choice so the events
+                    # land on the quota gauge instead of a standalone
+                    # "default" card.
+                    scoped_accounts = [event_hint]
+                    logging.info(
+                        f"  [{provider_id}] events stamped via server hint "
+                        f"(origin={event_origin}) → account_id={event_hint}"
+                    )
                 else:
-                    # Either the server has rows but local discovery came
-                    # back empty, or both are empty — either way, fall
-                    # back to legacy "default" so events don't disappear.
-                    scoped_accounts = ["default"]
+                    # Neither local discovery nor the server hint
+                    # resolved a real account_id — ship under the
+                    # legacy "default" sentinel so events don't
+                    # disappear. Mark untagged so the evidence gate
+                    # below can surface the origin: we only add the
+                    # manifest entry when THIS provider actually
+                    # extracted events this cycle (PR #318 round-2
+                    # review, Hermes warning #3): reporting origins
+                    # that no local credential backs produces a
+                    # permanent Untagged entry that the operator can
+                    # never resolve (no local artifact to map from),
+                    # and the prune side never clears it.
+                    untagged = True
+                    scoped_accounts = [local_account_id or "default"]
+                    logging.debug(
+                        f"  [{provider_id}] events fall through to default "
+                        f"(origin={event_origin}); reporting to manifest only "
+                        f"if extraction produces events this cycle"
+                    )
 
+                # PR #318 round-2 review: gate the manifest entry on
+                # evidence. Snapshot ``all_events`` length around the
+                # call so we know whether THIS provider contributed any
+                # events. Without this gate, the events branch reports
+                # every iterating provider's origin unconditionally —
+                # a host with no Claude/Codex artifacts publishes a
+                # permanent ``provider:anthropic`` / ``provider:chatgpt``
+                # Untagged entry for credentials it never had.
+                pre_count = len(all_events)
                 _extract_events_for_provider(
                     provider_id=provider_id,
                     account_ids=scoped_accounts,
                     watermark=_watermark,
                     bootstrap_days=bootstrap_days,
                     out_events=all_events,
+                    server_account_tag_hints=server_account_tag_hints,
                 )
+                post_count = len(all_events)
+                # Evidence gate (PR #318 round-2 W3): only surface an
+                # Untagged origin when THIS provider contributed events.
+                # PR #318 round-2 re-review W: gate on the explicit ``untagged``
+                # flag rather than re-deriving it from ``scoped_accounts``
+                # — the old proxy matched the resolved branches 1/2 too.
+                if untagged and post_count > pre_count:
+                    blocked_origins_this_cycle.append(
+                        {
+                            "provider_id": provider_id,
+                            "credential_origin": event_origin,
+                        }
+                    )
+                    logging.warning(
+                        f"  [{provider_id}] events untagged (origin={event_origin}) — "
+                        "neither local discovery nor the server hint resolved a real account_id; "
+                        f"shipping {post_count - pre_count} event(s) under 'default' so they don't disappear. "
+                        "Operator will see this in the fleet view's Untagged "
+                        "Credentials panel and can tag it to land events on the "
+                        "labeled quota card."
+                    )
 
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")

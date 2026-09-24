@@ -192,12 +192,14 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         assert "opencode-openrouter" not in rollup_providers
 
 
-def test_migration_retags_minimax_coding_plan_and_forces_account_id(engine):
+def test_migration_retags_minimax_coding_plan_preserves_account_id(engine):
     """Events under 'opencode-minimax-coding-plan' (the fallback id OpenCode's
     minimax-coding-plan providerID mints) move to the canonical 'minimax'
-    provider AND account_id 'default' — the identity the server's MiniMax
-    quota collector uses — so they land on the same latest_usage card instead
-    of a standalone opencode-minimax-coding-plan entry."""
+    provider, keeping the row's own account_id (pass-through) — same grain
+    as the operator-labeled MiniMax quota card (server-side tag-hints
+    carry the operator's chosen account_id back to the sidecar via
+    /fleet/config, PR #290). The card lands on the same latest_usage slot
+    instead of a standalone opencode-minimax-coding-plan entry."""
     with Session(engine) as s:
         s.add(
             UsageEvent(
@@ -250,7 +252,9 @@ def test_migration_retags_minimax_coding_plan_and_forces_account_id(engine):
     with Session(engine) as s:
         ev = s.exec(select(UsageEvent)).one()
         assert ev.provider_id == "minimax"
-        assert ev.account_id == "default"
+        # account_id preserved — pass-through; tag-hint carries the
+        # operator's chosen account_id on the live stream.
+        assert ev.account_id == "user@opencode.test"
         assert ev.kind == "message"
         # cost_usd untouched here — reclassify only retags identity;
         # scripts/recost_events.py handles repricing.

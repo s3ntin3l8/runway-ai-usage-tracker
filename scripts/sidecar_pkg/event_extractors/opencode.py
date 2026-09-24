@@ -101,9 +101,21 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 # own account). Keep in sync with scripts/reclassify_opencode_providers.py,
 # which reapplies this mapping to already-ingested events.
 _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
-    # MiniMax's coding-plan collector is API-key-only (no account email), so
-    # every card it emits is account_id="default" — match that here.
-    "minimax-coding-plan": ("minimax", "default"),
+    # MiniMax's coding-plan collector has no per-user identity upstream
+    # (API-key-only, no email in the API response), so quota cards live at
+    # whatever account_id the operator configured in provider_configs.
+    # Pass the event's own account through (None override) and let the
+    # server's tag-hint flow (PR #290) carry the operator's chosen
+    # account_id back to the sidecar via /fleet/config's
+    # account_tag_hints. The events branch in sidecar.run_collection
+    # consults both the iterating-provider key and every canonical
+    # provider this extractor might retag to — when no canonical hint
+    # is available, it reports the events as untagged via the same
+    # /fleet/credentials/manifest POST the token-card branch uses, and
+    # the operator can tag them in the Untagged Credentials dialog.
+    # Forcing "default" here would split the quota gauge from the
+    # sidecar's event stream — see the issue: label-set account split.
+    "minimax-coding-plan": ("minimax", None),
     # Kimi For Coding (kimi-code-plan-global backend in OpenCode; modelIDs
     # "k3-256k" / "kimi-for-coding"). Pass the account through: OpenCode
     # resolves the real account identity (usually the user's email), which
@@ -158,6 +170,7 @@ def parse_opencode_events(
     db_path: Path,
     account_id: str,
     since: datetime,
+    canonical_hints: dict[str, dict[str, str]] | None = None,
 ) -> list[UsageEventPush]:
     """Extract UsageEventPush records from an OpenCode SQLite database.
 
@@ -171,6 +184,20 @@ def parse_opencode_events(
         db_path: Path to the opencode.db SQLite file.
         account_id: Canonical account email or "default".
         since: Only return events strictly after this timestamp.
+        canonical_hints: Optional ``{canonical_provider_id: {origin:
+            account_id, ...}}`` map sourced from the server's
+            ``account_tag_hints`` payload. Used to stamp events with
+            the operator's chosen account_id *after* the
+            ``_OC_CANONICAL_MAP`` retag decision is known — the events
+            branch's iterating-provider hint lookup
+            (``run_collection``) can't see canonical-provider hints
+            because it keys on the iterating provider (e.g.
+            ``provider:opencode``), but the server emits hints under
+            the canonical key (e.g. ``provider:minimax``) via
+            ``CredentialTagRepo.auto_hints_for_single_account_providers``.
+            Without this merge, an event retagged to ``minimax`` lands
+            at ``(minimax, "default")`` even when the operator has a
+            configured ``s3ntin318@gmail.com`` row.
     """
     if not db_path.exists():
         return []
@@ -268,13 +295,25 @@ def parse_opencode_events(
         # directly (e.g. MiniMax's coding plan) — retag onto that provider_id
         # (and its account_id when the map pins one) so this event lands on the
         # same card, and drop the logged $0 subscription cost so the server
-        # prices it. A None account override keeps the event's own account.
+        # prices it. A None account override falls back to the operator's
+        # tag-hint for the canonical provider (when supplied) — the events
+        # branch in run_collection only ships the iterating provider's hint
+        # (e.g. provider:opencode), but the server emits the auto-hint under
+        # the canonical provider (e.g. provider:minimax), so per-event
+        # consultation here is the only way to retarget the event onto the
+        # labeled quota card.
         canonical = map_opencode_canonical(oc_provider_id)
         if canonical is not None:
             canonical_provider_id, account_override = canonical
             runway_provider_id = canonical_provider_id
             if account_override is not None:
                 event_account_id = account_override
+            elif canonical_hints:
+                canonical_hint = canonical_hints.get(canonical_provider_id, {}).get(
+                    f"provider:{canonical_provider_id}"
+                )
+                if canonical_hint:
+                    event_account_id = canonical_hint
             cost_usd = None
 
         # A failed request (bad auth, no subscription, etc.) never actually
