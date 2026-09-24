@@ -144,6 +144,7 @@ select {
   cursor: pointer;
   transition: all 0.15s;
   outline: none;
+  text-decoration: none;
 }
 .btn-primary {
   background: #7c3aed;
