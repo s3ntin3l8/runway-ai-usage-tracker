@@ -1245,3 +1245,104 @@ def test_delete_tag_rejects_sidecar_id_that_normalizes_to_empty(
     )
     assert resp.status_code == 422
     assert len(CredentialTagRepo.list_all(session)) == 1
+
+
+# ---------------------------------------------------------------------------
+# /fleet/config redaction for unsigned callers on a network-reachable bind
+# ---------------------------------------------------------------------------
+
+
+def _signed_config_headers(query: str) -> dict[str, str]:
+    from scripts.sidecar_pkg.credentials import config_request_signature
+
+    # Microsecond precision like the sidecar: signatures are single-use.
+    ts = f"{time.time():.6f}"
+    return {"X-Timestamp": ts, "X-Signature": config_request_signature(SECRET, ts, query)}
+
+
+def _seed_identity_state(session: Session) -> None:
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alice@example.com",
+    )
+    session.commit()
+
+
+def test_config_redacts_accounts_for_unsigned_remote_caller(
+    client: TestClient, session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    _seed_identity_state(session)
+
+    body = client.get("/api/v1/fleet/config").json()
+
+    assert body["account_tag_hints"] == {}
+    assert body["config"]["providers"]["anthropic"]["accounts"] == []
+    # The logical enabled/strategies view stays available.
+    assert body["config"]["providers"]["anthropic"]["enabled"] is True
+    assert "alice@example.com" not in json.dumps(body)
+
+
+def test_config_full_view_for_signed_sidecar(
+    client: TestClient, session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    _seed_identity_state(session)
+
+    query = "sidecar_id=laptop"
+    resp = client.get(f"/api/v1/fleet/config?{query}", headers=_signed_config_headers(query))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["account_tag_hints"] == {"anthropic": {"provider:anthropic": "alice@example.com"}}
+    accounts = body["config"]["providers"]["anthropic"]["accounts"]
+    assert [a["account_id"] for a in accounts] == ["alice@example.com"]
+    assert accounts[0].get("credential_token")
+
+
+def test_config_rejects_bad_signature(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    headers = _signed_config_headers("sidecar_id=laptop")
+    # Signature bound to another machine's query can't be replayed.
+    resp = client.get("/api/v1/fleet/config?sidecar_id=desktop", headers=headers)
+    assert resp.status_code == 401
+
+
+def test_config_full_view_on_loopback_bind_without_signature(
+    client: TestClient, session: Session, monkeypatch
+) -> None:
+    """Local topology (server + sidecar on one host) keeps working unsigned."""
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "127.0.0.1")
+    _seed_identity_state(session)
+    body = client.get("/api/v1/fleet/config").json()
+    assert body["account_tag_hints"] == {"anthropic": {"provider:anthropic": "alice@example.com"}}
+
+
+def test_config_signature_is_single_use(client: TestClient, monkeypatch) -> None:
+    """A captured signed GET can't be replayed within the timestamp window."""
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    query = "sidecar_id=laptop"
+    headers = _signed_config_headers(query)
+    assert client.get(f"/api/v1/fleet/config?{query}", headers=headers).status_code == 200
+    replay = client.get(f"/api/v1/fleet/config?{query}", headers=headers)
+    assert replay.status_code == 401
+
+
+def test_config_issues_no_credential_tokens_for_unsigned_remote_caller(
+    client: TestClient, session: Session, monkeypatch
+) -> None:
+    """Redacted callers don't even cost a token issuance (#327 review)."""
+    from unittest.mock import patch
+
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    _seed_identity_state(session)
+    with patch("app.api.endpoints.fleet.issue_credential_token") as issue:
+        assert client.get("/api/v1/fleet/config").status_code == 200
+    issue.assert_not_called()

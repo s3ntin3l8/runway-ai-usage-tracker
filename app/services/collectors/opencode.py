@@ -27,7 +27,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import PaceCalculator, http_request_with_retry
+from app.core.utils import PaceCalculator, http_request_with_retry, scrub_log
 from app.services.collectors.base import BaseCollector, format_token_details, normalize_account_id
 from app.services.token_cache import token_cache
 
@@ -73,7 +73,31 @@ class OpenCodeCollector(BaseCollector):
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+        # Email the session cookie belongs to, when the token cache knows it.
+        self._cookie_owner: str | None = None
         self._last_window_info: dict[str, dict] | None = self._load_persisted_state()
+
+    def _pin_identity(self, scraped_email: str) -> None:
+        """Pin ``account_id`` / ``account_label`` for an unpinned collector.
+
+        The cookie owner (the identity the credential was cached under) is
+        authoritative; the email scraped from the workspace page is only a
+        fallback — with several opencode accounts the page can show a
+        different account than the cookie's (#315). A disagreement is
+        logged so the split is visible instead of silent.
+        """
+        owner = self._cookie_owner
+        if owner and scraped_email and owner.lower() != scraped_email.lower():
+            logger.warning(
+                "OpenCode: workspace page shows %s but the session cookie belongs to %s; "
+                "using the cookie owner",
+                scrub_log(scraped_email),
+                scrub_log(owner),
+            )
+        identity = owner or scraped_email
+        self.account_label = identity
+        if not self.account_id or self.account_id == "default":
+            self.account_id = normalize_account_id(identity)
 
     def _state_file_path(self) -> str:
         """Path to the local state file for OpenCode."""
@@ -165,6 +189,11 @@ class OpenCodeCollector(BaseCollector):
             if session_cookie:
                 source = metadata.get("source")
                 input_source = "sidecar" if source else "config"
+                # The credential's own identity (#315): the email the
+                # cookie was pushed/configured under. It outranks the
+                # workspace-page scrape, which can show another account.
+                owner = str(metadata.get("account_label") or "")
+                self._cookie_owner = owner if "@" in owner else None
 
         if not session_cookie:
             return []
@@ -274,20 +303,10 @@ class OpenCodeCollector(BaseCollector):
             email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
             if email_match:
                 email = email_match.group(1)
-                self.account_label = email
-                # Pin account_id to the discovered email so cards and events
-                # land under a stable identity rather than the collector's
-                # default "default" bucket. Mirrors the github collector
-                # pattern (`app/services/collectors/github.py`). Without this,
-                # events stream into `account_id="default"` even when the
-                # real user identity is discoverable — see issue #276.
-                #
-                # TODO(#272): prefer the credential's `token_cache` identity
-                # as the pin source — when two opencode accounts are cached,
-                # the workspace HTML's email can disagree with the cookie
-                # owner, and the cookie is the more authoritative signal.
-                if not self.account_id or self.account_id == "default":
-                    self.account_id = normalize_account_id(email)
+                # Pin account_id so cards and events land under a stable
+                # identity rather than "default" (issue #276); the cookie
+                # owner wins over the scraped email (#315).
+                self._pin_identity(email)
 
             # Look for workspace ID pattern: id:"wrk_..."
             match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
@@ -618,17 +637,9 @@ class OpenCodeCollector(BaseCollector):
         email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
         if email_match:
             email = email_match.group(1)
-            self.account_label = email
-            # Pin account_id to the discovered email — sister site to the
-            # workspace-discovery block at `_get_workspace_id` above. Without
-            # this, the collector emits cards/events under `account_id="default"`
-            # even when the user is signed in (see issue #276).
-            #
-            # TODO(#272): prefer the credential's `token_cache` identity as
-            # the pin source when that workstream lands — see the matching
-            # note in `_get_workspace_id` for the rationale.
-            if not self.account_id or self.account_id == "default":
-                self.account_id = normalize_account_id(email)
+            # Sister site to `_get_workspace_id` — same pinning rule (#276, #315).
+            self._pin_identity(email)
+            email = self.account_label or email
 
         identity_suffix = f" | {email}" if email else ""
 

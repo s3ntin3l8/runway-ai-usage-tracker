@@ -2670,7 +2670,13 @@ def run_collection(
         if api_url_for_tokens and not cache.is_fresh():
             # ``sidecar_id`` (#319) lets the server scope
             # account_tag_hints to this machine's credential tags.
-            fetched = fetch_identity_hints(api_url_for_tokens, sidecar_id=get_hostname())
+            fetched = fetch_identity_hints(
+                api_url_for_tokens,
+                sidecar_id=get_hostname(),
+                # Signed → the server returns account ids + tag hints; it
+                # redacts both for unsigned callers on a non-loopback bind.
+                api_key=os.environ.get("RUNWAY_API_KEY") or config.get("api_key") or None,
+            )
             # ``fetched is None`` distinguishes outage from a valid
             # empty response. The cache skips the update on None, so
             # the prior snapshot survives and ``is_fresh()`` returns
