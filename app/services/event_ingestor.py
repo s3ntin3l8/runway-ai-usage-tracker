@@ -16,6 +16,7 @@ from sqlmodel import Session
 from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent
 from app.models.schemas import UsageEventPush
+from app.services.account_identity import canonical_account_id
 from app.services.cost_calculator import compute_event_cost_breakdown
 from app.services.period_rollups import update_rollups_for_event
 from app.services.project_label import derive_project
@@ -43,11 +44,15 @@ class EventIngestor:
         try:
             for push in pushes:
                 ts = parse_iso8601_utc(push.ts)
+                # Same canonical form the card path uses (resolve_account_id),
+                # so a mixed-case email from a sidecar can't split an account
+                # into an events-only twin of its quota card.
+                account_id = canonical_account_id(push.account_id)
 
                 if push.kind == "error":
                     ev = UsageEvent(
                         provider_id=push.provider_id,
-                        account_id=push.account_id,
+                        account_id=account_id,
                         sidecar_id=sidecar_id or "local",
                         event_id=push.event_id,
                         ts=ts,
@@ -83,7 +88,7 @@ class EventIngestor:
                 cost = push.cost_usd if push.cost_usd is not None else breakdown.total
                 ev = UsageEvent(
                     provider_id=push.provider_id,
-                    account_id=push.account_id,
+                    account_id=account_id,
                     sidecar_id=sidecar_id or "local",
                     event_id=push.event_id,
                     ts=ts,

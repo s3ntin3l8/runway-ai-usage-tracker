@@ -1603,9 +1603,10 @@ def _ag_account_email() -> str:
     """Read email from the agy OAuth token file; returns 'default' if unavailable.
 
     The agy token file does not carry an id_token or email claim directly, so
-    we return 'default' and let the server derive a stable account_id from the
-    hashed access_token.  If the user's email is known from a previous
-    collection cycle (stored in _ACCOUNT_IDENTITIES), that is preferred.
+    we return 'default' (unresolved — the operator tag / auto-hint path then
+    applies). The server-propagated identity in _ACCOUNT_IDENTITIES is used
+    when present; the server only sends it when it is unambiguous (single
+    live sidecar, single real antigravity account).
     """
     cached = _ACCOUNT_IDENTITIES.get("antigravity")
     if cached:
@@ -1890,17 +1891,14 @@ def _opencode_account_email(db_path: Path | None) -> str:
     email as account_id keeps sidecar-pushed events aligned with the cards
     emitted by the server's web collector.
     """
-    # 1. Try server-provided identity hint (propagated from server web scraper)
-    ident = _ACCOUNT_IDENTITIES.get("opencode")
-    if ident:
-        return ident
-
-    # 2. Try environment variable
+    # Local evidence first: the server-propagated identity is fleet-wide and
+    # would stamp this host's data with another host's account.
+    # 1. Environment variable
     env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
     if env_label:
         return env_label
 
-    # 3. Fallback to local DB
+    # 2. Local DB
     if db_path is not None and db_path.exists():
         try:
             conn = sqlite3.connect(str(db_path))
@@ -1914,6 +1912,12 @@ def _opencode_account_email(db_path: Path | None) -> str:
                 conn.close()
         except Exception:
             logging.debug("Failed to read account email from OpenCode DB", exc_info=True)
+
+    # 3. Server-provided identity — only sent when unambiguous (single live
+    #    sidecar, single real account for the provider).
+    ident = _ACCOUNT_IDENTITIES.get("opencode")
+    if ident:
+        return ident
 
     return "default"
 
@@ -2300,6 +2304,34 @@ class GenericCollector:
         if provider_id == "chatgpt" and tokens:
             tokens["account_id"] = _codex_account_email()
 
+        # Stamp CLI-derived credentials with the same local identity the
+        # events branch uses (``_LEGACY_EVENT_ACCOUNT_DISCOVERY``), so the
+        # token card, the collector's card and the events all land on one
+        # account. Only for credentials read from that CLI's own install —
+        # a browser cookie (claude.ai sessionKey) may belong to a different
+        # account than the CLI login, so it stays on the hint/tag path.
+        if tokens and not tokens.get("account_id"):
+            cli_identity: str = ""
+            has_cookie = any(k.startswith("cookie_") for k in tokens)
+            if provider_id == "anthropic" and tokens.get("oauth_token") and not has_cookie:
+                cli_identity = discover_anthropic_email()
+            elif provider_id == "gemini" and not has_cookie:
+                # The collected id_token covers every discovered creds path
+                # ({{CONFIG_DIR:gemini}} included); the home-dir helper is
+                # the fallback when the rule didn't carry one.
+                cli_identity = (
+                    _decode_id_token_email(tokens.get("id_token", "")) or _gemini_account_email()
+                )
+            if cli_identity and cli_identity != "default":
+                tokens["account_id"] = cli_identity
+
+        # Canonicalize a locally discovered id to the server's form
+        # (lowercased email) so token-cache keys match cards and events.
+        if tokens and tokens.get("account_id"):
+            from scripts.sidecar_pkg.identity import canonical_account_id
+
+            tokens["account_id"] = canonical_account_id(tokens["account_id"])
+
         # If tokens were extracted, add a hidden token card
         if tokens:
             logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
@@ -2330,6 +2362,12 @@ class GenericCollector:
             # origin expansion is the follow-up issue.
             local_account_id = tokens.get("account_id")
             hint_account_id = provider_hints.get(credential_origin_for_provider(provider_id))
+            # "default" (antigravity / codex without an email) is the absence
+            # of an identity: an operator tag must win over it. Without a
+            # hint it still ships as "default" — the server collector
+            # bootstraps the real identity from that token.
+            if local_account_id == "default" and hint_account_id is not None:
+                local_account_id = None
             if local_account_id is not None:
                 resolved_account_id = local_account_id
             elif hint_account_id is not None:
@@ -2696,7 +2734,14 @@ def run_collection(
             # sidecar hosts, and stamping events under them would leak
             # another user's account_id into our event stream.
             if _events_enabled and _watermark is not None and provider_id in _EVENT_PROVIDERS:
-                local_account_id = _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
+                from scripts.sidecar_pkg.identity import canonical_account_id
+
+                # Canonical form (lowercased email) so the membership check
+                # against the server's account list and the stamped events
+                # match the ids the server stores.
+                local_account_id = canonical_account_id(
+                    _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
+                )
                 provider_accounts = server_accounts_by_provider.get(provider_id) or []
 
                 # Silent-listener for events (PR #290 follow-up — the
@@ -3133,11 +3178,14 @@ class DaemonRunner:
 
                 if isinstance(result, dict):
                     # Store server-provided identity hints (for anonymous collectors)
-                    identities = result.get("identities")
-                    if identities:
+                    # Replace, don't merge: the server withdraws an identity
+                    # (e.g. a second sidecar or account appeared) by omitting
+                    # it, and a stale entry would keep stamping this host's
+                    # data with another host's account.
+                    if "identities" in result:
                         global _ACCOUNT_IDENTITIES
-                        _ACCOUNT_IDENTITIES.update(identities)
-                        logging.debug(f"Server provided identities: {identities}")
+                        _ACCOUNT_IDENTITIES = dict(result.get("identities") or {})
+                        logging.debug(f"Server provided identities: {_ACCOUNT_IDENTITIES}")
 
                     # Log reset_anchors for visibility (Phase 6)
                     reset_anchors = result.get("reset_anchors")
