@@ -598,7 +598,8 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     assert r.status_code == 200
 
     # session_cookie isn't accepted for openrouter via PUT (no cookie
-    # support), so set it directly to pin that branch of the wipe too.
+    # support), so set it + the ChatGPT oai-sc companion directly to pin
+    # that branch of the wipe too (round-3 approve nit: companion parity).
     from app.models.db import ProviderConfig
 
     row = session.exec(
@@ -609,6 +610,7 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     ).one()
     assert row.api_key is not None
     row.session_cookie = "sessionKey=stale"  # pragma: allowlist secret
+    row.oai_sc_cookie = "oai-sc=stale"  # pragma: allowlist secret
     session.add(row)
     session.commit()
 
@@ -687,6 +689,11 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     ).one()
     assert wiped.api_key is None, "DELETE must clear the stored api_key"
     assert wiped.session_cookie is None, "DELETE must clear the stored session_cookie"
+    assert wiped.oai_sc_cookie is None, (
+        "DELETE must clear the ChatGPT oai_sc companion cookie "
+        "(parity with clear_session_cookie, round-3 approve nit)"
+    )
+    assert wiped.oai_sc_cookie_encrypted is None
 
     # LatestUsage card was evicted.
     assert (

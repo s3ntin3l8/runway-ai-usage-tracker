@@ -1261,11 +1261,14 @@ async def delete_provider_config_for_account(
     # Remove is destructive (the dialog's confirm copy promises it), and a
     # kept credential could be re-cached if the row were ever re-enabled
     # (PR #317 round-2 re-review warning). PUT-archive deliberately does NOT
-    # clear credentials; archive ≠ remove.
+    # clear credentials; archive ≠ remove. ``oai_sc_cookie`` is ChatGPT's
+    # companion to ``session_cookie`` — the sibling ``clear_session_cookie``
+    # path wipes both (parity nit from the round-3 approve review).
     row.archived = True
     row.enabled = False
     row.api_key = None
     row.session_cookie = None
+    row.oai_sc_cookie = None
     session.add(row)
     session.commit()
 
