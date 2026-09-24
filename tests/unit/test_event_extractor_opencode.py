@@ -415,9 +415,30 @@ def test_map_opencode_canonical_minimax():
 def test_map_opencode_canonical_unmapped_returns_none():
     """Unmapped providerIDs (including other opencode-* siblings) fall through
     to map_opencode_provider_id's opencode-<slug> derivation, not a canonical id."""
-    assert map_opencode_canonical("openrouter") is None
     assert map_opencode_canonical("some-new-backend") is None
     assert map_opencode_canonical("") is None
+
+
+def test_map_opencode_canonical_openrouter():
+    """OpenRouter (openrouter backend) folds onto the canonical "openrouter"
+    provider so the events land on the OpenRouter quota card fed by the
+    sidecar-extracted API key. Account override is None — OpenCode's
+    resolved account flows through, same identity-pinning reasoning as
+    kimi and ollama."""
+    assert map_opencode_canonical("openrouter") == ("openrouter", None)
+    assert map_opencode_canonical("OPENROUTER") == (
+        "openrouter",
+        None,
+    )  # case-insensitive
+
+
+def test_map_opencode_canonical_xai():
+    """xAI (xai backend) folds onto the canonical "xai" provider so events
+    land on the (currently stub) xai quota card. Account override is None —
+    OpenCode's resolved account flows through, same identity-pinning
+    reasoning as kimi/ollama/openrouter."""
+    assert map_opencode_canonical("xai") == ("xai", None)
+    assert map_opencode_canonical("XAI") == ("xai", None)  # case-insensitive
 
 
 def test_map_opencode_canonical_kimi():
@@ -797,7 +818,9 @@ def test_failed_request_pushed_as_error_kind_not_usage():
         by_id = {e.event_id: e for e in evts}
 
         or_evt = by_id["msg_openrouter_401"]
-        assert or_evt.provider_id == "opencode-openrouter"
+        # openrouter is now in the canonical map — retags onto the canonical
+        # `openrouter` provider so events land on the OpenRouter quota card.
+        assert or_evt.provider_id == "openrouter"
         assert or_evt.kind == "error"
         assert or_evt.error_reason == "auth_failed"
         assert or_evt.tokens_input == 0
