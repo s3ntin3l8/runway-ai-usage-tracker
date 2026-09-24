@@ -107,6 +107,7 @@ async def _debug_run_one_strategy(
             {
                 "method": r.method,
                 "url": str(r.url),
+                "headers": _mask_headers(dict(r.headers)),
                 "timestamp": time.time(),
             }
         )
@@ -456,6 +457,7 @@ async def get_raw_provider_data(
             {
                 "method": request.method,
                 "url": str(request.url),
+                "headers": _mask_headers(dict(request.headers)),
                 "timestamp": time.time(),
             }
         )
@@ -1019,6 +1021,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "cookie_sessionKey",
                     "cookie___Secure-next-auth.session-token",
                     "sessionKey",
+                    "console_session",
                 )
             )
             for rule in rules
@@ -1603,7 +1606,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # Propagate to token_cache if this is also mapped as an OAuth token.
         # Stamp under the resolved account_id (no longer hard-coded "default")
         # so the new per-account endpoint keeps credentials and identity aligned.
-        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini"):
+        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini", "opencode", "ollama"):
             tokens = {"oauth_token": row.api_key}
 
             # For ChatGPT, try to extract the account_id from the token if it's a JWT
@@ -1620,6 +1623,10 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             ):
                 tokens["session_cookie"] = row.api_key
                 tokens["cookie_sessionKey"] = row.api_key
+
+            # Opencode reads the API key under the "api_key" token-cache slot.
+            if provider_id in ("opencode", "ollama"):
+                tokens["api_key"] = row.api_key
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
@@ -1666,7 +1673,12 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
                 if chunk0:
                     found = chunk0 + (chunk1 or "")
             elif provider_id == "opencode":
-                # Extract auth cookie value if user pasted full "auth=<value>" string
+                # Extract auth (and optional __Host-console_session) cookie
+                # values from a pasted multi-cookie string. The DB column
+                # only stores one value; if both are present we store the
+                # full string and let the manual-config-to-cache bridge
+                # split it into tokens["cookie_session"] and
+                # tokens["console_session"].
                 for part in val.split(";"):
                     part = part.strip()
                     if part.startswith("auth="):
@@ -1696,6 +1708,17 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             }
             if provider_id == "chatgpt" and oai_sc_val:
                 tokens["cookie_oai-sc"] = oai_sc_val
+
+            # Opencode's two-step console handshake needs both the legacy
+            # `auth` cookie AND `__Host-console_session`. The DB column
+            # stores one blob; if a pasted string contains both we split
+            # them here so the collector's two lookups both succeed.
+            if provider_id == "opencode":
+                for part in row.session_cookie.split(";"):
+                    part = part.strip()
+                    if part.startswith("__Host-console_session="):
+                        tokens["console_session"] = part[len("__Host-console_session=") :].strip()
+                        break
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
 

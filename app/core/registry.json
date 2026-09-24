@@ -304,14 +304,35 @@
     "opencode": {
       "name": "OpenCode",
       "icon": "⚡",
-      "session_cookie_label": "Auth Cookie (web)",
-      "session_cookie_help": "Paste the 'auth' cookie value from opencode.ai",
+      "api_key_label": "OpenCode API Key (api)",
+      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"opencode-go\"].key. Env: OPENCODE_API_KEY=oc_sk_…. Manual: paste an oc_sk_… key from the opencode console.",
+      "session_cookie_label": "Session Cookies (web, fallback)",
+      "session_cookie_help": "Fallback: paste both 'auth' AND '__Host-console_session' cookie values from opencode.ai. Required only when no API key is configured.",
       "rules": [
+        {
+          "type": "file",
+          "paths": [
+            "~/.local/share/opencode/auth.json",
+            "~/.opencode/auth.json"
+          ],
+          "mapping": { "opencode-go.key": "api_key" }
+        },
+        {
+          "type": "env",
+          "variable": "OPENCODE_API_KEY",
+          "mapping": { "value": "api_key" }
+        },
         {
           "type": "cookie",
           "domains": ["opencode.ai", ".opencode.ai"],
           "name": "auth",
           "mapping": { "value": "cookie_session" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["opencode.ai", ".opencode.ai"],
+          "name": "__Host-console_session",
+          "mapping": { "value": "console_session" }
         },
         {
           "type": "sqlite",
@@ -352,13 +373,44 @@
         }
       ]
     },
+    "xai": {
+      "name": "xAI (Grok)",
+      "icon": "🤖",
+      "description": "xAI doesn't expose a programmatic quota API. Runway surfaces an auth_required card when the opencode-pushed xai OAuth access token expires; re-login in the opencode CLI to refresh.",
+      "rules": [
+        {
+          "type": "file",
+          "paths": [
+            "~/.local/share/opencode/auth.json",
+            "~/.opencode/auth.json"
+          ],
+          "parser": "xai_oauth",
+          "provider_key": "xai"
+        }
+      ]
+    },
     "ollama": {
       "name": "Ollama Cloud",
       "icon": "🦙",
-      "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (__Secure-session, or a bare value from the Cookie header) from ollama.com, not an API key.",
-      "session_cookie_label": "Web Session (web)",
-      "session_cookie_help": "Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings",
+      "description": "Monitor your Ollama Cloud usage. Bearer API key (preferred) or session cookie (web).",
+      "api_key_label": "Ollama API Key (api)",
+      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"ollama-cloud\"].key. Env: OLLAMA_API_KEY=…. Manual: paste a key from ollama.com/settings/keys. Used against https://ollama.com/api/usage for monthly quota.",
+      "session_cookie_label": "Web Session (web, fallback)",
+      "session_cookie_help": "Fallback: paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings. Used to scrape /settings when no API key is configured.",
       "rules": [
+        {
+          "type": "file",
+          "paths": [
+            "~/.local/share/opencode/auth.json",
+            "~/.opencode/auth.json"
+          ],
+          "mapping": { "ollama-cloud.key": "api_key" }
+        },
+        {
+          "type": "env",
+          "variable": "OLLAMA_API_KEY",
+          "mapping": { "value": "api_key" }
+        },
         {
           "type": "env",
           "variable": "OLLAMA_SESSION_TOKEN",
