@@ -54,3 +54,37 @@ def test_opencode_falls_back_to_workspace_scrape_without_cookie_identity():
     collector = OpenCodeCollector()
     collector._pin_identity("Personal@Example.com")
     assert collector.account_id == "personal@example.com"
+
+
+def test_unpinned_collector_bootstraps_from_the_only_identified_account():
+    """Fresh single-account server: the unpinned collector may borrow the one
+    identified entry — that first card is what pins it (#327 review)."""
+    from app.services.token_cache import borrowable_entries
+
+    entries = [{"account_id": "alice@example.com", "tokens": {"oauth_token": "t"}}]
+    assert borrowable_entries(entries, None) == entries
+
+
+def test_unpinned_collector_does_not_guess_between_two_accounts(caplog):
+    from app.services.token_cache import borrowable_entries
+
+    entries = [
+        {"account_id": "alice@example.com", "tokens": {}},
+        {"account_id": "bob@example.com", "tokens": {}},
+    ]
+    with caplog.at_level("WARNING"):
+        assert borrowable_entries(entries, None, provider="chatgpt") == []
+    assert "belong to other accounts" in caplog.text
+
+
+async def test_chatgpt_fallback_bootstraps_single_account(monkeypatch):
+    from app.services.collectors import chatgpt_oauth
+    from app.services.collectors.chatgpt import ChatGPTCollector
+
+    cache = TokenCache()
+    await cache.store("chatgpt", {"oauth_token": "alices-token"}, account_id="alice@example.com")
+    monkeypatch.setattr(chatgpt_oauth, "token_cache", cache)
+
+    found = await ChatGPTCollector(account_id=None)._find_cross_account_oauth_token()
+    assert found is not None
+    assert found[0]["oauth_token"] == "alices-token"

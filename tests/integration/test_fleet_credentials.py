@@ -1255,7 +1255,8 @@ def test_delete_tag_rejects_sidecar_id_that_normalizes_to_empty(
 def _signed_config_headers(query: str) -> dict[str, str]:
     from scripts.sidecar_pkg.credentials import config_request_signature
 
-    ts = str(int(time.time()))
+    # Microsecond precision like the sidecar: signatures are single-use.
+    ts = f"{time.time():.6f}"
     return {"X-Timestamp": ts, "X-Signature": config_request_signature(SECRET, ts, query)}
 
 
@@ -1322,3 +1323,13 @@ def test_config_full_view_on_loopback_bind_without_signature(
     _seed_identity_state(session)
     body = client.get("/api/v1/fleet/config").json()
     assert body["account_tag_hints"] == {"anthropic": {"provider:anthropic": "alice@example.com"}}
+
+
+def test_config_signature_is_single_use(client: TestClient, monkeypatch) -> None:
+    """A captured signed GET can't be replayed within the timestamp window."""
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
+    query = "sidecar_id=laptop"
+    headers = _signed_config_headers(query)
+    assert client.get(f"/api/v1/fleet/config?{query}", headers=headers).status_code == 200
+    replay = client.get(f"/api/v1/fleet/config?{query}", headers=headers)
+    assert replay.status_code == 401

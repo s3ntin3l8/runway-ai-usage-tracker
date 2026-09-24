@@ -87,7 +87,9 @@ def _fetch_config_payload(
     if api_key:
         # Signed requests get the full payload (account ids, tag hints,
         # credential tokens); the server redacts it for unsigned callers.
-        ts = str(int(time.time()))
+        # Microsecond precision: the server accepts each signature once, so
+        # two fetches in the same second must not collide.
+        ts = f"{time.time():.6f}"
         headers = {
             "X-Timestamp": ts,
             "X-Signature": config_request_signature(api_key, ts, query),

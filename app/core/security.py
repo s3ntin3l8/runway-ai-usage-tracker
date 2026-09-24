@@ -316,9 +316,25 @@ def verify_config_signature(request: Request) -> bool:
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(x_signature, expected):
-        logger.warning("fleet/config: HMAC mismatch")
+        source = request.client.host if request.client else "unknown"
+        logger.warning("fleet/config: HMAC mismatch from %s", scrub_log(source))
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+    # Single use: a captured signed GET (on-path, within the timestamp
+    # window) must not be replayable for the hints + credential tokens.
+    now = time.time()
+    for seen_sig, seen_at in list(_SEEN_CONFIG_SIGNATURES.items()):
+        if now - seen_at > _CONFIG_SIGNATURE_TTL:
+            del _SEEN_CONFIG_SIGNATURES[seen_sig]
+    if x_signature in _SEEN_CONFIG_SIGNATURES:
+        raise HTTPException(status_code=401, detail="Replayed signature")
+    _SEEN_CONFIG_SIGNATURES[x_signature] = now
     return True
+
+
+# Signatures already accepted by verify_config_signature, kept for the whole
+# accepted timestamp window (+60s future skew) so each is usable once.
+_CONFIG_SIGNATURE_TTL = 360
+_SEEN_CONFIG_SIGNATURES: dict[str, float] = {}
 
 
 def is_loopback_bind() -> bool:

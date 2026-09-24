@@ -419,3 +419,34 @@ def is_foreign_account_entry(entry_account_id: str, wanted_account_id: str | Non
     if wanted_account_id and entry == canonical_account_id(wanted_account_id):
         return False
     return "@" in entry
+
+
+def borrowable_entries(
+    entries: list[dict[str, Any]], wanted_account_id: str | None, *, provider: str = ""
+) -> list[dict[str, Any]]:
+    """Filter ``get_accounts`` rows down to those a fallback may borrow.
+
+    Drops entries keyed to another identified account
+    (:func:`is_foreign_account_entry`). One exception keeps the identity
+    bootstrap working: an *unpinned* collector (``wanted_account_id`` is
+    None, e.g. a fresh server with no ``LatestUsage`` row yet) may borrow
+    when the cache holds exactly one identified account — a single-account
+    deployment has no cross-account risk, and that first card is what pins
+    the collector to its identity. When everything is excluded the outage
+    is logged instead of going silent.
+    """
+    allowed = [
+        a for a in entries if not is_foreign_account_entry(a["account_id"], wanted_account_id)
+    ]
+    if allowed or not entries:
+        return allowed
+    identities = {canonical_account_id(a["account_id"]) for a in entries}
+    if not wanted_account_id and len(identities) == 1:
+        return entries
+    logger.warning(
+        "%s: %d cached credential(s) belong to other accounts; not borrowing any for %s",
+        scrub_log(provider or "token_cache"),
+        len(entries),
+        "the unpinned collector" if not wanted_account_id else "this account",
+    )
+    return []

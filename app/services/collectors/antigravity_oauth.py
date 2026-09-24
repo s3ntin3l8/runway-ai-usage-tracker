@@ -6,7 +6,7 @@ import httpx
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import IdentityExtractor
 from app.services.collectors.oauth_base import OAuthBaseCollector
-from app.services.token_cache import is_foreign_account_entry, token_cache
+from app.services.token_cache import borrowable_entries, token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,11 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
                 # falling back to the bare newest-by-recency only if every entry is
                 # expired (nothing better to offer).
                 # Never another identified account's token (multi-account).
-                candidates = [
-                    a
-                    for a in await token_cache.get_accounts("antigravity")
-                    if not is_foreign_account_entry(a["account_id"], self.account_id)
-                ]
+                candidates = borrowable_entries(
+                    await token_cache.get_accounts("antigravity"),
+                    self.account_id,
+                    provider="antigravity",
+                )
                 fresh = [a for a in candidates if not _is_token_expired(a["tokens"])]
                 pool = fresh or candidates
                 if pool:
