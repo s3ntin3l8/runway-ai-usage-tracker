@@ -115,11 +115,13 @@ describe('ProviderGrid', () => {
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
-  it('treats Collection-failing detail as stale for opacity and footer', () => {
+  it('treats a scrubbed residual (flags + detail prefix) as stale for opacity and footer', () => {
     const items = buildRiskItems(
       [
         entry({
           critical_gauge: card({
+            stale: true,
+            collection_failing: true,
             detail: '⚠ Collection failing — timeout [Cached 346.1m ago]',
           }),
         }),

@@ -68,27 +68,37 @@ describe('status semantics', () => {
     // Non-stale card with health:critical stays critical
     expect(cardStatus(card({ health: 'critical', pct_used: 20 }))).toBe('critical');
   });
-  it('Collection-failing detail is treated as stale for the critical gate', () => {
-    // Residual pre-#293 row: health=critical, no stale flag, detail carries prefix
+  it('scrubbed residual (flags + detail prefix) skips the critical gate', () => {
+    // Residual pre-#293 row after the startup scrub stamped the flags.
     expect(
       cardStatus(
         card({
+          stale: true,
+          collection_failing: true,
           health: 'critical',
           pct_used: 0,
           detail: '⚠ Collection failing — whatever [Cached 346.1m ago]',
         }),
       ),
     ).toBe('ok');
-    // Genuine near-limit quota still critical even with the prefix
+    // Genuine near-limit quota still critical even when collection fails
     expect(
       cardStatus(
         card({
+          stale: true,
+          collection_failing: true,
           health: 'critical',
           pct_used: 95,
           detail: '⚠ Collection failing — whatever [Cached 1m ago]',
         }),
       ),
     ).toBe('critical');
+  });
+  it('Collection-failing detail prefix alone no longer drives staleness', () => {
+    // detail is display-only; the structured flags are the source of truth.
+    const prefixOnly = { detail: '⚠ Collection failing — whatever [Cached 346.1m ago]' };
+    expect(cardStale(card(prefixOnly))).toBe(false);
+    expect(cardStatus(card({ ...prefixOnly, health: 'critical', pct_used: 0 }))).toBe('critical');
   });
   it('stale balance card retains health:critical (no derivable pct)', () => {
     // Balance card: no pct_used, no used_value/limit_value → cardPct = null
@@ -131,10 +141,11 @@ describe('status semantics', () => {
         }),
       ),
     ).toBe('ok');
-    // Same via the migration-fallback detail prefix, no stale flag.
+    // Same for a scrubbed residual (flag + display prefix, no stale flag).
     expect(
       cardStatus(
         card({
+          collection_failing: true,
           health: 'critical',
           used_value: 20,
           limit_value: 100,
