@@ -2722,6 +2722,22 @@ def run_collection(
                 event_origin = credential_origin_for_provider(provider_id)
                 event_hint = server_account_tag_hints.get(provider_id, {}).get(event_origin)
 
+                # PR #318 round-2 re-review (Hermes): the evidence gate below
+                # used a proxy (``scoped_accounts == [local or "default"]``
+                # + ``event_hint is None``) that was ALSO true for the two
+                # *resolved* branches whenever ``local_account_id`` was
+                # truthy — a host whose identity the server already knew
+                # (branch 1) or whose local identity we chose over
+                # cross-host attribution (branch 2) still posted a phantom
+                # Untagged entry + "shipping under 'default'" warning even
+                # though events shipped under the resolved account.
+                # Track untaggedness explicitly instead: only the final
+                # else-arm (no server match, no local identity, no hint)
+                # is genuinely unresolved, and its events always ship under
+                # the legacy ``[local or "default"]`` sentinel — which the
+                # warning log below accurately describes.
+                untagged = False
+
                 if provider_accounts and local_account_id and local_account_id in provider_accounts:
                     # Best case: server knows about us, and our local
                     # identity matches one of its rows.
@@ -2762,15 +2778,16 @@ def run_collection(
                     # Neither local discovery nor the server hint
                     # resolved a real account_id — ship under the
                     # legacy "default" sentinel so events don't
-                    # disappear. The manifest entry is added AFTER the
-                    # extractor runs (PR #318 round-2 review, Hermes
-                    # warning #3): we only surface an Untagged origin
-                    # for credentials the sidecar actually has evidence
-                    # of — at least one event extracted this cycle.
-                    # Reporting origins that no local credential backs
-                    # produces a permanent Untagged entry that the
-                    # operator can never resolve (no local artifact to
-                    # map from), and the prune side never clears it.
+                    # disappear. Mark untagged so the evidence gate
+                    # below can surface the origin: we only add the
+                    # manifest entry when THIS provider actually
+                    # extracted events this cycle (PR #318 round-2
+                    # review, Hermes warning #3): reporting origins
+                    # that no local credential backs produces a
+                    # permanent Untagged entry that the operator can
+                    # never resolve (no local artifact to map from),
+                    # and the prune side never clears it.
+                    untagged = True
                     scoped_accounts = [local_account_id or "default"]
                     logging.debug(
                         f"  [{provider_id}] events fall through to default "
@@ -2796,11 +2813,12 @@ def run_collection(
                     server_account_tag_hints=server_account_tag_hints,
                 )
                 post_count = len(all_events)
-                if (
-                    scoped_accounts == [local_account_id or "default"]
-                    and event_hint is None
-                    and post_count > pre_count
-                ):
+                # Evidence gate (PR #318 round-2 W3): only surface an
+                # Untagged origin when THIS provider contributed events.
+                # PR #318 round-2 re-review W: gate on the explicit ``untagged``
+                # flag rather than re-deriving it from ``scoped_accounts``
+                # — the old proxy matched the resolved branches 1/2 too.
+                if untagged and post_count > pre_count:
                     blocked_origins_this_cycle.append(
                         {
                             "provider_id": provider_id,

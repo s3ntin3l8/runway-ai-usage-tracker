@@ -576,9 +576,15 @@ def test_pending_delete_returns_true_when_present_false_when_absent(session: Ses
 def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> None:
     """PR #318 round-2 review (Hermes warning #2): auto-hints are
     deployment-wide — they would cross-contaminate hosts in a multi-
-    sidecar deployment. Gating: when ``sidecar_registry`` has 2+
-    rows, the auto-hint is suppressed. Operators must tag explicitly
-    via the Untagged Credentials dialog.
+    sidecar deployment. Gating: when ``sidecar_registry`` has 2+ rows
+    with ``last_seen`` inside the last 7 days, the auto-hint is
+    suppressed. Operators must tag explicitly via the Untagged
+    Credentials dialog.
+
+    PR #318 round-2 re-review S: only *live* rows count — rows default
+    ``last_seen`` to now (so both fixtures here are live) and stale/retired
+    rows age out of the window instead of suppressing forever; see
+    ``test_auto_hints_not_suppressed_by_stale_sidecar_rows``.
 
     Tracking: ``credential_tags`` is planned to gain a ``sidecar_id``
     column (#319) which will let this heuristic resume
@@ -595,14 +601,52 @@ def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> 
             enabled=True,
         )
     )
-    # Two sidecars registered — multi-host deployment.
+    # Two sidecars registered — multi-host deployment. Both get the
+    # default ``last_seen=now`` → both live within the 7-day window.
     session.add(SidecarRegistry(sidecar_id="alpha", hostname="alpha-host"))
     session.add(SidecarRegistry(sidecar_id="beta", hostname="beta-host"))
     session.commit()
 
     out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
-    # Auto-hint suppressed because two sidecars are registered.
+    # Auto-hint suppressed because two LIVE sidecars are registered.
     assert out == {}
+
+
+def test_auto_hints_not_suppressed_by_stale_sidecar_rows(session: Session) -> None:
+    """PR #318 round-2 re-review S: stale/retired registry rows must not
+    suppress the auto-hint forever.
+
+    ``sidecar_registry`` rows are never pruned automatically (the only
+    prune is the operator-triggered ``remove_inactive_sidecars_days``
+    cleanup), so counting every row ever created meant a single-host
+    operator who once ran a second machine lost the MiniMax auto-hint
+    permanently with no log line. The gate now counts only rows whose
+    ``last_seen`` is within 7 days — beyond the ~60s heartbeat cadence
+    and the 60-min staleness threshold, but short enough that retired
+    machines age out — and logs at DEBUG when it suppresses.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.db import ProviderConfig, SidecarRegistry
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    # One live sidecar (default last_seen=now) + one retired machine
+    # that last checked in 30 days ago. Only the live one counts →
+    # single-host detection holds and the hint fires.
+    session.add(SidecarRegistry(sidecar_id="alpha", hostname="alpha-host"))
+    stale = SidecarRegistry(sidecar_id="beta", hostname="beta-host")
+    stale.last_seen = datetime.now(UTC) - timedelta(days=30)
+    session.add(stale)
+    session.commit()
+
+    out = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=["minimax"])
+    assert out == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
 
 
 def test_auto_hints_unaffected_when_only_one_sidecar(session: Session) -> None:

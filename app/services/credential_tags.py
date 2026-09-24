@@ -200,12 +200,14 @@ class CredentialTagRepo:
         would adopt the single account's identity for its events AND
         its token cards — i.e. attribute another host's usage to its
         own card. This heuristic is therefore gated on a single-host
-        detection: when ``sidecar_registry`` has 2+ rows, the auto-hint
-        is suppressed and operators must tag explicitly via the
-        Untagged Credentials dialog. Tracking: the
-        ``credential_tags`` table is planned to gain a ``sidecar_id``
-        column (#319) which will let this heuristic resume
-        per-host scoping.
+        detection: when ``sidecar_registry`` has 2+ rows whose
+        ``last_seen`` is within the last 7 days (sidecars heartbeat
+        ~every 60s; stale/retired rows age out of the count instead
+        of suppressing forever), the auto-hint is suppressed and
+        operators must tag explicitly via the Untagged Credentials
+        dialog. Tracking: the ``credential_tags`` table is planned to
+        gain a ``sidecar_id`` column (#319) which will let this
+        heuristic resume per-host scoping.
 
         Empty ``providers`` returns an empty map. Defensively filters
         empty / non-string ``account_id`` values.
@@ -214,12 +216,36 @@ class CredentialTagRepo:
             return {}
         # Multi-host gate: see docstring. Auto-hints are deployment-
         # wide, so they would cross-contaminate hosts in a multi-
-        # sidecar deployment. Phase-2 schema work (sidecar_id on
-        # credential_tags) will remove the need for this gate.
+        # sidecar deployment. Only *live* sidecars count toward the
+        # threshold — ``sidecar_registry`` rows are never pruned
+        # automatically, so counting every row ever created would let
+        # one retired/second machine (PR #318 round-2 re-review S: rows
+        # accumulate forever) permanently disable the auto-hint for a
+        # single-host operator who once ran a second box. Window: 7
+        # days, comfortably beyond the ~60s heartbeat cadence
+        # (``fleet_registry``) and the 60-min staleness threshold, but
+        # short enough that retired machines age out. Sidecar-scoped
+        # hints need the ``sidecar_id`` column on ``credential_tags``
+        # (#319), which will remove the need for this gate.
+        import logging
+        from datetime import timedelta
+
         from app.models.db import SidecarRegistry
 
-        sidecar_count = session.exec(select(SidecarRegistry.sidecar_id)).all()
-        if len(sidecar_count) > 1:
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        live_sidecar_ids = session.exec(
+            select(SidecarRegistry.sidecar_id).where(  # type: ignore[arg-type]
+                SidecarRegistry.last_seen >= cutoff
+            )
+        ).all()
+        if len(live_sidecar_ids) > 1:
+            logging.debug(
+                "auto-hint suppressed: %d live sidecar(s) in registry "
+                "(7-day last_seen window); operators must tag explicitly "
+                "via the Untagged Credentials dialog until credential_tags "
+                "gains per-sidecar scoping (#319)",
+                len(live_sidecar_ids),
+            )
             return {}
         # Group by provider_id, keeping only providers with exactly
         # one enabled non-default row. A GROUP BY + HAVING COUNT(*) = 1

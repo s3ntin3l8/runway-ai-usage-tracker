@@ -1585,6 +1585,113 @@ def test_run_collection_events_untagged_only_when_events_extracted(
     assert posted.get("entries") == []
 
 
+def test_run_collection_events_no_untagged_when_identity_resolved(
+    monkeypatch,
+) -> None:
+    """PR #318 round-2 re-review (Hermes W): the evidence gate must not
+    fire for the *resolved* branches.
+
+    The previous gate used the proxy
+    ``scoped_accounts == [local_account_id or "default"]
+    and event_hint is None`` — which was ALSO true for branches 1 and 2
+    whenever ``local_account_id`` was truthy (branch 2 always stamps
+    ``[local]``; branch 1 does too when local is in the server's list,
+    including the ``default``/``[default]`` case). A host whose identity
+    the server already knew therefore posted a phantom Untagged entry
+    plus a misleading "shipping under 'default'" warning even though
+    events shipped under the resolved account_id.
+
+    Pins the explicit ``untagged`` flag: only the else-arm (no server
+    match, no local identity, no hint) may report. Covers the reviewer's
+    table:
+      - branch 1  (local in server accounts)          → no entry
+      - branch 1b (default, server has [default])     → no entry
+      - branch 2  (local non-default, not in server)  → no entry
+    Each case still ships its events under the resolved scoped_accounts.
+    """
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cases = [
+        # (label, server accounts, local identity, expected scoped_accounts)
+        (
+            "branch 1: local in server accounts",
+            ["alice@example.com"],
+            "alice@example.com",
+            ["alice@example.com"],
+        ),
+        (
+            "branch 1b: default local, server has default row",
+            ["default"],
+            "default",
+            ["default"],
+        ),
+        (
+            "branch 2: local non-default not in server accounts",
+            ["alice@example.com"],
+            "bob@example.com",
+            ["bob@example.com"],
+        ),
+    ]
+
+    for label, server_accounts, local_identity, expected_scoped in cases:
+        cache = CredentialCache()
+        cache.replace(
+            accounts={"opencode": list(server_accounts)},
+            tokens={},
+            tag_hints={},  # no hint — isolation is on the branch chain
+        )
+        monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+        monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+        monkeypatch.setattr(
+            sidecar,
+            "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+            {"opencode": (lambda li=local_identity: li)},
+        )
+        monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"opencode"}))
+
+        captured_account_ids: list[str] = []
+
+        def _capture_extract(
+            provider_id: str,
+            account_ids: list[str],
+            *,
+            watermark: Any,
+            bootstrap_days: int,
+            out_events: list[dict[str, Any]],
+            server_account_tag_hints=None,
+        ) -> None:
+            captured_account_ids.clear()
+            captured_account_ids.extend(account_ids)
+            out_events.append({"event_id": "msg_resolved_001", "kind": "message"})
+
+        monkeypatch.setattr(sidecar, "_extract_events_for_provider", _capture_extract)
+        monkeypatch.setattr(
+            sidecar.GenericCollector,
+            "collect_provider",
+            lambda *a, **kw: ([], []),
+        )
+
+        posted: dict[str, Any] = {}
+
+        def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+            posted["entries"] = entries
+
+        monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+        sidecar.run_collection(
+            config={"api_url": "http://x", "api_key": "k"},
+            providers=["opencode"],
+        )
+
+        assert captured_account_ids == expected_scoped, f"{label}: scoped_accounts"
+        # Identity resolved → no Untagged manifest entry, even though
+        # events were extracted this cycle.
+        assert posted.get("entries") == [], (
+            f"{label}: resolved identity must not post an untagged entry, "
+            f"got {posted.get('entries')!r}"
+        )
+
+
 class _StubCache:
     """Minimal stand-in for ``CredentialCache`` so the test can stub
     ``_get_credential_cache`` without dragging in the full cache.
