@@ -172,6 +172,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 self_update_capable=payload.self_update_capable,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
+                identity_sources=payload.identity_sources,
             )
         except Exception as _e:
             logger.warning(f"Fleet registry upsert failed for '{payload.sidecar_id}': {_e}")
@@ -233,6 +234,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
     # Process events for atomic usage tracking
     ingest_result = None
+    events_error = False
     if payload.events:
         from app.services.event_ingestor import EventIngestor
 
@@ -246,8 +248,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 f"from {payload.sidecar_id or 'unknown'}"
             )
         except Exception as e:
-            logger.error(f"Event ingestion failed: {e}")
+            logger.error(f"Event ingestion failed: {e}", exc_info=True)
             ingest_result = None
+            events_error = True
 
     # Determine which providers this sidecar should poll right now.
     # The server is the cadence authority — sidecars heartbeat frequently and
@@ -309,6 +312,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "events_inserted": ingest_result.events_inserted if ingest_result else 0,
         "events_duplicate": ingest_result.events_duplicate if ingest_result else 0,
         "events_reattributed": ingest_result.events_reattributed if ingest_result else 0,
+        # True when this batch's events were NOT stored — the sidecar keeps
+        # its watermark and re-sends them next cycle instead of losing them.
+        "events_error": events_error,
         "windows_closed": ingest_result.windows_closed if ingest_result else 0,
         "poll_providers": poll_providers,
         "trigger": trigger,

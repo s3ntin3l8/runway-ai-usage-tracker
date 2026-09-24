@@ -510,7 +510,19 @@ export interface Sidecar {
   pending_update?: boolean;
   stale?: boolean;
   stale_threshold_minutes?: number;
+  // A newer build exists, regardless of whether it can be pushed right now
+  // (#202) — lets an offline sidecar still show that it is behind.
+  outdated?: boolean;
+  // Per event provider: which account this sidecar stamped its data with in
+  // the latest cycle, and why ("local" discovery, operator "tag"/auto-hint,
+  // or "default" when nothing resolved).
+  identity_sources?: Record<string, SidecarIdentitySource>;
   [key: string]: unknown;
+}
+
+export interface SidecarIdentitySource {
+  account_id: string;
+  source: 'local' | 'tag' | 'default' | string;
 }
 
 // Silent-listener pending entry — a credential the sidecar reported but

@@ -1672,6 +1672,14 @@ def _get_credential_cache() -> Any:
 # bootstrap window every cycle. Rebuilt on every extraction.
 _EVENT_WATERMARK_ALIASES: dict[tuple[str, str], tuple[str, str]] = {}
 
+# provider_id → {"account_id", "source"} for the identity this sidecar stamped
+# on each event provider's data in the last collection cycle. ``source`` is
+# "local" (discovered on this host), "tag" (operator tag / auto-hint) or
+# "default" (nothing resolved). Shipped as ``identity_sources`` with the
+# first ingest batch so the Fleet page can show *why* a card lands where
+# it does. Rebuilt every cycle.
+_IDENTITY_REPORT: dict[str, dict[str, str]] = {}
+
 # Provider IDs that have event extractors. Per-account iteration loops over
 # each of these and stamps events with the resolved ``account_id``.
 _EVENT_PROVIDERS: frozenset[str] = frozenset(
@@ -1701,7 +1709,7 @@ def _extract_events_for_provider(
     bootstrap_days: int,
     out_events: list[dict[str, Any]],
     server_account_tag_hints: dict[str, dict[str, str]] | None = None,
-) -> None:
+) -> int:
     """Run the event extractor for ``provider_id`` once per ``account_ids``,
     stamping each event with the resolved identity. Errors on one account
     don't block the others (issue #272 acceptance: "Handle partial
@@ -1715,9 +1723,13 @@ def _extract_events_for_provider(
     ``minimax-coding-plan`` → ``minimax``) can land on the operator's
     chosen account_id rather than the synthetic ``"default"`` card —
     closes the MiniMax card-split.
+
+    Returns the number of accounts whose extraction raised, so the caller
+    can count them as collection errors — a silently failing extractor
+    (#320) must show up on the Fleet page, not only in the sidecar log.
     """
     if not account_ids:
-        return
+        return 0
     # Lazy import — these are only needed in the events branch.
     from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
     from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
@@ -1735,9 +1747,10 @@ def _extract_events_for_provider(
 
     extractor = dispatch.get(provider_id)
     if extractor is None:
-        return
+        return 0
     canonical_hints = _build_canonical_hints_for_provider(provider_id, server_account_tag_hints)
 
+    failures = 0
     for account_id in account_ids:
         try:
             evts = extractor(
@@ -1752,6 +1765,7 @@ def _extract_events_for_provider(
             logging.warning(
                 f"  [{provider_id}/{account_id}] event extraction error: {e}", exc_info=True
             )
+            failures += 1
             continue
         if evts:
             logging.info(f"  [{provider_id}/{account_id}] {len(evts)} new event(s)")
@@ -1763,6 +1777,7 @@ def _extract_events_for_provider(
                         provider_id,
                         account_id,
                     )
+    return failures
 
 
 def _build_canonical_hints_for_provider(
@@ -2703,6 +2718,7 @@ def run_collection(
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
     _EVENT_WATERMARK_ALIASES.clear()
+    _IDENTITY_REPORT.clear()
     error_count = 0
 
     if providers is None:
@@ -2814,6 +2830,7 @@ def run_collection(
                     # Best case: server knows about us, and our local
                     # identity matches one of its rows.
                     scoped_accounts = [local_account_id]
+                    identity_source = "local"
                 elif local_account_id and local_account_id != "default":
                     # Server has rows, none of which are us (e.g. local
                     # is some-other-id but the server registered
@@ -2832,6 +2849,7 @@ def run_collection(
                             provider_accounts,
                         )
                     scoped_accounts = [local_account_id]
+                    identity_source = "local"
                 elif event_hint:
                     # Local discovery returned the legacy "default"
                     # sentinel (no real identity on this host), but the
@@ -2842,6 +2860,7 @@ def run_collection(
                     # land on the quota gauge instead of a standalone
                     # "default" card.
                     scoped_accounts = [event_hint]
+                    identity_source = "tag"
                     logging.info(
                         f"  [{provider_id}] events stamped via server hint "
                         f"(origin={event_origin}) → account_id={event_hint}"
@@ -2861,6 +2880,7 @@ def run_collection(
                     # and the prune side never clears it.
                     untagged = True
                     scoped_accounts = [local_account_id or "default"]
+                    identity_source = "default"
                     logging.debug(
                         f"  [{provider_id}] events fall through to default "
                         f"(origin={event_origin}); reporting to manifest only "
@@ -2875,8 +2895,12 @@ def run_collection(
                 # a host with no Claude/Codex artifacts publishes a
                 # permanent ``provider:anthropic`` / ``provider:chatgpt``
                 # Untagged entry for credentials it never had.
+                _IDENTITY_REPORT[provider_id] = {
+                    "account_id": scoped_accounts[0],
+                    "source": identity_source,
+                }
                 pre_count = len(all_events)
-                _extract_events_for_provider(
+                extraction_failures = _extract_events_for_provider(
                     provider_id=provider_id,
                     account_ids=scoped_accounts,
                     watermark=_watermark,
@@ -2884,6 +2908,7 @@ def run_collection(
                     out_events=all_events,
                     server_account_tag_hints=server_account_tag_hints,
                 )
+                error_count += extraction_failures or 0
                 post_count = len(all_events)
                 # Evidence gate (PR #318 round-2 W3): only surface an
                 # Untagged origin when THIS provider contributed events.
@@ -3123,6 +3148,7 @@ class DaemonRunner:
             )
 
             success = True
+            events_failed = False
             result: Any = None
             code: int = 0
             ingest_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
@@ -3137,6 +3163,7 @@ class DaemonRunner:
                     "os_platform": os_platform,
                     "self_update_capable": self_update_capable if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
+                    "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
                     "last_log_lines": (_tail_log(20) if not providers else [])
                     if first_batch
                     else [],
@@ -3158,6 +3185,11 @@ class DaemonRunner:
                         f"  server re-attributed {result['events_reattributed']} "
                         "previously stored event(s) to their new account"
                     )
+                if isinstance(result, dict) and result.get("events_error"):
+                    # HTTP 200 but the server failed to store this batch's
+                    # events — keep the watermark so they are re-extracted
+                    # next cycle instead of being lost.
+                    events_failed = True
                 if len(event_batches) > 1:
                     logging.info(
                         f"  sent batch {batch_idx + 1}/{len(event_batches)} "
@@ -3176,7 +3208,12 @@ class DaemonRunner:
                     logging.debug("Heartbeat successful")
 
                 # Advance watermark for successfully pushed events.
-                if events:
+                if events and events_failed:
+                    logging.warning(
+                        "Server reported an event-ingest failure; keeping the event "
+                        "watermark so the events are re-sent next cycle"
+                    )
+                if events and not events_failed:
                     try:
                         from scripts.sidecar_pkg.event_watermark import EventWatermark
 

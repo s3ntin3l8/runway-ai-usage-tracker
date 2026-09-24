@@ -63,6 +63,32 @@ describe('FleetPage', () => {
     expect(await screen.findByText('Credential mappings')).toBeInTheDocument();
   });
 
+  it('shows which account each provider is stamped with, and why', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        sidecar({
+          identity_sources: {
+            anthropic: { account_id: 'alice@example.com', source: 'local' },
+            antigravity: { account_id: 'default', source: 'default' },
+          },
+        }),
+      ],
+    });
+    renderWithProviders(<FleetPage />);
+    const list = await screen.findByRole('list', { name: 'Account identities' });
+    expect(list).toHaveTextContent('anthropic');
+    expect(list).toHaveTextContent('found on this machine');
+    expect(list).toHaveTextContent('unidentified');
+  });
+
+  it('flags an offline sidecar that is behind as outdated', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ stale: true, update_available: false, outdated: true })],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByText('outdated')).toBeInTheDocument();
+  });
+
   it('toggles the Add sidecar card from the header', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     renderWithProviders(<FleetPage />);

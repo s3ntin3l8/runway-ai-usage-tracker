@@ -161,6 +161,10 @@ class IngestRequest(BaseModel):
     self_update_capable: bool | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     last_log_lines: list[str] = Field(default_factory=list)
+    # provider_id → {"account_id", "source"}: which account this sidecar
+    # stamped each event provider's data with this cycle, and why
+    # ("local" | "tag" | "default"). None from sidecars that don't report it.
+    identity_sources: dict[str, dict[str, str]] | None = None
     # api_key is now passed via X-Signature header for security
     # NOTE: deltas field removed — replaced by events[]
 

@@ -28,6 +28,8 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     # not reported (legacy/permissive); False = from-source/Docker (no update push).
     self_update_capable: bool | None = None
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
+    # JSON: provider_id → {"account_id", "source"} from the latest check-in.
+    identity_sources: str | None = None
     collection_enabled: bool = Field(
         default=True
     )  # False = sidecar paused, server skips poll instructions
