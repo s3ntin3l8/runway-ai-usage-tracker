@@ -9,7 +9,12 @@ from sqlmodel import Session, col, select
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
-from app.core.security import require_admin_key, validate_ingest_auth
+from app.core.security import (
+    is_loopback_bind,
+    require_admin_key,
+    validate_ingest_auth,
+    verify_config_signature,
+)
 from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
@@ -997,8 +1002,11 @@ async def get_fleet_config(
     """Retrieve active collection configuration for sidecars.
 
     This endpoint does not require the admin key (as sidecars do not have it)
-    but relies on rate limiting. It returns only the logical state (enabled/disabled
-    providers and strategies), no sensitive keys or tokens.
+    but relies on rate limiting. Account ids, ``account_tag_hints`` and
+    ``credential_token``s are only returned to callers that sign the request
+    with the ingest key (``X-Timestamp`` / ``X-Signature``, see
+    ``verify_config_signature``) or when the server is bound to loopback;
+    anyone else gets only the enabled/strategies view.
 
     Optional ``?sidecar_id=<hostname>`` (#319) identifies the requesting
     sidecar so ``account_tag_hints`` can be scoped to it: machine-scoped
@@ -1133,6 +1141,16 @@ async def get_fleet_config(
     account_tag_hints = _account_tag_hints_for_providers(
         session, list(config["providers"].keys()), sidecar_id=sidecar_id
     )
+
+    if not (verify_config_signature(request) or is_loopback_bind()):
+        # Unsigned caller on a network-reachable server: this endpoint is
+        # unauthenticated, so strip everything that identifies accounts —
+        # account ids / emails, operator tag hints and credential tokens.
+        # Sidecars sign the request with the ingest key and get the full
+        # view; enabled/strategies stay available for older binaries.
+        for provider_cfg in config["providers"].values():
+            provider_cfg["accounts"] = []
+        account_tag_hints = {}
 
     return {
         "status": "ok",

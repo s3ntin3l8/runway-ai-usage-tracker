@@ -8,7 +8,7 @@ import httpx
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import http_request_with_retry
 from app.services.credential_provider import credential_provider
-from app.services.token_cache import token_cache
+from app.services.token_cache import is_foreign_account_entry, token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,13 @@ class ChatGPTWebOAuthMixin:
         instead of trusting that fallback.
         """
         candidates = await token_cache.get_accounts("chatgpt")
-        usable = [a for a in candidates if a["tokens"].get("oauth_token")]
+        usable = [
+            a
+            for a in candidates
+            if a["tokens"].get("oauth_token")
+            # Never another identified account's token (multi-account).
+            and not is_foreign_account_entry(a["account_id"], self.account_id)
+        ]
         if not usable:
             return None
         newest = min(usable, key=lambda a: a["age"])

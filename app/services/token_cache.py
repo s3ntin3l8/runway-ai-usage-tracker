@@ -404,3 +404,18 @@ class TokenCache:
 
 # Global instance
 token_cache = TokenCache()
+
+
+def is_foreign_account_entry(entry_account_id: str, wanted_account_id: str | None) -> bool:
+    """True when a cache entry is keyed to a *different, identified* account.
+
+    Identity-mismatch fallbacks (a collector searching every cached entry
+    for a usable token) may only borrow entries that carry no identity of
+    their own — ``"default"`` or an opaque credential hash — or the wanted
+    account itself. An entry keyed by another email belongs to that
+    account; using it would report account B's quota on account A's card.
+    """
+    entry = canonical_account_id(entry_account_id)
+    if wanted_account_id and entry == canonical_account_id(wanted_account_id):
+        return False
+    return "@" in entry

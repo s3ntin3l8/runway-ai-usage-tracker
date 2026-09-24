@@ -37,6 +37,7 @@ In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message ev
    - The server verifies the signature matches and that the timestamp is within a 5-minute sliding window.
 3. **Rate Limit**: `POST /ingest` is capped at **600 requests/minute per source IP** to bound damage from a stolen key or a misconfigured sidecar.
 4. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
+5. **Config endpoint**: `GET /api/v1/fleet/config` needs no key, but only a request signed with the same HMAC (message: `X-Timestamp + "GET:" + query string`, which binds `sidecar_id`) receives account ids, operator tag hints and per-account credential tokens. Unsigned callers on a non-loopback bind get only the enabled/strategies view; a present-but-invalid signature is rejected (401).
 
 ## 🔗 Sidecar Pairing (`runway-sidecar://` links)
 

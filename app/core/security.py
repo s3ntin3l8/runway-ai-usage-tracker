@@ -280,3 +280,49 @@ async def validate_ingest_auth(
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
     return body_bytes
+
+
+def verify_config_signature(request: Request) -> bool:
+    """Optional HMAC check for ``GET /api/v1/fleet/config``.
+
+    Returns ``False`` when the request is unsigned (or no ingest key is
+    configured, so nothing can be verified) — the caller then serves the
+    redacted view. Raises 401 / 400 for a signature that is *present* but
+    wrong or stale, so a misconfigured sidecar fails loudly instead of
+    silently losing its hints.
+
+    Signed message: ``timestamp + "GET:" + raw query string`` — mirrors
+    ``scripts/sidecar_pkg/credentials.py:config_request_signature``. Binding
+    the query (``sidecar_id=…``) stops a captured signature from being
+    replayed to read another machine's scoped hints.
+    """
+    from app.core.config import settings as _settings
+
+    x_signature = request.headers.get("X-Signature")
+    x_timestamp = request.headers.get("X-Timestamp")
+    if not x_signature or not x_timestamp:
+        return False
+    if not _settings.INGEST_API_KEY or _settings.INGEST_API_KEY_IS_INSECURE_DEFAULT:
+        return False
+    try:
+        skew = time.time() - float(x_timestamp)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid X-Timestamp format") from None
+    if skew < -60 or skew > 300:
+        raise HTTPException(status_code=400, detail="X-Timestamp outside the allowed window")
+    expected = hmac.new(
+        _settings.INGEST_API_KEY.encode(),
+        f"{x_timestamp}GET:{request.url.query}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(x_signature, expected):
+        logger.warning("fleet/config: HMAC mismatch")
+        raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+    return True
+
+
+def is_loopback_bind() -> bool:
+    """True when the server only listens on loopback (local topology)."""
+    from app.core.config import settings as _settings
+
+    return _settings.APP_HOST in ("127.0.0.1", "localhost", "::1")

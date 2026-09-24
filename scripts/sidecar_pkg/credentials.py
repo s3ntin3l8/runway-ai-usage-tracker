@@ -30,6 +30,8 @@ stdlib-only.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -38,11 +40,24 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def config_request_signature(api_key: str, timestamp: str, query: str) -> str:
+    """HMAC for ``GET /fleet/config``: ``timestamp + "GET:" + query``.
+
+    Mirrors ``app.core.security.verify_config_signature``. A GET has no
+    body, so the query string (``sidecar_id=…``) is what gets bound — a
+    captured signature can't be replayed for another machine's hints.
+    """
+    return hmac.new(
+        api_key.encode(), f"{timestamp}GET:{query}".encode(), hashlib.sha256
+    ).hexdigest()
+
+
 def _fetch_config_payload(
     api_url: str,
     *,
     timeout: int = 10,
     sidecar_id: str | None = None,
+    api_key: str | None = None,
 ) -> dict[str, Any] | None:
     """Single ``GET /api/v1/fleet/config`` round-trip.
 
@@ -60,14 +75,24 @@ def _fetch_config_payload(
     deployment-wide view for single-host deployments.
     """
     from urllib import error, request
+    from urllib.parse import urlencode
 
     from scripts.sidecar_pkg.tls import build_context
 
+    query = urlencode({"sidecar_id": sidecar_id}) if sidecar_id else ""
     url = f"{api_url.rstrip('/')}/api/v1/fleet/config"
-    if sidecar_id:
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}sidecar_id={sidecar_id}"
-    req = request.Request(url)
+    if query:
+        url = f"{url}?{query}"
+    headers: dict[str, str] = {}
+    if api_key:
+        # Signed requests get the full payload (account ids, tag hints,
+        # credential tokens); the server redacts it for unsigned callers.
+        ts = str(int(time.time()))
+        headers = {
+            "X-Timestamp": ts,
+            "X-Signature": config_request_signature(api_key, ts, query),
+        }
+    req = request.Request(url, headers=headers)
     try:
         with request.urlopen(req, timeout=timeout, context=build_context(url)) as resp:
             if resp.getcode() != 200:
@@ -168,6 +193,7 @@ def fetch_identity_hints(
     *,
     timeout: int = 10,
     sidecar_id: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[dict[str, list[str]], dict[str, dict[str, str]] | None] | None:
     """Fetch per-account identity hints + operator tag-hint map from ``GET /api/v1/fleet/config``.
 
@@ -197,7 +223,9 @@ def fetch_identity_hints(
     ``account_tag_hints`` to machine-local credential tags. Keyword-only
     for backward compatibility with positional callers.
     """
-    payload = _fetch_config_payload(api_url, timeout=timeout, sidecar_id=sidecar_id)
+    payload = _fetch_config_payload(
+        api_url, timeout=timeout, sidecar_id=sidecar_id, api_key=api_key
+    )
     if payload is None:
         return None
     accounts = _parse_identity_hints(payload)
@@ -210,6 +238,7 @@ def fetch_credential_tokens(
     *,
     timeout: int = 10,
     sidecar_id: str | None = None,
+    api_key: str | None = None,
 ) -> dict[tuple[str, str], str] | None:
     """Fetch per-account credential tokens from ``GET /api/v1/fleet/config``.
 
@@ -221,7 +250,9 @@ def fetch_credential_tokens(
     :func:`fetch_identity_hints` — tokens are not machine-scoped yet,
     but sending it keeps both fetchers on the same request shape.
     """
-    payload = _fetch_config_payload(api_url, timeout=timeout, sidecar_id=sidecar_id)
+    payload = _fetch_config_payload(
+        api_url, timeout=timeout, sidecar_id=sidecar_id, api_key=api_key
+    )
     if payload is None:
         return None
     return _parse_credential_tokens(payload)
@@ -277,6 +308,7 @@ class CredentialCache:
         *,
         fetch_tokens: bool = False,
         sidecar_id: str | None = None,
+        api_key: str | None = None,
     ) -> tuple[int, int] | None:
         """Re-fetch ``/fleet/config`` and replace the cached snapshot.
 
@@ -294,7 +326,7 @@ class CredentialCache:
         ``sidecar_id`` (#319) forwards this machine's identity for
         machine-scoped account_tag_hints.
         """
-        payload = _fetch_config_payload(api_url, sidecar_id=sidecar_id)
+        payload = _fetch_config_payload(api_url, sidecar_id=sidecar_id, api_key=api_key)
         if payload is None:
             # Outage — leave the cache untouched. ``is_fresh`` stays at
             # its prior value (likely False), so the next cycle retries.
