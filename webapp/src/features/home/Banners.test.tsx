@@ -22,7 +22,7 @@ const entry = (o: Partial<FleetEntry> = {}): FleetEntry => ({
 });
 
 describe('Banners collection failure', () => {
-  it('renders a critical banner when a fleet card carries Collection failing detail', () => {
+  it('renders a critical banner when a fleet card is collection-failing', () => {
     renderWithProviders(
       <Banners
         tokens={[]}
@@ -30,6 +30,8 @@ describe('Banners collection failure', () => {
         fleet={[
           entry({
             critical_gauge: card({
+              stale: true,
+              collection_failing: true,
               detail: '⚠ Collection failing — timeout [Cached 346.1m ago]',
               fetched_at: new Date(Date.now() - 7 * 86_400_000).toISOString(),
             }),
@@ -49,6 +51,8 @@ describe('Banners collection failure', () => {
           entry({
             critical_gauge: card({
               service_name: 'Ollama',
+              stale: true,
+              collection_failing: true,
               detail: '⚠ Collection failing — a [Cached 1h ago]',
             }),
           }),
@@ -56,6 +60,8 @@ describe('Banners collection failure', () => {
             provider_id: 'gemini',
             critical_gauge: card({
               service_name: 'Gemini',
+              stale: true,
+              collection_failing: true,
               detail: '⚠ Collection failing — b [Cached 2h ago]',
             }),
           }),
@@ -95,7 +101,11 @@ describe('Banners collection failure', () => {
         anomalies={[]}
         fleet={[
           entry({
-            critical_gauge: card({ detail: '⚠ Collection failing — x [Cached 1h ago]' }),
+            critical_gauge: card({
+              stale: true,
+              collection_failing: true,
+              detail: '⚠ Collection failing — x [Cached 1h ago]',
+            }),
           }),
         ]}
       />,

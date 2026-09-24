@@ -79,19 +79,14 @@ export function cardPct(card: LimitCard): number | null {
 // trigger false at-risk alerts for occasionally-used providers — the derived
 // pct is the only evidence a baked critical is genuine, and the startup
 // scrub cannot rewrite health without an explicit pct_used. Balance cards
-// (no derivable pct) retain collector-asserted health even when stale. The
-// Collection-failing detail prefix is treated the same as `stale` so residual
-// pre-#293 rows (health baked critical, no stale flag) leave the at-risk rail
-// even before the startup scrub rewrites them.
-// cardStale() prefers the structured fields (stale / collection_failing);
-// the detail-regex is a migration fallback for residual rows not yet scrubbed.
+// (no derivable pct) retain collector-asserted health even when stale.
+// cardStale() reads only the structured fields (stale / collection_failing).
+// Residual pre-#293 rows are covered because the startup scrub
+// (`_scrub_residual_stale_health`, shipped in the same image as this SPA)
+// stamps both flags on them before the first request; the
+// "⚠ Collection failing" detail prefix is display-only.
 export function cardStale(card: LimitCard): boolean {
-  return (
-    card.stale === true ||
-    card.collection_failing === true ||
-    // Migration fallback: residual pre-flag rows (prefix in detail, flag absent).
-    /collection failing/i.test(card.detail ?? '')
-  );
+  return card.stale === true || card.collection_failing === true;
 }
 
 export function cardStatus(card: LimitCard): QuotaStatus {

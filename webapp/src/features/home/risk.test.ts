@@ -99,8 +99,8 @@ describe('atRiskItems', () => {
     expect(rail.map((i) => i.entry.provider_id)).toEqual(['high', 'low']);
   });
 
-  it('excludes residual critical 0% cards with Collection-failing detail', () => {
-    // Pre-#293 Ollama residual: health=critical, pct=0, no stale flag.
+  it('excludes scrubbed residual critical 0% cards (flags + detail prefix)', () => {
+    // Pre-#293 Ollama residual after the startup scrub stamped the flags.
     const residual: FleetEntry = {
       provider_id: 'ollama',
       account_id: 'default',
@@ -108,6 +108,8 @@ describe('atRiskItems', () => {
         service_name: 'Ollama',
         pct_used: 0,
         health: 'critical',
+        stale: true,
+        collection_failing: true,
         detail: '⚠ Collection failing — timeout [Cached 346.1m ago]',
       } as LimitCard,
       secondary_limits: [],
