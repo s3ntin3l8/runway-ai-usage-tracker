@@ -203,6 +203,39 @@ async def test_staler_push_does_not_clobber_fresher(cache):
 
 
 @pytest.mark.asyncio
+async def test_sibling_credential_push_does_not_keep_removed_family_alive(monkeypatch):
+    """A live CLI push must not extend the TTL of a browser credential no longer reported."""
+    short_cache = TokenCache(ttl_seconds=10)
+    now = [100.0]
+    monkeypatch.setattr("app.services.token_cache.time.time", lambda: now[0])
+
+    await short_cache.store(
+        "chatgpt",
+        {"oauth_token": "cli-token", "refresh_token": "cli-refresh"},
+        account_id="user@example.com",
+        source="sidecar-a",
+    )
+    await short_cache.store(
+        "chatgpt",
+        {"cookie_session": "browser-cookie"},
+        account_id="user@example.com",
+        source="sidecar-a",
+    )
+
+    now[0] += 8
+    await short_cache.store(
+        "chatgpt",
+        {"oauth_token": "cli-token-2", "refresh_token": "cli-refresh-2"},
+        account_id="user@example.com",
+        source="sidecar-a",
+    )
+
+    now[0] += 3
+    tokens = await short_cache.get("chatgpt", "user@example.com")
+    assert tokens == {"oauth_token": "cli-token-2", "refresh_token": "cli-refresh-2"}
+
+
+@pytest.mark.asyncio
 async def test_known_expired_push_does_not_clobber_unknown_expiry_entry(cache):
     """A push with a known-expired credential must not overwrite an existing
     entry that has no comparable expiry signal of its own.

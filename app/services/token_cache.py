@@ -41,6 +41,10 @@ class TokenCache:
     def __init__(self, ttl_seconds: int = DEFAULT_TTL):
         # provider_id -> {account_id: (tokens, metadata, timestamp)}
         self._cache: dict[str, dict[str, tuple[dict[str, str], dict[str, Any], float]]] = {}
+        # Track each credential family's last report independently. Sidecars
+        # send one card per origin, so refreshing a CLI token must not keep a
+        # removed browser cookie alive forever (or vice versa).
+        self._token_timestamps: dict[str, dict[str, dict[str, float]]] = {}
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
 
@@ -109,6 +113,7 @@ class TokenCache:
         async with self._lock:
             if provider not in self._cache:
                 self._cache[provider] = {}
+                self._token_timestamps[provider] = {}
 
             existing = self._cache[provider].get(account_id)
             if existing is not None and self._is_staler(tokens, existing[0]):
@@ -116,16 +121,20 @@ class TokenCache:
                 # sidecar re-pushing its local (expired) access token would
                 # otherwise clobber the server-refreshed token every cycle. Keep
                 # the fresher tokens, but absorb a rotated refresh_token and fill
-                # in identity metadata, and bump last-seen so it stays TTL-alive.
+                # in identity metadata. Only fields actually reported again
+                # have their independent TTL refreshed.
                 kept_tokens, kept_meta, _ = existing
                 # Keep the fresher OAuth family, while retaining independent
                 # credential families (for example a browser cookie beside a
                 # CLI OAuth token) pushed for this same account.
                 for key, value in tokens.items():
                     if key not in _OAUTH_CREDENTIAL_KEYS:
-                        kept_tokens.setdefault(key, value)
+                        self._mark_token_seen(provider, account_id, key)
+                        if key not in kept_tokens:
+                            kept_tokens[key] = value
                 if tokens.get("refresh_token"):
                     kept_tokens["refresh_token"] = tokens["refresh_token"]
+                    self._mark_token_seen(provider, account_id, "refresh_token")
                 if account_label and not kept_meta.get("account_label"):
                     kept_meta["account_label"] = account_label
                 if source:
@@ -144,6 +153,8 @@ class TokenCache:
             # store, etc.).
             prev_meta = existing[1] if existing is not None else {}
             stored_tokens = {**existing[0], **tokens} if existing is not None else tokens
+            for key in tokens:
+                self._mark_token_seen(provider, account_id, key)
             metadata = {
                 "account_label": account_label or prev_meta.get("account_label"),
                 "source": source or prev_meta.get("source"),
@@ -156,6 +167,12 @@ class TokenCache:
                 scrub_log(provider),
             )
             return account_id
+
+    def _mark_token_seen(self, provider: str, account_id: str, key: str) -> None:
+        """Record when a particular credential field was last reported."""
+        self._token_timestamps.setdefault(provider, {}).setdefault(account_id, {})[key] = (
+            time.time()
+        )
 
     @staticmethod
     def _is_staler(incoming: dict[str, str], existing: dict[str, str]) -> bool:
@@ -300,17 +317,35 @@ class TokenCache:
         providers_to_clean = list(self._cache.keys())
 
         for provider in providers_to_clean:
-            expired_accs = [
-                acc_id
-                for acc_id, (_, _, ts) in self._cache[provider].items()
-                if now - ts > self._ttl
-            ]
+            expired_accs = []
+            for acc_id, (tokens, metadata, ts) in list(self._cache[provider].items()):
+                key_timestamps = self._token_timestamps.setdefault(provider, {}).setdefault(
+                    acc_id, {}
+                )
+                # Entries seeded by older code/tests have no per-key timestamps;
+                # inherit the account timestamp to preserve their existing TTL.
+                for key in tokens:
+                    key_timestamps.setdefault(key, ts)
+                for key in list(tokens):
+                    if now - key_timestamps.get(key, ts) > self._ttl:
+                        tokens.pop(key, None)
+                        key_timestamps.pop(key, None)
+                if not tokens:
+                    expired_accs.append(acc_id)
+                else:
+                    self._cache[provider][acc_id] = (
+                        tokens,
+                        metadata,
+                        max(key_timestamps.values(), default=ts),
+                    )
             for acc_id in expired_accs:
                 del self._cache[provider][acc_id]
+                self._token_timestamps.get(provider, {}).pop(acc_id, None)
                 logger.debug(f"Cleared expired account {acc_id} for {provider}")
 
             if not self._cache[provider]:
                 del self._cache[provider]
+                self._token_timestamps.pop(provider, None)
 
     async def purge_expired_unrefreshable(self) -> int:
         """Evict entries already past their JWT `exp` that carry no refresh_token.
@@ -357,6 +392,9 @@ class TokenCache:
         """
         if provider not in self._cache:
             self._cache[provider] = {}
+        self._token_timestamps.setdefault(provider, {})[account_id] = {
+            key: (last_seen or time.time()) for key in tokens
+        }
         self._cache[provider][account_id] = (tokens, metadata or {}, last_seen or time.time())
 
     async def remove(self, provider: str, account_id: str) -> bool:
@@ -369,6 +407,7 @@ class TokenCache:
         async with self._lock:
             if provider in self._cache and account_id in self._cache[provider]:
                 del self._cache[provider][account_id]
+                self._token_timestamps.get(provider, {}).pop(account_id, None)
                 logger.info(
                     f"Manually removed {scrub_log(provider)} account {scrub_log(account_id)} from cache"
                 )
@@ -376,6 +415,7 @@ class TokenCache:
                 # Cleanup empty provider entry
                 if not self._cache[provider]:
                     del self._cache[provider]
+                    self._token_timestamps.pop(provider, None)
                 return True
             return False
 
@@ -402,6 +442,7 @@ class TokenCache:
         """Clear all cached tokens (used in tests)."""
         async with self._lock:
             self._cache.clear()
+            self._token_timestamps.clear()
 
     async def get_all_active_accounts(self) -> list[tuple[str, str, str | None]]:
         """
