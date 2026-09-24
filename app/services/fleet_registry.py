@@ -119,6 +119,7 @@ class FleetRegistryService:
         self_update_capable: bool | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
+        identity_sources: dict[str, dict[str, str]] | None = None,
     ) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         row = session.get(SidecarRegistry, sidecar_id)
@@ -136,6 +137,8 @@ class FleetRegistryService:
                 row.error_count += collection_errors
             if last_log_lines is not None:
                 row.recent_logs = json.dumps(last_log_lines[-20:])
+            if identity_sources is not None:
+                row.identity_sources = json.dumps(identity_sources)
             logger.debug(f"Updated sidecar '{sidecar_id}' (ingest #{row.ingest_count})")
         else:
             row = SidecarRegistry(
@@ -147,6 +150,7 @@ class FleetRegistryService:
                 self_update_capable=self_update_capable,
                 error_count=collection_errors,
                 recent_logs=json.dumps(last_log_lines[-20:]) if last_log_lines else None,
+                identity_sources=json.dumps(identity_sources) if identity_sources else None,
             )
             session.add(row)
             logger.info(f"Registered new sidecar: '{sidecar_id}' from {source_ip}")
@@ -211,11 +215,10 @@ class FleetRegistryService:
         # rides its next successful ingest response (see fleet.py:ingest_metrics)
         # — so a dead sidecar would otherwise show "update available" forever
         # even though nothing can apply it. Gate the offer on liveness too.
-        update_available = (
-            not stale
-            and row.self_update_capable is not False
-            and is_update_available(row.sidecar_version, latest_version, latest_edge_sha)
-        )
+        # "A newer build exists" is independent of whether it can be pushed
+        # right now (#202): an offline sidecar still reports it is behind.
+        outdated = is_update_available(row.sidecar_version, latest_version, latest_edge_sha)
+        update_available = not stale and row.self_update_capable is not False and outdated
         return {
             "sidecar_id": row.sidecar_id,
             "hostname": row.hostname,
@@ -230,6 +233,7 @@ class FleetRegistryService:
             "latest_version": latest_version,
             "channel": parse_channel(row.sidecar_version)[0],
             "update_available": update_available,
+            "outdated": outdated,
             "self_update_capable": row.self_update_capable,
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
@@ -237,6 +241,7 @@ class FleetRegistryService:
             "stale": stale,
             "stale_threshold_minutes": _STALE_THRESHOLD_MINUTES,
             "recent_logs": json.loads(row.recent_logs) if row.recent_logs else [],
+            "identity_sources": json.loads(row.identity_sources) if row.identity_sources else {},
         }
 
 

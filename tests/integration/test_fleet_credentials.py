@@ -1346,3 +1346,39 @@ def test_config_issues_no_credential_tokens_for_unsigned_remote_caller(
     with patch("app.api.endpoints.fleet.issue_credential_token") as issue:
         assert client.get("/api/v1/fleet/config").status_code == 200
     issue.assert_not_called()
+
+
+def test_ingest_reports_events_error_when_event_storage_fails(
+    client: TestClient, session: Session
+) -> None:
+    """HTTP 200 with ``events_error`` so the sidecar keeps its watermark and
+    re-sends the events instead of losing them."""
+    from unittest.mock import patch
+
+    body = json.dumps(
+        {
+            "provider": "sidecar-laptop",
+            "sidecar_id": "laptop",
+            "events": [
+                {
+                    "provider_id": "anthropic",
+                    "account_id": "alice@example.com",
+                    "event_id": "msg_1",
+                    "ts": "2026-09-01T10:00:00Z",
+                    "kind": "message",
+                    "model_id": "sonnet-4.5",
+                }
+            ],
+        }
+    ).encode()
+    ts, sig = _sign(body)
+    with patch(
+        "app.services.event_ingestor.EventIngestor.ingest", side_effect=RuntimeError("db locked")
+    ):
+        resp = client.post(
+            "/api/v1/fleet/ingest",
+            content=body,
+            headers={"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["events_error"] is True

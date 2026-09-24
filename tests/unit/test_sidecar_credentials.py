@@ -1239,9 +1239,11 @@ def test_run_collection_uses_get_credential_cache_factory(monkeypatch, tmp_path)
         "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
         {"anthropic": lambda: "default"},
     )
-    monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x: [])
-    monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x: [])
-    monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x: [])
+    monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x, **k: [])
+    monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x, **k: [])
+    monkeypatch.setattr(
+        sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x, **k: []
+    )
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
@@ -1389,9 +1391,11 @@ def test_run_collection_keeps_prior_cache_when_fetch_identity_hints_returns_none
         "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
         {"anthropic": lambda: "default"},
     )
-    monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x: [])
-    monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x: [])
-    monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x: [])
+    monkeypatch.setattr(sc, "_make_account_extractor", lambda *a, **kw: lambda *x, **k: [])
+    monkeypatch.setattr(sc, "_make_account_extractor_opencode", lambda *a, **kw: lambda *x, **k: [])
+    monkeypatch.setattr(
+        sc, "_make_account_extractor_antigravity", lambda *a, **kw: lambda *x, **k: []
+    )
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     config = {"api_url": "https://api.example.com"}

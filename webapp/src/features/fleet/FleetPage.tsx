@@ -28,6 +28,7 @@ import {
 import type { Sidecar, UntaggedCredential } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
+import { maskAccountId } from '@/lib/accountDisplay';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -369,6 +370,11 @@ function SidecarCard({
                   </Badge>
                 ) : null}
                 {sidecar.update_available ? <Badge variant="warning">update</Badge> : null}
+                {!sidecar.update_available && sidecar.outdated ? (
+                  <Badge variant="neutral" title="A newer build exists; it installs once the sidecar is back online">
+                    outdated
+                  </Badge>
+                ) : null}
               </dd>
             </div>
             <div>
@@ -386,6 +392,8 @@ function SidecarCard({
               </dd>
             </div>
           </dl>
+
+          <IdentitySources sources={sidecar.identity_sources} />
 
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onEdit}>
@@ -418,6 +426,40 @@ function SidecarCard({
         </pre>
       </ResponsiveDialog>
     </Card>
+  );
+}
+
+const IDENTITY_SOURCE_LABEL: Record<string, string> = {
+  local: 'found on this machine',
+  tag: 'mapped by operator',
+  default: 'unidentified',
+};
+
+// Which account each event provider's data is stamped with on this sidecar,
+// and why — so a card landing on the wrong (or a "default") account is
+// visible here instead of as a silent split on the dashboard.
+function IdentitySources({ sources }: { sources?: Sidecar['identity_sources'] }) {
+  const entries = Object.entries(sources ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return null;
+  return (
+    <div className="mt-3">
+      <p className="text-[11px] text-fg-subtle">Accounts</p>
+      <ul className="mt-1 space-y-0.5 text-[12px]" aria-label="Account identities">
+        {entries.map(([providerId, info]) => (
+          <li key={providerId} className="flex items-baseline justify-between gap-2">
+            <span className="font-medium">{providerId}</span>
+            <span className="min-w-0 truncate text-right">
+              <span className={`font-mono ${info.source === 'default' ? 'text-warning' : ''}`}>
+                {maskAccountId(info.account_id)}
+              </span>{' '}
+              <span className="text-fg-subtle">
+                · {IDENTITY_SOURCE_LABEL[info.source] ?? info.source}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
