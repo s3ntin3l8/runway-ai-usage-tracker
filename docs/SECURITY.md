@@ -38,6 +38,18 @@ In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message ev
 3. **Rate Limit**: `POST /ingest` is capped at **600 requests/minute per source IP** to bound damage from a stolen key or a misconfigured sidecar.
 4. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
 
+## 🔗 Sidecar Pairing (`runway-sidecar://` links)
+
+New sidecars can be set up from the dashboard (*Fleet → Add sidecar → Generate pairing link*) instead of by pasting the server URL and `INGEST_API_KEY` into each machine. The design keeps the shared key out of URLs and out of the user's hands:
+
+1. **Mint (admin only).** `POST /api/v1/fleet/pairing-codes` (behind `require_admin_key`, 10/min, audited as `sidecar.pairing_code.create`) creates a random 10-character Crockford-base32 code (~50 bits). Only its SHA-256 is stored, in `sidecar_pairing_codes`. It expires after `PAIRING_CODE_TTL_SECONDS` (default 10 min). The response carries `runway-sidecar://pair?server=<url>&code=<code>`. The server URL is `PUBLIC_URL` if set, otherwise the origin the admin's browser is on, otherwise the request's base URL.
+2. **Confirm (on the sidecar).** Any web page can fire a `runway-sidecar://` link, and pairing re-points where the machine ships provider tokens and cookies. So the sidecar **never pairs silently**. The link only opens a local confirmation page. That page names the target server, warns if it would replace the current one, and waits for an explicit *Pair* click. The page lives on the tray's loopback settings server, whose POSTs are Origin-checked.
+3. **Redeem (single use).** The sidecar calls `POST /api/v1/fleet/pair` with the code over the same channel it will use for ingest. The sidecar refuses plain `http://` for non-loopback servers, and the multi-host gates require TLS. The conditional `UPDATE … WHERE used_at IS NULL AND expires_at > now` makes the code single-use even under races. Unknown, expired and reused codes get one identical 400, so there is no oracle. Redeem is rate-limited to 10/min per IP and every outcome is audited (`sidecar.pair` / `sidecar.pair.rejected`). The response is `{api_url, api_key}`, and `api_key` is the ingest HMAC secret.
+
+Hand-off between processes: on Windows the OS starts a second `RunwaySidecar.exe "<url>"`. That process forwards the link to the running tray through `/pair-request`, authenticated by a per-run random token in an owner-only (0600) control file in the sidecar config dir. A browser can't forge that request: it can't read the token, and the custom header forces a CORS preflight that the server never answers.
+
+Pairing hands out the **same** shared `INGEST_API_KEY` that manual setup uses; it changes how the key is delivered, not the trust model. Rotating `INGEST_API_KEY` still requires re-pairing, or re-entering the key, on every sidecar.
+
 ## 🚦 Multi-Host Startup Gates
 
 When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start unless three things are in place — HMAC alone is not enough confidentiality for sidecar payloads carrying OAuth tokens, cookies, and API keys.

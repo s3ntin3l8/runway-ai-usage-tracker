@@ -70,7 +70,13 @@ Edge binaries report their version as `<base>+edge.<short-sha>` (e.g. `1.1.0+edg
 
 ### First Run
 
-On first launch, if no config file exists, the app creates a template config and opens it in the default editor.
+**Easiest: pair from the dashboard.** In Runway, go to *Fleet → Add sidecar → Generate pairing link* and click **Open in Runway Sidecar**. The sidecar opens a confirmation page naming your server. Check the address and click **Pair**. The sidecar fetches the server URL and ingest key itself and starts reporting straight away. Codes are one-time and expire after 10 minutes.
+
+- If the link doesn't open the app (e.g. a Linux tray build, or the browser blocks it): open **Settings…** from the tray icon → **Pair with a code…** and enter the server address and code shown in the dashboard.
+- Headless / CLI: `runway-sidecar-cli --pair https://your-server CODE` (or pass the whole `runway-sidecar://pair?…` link). It writes the config and exits; then (re)start the daemon.
+- Only pair with a link you just generated in **your own** dashboard: pairing points this machine's usage data and provider sign-ins at that server.
+
+**Manual setup:** on first launch, if no config file exists, the app creates a template config and opens it in the default editor.
 
 The config is located at:
 - **macOS/Linux**: `~/.config/runway/sidecar/config.json`

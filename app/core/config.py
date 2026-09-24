@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     # cadence; the TTL intentionally caps blast radius if a token leaks.
     CREDENTIAL_TOKEN_TTL_SECONDS: int = 3600
 
+    # Sidecar pairing (runway-sidecar://pair deep links, POST /fleet/pair).
+    # PUBLIC_URL pins the server URL handed to paired sidecars; empty = use the
+    # URL the admin's browser is on (sent by the dashboard), else the request's
+    # base URL. Codes are one-time and expire after PAIRING_CODE_TTL_SECONDS.
+    PUBLIC_URL: str = ""
+    PAIRING_CODE_TTL_SECONDS: int = 600
+
     # Comma-separated list of reverse-proxy IPs allowed to assert auth via
     # X-Forwarded-User / Remote-User headers. Empty = proxy-header auth
     # disabled (default). Without this, anyone could forge the header.

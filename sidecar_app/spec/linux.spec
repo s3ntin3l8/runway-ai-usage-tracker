@@ -48,6 +48,8 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
+        # One-time pairing (runway-sidecar://pair links, --pair).
+        "scripts.sidecar_pkg.pairing",
         # Shared TLS trust-store helper + bundled CA store (certifi). The
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.

@@ -42,6 +42,7 @@ describe('AddSidecarCard', () => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     vi.mocked(api.fetchSidecarDownloads).mockImplementation(async (c) => release(c));
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
   });
 
   it('offers the Windows installer to a Windows viewer', async () => {
@@ -94,6 +95,13 @@ describe('AddSidecarCard', () => {
     renderWithProviders(<AddSidecarCard />);
     expect(await screen.findByText(/Sigstore signature/)).toBeInTheDocument();
     expect(screen.getByText(/Open the DMG/)).toBeInTheDocument();
+  });
+
+  it('includes the pairing step', async () => {
+    renderWithProviders(<AddSidecarCard />);
+    expect(
+      await screen.findByRole('button', { name: /generate pairing link/i }),
+    ).toBeInTheDocument();
   });
 
   it('switches to the edge channel', async () => {

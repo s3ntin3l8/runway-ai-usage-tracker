@@ -592,6 +592,14 @@ export interface SidecarDownloads {
   error?: string | null;
 }
 
+// POST /fleet/pairing-codes — a one-time code + runway-sidecar://pair deep link.
+export interface PairingCode {
+  code: string;
+  expires_at: string;
+  server_url: string;
+  deep_link: string;
+}
+
 export interface AppConfig {
   browser_preference?: string | null;
   default_poll_interval_seconds?: number;

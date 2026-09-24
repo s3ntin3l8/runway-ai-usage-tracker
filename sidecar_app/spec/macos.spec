@@ -28,6 +28,9 @@ a = Analysis(
     ],
     hiddenimports=[
         "pystray._darwin",
+        # runway-sidecar:// Apple Event handler (sidecar_app/url_events.py).
+        "objc",
+        "Foundation",
         "PIL.Image",
         "PIL.PngImagePlugin",
         "pkg_resources",
@@ -53,6 +56,8 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
+        # One-time pairing (runway-sidecar://pair links, --pair).
+        "scripts.sidecar_pkg.pairing",
         # Shared TLS trust-store helper + bundled CA store (certifi). The
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.
@@ -80,6 +85,9 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    # URL events are handled in-process via NSAppleEventManager; argv
+    # emulation would swallow the launch-time GURL event instead.
+    argv_emulation=False,
 )
 
 coll = COLLECT(
@@ -107,5 +115,14 @@ app = BUNDLE(
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
         "NSHumanReadableCopyright": "Runway contributors. Licensed under AGPL-3.0.",
+        # runway-sidecar://pair?… deep links from the dashboard's "Pair a
+        # sidecar" button (sidecar_app/url_events.py). Keep the scheme in sync
+        # with installer/windows/runway-sidecar.nsi (contract-tested).
+        "CFBundleURLTypes": [
+            {
+                "CFBundleURLName": "com.runway.sidecar.pair",
+                "CFBundleURLSchemes": ["runway-sidecar"],
+            }
+        ],
     },
 )

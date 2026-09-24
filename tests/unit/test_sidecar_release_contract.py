@@ -106,6 +106,14 @@ class TestWindowsInstaller:
         for leftover in ("RunwaySidecar.new.exe", "runway-self-update.bat"):
             assert f'Delete "$INSTDIR\\{leftover}"' in NSI
 
+    def test_deep_link_scheme_registered_and_removed(self):
+        from scripts.sidecar_pkg import pairing
+
+        assert _nsis_define("URL_SCHEME") == pairing.SCHEME
+        assert '"URL Protocol"' in NSI
+        assert '"$INSTDIR\\${EXE_NAME}" "%1"' in NSI
+        assert 'DeleteRegKey HKCU "${URL_KEY}"' in NSI
+
     def test_per_user_install(self):
         assert "RequestExecutionLevel user" in NSI
         assert "$LOCALAPPDATA\\Programs" in NSI
@@ -139,6 +147,24 @@ class TestMacOS:
         spec = (ROOT / "sidecar_app" / "spec" / "macos.spec").read_text(encoding="utf-8")
         assert '"installer", "assets", "app.icns"' in spec
         assert (INSTALLER_ASSETS / "app.icns").read_bytes()[:4] == b"icns"
+
+    def test_bundle_declares_the_pairing_url_scheme(self):
+        from scripts.sidecar_pkg import pairing
+
+        spec = (ROOT / "sidecar_app" / "spec" / "macos.spec").read_text(encoding="utf-8")
+        assert f'"CFBundleURLSchemes": ["{pairing.SCHEME}"]' in spec
+        # argv emulation would swallow the launch-time GURL Apple Event.
+        assert "argv_emulation=False" in spec
+
+    def test_server_mints_links_the_sidecar_parses(self):
+        from app.services import pairing as server_pairing
+        from scripts.sidecar_pkg import pairing
+
+        code = server_pairing.generate_code()
+        link = server_pairing.deep_link("https://runway.example.com/base", code)
+        target = pairing.parse_pair_url(link)
+        assert target.server == "https://runway.example.com/base"
+        assert server_pairing.normalize(target.code) == server_pairing.normalize(code)
 
     def test_dmg_icon_slots_match_background_art(self):
         svg = (ROOT / "assets" / "installer" / "dmg-background.svg").read_text(encoding="utf-8")

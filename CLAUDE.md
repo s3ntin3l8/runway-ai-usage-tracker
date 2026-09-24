@@ -54,6 +54,7 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 | `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `account_id` (NULL = all accounts), `threshold_pct`, `url`, `channel`, last-fired timestamp. |
 | `system_config` | Single-row global config — browser preference, default poll interval, dashboard layout JSON, user timezone. |
 | `audit_log` | Append-only record of admin mutations (sidecar pause/resume/delete/patch, etc.). Diagnostic, not legal-grade. |
+| `sidecar_pairing_codes` | One-time, short-lived (`PAIRING_CODE_TTL_SECONDS`) sidecar pairing codes, stored as SHA-256 only. Minted by admins (`POST /fleet/pairing-codes`, a `runway-sidecar://pair` deep link), redeemed once by a new sidecar (`POST /fleet/pair` → `api_url` + ingest key). See `app/services/pairing.py`, `docs/SECURITY.md`. |
 
 **Ingest path:** Sidecar batches up to 1000 events per push to `POST /api/v1/fleet/ingest` (HMAC-signed, rate-limited to 600/min per source IP). Server runs `EventIngestor`, which deduplicates by `event_id`, computes cost via `cost_calculator`, updates rollups, and triggers `window_closer._maybe_close_previous_window` on quota-window boundaries.
 
@@ -63,8 +64,9 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 - Insights / rankings: `/api/v1/usage/{top-models,top-projects,top-tools,projects,global-stats}` — cross-provider lifetime totals, session economics, cache-hit ratio, busiest day/hour, and the Top-N model/project/tool rankings that back the `/insights` page.
 - Forecasts: `/api/v1/usage/forecast` (Theil-Sen regression on `quota_snapshots`, anchor-at-now; `include_series=true` returns the drill-down points) and `/api/v1/usage/cost-forecast` (MTD + 7-day burn to EOM).
 - Diagnostics: `/api/v1/usage/anomalies` (z-score spike detection) and `/api/v1/system/debug/raw/{provider_id}`.
+- Sidecar onboarding: `/api/v1/system/sidecar-downloads?channel=stable|edge` (public; cached GitHub release assets for the Fleet page's *Add sidecar* card) and `POST /api/v1/fleet/pair` (unauthenticated one-time-code redeem, 10/min/IP).
 
-**Mutating endpoints:** `POST /api/v1/usage/{reset/{provider},collect/{provider}}`, the `/api/v1/fleet/sidecars/{id}/{pause,resume,update}` controls, the `/api/v1/system/{cleanup,wake,force-collect,check-updates}` maintenance set, and the webhook/provider-config/app-config/dashboard-layout CRUD on `/api/v1/system/` — admin writes go through `require_admin_key` and append to `audit_log`.
+**Mutating endpoints:** `POST /api/v1/usage/{reset/{provider},collect/{provider}}`, the `/api/v1/fleet/sidecars/{id}/{pause,resume,update}` controls, `POST /api/v1/fleet/pairing-codes` (sidecar pairing), the `/api/v1/system/{cleanup,wake,force-collect,check-updates}` maintenance set, and the webhook/provider-config/app-config/dashboard-layout CRUD on `/api/v1/system/` — admin writes go through `require_admin_key` and append to `audit_log`.
 
 **Admin auth:** the dashboard logs in via `POST /api/v1/auth/session` (validates `ADMIN_API_KEY`, sets an HttpOnly `SameSite=Strict` session cookie, rate-limited 10/min); `POST /auth/logout` clears the cookie and `POST /auth/revoke-all` rotates `SESSION_SECRET` to invalidate every session. `SESSION_SECRET` is auto-generated, stored Fernet-encrypted in `system_config`, and is separate from `DB_ENCRYPTION_KEY`. Scripts/API clients can keep using the `X-Admin-Key` header. Blank `ADMIN_API_KEY`/`DB_ENCRYPTION_KEY` env values normalize to unset, and a malformed `DB_ENCRYPTION_KEY` fails fast at startup rather than silently running plaintext. See `docs/SECURITY.md`.
 

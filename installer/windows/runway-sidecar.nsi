@@ -44,6 +44,10 @@ SetCompressor /SOLID lzma
 ; Must equal sidecar_app/autostart.py:_WIN_REG_PATH / _WIN_REG_KEY.
 !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 !define RUN_VALUE "Runway Sidecar"
+; runway-sidecar://pair?… deep links from the dashboard (sidecar_app/url_events.py).
+; Must match CFBundleURLSchemes in sidecar_app/spec/macos.spec (contract-tested).
+!define URL_SCHEME "runway-sidecar"
+!define URL_KEY "Software\Classes\${URL_SCHEME}"
 
 Name "${PRODUCT_NAME}"
 OutFile "${OUTFILE}"
@@ -178,6 +182,12 @@ Section "!${PRODUCT_NAME}" SecCore
     IntFmt $0 "0x%08X" $0
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" "$0"
 
+    ; Deep-link protocol handler (per-user; no elevation needed).
+    WriteRegStr HKCU "${URL_KEY}" "" "URL:Runway Sidecar pairing link"
+    WriteRegStr HKCU "${URL_KEY}" "URL Protocol" ""
+    WriteRegStr HKCU "${URL_KEY}\DefaultIcon" "" '"$INSTDIR\${EXE_NAME}",0'
+    WriteRegStr HKCU "${URL_KEY}\shell\open\command" "" '"$INSTDIR\${EXE_NAME}" "%1"'
+
     ; Silent installs have no finish page: honour /AUTOSTART=1 instead.
     ${If} ${Silent}
         ${GetParameters} $R0
@@ -204,6 +214,7 @@ Section "Uninstall"
     Call un.CheckExeNotRunning
 
     DeleteRegValue HKCU "${RUN_KEY}" "${RUN_VALUE}"
+    DeleteRegKey HKCU "${URL_KEY}"
 
     Delete "$INSTDIR\${EXE_NAME}"
     Delete "$INSTDIR\uninstall.exe"

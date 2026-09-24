@@ -1,6 +1,6 @@
 // "Add a sidecar" — one-click download of the right installer for the
 // viewer's OS (macOS .dmg / Windows setup.exe), with every other build one
-// click further, plus the first-run steps. Data: GET /system/sidecar-downloads
+// click further, the first-run steps, and one-time pairing (PairSidecarPanel). Data: GET /system/sidecar-downloads
 // (the server proxies + caches the GitHub release so the browser never calls
 // api.github.com directly).
 
@@ -22,6 +22,7 @@ import {
   primaryAsset,
   type ViewerOS,
 } from './downloads';
+import { PairSidecarPanel } from './PairSidecarPanel';
 
 // Step 1 of the first-run list, keyed by what the big button actually
 // downloads (older releases only carry the portable builds).
@@ -42,14 +43,7 @@ function firstLaunchStep(os: ViewerOS | null, primary: SidecarDownloadAsset | nu
   return 'Extract the archive and run ./RunwaySidecar (tray) or ./runway-sidecar-cli --daemon.';
 }
 
-export function AddSidecarCard({
-  className,
-  children,
-}: {
-  className?: string;
-  // Extra steps rendered under the downloads (e.g. the pairing flow).
-  children?: React.ReactNode;
-}) {
+export function AddSidecarCard({ className }: { className?: string }) {
   const [channel, setChannel] = useState<SidecarChannel>('stable');
   const os = detectViewerOS(typeof navigator === 'undefined' ? undefined : navigator);
   const downloads = useQuery({
@@ -136,10 +130,11 @@ export function AddSidecarCard({
             <ol className="list-decimal space-y-1 pl-4 text-xs text-fg-muted">
               <li>{firstLaunchStep(os, primary)}</li>
               <li>
-                Open <span className="text-fg">Settings…</span> from the sidecar's tray/menu-bar icon
-                and enter this server's URL (
+                Pair it with this server using the one-time link below. Or open{' '}
+                <span className="text-fg">Settings…</span> from the sidecar's tray/menu-bar icon and
+                enter this server's URL (
                 <code className="font-mono text-fg">{window.location.origin}</code>) and your ingest
-                API key.
+                API key yourself.
               </li>
               <li>The sidecar shows up here on its first check-in.</li>
             </ol>
@@ -160,7 +155,7 @@ export function AddSidecarCard({
             </p>
           </>
         )}
-        {children}
+        <PairSidecarPanel />
       </CardContent>
     </Card>
   );
