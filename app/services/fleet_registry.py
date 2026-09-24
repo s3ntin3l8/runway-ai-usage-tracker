@@ -178,6 +178,13 @@ class FleetRegistryService:
         row = session.get(SidecarRegistry, sidecar_id)
         if not row:
             return False
+        # Machine-scoped credential tags and pending origins (#319) belong
+        # to this sidecar only — drop them so they don't linger as
+        # unresolvable rows (or re-apply if the hostname is ever reused).
+        from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+        CredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
+        PendingCredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
         session.delete(row)
         session.commit()
         logger.info(f"Deleted sidecar from registry: '{scrub_log(sidecar_id)}'")

@@ -14,9 +14,9 @@
 // switch sets the request's `scope` field. "This machine" (default)
 // scopes the tag to the reporting sidecar; "All machines" persists a
 // deployment-wide (sidecar_id NULL) tag that applies to every host —
-// useful for shared credential origins (e.g. NFS home dirs) and for
-// retagging a known origin from a second machine without visiting the
-// first. The dialog-level switch applies to every row in that open —
+// useful for shared credential origins (e.g. NFS home dirs). Tagging
+// "All machines" also drops any machine-scoped override for the origin,
+// so the new mapping wins everywhere. The dialog-level switch applies to every row in that open —
 // multi-machine deployments tag per machine by re-opening the dialog
 // per entry (singleEntry).
 //
@@ -147,6 +147,7 @@ export function UntaggedCredentialsDialog({
       // Invalidate both the untagged list (the entry disappears) and
       // the fleet list (counts may change in any card).
       queryClient.invalidateQueries({ queryKey: ['fleet', 'untagged_credentials'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'credential_tags'] });
       queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
       queryClient.invalidateQueries({ queryKey: ['system', 'provider_configs'] });
       onClose();
@@ -239,16 +240,10 @@ export function UntaggedCredentialsDialog({
               currentSelection={state}
               scopeLabel={scopeLabel}
               onSelect={(accountId) => stage(entry, accountId)}
-              onSave={() =>
-                save.mutate(
-                  stageToBody(
-                    entry,
-                    accountsByProvider[entry.provider_id] ?? [],
-                    state,
-                    applyToAllMachines,
-                  ),
-                )
-              }
+              onSave={() => {
+                const body = stageToBody(entry, state, applyToAllMachines);
+                if (body) save.mutate(body);
+              }}
               saving={save.isPending}
             />
           ))}
@@ -267,27 +262,28 @@ export function UntaggedCredentialsDialog({
   );
 }
 
-function stageToBody(
+export function stageToBody(
   entry: UntaggedCredential,
-  matchingAccounts: ProviderAccount[],
   state: DialogState,
   applyToAllMachines: boolean,
-): CredentialTagRequest {
-  // The state machine keeps a single staged selection per dialog open.
-  // The Save button is rendered per-row, so the body comes from that
-  // row's currently staged account_id (state at the time of click).
-  // ``scope`` (#319) is the dialog-level switch's value at click time.
+): CredentialTagRequest | null {
+  // The dialog keeps a single staged selection per open, but the Tag
+  // button is rendered per row. Only use the staged account when it was
+  // staged *for this row* (same sidecar + provider + origin) — otherwise a
+  // pick on machine A's row could be saved onto machine B's row for the
+  // same origin. No fallback to "the first account": that could silently
+  // tag a disabled or unintended account. ``scope`` (#319) is the
+  // dialog-level switch's value at click time.
+  const stagedForEntry =
+    state.sidecar_id === entry.sidecar_id &&
+    state.provider_id === entry.provider_id &&
+    state.credential_origin === entry.credential_origin;
+  if (!stagedForEntry || !state.account_id) return null;
   return {
     sidecar_id: entry.sidecar_id,
     provider_id: entry.provider_id,
     credential_origin: entry.credential_origin,
-    account_id:
-      state.account_id ||
-      // Defensive: if the row's account_id wasn't staged yet (e.g. the
-      // user clicked Save before the Select rendered), fall back to the
-      // first matching account's id so the click isn't a no-op.
-      matchingAccounts[0]?.account_id ||
-      '',
+    account_id: state.account_id,
     scope: applyToAllMachines ? 'deployment' : 'sidecar',
   };
 }

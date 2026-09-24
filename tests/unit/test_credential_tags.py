@@ -530,20 +530,107 @@ def test_pending_delete_stale_with_empty_keep_map_removes_everything(session: Se
     assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []
 
 
-def test_pending_count_by_sidecar_aggregates(session: Session):
+def test_delete_for_sidecar_drops_only_that_sidecars_rows(session: Session):
     PendingCredentialTagRepo.upsert(
         session, sidecar_id="alpha", provider_id="anthropic", credential_origin="path:/a"
     )
     PendingCredentialTagRepo.upsert(
-        session, sidecar_id="alpha", provider_id="chatgpt", credential_origin="path:/b"
+        session, sidecar_id="beta", provider_id="anthropic", credential_origin="path:/a"
     )
-    PendingCredentialTagRepo.upsert(
-        session, sidecar_id="beta", provider_id="anthropic", credential_origin="path:/c"
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/a",
+        account_id="a@x.com",
+        sidecar_id="alpha",
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/a",
+        account_id="shared@x.com",
     )
     session.commit()
 
-    counts = PendingCredentialTagRepo.pending_count_by_sidecar(session)
-    assert counts == {"alpha": 2, "beta": 1}
+    assert PendingCredentialTagRepo.delete_for_sidecar(session, sidecar_id="alpha") == 1
+    assert CredentialTagRepo.delete_for_sidecar(session, sidecar_id="alpha") == 1
+    session.commit()
+
+    assert [r.sidecar_id for r in PendingCredentialTagRepo.list_all(session)] == ["beta"]
+    # The deployment-wide row is untouched.
+    assert [(t.sidecar_id, t.account_id) for t in CredentialTagRepo.list_all(session)] == [
+        (None, "shared@x.com")
+    ]
+
+
+def test_delete_scoped_for_origin_keeps_deployment_row(session: Session):
+    for sc in ("alpha", "beta"):
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="anthropic",
+            credential_origin="provider:anthropic",
+            account_id=f"{sc}@x.com",
+            sidecar_id=sc,
+        )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="all@x.com",
+    )
+    session.commit()
+
+    assert (
+        CredentialTagRepo.delete_scoped_for_origin(
+            session, provider_id="anthropic", credential_origin="provider:anthropic"
+        )
+        == 2
+    )
+    session.commit()
+    assert (
+        CredentialTagRepo.get_account_id(
+            session,
+            provider_id="anthropic",
+            credential_origin="provider:anthropic",
+            sidecar_id="alpha",
+        )
+        == "all@x.com"
+    )
+
+
+def test_delete_tag_in_scope_targets_one_row(session: Session):
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alpha@x.com",
+        sidecar_id="alpha",
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="all@x.com",
+    )
+    session.commit()
+
+    # None = the deployment-wide row only (not "every scope").
+    assert CredentialTagRepo.delete_tag_in_scope(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        sidecar_id=None,
+    )
+    session.commit()
+    assert [(t.sidecar_id, t.account_id) for t in CredentialTagRepo.list_all(session)] == [
+        ("alpha", "alpha@x.com")
+    ]
+    assert not CredentialTagRepo.delete_tag_in_scope(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        sidecar_id=None,
+    )
 
 
 def test_pending_delete_returns_true_when_present_false_when_absent(session: Session):
@@ -1117,3 +1204,44 @@ def test_fresh_db_skips_credential_tag_scoping_migration():
         index_names = {r[1] for r in conn.execute(text("PRAGMA index_list(credential_tags)"))}
         assert "uq_credential_tag_deployment" in index_names
         assert "uq_credential_tag_sidecar" in index_names
+
+
+def test_drop_redundant_credential_tag_indexes():
+    """Duplicate ``Field(index=True)`` indexes from earlier model versions
+    are dropped at startup; fresh DBs never create them (#322 review)."""
+    from sqlalchemy import text
+
+    from app.core.db import _drop_redundant_credential_tag_indexes
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    def _index_names(conn) -> set[str]:
+        return {
+            r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        }
+
+    with engine.connect() as conn:
+        fresh = _index_names(conn)
+        assert "ix_credential_tags_sidecar_id" not in fresh
+        assert "ix_credential_tags_sidecar" in fresh
+        # Simulate a DB created by the previous model version.
+        conn.execute(
+            text("CREATE INDEX ix_credential_tags_sidecar_id ON credential_tags (sidecar_id)")
+        )
+        conn.execute(
+            text("CREATE INDEX ix_credential_tags_provider_id ON credential_tags (provider_id)")
+        )
+        conn.commit()
+
+        _drop_redundant_credential_tag_indexes(conn)
+        _drop_redundant_credential_tag_indexes(conn)  # idempotent
+
+        after = _index_names(conn)
+        assert "ix_credential_tags_sidecar_id" not in after
+        assert "ix_credential_tags_provider_id" not in after
+        assert "ix_credential_tags_sidecar" in after

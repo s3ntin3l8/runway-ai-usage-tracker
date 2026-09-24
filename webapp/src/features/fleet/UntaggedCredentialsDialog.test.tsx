@@ -369,3 +369,33 @@ describe('UntaggedCredentialsDialog', () => {
     expect(link.closest('p')?.textContent).toMatch(/all .*anthropic.* rows? configured .* disabled/i);
   });
 });
+
+describe('stageToBody', () => {
+  const staged = {
+    sidecar_id: 'laptop',
+    provider_id: 'anthropic',
+    credential_origin: 'provider:anthropic',
+    account_id: 'alice@example.com',
+  };
+
+  it('builds the body from the account staged for this row', async () => {
+    const { stageToBody } = await import('./UntaggedCredentialsDialog');
+    expect(stageToBody(entry, staged, false)).toEqual({
+      ...entry,
+      account_id: 'alice@example.com',
+      scope: 'sidecar',
+    });
+    expect(stageToBody(entry, staged, true)?.scope).toBe('deployment');
+  });
+
+  it("never saves another machine's staged pick onto this row", async () => {
+    const { stageToBody } = await import('./UntaggedCredentialsDialog');
+    const otherMachine = { ...entry, sidecar_id: 'desktop' };
+    expect(stageToBody(otherMachine, staged, false)).toBeNull();
+  });
+
+  it('returns null instead of guessing when nothing is staged', async () => {
+    const { stageToBody } = await import('./UntaggedCredentialsDialog');
+    expect(stageToBody(entry, { ...staged, account_id: '' }, false)).toBeNull();
+  });
+});

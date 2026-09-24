@@ -546,6 +546,21 @@ export interface CredentialTagRequest {
   scope?: 'sidecar' | 'deployment';
 }
 
+// Resolved credential tag (GET /fleet/credentials/tags). ``sidecar_id`` is
+// ``null`` for a deployment-wide ("All machines") tag.
+export interface CredentialTag {
+  provider_id: string;
+  credential_origin: string;
+  account_id: string;
+  sidecar_id: string | null;
+  set_by: string;
+  set_at: string | null;
+}
+
+export interface CredentialTagList {
+  items: CredentialTag[];
+}
+
 export interface SystemSettings {
   project_name?: string;
   app_host?: string;

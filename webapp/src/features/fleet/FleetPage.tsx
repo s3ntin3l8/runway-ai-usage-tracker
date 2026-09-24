@@ -37,6 +37,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
+import { CredentialMappingsCard } from './CredentialMappingsCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
@@ -205,6 +206,7 @@ export function FleetPage() {
                 />
               ))}
             </div>
+            <CredentialMappingsCard className="mt-4" />
           </>
         )}
       </div>
