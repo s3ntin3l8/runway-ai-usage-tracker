@@ -128,13 +128,12 @@ class TokenCache:
                 # credential families (for example a browser cookie beside a
                 # CLI OAuth token) pushed for this same account.
                 for key, value in tokens.items():
+                    self._mark_token_seen(provider, account_id, key)
                     if key not in _OAUTH_CREDENTIAL_KEYS:
-                        self._mark_token_seen(provider, account_id, key)
                         if key not in kept_tokens:
                             kept_tokens[key] = value
                 if tokens.get("refresh_token"):
                     kept_tokens["refresh_token"] = tokens["refresh_token"]
-                    self._mark_token_seen(provider, account_id, "refresh_token")
                 if account_label and not kept_meta.get("account_label"):
                     kept_meta["account_label"] = account_label
                 if source:
@@ -374,6 +373,7 @@ class TokenCache:
                         logger.info(f"Purged expired unrefreshable token for {provider}/{acc_id}")
                 if not self._cache[provider]:
                     del self._cache[provider]
+                    self._token_timestamps.pop(provider, None)
             return removed
 
     def seed_sync(

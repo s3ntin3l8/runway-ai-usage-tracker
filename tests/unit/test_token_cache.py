@@ -133,6 +133,7 @@ async def test_purge_removes_expired_unrefreshable(cache):
 
     assert removed == 1
     assert await cache.get("chatgpt", "dead-orphan") is None
+    assert "chatgpt" not in cache._token_timestamps
 
 
 @pytest.mark.asyncio
@@ -233,6 +234,45 @@ async def test_sibling_credential_push_does_not_keep_removed_family_alive(monkey
     now[0] += 3
     tokens = await short_cache.get("chatgpt", "user@example.com")
     assert tokens == {"oauth_token": "cli-token-2", "refresh_token": "cli-refresh-2"}
+
+
+@pytest.mark.asyncio
+async def test_repeated_stale_oauth_push_refreshes_protected_fields_ttl(monkeypatch):
+    """A reported expired local OAuth token keeps protected fresh fields available."""
+    short_cache = TokenCache(ttl_seconds=10)
+    now = [1_700_000_000.0]
+    monkeypatch.setattr("app.services.token_cache.time.time", lambda: now[0])
+    fresh_expiry = str(int((now[0] + 3600) * 1000))
+
+    await short_cache.store(
+        "gemini",
+        {
+            "oauth_token": "server-fresh",
+            "refresh_token": "server-refresh",
+            "expiry_date": fresh_expiry,
+        },
+        account_id="user@example.com",
+    )
+
+    now[0] += 8
+    await short_cache.store(
+        "gemini",
+        {
+            "oauth_token": "local-expired",
+            "refresh_token": "rotated-refresh",
+            "expiry_date": str(int((now[0] - 1) * 1000)),
+        },
+        account_id="user@example.com",
+        source="sidecar-a",
+    )
+
+    now[0] += 3
+    tokens = await short_cache.get("gemini", "user@example.com")
+    assert tokens == {
+        "oauth_token": "server-fresh",
+        "refresh_token": "rotated-refresh",
+        "expiry_date": fresh_expiry,
+    }
 
 
 @pytest.mark.asyncio
