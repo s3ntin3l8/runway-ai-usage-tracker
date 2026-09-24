@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import traceback
 import webbrowser
@@ -19,7 +20,7 @@ from sidecar_app.config import (
 )
 from sidecar_app.daemon import TrayDaemon
 from sidecar_app.settings_server import SettingsServer
-from sidecar_app.tray import SidecarTray, _open_in_editor
+from sidecar_app.tray import MOVE_TO_APPLICATIONS_MSG, SidecarTray, _notify, _open_in_editor
 from sidecar_app.updater import UpdateChecker
 
 _FALLBACK_CONFIG: dict = {
@@ -188,21 +189,25 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         daemon.start()
 
     # 10. Run tray — blocks main thread
-    if needs_setup_notification:
+    from scripts.sidecar_pkg.self_update import running_from_disk_image
 
-        def notify_setup() -> None:
-            if tray._icon is not None:
-                try:
-                    tray._icon.notify(
-                        "Edit config.json to connect to your Runway server, then restart.",
-                        "Runway Sidecar — Setup Required",
-                    )
-                except Exception:
-                    pass  # notifications not supported on all platforms
+    from_disk_image = running_from_disk_image()
+    if from_disk_image:
+        logging.warning(
+            "Running from the disk image (%s); updates and login item disabled", sys.executable
+        )
 
-        tray.run(after_start=notify_setup)
-    else:
-        tray.run()
+    def notify_on_start() -> None:
+        if from_disk_image:
+            _notify(tray._icon, MOVE_TO_APPLICATIONS_MSG, "Runway Sidecar — Move to Applications")
+        elif needs_setup_notification:
+            _notify(
+                tray._icon,
+                "Edit config.json to connect to your Runway server, then restart.",
+                "Runway Sidecar — Setup Required",
+            )
+
+    tray.run(after_start=notify_on_start)
 
     # 11. Tray exited — stop background threads
     checker.stop()

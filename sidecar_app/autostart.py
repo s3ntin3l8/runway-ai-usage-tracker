@@ -128,7 +128,10 @@ def _windows_install() -> None:
                 _WIN_REG_KEY,
                 0,
                 winreg.REG_SZ,
-                sys.executable,  # type: ignore[name-defined]
+                # Quoted: the installer's default dir ("…\Programs\Runway Sidecar")
+                # contains a space. Same form installer/windows/runway-sidecar.nsi
+                # writes, so the tray toggle and the finish-page checkbox agree.
+                f'"{sys.executable}"',
             )
     except OSError:
         pass  # registry is locked or inaccessible

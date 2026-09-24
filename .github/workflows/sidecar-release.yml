@@ -1,80 +1,76 @@
 name: Sidecar Release Build
 
-# Superseded by release-please.yml build-sidecar job (triggered via release_created output).
-# Tag-push and release events are not triggered when GITHUB_TOKEN creates the tag/release.
+# Manual (re)build of the sidecar installers + payloads via the shared
+# sidecar-build.yml matrix. Stable releases normally build automatically from
+# release-please.yml (tag-push/release events don't fire when GITHUB_TOKEN
+# creates the tag/release, hence the explicit call there).
+#
+# * `tag` empty  → build-only: the signed asset set is left as the
+#   `sidecar-release-assets` workflow artifact (handy for testing the .dmg /
+#   setup.exe from a branch before merging).
+# * `tag` set    → rebuild that tag and (re)upload its assets to the release.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild and upload to (e.g. v2.13.0). Empty = build-only.
+        required: false
+        type: string
+        default: ''
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.tag }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  build-sidecar:
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            spec: sidecar_app/spec/macos.spec
-            artifact_name: Runway-Sidecar-macOS
-            artifact_path: dist/Runway Sidecar.app
-            zip_name: Runway-Sidecar-macOS.zip
-          - os: windows-latest
-            spec: sidecar_app/spec/windows.spec
-            artifact_name: Runway-Sidecar-Windows
-            artifact_path: dist/RunwaySidecar.exe
-            zip_name: Runway-Sidecar-Windows.zip
-          - os: ubuntu-latest
-            spec: sidecar_app/spec/linux.spec
-            artifact_name: Runway-Sidecar-Linux
-            artifact_path: dist/RunwaySidecar
-            zip_name: Runway-Sidecar-Linux.tar.gz
-          - os: ubuntu-latest
-            spec: sidecar_app/spec/linux-cli.spec
-            artifact_name: Runway-Sidecar-Linux-CLI
-            artifact_path: dist/runway-sidecar-cli
-            zip_name: Runway-Sidecar-Linux-CLI.tar.gz
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.r.outputs.ref }}
+      label: ${{ steps.r.outputs.label }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: r
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$TAG" ]; then
+            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+            echo "label=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "label=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve
+    permissions:
+      contents: read
+      id-token: write  # Sigstore signing in sidecar-build.yml's attest job
+    uses: ./.github/workflows/sidecar-build.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      label: ${{ needs.resolve.outputs.label }}
+
+  upload:
+    needs: [resolve, build]
+    if: ${{ inputs.tag != '' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Download signed asset set
+        uses: actions/download-artifact@v8
         with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pystray Pillow pyinstaller packaging certifi
-
-      - name: Generate icons
-        run: python sidecar_app/assets/generate_icons.py
-
-      - name: Run PyInstaller
-        run: pyinstaller ${{ matrix.spec }}
-
-      - name: Create zip (macOS)
-        if: runner.os == 'macOS'
-        run: cd dist && zip -r "../${{ matrix.zip_name }}" "Runway Sidecar.app"
-
-      - name: Create zip (Windows)
-        if: runner.os == 'Windows'
-        run: Compress-Archive -Path "${{ matrix.artifact_path }}" -DestinationPath "${{ matrix.zip_name }}"
-
-      - name: Create tarball (Linux)
-        if: runner.os == 'Linux'
-        run: tar -czf "${{ matrix.zip_name }}" -C dist "$(basename '${{ matrix.artifact_path }}')"
+          name: sidecar-release-assets
+          path: release-assets
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ matrix.zip_name }}
+          tag_name: ${{ inputs.tag }}
+          files: release-assets/*
           fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

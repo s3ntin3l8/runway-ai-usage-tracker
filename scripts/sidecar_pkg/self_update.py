@@ -45,6 +45,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from urllib import error, request
 
+from scripts.sidecar_pkg import asset_names
 from scripts.sidecar_pkg.update_check import (
     _LATEST_URL,
     check_once,
@@ -125,15 +126,31 @@ def _is_docker() -> bool:
     return pathlib.Path("/.dockerenv").exists()
 
 
+def running_from_disk_image(executable: str | None = None, plat: str | None = None) -> bool:
+    """True when the macOS app is running straight off the mounted ``.dmg``.
+
+    That happens when someone double-clicks the app inside the DMG window
+    instead of dragging it to Applications first — or when Gatekeeper App
+    Translocation runs a quarantined copy from a randomised read-only path.
+    Either way the bundle is read-only and will vanish (unmount / reboot), so
+    self-update and the login item must not target it.
+    """
+    if (plat or sys.platform) != "darwin":
+        return False
+    path = executable if executable is not None else sys.executable
+    return path.startswith("/Volumes/") or "/AppTranslocation/" in path
+
+
 def self_update_supported() -> bool:
     """True when this build can replace its own binary in place.
 
     Frozen PyInstaller builds only — Docker images update by repulling and
-    from-source checkouts update via git, so both report False. Mirrors the
-    gate in ``self_update()`` so the server is told the same thing the apply
-    path enforces, and won't offer a meaningless update push.
+    from-source checkouts update via git, so both report False, as does a
+    macOS app still running off its read-only disk image. Mirrors the gate in
+    ``self_update()`` so the server is told the same thing the apply path
+    enforces, and won't offer a meaningless update push.
     """
-    return _is_frozen() and not _is_docker()
+    return _is_frozen() and not _is_docker() and not running_from_disk_image()
 
 
 def _detect_target() -> str:
@@ -166,37 +183,37 @@ def _sidecar_dir() -> pathlib.Path:
 
 
 def resolve_asset_name(target: str, channel: str, version: str | None) -> str:
-    """Return the GitHub release asset base name for this platform/target/channel.
+    """Return the self-update payload asset name for this platform/target/channel.
 
-    *version* is the latest tag (without ``v``) for the stable channel; the edge
-    channel uses a single rolling asset per platform, so *version* is ignored
-    there.
+    *version* is the latest release tag for the stable channel (``v`` prefix
+    optional — the published names always carry it); the edge channel uses a
+    single rolling asset per platform, so *version* is ignored there. Names
+    come from ``asset_names`` — the same module the release-workflow contract
+    test checks — and are always the ``.zip`` / ``.tar.gz`` payload, never the
+    ``.dmg`` / ``-setup.exe`` installers.
 
     Raises ``SelfUpdateUnsupportedError`` for combinations with no published asset.
     """
-    plat = sys.platform
-    if channel == "edge":
-        # Edge publishes a rolling per-platform asset (no version in the name).
-        if plat == "darwin":
-            return "Runway-Sidecar-macOS-edge.zip"
-        if plat == "win32":
-            return "Runway-Sidecar-Windows-edge.zip"
-        if plat == "linux":
-            suffix = "CLI-edge" if target == "cli" else "edge"
-            return f"Runway-Sidecar-Linux-{suffix}.tar.gz"
-        raise SelfUpdateUnsupportedError(f"unsupported platform: {plat}")
+    plat = asset_names.platform_key(sys.platform, target)
+    if plat is None:
+        raise SelfUpdateUnsupportedError(f"unsupported platform: {sys.platform}")
+    try:
+        label = asset_names.release_label(channel, version)
+    except ValueError as exc:
+        raise SelfUpdateError("missing latest version for stable asset name") from exc
+    return asset_names.payload_name(plat, label)
 
-    ver = (version or "").lstrip("v").strip()
-    if not ver:
-        raise SelfUpdateError("missing latest version for stable asset name")
-    if plat == "darwin":
-        return f"Runway-Sidecar-macOS-{ver}.zip"
-    if plat == "win32":
-        return f"Runway-Sidecar-Windows-{ver}.zip"
-    if plat == "linux":
-        kind = "Linux-CLI" if target == "cli" else "Linux"
-        return f"Runway-Sidecar-{kind}-{ver}.tar.gz"
-    raise SelfUpdateUnsupportedError(f"unsupported platform: {plat}")
+
+def _asset_name_candidates(target: str, channel: str, version: str | None) -> list[str]:
+    """Primary payload name, then the legacy ``v``-less spelling as a fallback."""
+    primary = resolve_asset_name(target, channel, version)
+    plat = asset_names.platform_key(sys.platform, target)
+    legacy = (
+        asset_names.legacy_payload_name(plat, asset_names.release_label(channel, version))
+        if plat
+        else None
+    )
+    return [primary] + ([legacy] if legacy and legacy != primary else [])
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +245,17 @@ def _get_release_json(channel: str) -> dict:
     return _get_json(_EDGE_RELEASE_URL if channel == "edge" else _LATEST_URL)
 
 
-def find_asset_urls(release: dict, asset_name: str) -> tuple[str, str]:
+def find_asset_urls(release: dict, asset_name: str | list[str]) -> tuple[str, str]:
     """Return ``(asset_url, sha256_url)`` for *asset_name* within *release*.
 
-    Raises ``SelfUpdateError`` if either the asset or its ``.sha256`` sibling is
-    absent — the checksum is mandatory.
+    *asset_name* may be a list of candidate names tried in order (primary name
+    first, legacy spelling after). Raises ``SelfUpdateError`` if no candidate is
+    present, or the matched asset lacks its ``.sha256`` sibling — the checksum
+    is mandatory.
     """
     by_name = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])}
+    candidates = [asset_name] if isinstance(asset_name, str) else list(asset_name)
+    asset_name = next((n for n in candidates if by_name.get(n)), candidates[0])
     asset_url = by_name.get(asset_name)
     sha_url = by_name.get(f"{asset_name}.sha256")
     if not asset_url:
@@ -602,6 +623,11 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
     if _is_docker():
         logger.info("Self-update skipped: running in Docker (repull the image instead)")
         return False
+    if running_from_disk_image():
+        logger.info(
+            "Self-update skipped: running from the disk image; move the app to Applications"
+        )
+        return False
 
     with _single_flight() as acquired:
         if not acquired:
@@ -622,8 +648,10 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
 
         try:
             release = _with_retries(lambda: _get_release_json(eff_channel), what="release fetch")
-            latest_ver = str(release.get("tag_name", "")).lstrip("v").strip()
-            asset_name = resolve_asset_name(target, eff_channel, latest_ver)
+            latest_tag = str(release.get("tag_name", "")).strip()
+            candidates = _asset_name_candidates(target, eff_channel, latest_tag)
+            published = {a.get("name") for a in release.get("assets", [])}
+            asset_name = next((n for n in candidates if n in published), candidates[0])
             asset_url, sha_url = find_asset_urls(release, asset_name)
         except SelfUpdateUnsupportedError as exc:
             logger.warning("Self-update unsupported: %s", exc)

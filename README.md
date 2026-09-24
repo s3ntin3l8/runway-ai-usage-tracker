@@ -130,28 +130,23 @@ If you are running in Docker or a headless environment where browser scraping is
 
 *Note: For ChatGPT and Claude, we recommend using the Bearer token in the "API Key" field for the most reliable connection.*
 
-### Sidecar binaries (macOS / Windows / Linux)
+### Sidecar installers (macOS / Windows / Linux)
 
-Pre-built artifacts are attached to every [GitHub release](https://github.com/s3ntin3l8/runway/releases):
+Every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases) ships:
 
-- `Runway-Sidecar-macOS-<version>.zip` — desktop tray app
-- `Runway-Sidecar-Windows-<version>.zip` — desktop tray app
-- `Runway-Sidecar-Linux-<version>.tar.gz` — desktop tray app (needs AppIndicator/GTK + DBus)
-- `Runway-Sidecar-Linux-CLI-<version>.tar.gz` — headless single-file binary for servers, Docker, and CI agents (no Python or GUI required)
+- `Runway-Sidecar-macOS-<version>.dmg`: drag-to-Applications installer for the menu-bar app (Apple Silicon)
+- `Runway-Sidecar-Windows-<version>-setup.exe`: per-user installer for the tray app (no admin rights; Start Menu entry, uninstaller, optional start-at-sign-in)
+- `Runway-Sidecar-Linux-<version>.tar.gz`: desktop tray app (needs AppIndicator/GTK + DBus)
+- `Runway-Sidecar-Linux-CLI-<version>.tar.gz`: headless single-file binary for servers, Docker, and CI agents (no Python or GUI required)
 
-The desktop binaries are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS's built-in malware gatekeeper will block the first launch.
+It also ships portable `.zip` builds for macOS/Windows, which the in-app self-updater uses, plus `SHA256SUMS.txt` and Sigstore signatures for verification. The **Fleet** page of the dashboard links the right installer for your OS. A rolling `edge` prerelease carries the same set for every push to `main`.
 
-**macOS** (Gatekeeper: *"Apple could not verify this app is free of malware"*):
+The desktop apps are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS asks once before the first launch:
 
-```bash
-# After unzipping, strip the quarantine attribute:
-xattr -cr ~/Downloads/Runway\ Sidecar.app
-open ~/Downloads/Runway\ Sidecar.app
-```
+- **macOS** (*"Apple could not verify this app…"*): right-click **Runway Sidecar** in Applications → **Open** → **Open**. On macOS 15+, use *System Settings → Privacy & Security → Open Anyway*.
+- **Windows** (SmartScreen: *"Windows protected your PC"*): click **More info** → **Run anyway**.
 
-Alternatively: right-click the app in Finder → **Open** → **Open** again in the dialog. Only required on the first launch.
-
-**Windows** (SmartScreen: *"Windows protected your PC"*): click **More info** → **Run anyway**.
+See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install and verification details.
 
 ## Supported Providers
 

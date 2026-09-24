@@ -137,6 +137,22 @@ def _build_status_icon_generic(status: str) -> Image.Image:
     return img
 
 
+MOVE_TO_APPLICATIONS_MSG = (
+    "Runway Sidecar is running from the disk image. Drag it into Applications "
+    "and open it from there to enable updates and Launch at Login."
+)
+
+
+def _notify(icon: "pystray.Icon | None", message: str, title: str = "Runway Sidecar") -> None:
+    """Best-effort tray notification (not every platform/backend supports it)."""
+    if icon is None:
+        return
+    try:
+        icon.notify(message, title)
+    except Exception:
+        pass  # notifications not supported on all platforms
+
+
 def _open_in_editor(path: pathlib.Path) -> None:
     """Open *path* in the system default editor."""
     if sys.platform == "darwin":
@@ -298,8 +314,15 @@ class SidecarTray:
             threading.Thread(target=_run, name="runway-self-update", daemon=True).start()
 
         def on_launch_at_login(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            from scripts.sidecar_pkg.self_update import running_from_disk_image
+
             if is_login_item_installed():
                 remove_login_item()
+            elif running_from_disk_image():
+                # The LaunchAgent would point into the mounted DMG, which is
+                # gone after the next eject/reboot.
+                _notify(icon, MOVE_TO_APPLICATIONS_MSG)
+                return
             else:
                 install_login_item()
             icon.update_menu()

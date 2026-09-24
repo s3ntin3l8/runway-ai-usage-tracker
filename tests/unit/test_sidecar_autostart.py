@@ -171,7 +171,7 @@ class TestWindowsAutostart:
         args = fake_winreg.SetValueEx.call_args[0]
         # args: (key, name, reserved, type, value)
         assert args[1] == "Runway Sidecar"
-        assert args[4] == r"C:\runway\sidecar.exe"
+        assert args[4] == r'"C:\runway\sidecar.exe"'
 
     def test_remove_deletes_reg_value(self) -> None:
         mod, fake_winreg = self._get_mod_and_winreg()

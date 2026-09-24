@@ -39,20 +39,20 @@ from scripts.sidecar_pkg.self_update import (
 class TestResolveAssetName:
     def test_macos_stable(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "darwin")
-        assert resolve_asset_name("tray", "stable", "1.2.0") == "Runway-Sidecar-macOS-1.2.0.zip"
+        assert resolve_asset_name("tray", "stable", "1.2.0") == "Runway-Sidecar-macOS-v1.2.0.zip"
 
     def test_windows_stable(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")
-        assert resolve_asset_name("tray", "stable", "v1.2.0") == "Runway-Sidecar-Windows-1.2.0.zip"
+        assert resolve_asset_name("tray", "stable", "v1.2.0") == "Runway-Sidecar-Windows-v1.2.0.zip"
 
     def test_linux_tray_stable(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "linux")
-        assert resolve_asset_name("tray", "stable", "1.2.0") == "Runway-Sidecar-Linux-1.2.0.tar.gz"
+        assert resolve_asset_name("tray", "stable", "1.2.0") == "Runway-Sidecar-Linux-v1.2.0.tar.gz"
 
     def test_linux_cli_stable(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "linux")
         assert (
-            resolve_asset_name("cli", "stable", "1.2.0") == "Runway-Sidecar-Linux-CLI-1.2.0.tar.gz"
+            resolve_asset_name("cli", "stable", "1.2.0") == "Runway-Sidecar-Linux-CLI-v1.2.0.tar.gz"
         )
 
     def test_linux_tray_edge(self, monkeypatch):
@@ -82,6 +82,36 @@ class TestResolveAssetName:
         with pytest.raises(SelfUpdateError):
             resolve_asset_name("cli", "stable", "")
 
+    def test_stable_name_matches_published_tag_form(self, monkeypatch):
+        # Regression: CI publishes names built from the raw tag (``v2.12.0``);
+        # the updater used to strip the ``v`` and 404 on every stable update.
+        monkeypatch.setattr(sys, "platform", "darwin")
+        assert resolve_asset_name("tray", "stable", "v2.12.0") == resolve_asset_name(
+            "tray", "stable", "2.12.0"
+        )
+        assert resolve_asset_name("tray", "stable", "v2.12.0") == "Runway-Sidecar-macOS-v2.12.0.zip"
+
+    @pytest.mark.parametrize("plat", ["darwin", "win32", "linux"])
+    @pytest.mark.parametrize("channel", ["stable", "edge"])
+    def test_never_resolves_an_installer(self, monkeypatch, plat, channel):
+        # The .dmg / -setup.exe are for humans; self-update swaps the payload.
+        monkeypatch.setattr(sys, "platform", plat)
+        name = resolve_asset_name("tray", channel, "v1.2.0")
+        assert name.endswith((".zip", ".tar.gz"))
+
+    def test_candidates_include_legacy_spelling(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert self_update._asset_name_candidates("tray", "stable", "v1.2.0") == [
+            "Runway-Sidecar-Windows-v1.2.0.zip",
+            "Runway-Sidecar-Windows-1.2.0.zip",
+        ]
+
+    def test_edge_candidates_have_no_legacy(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert self_update._asset_name_candidates("tray", "edge", None) == [
+            "Runway-Sidecar-Windows-edge.zip"
+        ]
+
 
 # ---------------------------------------------------------------------------
 # find_asset_urls
@@ -108,6 +138,33 @@ class TestFindAssetUrls:
     def test_raises_when_asset_missing(self):
         with pytest.raises(SelfUpdateError):
             find_asset_urls(self._release(), "Runway-Sidecar-macOS-9.9.9.zip")
+
+    def test_candidate_list_falls_back_to_legacy_name(self):
+        asset, sha = find_asset_urls(
+            self._release(),
+            ["Runway-Sidecar-Linux-CLI-v1.2.0.tar.gz", "Runway-Sidecar-Linux-CLI-1.2.0.tar.gz"],
+        )
+        assert (asset, sha) == ("u/bin", "u/sha")
+
+    def test_candidate_list_prefers_primary_name(self):
+        release = {
+            "assets": [
+                {"name": "Runway-Sidecar-macOS-v1.2.0.zip", "browser_download_url": "new"},
+                {
+                    "name": "Runway-Sidecar-macOS-v1.2.0.zip.sha256",
+                    "browser_download_url": "new.sha",
+                },
+                {"name": "Runway-Sidecar-macOS-v1.2.0.dmg", "browser_download_url": "dmg"},
+                {"name": "Runway-Sidecar-macOS-1.2.0.zip", "browser_download_url": "old"},
+                {
+                    "name": "Runway-Sidecar-macOS-1.2.0.zip.sha256",
+                    "browser_download_url": "old.sha",
+                },
+            ]
+        }
+        assert find_asset_urls(
+            release, ["Runway-Sidecar-macOS-v1.2.0.zip", "Runway-Sidecar-macOS-1.2.0.zip"]
+        ) == ("new", "new.sha")
 
     def test_raises_when_checksum_missing(self):
         release = {
@@ -496,3 +553,42 @@ class TestApplyUpdateMacOSExecBit:
             # Owner-only rwx, matching the file branch's stated policy —
             # not a blanket +rx that would widen group/world permissions.
             assert stat.S_IMODE(binary.stat().st_mode) == 0o700
+
+
+# ---------------------------------------------------------------------------
+# running_from_disk_image (macOS DMG / App Translocation guard)
+# ---------------------------------------------------------------------------
+
+
+class TestRunningFromDiskImage:
+    @pytest.mark.parametrize(
+        "exe",
+        [
+            "/Volumes/Runway Sidecar/Runway Sidecar.app/Contents/MacOS/RunwaySidecar",
+            "/private/var/folders/x/AppTranslocation/ABCD/d/Runway Sidecar.app/Contents/MacOS/RunwaySidecar",
+        ],
+    )
+    def test_dmg_and_translocated_paths(self, exe):
+        assert self_update.running_from_disk_image(exe, "darwin") is True
+
+    def test_installed_app_is_not_disk_image(self):
+        exe = "/Applications/Runway Sidecar.app/Contents/MacOS/RunwaySidecar"
+        assert self_update.running_from_disk_image(exe, "darwin") is False
+
+    def test_non_macos_never_disk_image(self):
+        assert self_update.running_from_disk_image("/Volumes/x/RunwaySidecar", "linux") is False
+
+    def test_blocks_self_update_support(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        monkeypatch.setattr(self_update, "running_from_disk_image", lambda: True)
+        assert self_update.self_update_supported() is False
+
+    def test_self_update_noops_from_disk_image(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        monkeypatch.setattr(self_update, "running_from_disk_image", lambda: True)
+        monkeypatch.setattr(
+            self_update, "check_once", lambda *a: pytest.fail("must not reach the network")
+        )
+        assert self_update.self_update("1.0.0", "stable") is False

@@ -16,7 +16,7 @@ A `Makefile` wraps all common tasks — run `make help` for the full list. Key t
 - **Single test**: `pytest tests/path/to/test_file.py`
 - **Lint**: `make lint` (ruff + mypy + pip-audit). `make format` to auto-fix.
 - **Frontend**: `make web` (build the SPA into `webapp/dist` — what the server serves), `make web-dev` (Vite dev server on :5173, proxies `/api` to :8765; override target via `RUNWAY_API_URL`), `make web-test` (vitest).
-- **Sidecar**: `make sidecar` (sources `.env`; defaults `RUNWAY_CONFIG_DIR` to `./data` to match `make dev`, so its config/queue sit beside the dev DB).
+- **Sidecar**: `make sidecar` (sources `.env`; defaults `RUNWAY_CONFIG_DIR` to `./data` to match `make dev`, so its config/queue sit beside the dev DB). Packaging: `make sidecar-dmg` (macOS) / `make sidecar-installer` (NSIS; any OS with `makensis`).
 - **Secrets**: `make secrets` (gates — fails on any unbaselined credential in a tracked file; same check as CI). `make secrets-baseline` regenerates the baseline after vetting new detections.
 
 ## Environments (dev vs prod)
@@ -36,7 +36,7 @@ When adding new card fields, update `LimitCard` in `app/models/schemas.py`, the 
 - `pct_used`: float
 
 ## Branding
-One canonical mark: **`assets/logo.svg`**. Every other surface (the `webapp/public/favicon.svg` copy, PWA/home-screen icons, sidecar tray icons) is derived — run `make logo` to regenerate them all; never hand-edit a derived asset. The in-app `webapp/src/components/layout/RunwayMark.tsx` is a hand-maintained inline echo of the master (update by hand). See `docs/branding.md`.
+One canonical mark: **`assets/logo.svg`**. Every other surface (the `webapp/public/favicon.svg` copy, PWA/home-screen icons, sidecar tray icons, and the sidecar's native art in `installer/assets/`: `.icns`/`.ico` app icons, DMG background, NSIS wizard bitmaps) is derived — run `make logo` to regenerate them all; never hand-edit a derived asset. Installer artwork has its own canonical SVGs in `assets/installer/`. The in-app `webapp/src/components/layout/RunwayMark.tsx` is a hand-maintained inline echo of the master (update by hand). See `docs/branding.md`.
 
 ## Data Model
 Runway is **event-sourced**. The authoritative table is `usage_events` — one row per assistant message — and everything else is a derived view. All models live in `app/models/db.py`.
@@ -82,8 +82,10 @@ The core build/release workflows in `.github/workflows/` (alongside CodeQL, depe
   - **test**: pytest with coverage uploaded to Codecov
   - **build-and-push**: Docker image to GHCR — `:edge` on every push to `main`, `:latest` + version tag on a release (via the shared `docker-publish.yml`)
 - **`release-please.yml`** — opens / merges release PRs from Conventional Commits (see *Releases* below).
-- **`sidecar-release.yml`** — manual (`workflow_dispatch`); builds the standalone sidecar with PyInstaller and attaches macOS/Windows `.zip` + Linux/Linux-CLI `.tar.gz` artifacts to a GitHub release (stable channel).
-- **`sidecar-edge.yml`** — on push to `main` touching sidecar code; rolling per-commit builds for all four targets (Linux, Linux-CLI, macOS, Windows) stamped `<base>+edge.<sha>`, published to the always-overwritten `edge` prerelease — the sidecar analog of the Docker `:edge` tag. A flaky non-Linux runner doesn't block the rest (the publish job tolerates a partial set).
+- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the only place PyInstaller runs. Per release label (`vX.Y.Z` or `edge`) it builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`) installers, plus the `.zip`/`.tar.gz` self-update payloads for all four targets. Its `attest` job then writes `SHA256SUMS.txt` and Sigstore keyless `.sig`/`.cert` files. Every asset name comes from `scripts/sidecar_pkg/asset_names.py` (the updater's source of truth), and `tests/unit/test_sidecar_release_contract.py` pins it all together.
+- **`release-please.yml`**'s `build-sidecar`/`publish-sidecar` call it for stable releases. **`sidecar-release.yml`** is a manual wrapper (`workflow_dispatch`; empty `tag` = build-only artifacts, handy for testing installers from a branch).
+- **`sidecar-edge.yml`** — on push to `main` touching sidecar/installer code; calls `sidecar-build.yml` with `label: edge` (version stamped `<base>+edge.<sha>`) and publishes to the always-overwritten `edge` prerelease — the sidecar analog of the Docker `:edge` tag. A flaky non-Linux runner doesn't block the rest (`allow-partial`).
+- `ci-cd.yml` also compiles the NSIS installer on every PR (`installer-check`).
 
 Dependabot updates actions, pip, and npm weekly. Secrets baseline (`.secrets.baseline`) is tracked in git — required by CI.
 

@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks dev dev-all run run-all sidecar test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks dev dev-all run run-all sidecar sidecar-app sidecar-dmg sidecar-installer test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -44,6 +44,31 @@ sidecar: ## Run the sidecar agent (config → ./data to match `make dev`; overri
 	$(LOAD_ENV); \
 	RUNWAY_CONFIG_DIR="$${RUNWAY_CONFIG_DIR:-$(CURDIR)/data}" \
 	$(PYTHON) scripts/sidecar.py
+
+# --- Sidecar packaging (CI does the same in .github/workflows/sidecar-build.yml) ---
+SIDECAR_APP := dist/Runway Sidecar.app
+
+sidecar-app: ## macOS only: build + ad-hoc sign dist/Runway Sidecar.app (needs pyinstaller in the venv)
+	@[ "$$(uname)" = "Darwin" ] || { echo "sidecar-app needs macOS"; exit 1; }
+	$(VENV)/bin/pyinstaller --noconfirm sidecar_app/spec/macos.spec
+	codesign --force --deep --sign - "$(SIDECAR_APP)"
+	codesign --verify --strict --verbose=2 "$(SIDECAR_APP)"
+
+sidecar-dmg: sidecar-app ## macOS only: package the drag-to-Applications DMG (brew install create-dmg)
+	rm -rf dist/dmg-root dist/Runway-Sidecar-macOS-dev.dmg
+	mkdir -p dist/dmg-root
+	cp -R "$(SIDECAR_APP)" dist/dmg-root/
+	tiffutil -cathidpicheck installer/assets/dmg-background.png installer/assets/dmg-background@2x.png -out dist/dmg-background.tiff
+	create-dmg --volname "Runway Sidecar" --volicon installer/assets/app.icns \
+		--background dist/dmg-background.tiff --window-pos 200 120 --window-size 760 480 \
+		--icon-size 128 --icon "Runway Sidecar.app" 180 320 --hide-extension "Runway Sidecar.app" \
+		--app-drop-link 580 320 --no-internet-enable dist/Runway-Sidecar-macOS-dev.dmg dist/dmg-root/
+
+sidecar-installer: ## Compile the Windows NSIS installer from dist/RunwaySidecar.exe (needs makensis; works on Linux/macOS too)
+	@[ -f dist/RunwaySidecar.exe ] || { echo "dist/RunwaySidecar.exe missing — build it on Windows with pyinstaller sidecar_app/spec/windows.spec"; exit 1; }
+	eval "$$($(PYTHON) sidecar_app/spec/win_version.py)"; \
+	makensis -V2 -DVERSION="$$VERSION" -DPRODUCT_VERSION_QUAD="$$PRODUCT_VERSION_QUAD" installer/windows/runway-sidecar.nsi
+	@echo "→ dist/runway-sidecar-setup.exe"
 
 test: ## Run test suite (matches CI)
 	$(PYTEST)

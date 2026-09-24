@@ -29,79 +29,31 @@ jobs:
   build-sidecar:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            spec: sidecar_app/spec/macos.spec
-            platform: macOS
-            dist_path: "dist/Runway Sidecar.app"
-            ext: zip
-          - os: windows-latest
-            spec: sidecar_app/spec/windows.spec
-            platform: Windows
-            dist_path: dist/RunwaySidecar.exe
-            ext: zip
-          - os: ubuntu-latest
-            spec: sidecar_app/spec/linux.spec
-            platform: Linux
-            dist_path: dist/RunwaySidecar
-            ext: tar.gz
-          - os: ubuntu-latest
-            spec: sidecar_app/spec/linux-cli.spec
-            platform: Linux-CLI
-            dist_path: dist/runway-sidecar-cli
-            ext: tar.gz
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write  # Sigstore signing in sidecar-build.yml's attest job
+    uses: ./.github/workflows/sidecar-build.yml
+    with:
+      ref: ${{ needs.release-please.outputs.tag_name }}
+      label: ${{ needs.release-please.outputs.tag_name }}
+
+  publish-sidecar:
+    needs: [release-please, build-sidecar]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      ARTIFACT: Runway-Sidecar-${{ matrix.platform }}-${{ needs.release-please.outputs.tag_name }}.${{ matrix.ext }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Download signed asset set
+        uses: actions/download-artifact@v8
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -e . pystray Pillow pyinstaller packaging
-
-      - name: Build with PyInstaller
-        run: pyinstaller ${{ matrix.spec }}
-
-      - name: Zip artifact (macOS)
-        if: runner.os == 'macOS'
-        run: zip -r "${{ env.ARTIFACT }}" "${{ matrix.dist_path }}"
-
-      - name: Zip artifact (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Compress-Archive -Path "${{ matrix.dist_path }}" -DestinationPath "${{ env.ARTIFACT }}"
-
-      - name: Tar artifact (Linux)
-        if: runner.os == 'Linux'
-        run: tar -czf "${{ env.ARTIFACT }}" -C dist "$(basename '${{ matrix.dist_path }}')"
-
-      - name: Checksum (macOS/Linux)
-        if: runner.os != 'Windows'
-        run: shasum -a 256 "${{ env.ARTIFACT }}" > "${{ env.ARTIFACT }}.sha256"
-
-      - name: Checksum (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $h = (Get-FileHash "${{ env.ARTIFACT }}" -Algorithm SHA256).Hash.ToLower()
-          "$h  ${{ env.ARTIFACT }}" | Out-File -Encoding ascii "${{ env.ARTIFACT }}.sha256"
+          name: sidecar-release-assets
+          path: release-assets
 
       - name: Upload to GitHub Release
+        # .dmg / -setup.exe installers, .zip / .tar.gz self-update payloads,
+        # per-asset .sha256, SHA256SUMS.txt and Sigstore .sig/.cert files.
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: |
-            ${{ env.ARTIFACT }}
-            ${{ env.ARTIFACT }}.sha256
+          files: release-assets/*
+          fail_on_unmatched_files: true
