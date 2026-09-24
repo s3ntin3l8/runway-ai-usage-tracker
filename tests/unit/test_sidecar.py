@@ -298,6 +298,115 @@ class TestQueueRotate:
         assert entry["payload"] == {"provider": "test", "metrics": []}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Unix queue permission semantics")
+class TestSecureQueueStorage:
+    def _use_dirs(self, monkeypatch, root: Path) -> tuple[Path, Path]:
+        sidecar_dir = root / "sidecar"
+        queue_dir = sidecar_dir / "queue"
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: sidecar_dir)
+        monkeypatch.setattr(sidecar, "get_queue_dir", lambda: queue_dir)
+        return sidecar_dir, queue_dir
+
+    def test_push_secures_directories_and_file_under_permissive_umask(self, tmp_path, monkeypatch):
+        sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
+        old_umask = os.umask(0o022)
+        try:
+            sidecar.queue_push({"credential": "synthetic-secret"})
+        finally:
+            os.umask(old_umask)
+
+        queue_file = next(queue_dir.glob("*.jsonl"))
+        assert sidecar_dir.stat().st_mode & 0o777 == 0o700
+        assert queue_dir.stat().st_mode & 0o777 == 0o700
+        assert queue_file.stat().st_mode & 0o777 == 0o600
+        assert "synthetic-secret" in queue_file.read_text()
+
+    def test_push_repairs_permissive_directory_and_file_preserving_content(
+        self, tmp_path, monkeypatch
+    ):
+        sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
+        queue_dir.mkdir(parents=True, mode=0o777)
+        queue_file = queue_dir / "2026-01-01.jsonl"
+        original = '{"ts":1,"payload":{"credential":"keep-me"}}\n'
+        queue_file.write_text(original)
+        sidecar_dir.chmod(0o777)
+        queue_dir.chmod(0o777)
+        queue_file.chmod(0o644)
+
+        sidecar.queue_push({"provider": "test"})
+
+        assert sidecar_dir.stat().st_mode & 0o777 == 0o700
+        assert queue_dir.stat().st_mode & 0o777 == 0o700
+        assert queue_file.stat().st_mode & 0o777 == 0o600
+        assert queue_file.read_text().startswith(original)
+
+    def test_push_rejects_symlinked_queue_file(self, tmp_path, monkeypatch):
+        _sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
+        queue_dir.mkdir(parents=True)
+        target = tmp_path / "outside.jsonl"
+        target.write_text("private target\n")
+        (
+            queue_dir / f"{sidecar.datetime.datetime.now(sidecar.datetime.UTC):%Y-%m-%d}.jsonl"
+        ).symlink_to(target)
+
+        with pytest.raises(OSError):
+            sidecar.queue_push({"credential": "secret"})
+        assert target.read_text() == "private target\n"
+
+    def test_rejects_symlinked_sidecar_directory(self, tmp_path, monkeypatch):
+        sidecar_dir = tmp_path / "sidecar"
+        target = tmp_path / "outside"
+        target.mkdir()
+        sidecar_dir.symlink_to(target, target_is_directory=True)
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: sidecar_dir)
+        monkeypatch.setattr(sidecar, "get_queue_dir", lambda: sidecar_dir / "queue")
+
+        with pytest.raises(OSError):
+            sidecar.queue_push({"credential": "secret"})
+        assert list(target.iterdir()) == []
+
+    def test_rejects_symlinked_queue_directory(self, tmp_path, monkeypatch):
+        sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
+        sidecar_dir.mkdir()
+        target = tmp_path / "outside-queue"
+        target.mkdir()
+        queue_dir.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(OSError):
+            sidecar.queue_push({"credential": "secret"})
+        assert list(target.iterdir()) == []
+
+    def test_flush_repairs_failed_entry_and_preserves_jsonl(self, tmp_path, monkeypatch):
+        _sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
+        queue_dir.mkdir(parents=True)
+        queue_file = queue_dir / "2026-01-01.jsonl"
+        line = '{"ts":1,"payload":{"credential":"preserve"}}\n'
+        queue_file.write_text(line)
+        queue_file.chmod(0o644)
+        monkeypatch.setattr(
+            sidecar,
+            "http_post_signed_with_retry",
+            lambda *args, **kwargs: (False, 0, "offline"),
+        )
+
+        assert sidecar.queue_flush("http://localhost", "synthetic-key") == 0
+        assert queue_file.stat().st_mode & 0o777 == 0o600
+        assert queue_file.read_text() == line
+
+    def test_flush_and_rotation_leave_symlink_target_untouched(self, tmp_path, monkeypatch):
+        _sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
+        queue_dir.mkdir(parents=True)
+        target = tmp_path / "outside.jsonl"
+        target.write_text('{"payload":{"credential":"do-not-read"}}\n')
+        link = queue_dir / "2026-01-01.jsonl"
+        link.symlink_to(target)
+
+        assert sidecar.queue_flush("http://localhost", "synthetic-key") == 0
+        sidecar.queue_rotate(max_size_mb=0)
+        assert link.is_symlink()
+        assert target.read_text() == '{"payload":{"credential":"do-not-read"}}\n'
+
+
 class TestKimiCliCredentialGlob:
     """kimi-cli writes a per-install credential file (kimi-code-env-<hash>.json),
     so the kimi_coding file rule must glob the credentials dir — and the scrape

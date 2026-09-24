@@ -27,6 +27,7 @@ import signal
 import socket
 import sqlite3
 import ssl
+import stat
 import struct
 import subprocess
 import sys
@@ -586,8 +587,21 @@ def get_hostname() -> str:
 
 def ensure_dirs() -> None:
     """Ensure all required directories exist."""
-    get_sidecar_dir().mkdir(parents=True, exist_ok=True)
-    get_queue_dir().mkdir(parents=True, exist_ok=True)
+    sidecar_dir = get_sidecar_dir()
+    queue_dir = get_queue_dir()
+    if os.name == "nt":
+        sidecar_dir.mkdir(parents=True, exist_ok=True)
+        queue_dir.mkdir(parents=True, exist_ok=True)
+        return
+    # The configured parent is trusted; these two directories are sidecar-owned.
+    sidecar_dir.parent.mkdir(parents=True, exist_ok=True)
+    for path in (sidecar_dir, queue_dir):
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = _open_directory(path)
+        try:
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
 
 
 def load_config(config_path: str | None = None) -> dict[str, Any]:
@@ -823,19 +837,104 @@ def setup_signal_handlers() -> None:
 # --- Queue Management ---
 
 
+def _open_directory(path: Path) -> int:
+    """Open a directory without following a symlink (Unix only)."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise OSError("This platform cannot securely open queue directories")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(f"Not a directory: {path}")
+    return fd
+
+
+def _secure_queue_dir() -> int:
+    """Return an open queue directory descriptor, secured on Unix."""
+    ensure_dirs()
+    fd = _open_directory(get_queue_dir())
+    if os.name != "nt":
+        os.fchmod(fd, 0o700)
+    return fd
+
+
+def _open_queue_file(dir_fd: int, name: str, flags: int, mode: int = 0o600) -> int:
+    """Open a regular queue file without following symlinks and secure it."""
+    before = None
+    if os.name != "nt":
+        try:
+            before = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if not flags & os.O_CREAT:
+                raise
+        if before is not None:
+            if not stat.S_ISREG(before.st_mode):
+                raise OSError(f"Queue entry is not a regular file: {name}")
+            # chmod through the validated directory entry allows recovery of
+            # a regular file whose mode was changed to 000, without following links.
+            os.chmod(name, 0o600, dir_fd=dir_fd, follow_symlinks=False)
+    nofollow = getattr(os, "O_NOFOLLOW", 0) if os.name != "nt" else 0
+    fd = os.open(name, flags | nofollow, mode, dir_fd=dir_fd)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OSError(f"Queue entry is not a regular file: {name}")
+        if before is not None and (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise OSError(f"Queue entry changed during access: {name}")
+        if os.name != "nt":
+            os.fchmod(fd, 0o600)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _queue_names(dir_fd: int) -> list[str]:
+    return sorted(name for name in os.listdir(dir_fd) if name.endswith(".jsonl"))
+
+
+def _unlink_queue_file(dir_fd: int, name: str) -> None:
+    """Unlink only after reopening and validating the regular queue file."""
+    fd = _open_queue_file(dir_fd, name, os.O_RDONLY)
+    try:
+        info = os.fstat(fd)
+        current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if not stat.S_ISREG(current.st_mode) or (info.st_dev, info.st_ino) != (
+            current.st_dev,
+            current.st_ino,
+        ):
+            raise OSError(f"Queue entry changed during deletion: {name}")
+        os.unlink(name, dir_fd=dir_fd)
+    finally:
+        os.close(fd)
+
+
 def queue_push(payload: dict[str, Any]) -> None:
     """Add payload to offline queue."""
-    ensure_dirs()
-    queue_dir = get_queue_dir()
+    if os.name == "nt":
+        ensure_dirs()
 
     # Create queue file for today
     today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
-    queue_file = queue_dir / f"{today}.jsonl"
+    queue_file = get_queue_dir() / f"{today}.jsonl"
 
     entry = {"ts": int(time.time()), "payload": payload}
 
-    with open(queue_file, "a") as f:
-        f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    if os.name == "nt":
+        with open(queue_file, "a") as f:
+            f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    else:
+        dir_fd = _secure_queue_dir()
+        try:
+            fd = _open_queue_file(
+                dir_fd,
+                queue_file.name,
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+            )
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        finally:
+            os.close(dir_fd)
 
     logging.info(f"Queued payload for retry: {queue_file.name}")
     queue_rotate()
@@ -844,7 +943,7 @@ def queue_push(payload: dict[str, Any]) -> None:
 def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) -> None:
     """Rotate queue files, removing oldest if total size exceeds limit."""
     queue_dir = get_queue_dir()
-    if not queue_dir.exists():
+    if os.name == "nt" and not queue_dir.exists():
         return
 
     if max_size_mb is None and config:
@@ -852,23 +951,51 @@ def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) ->
 
     max_size_bytes = max_size_mb * 1024 * 1024
 
-    # Get all queue files sorted by modification time (oldest first)
-    queue_files = sorted(queue_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    if os.name == "nt":
+        queue_files = sorted(queue_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+        total_size = sum(f.stat().st_size for f in queue_files)
+        while total_size > max_size_bytes and queue_files:
+            oldest = queue_files.pop(0)
+            try:
+                size = oldest.stat().st_size
+                oldest.unlink()
+                total_size -= size
+                logging.warning(f"Queue rotation: removed {oldest.name} ({size} bytes)")
+            except Exception as e:
+                logging.error(f"Failed to remove old queue file {oldest}: {e}")
+                break
+        return
 
-    # Calculate total size
-    total_size = sum(f.stat().st_size for f in queue_files)
-
-    # Remove oldest files until under limit
-    while total_size > max_size_bytes and queue_files:
-        oldest = queue_files.pop(0)
-        try:
-            size = oldest.stat().st_size
-            oldest.unlink()
-            total_size -= size
-            logging.warning(f"Queue rotation: removed {oldest.name} ({size} bytes)")
-        except Exception as e:
-            logging.error(f"Failed to remove old queue file {oldest}: {e}")
-            break
+    try:
+        dir_fd = _secure_queue_dir()
+    except Exception as e:
+        logging.error(f"Failed to access queue directory: {e}")
+        return
+    try:
+        entries = []
+        for name in _queue_names(dir_fd):
+            try:
+                fd = _open_queue_file(dir_fd, name, os.O_RDONLY)
+                try:
+                    info = os.fstat(fd)
+                    entries.append((info.st_mtime, name, info.st_size))
+                finally:
+                    os.close(fd)
+            except Exception as e:
+                logging.error(f"Failed to secure queue file {name}: {e}")
+        entries.sort()
+        total_size = sum(size for _, _, size in entries)
+        while total_size > max_size_bytes and entries:
+            _, name, size = entries.pop(0)
+            try:
+                _unlink_queue_file(dir_fd, name)
+                total_size -= size
+                logging.warning(f"Queue rotation: removed {name} ({size} bytes)")
+            except Exception as e:
+                logging.error(f"Failed to remove old queue file {name}: {e}")
+                break
+    finally:
+        os.close(dir_fd)
 
 
 def queue_flush(
@@ -878,11 +1005,21 @@ def queue_flush(
 ) -> int:
     """Flush all queued payloads to server. Returns count of successful sends."""
     queue_dir = get_queue_dir()
-    if not queue_dir.exists():
+    if os.name == "nt" and not queue_dir.exists():
         return 0
 
-    queue_files = sorted(queue_dir.glob("*.jsonl"))
+    if os.name == "nt":
+        queue_files = sorted(queue_dir.glob("*.jsonl"))
+    else:
+        try:
+            dir_fd = _secure_queue_dir()
+            queue_files = _queue_names(dir_fd)
+        except Exception as e:
+            logging.error(f"Failed to access queue directory: {e}")
+            return 0
     if not queue_files:
+        if os.name != "nt":
+            os.close(dir_fd)
         return 0
 
     count = 0
@@ -893,13 +1030,20 @@ def queue_flush(
             logging.info("queue_flush: stop requested, aborting flush")
             break
         try:
-            with open(queue_file) as f:
-                lines = f.readlines()
+            if os.name == "nt":
+                with open(queue_file) as f:
+                    lines = f.readlines()
+            else:
+                fd = _open_queue_file(dir_fd, queue_file, os.O_RDONLY)
+                with os.fdopen(fd, encoding="utf-8") as f:
+                    lines = f.readlines()
 
             failed_lines = []
             for line in lines:
                 if stop_event and stop_event.is_set():
                     logging.info("queue_flush: stop requested, aborting flush")
+                    if os.name != "nt":
+                        os.close(dir_fd)
                     return count
                 line = line.strip()
                 if not line:
@@ -925,18 +1069,34 @@ def queue_flush(
 
             # Remove file if all sent successfully, otherwise rewrite with failures
             if not failed_lines:
-                queue_file.unlink()
-                logging.info(f"Queue file processed and removed: {queue_file.name}")
+                if os.name == "nt":
+                    queue_file.unlink()
+                    name = queue_file.name
+                else:
+                    _unlink_queue_file(dir_fd, queue_file)
+                    name = queue_file
+                logging.info(f"Queue file processed and removed: {name}")
             else:
-                with open(queue_file, "w") as f:
-                    for line in failed_lines:
-                        f.write(line + "\n")
+                if os.name == "nt":
+                    with open(queue_file, "w") as f:
+                        for line in failed_lines:
+                            f.write(line + "\n")
+                else:
+                    fd = _open_queue_file(dir_fd, queue_file, os.O_WRONLY | os.O_TRUNC)
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        for line in failed_lines:
+                            f.write(line + "\n")
                 logging.warning(
-                    f"Queue file has {len(failed_lines)} failed entries: {queue_file.name}"
+                    f"Queue file has {len(failed_lines)} failed entries: {getattr(queue_file, 'name', queue_file)}"
                 )
 
         except Exception as e:
-            logging.error(f"Failed to process queue file {queue_file}: {e}")
+            logging.error(
+                f"Failed to process queue file {getattr(queue_file, 'name', queue_file)}: {e}"
+            )
+
+    if os.name != "nt":
+        os.close(dir_fd)
 
     return count
 
