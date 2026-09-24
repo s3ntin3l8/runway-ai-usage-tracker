@@ -369,6 +369,7 @@ class TokenCache:
                     exp = IdentityExtractor.exp_from_tokens(tokens)
                     if exp is not None and exp < now:
                         del self._cache[provider][acc_id]
+                        self._token_timestamps.get(provider, {}).pop(acc_id, None)
                         removed += 1
                         logger.info(f"Purged expired unrefreshable token for {provider}/{acc_id}")
                 if not self._cache[provider]:
