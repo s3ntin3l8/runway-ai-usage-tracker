@@ -2,20 +2,20 @@
 
 **File:** `app/services/collectors/ollama.py`
 
-The Ollama provider scrapes the **Plan & Settings** page at `https://ollama.com/settings` to extract Cloud Usage limits for session and weekly windows.
+The Ollama provider scrapes the **Plan & Settings** page at `https://ollama.com/settings` to extract included-usage limits (one card per usage meter; the window type is inferred from the meter label, falling back to the reset horizon).
 
 ## Overview
 
 
 - **Collection Strategy**: web (Scraping)
-- **Cards**: 2 cards (Session and Weekly usage windows)
-- **Authentication**: Browser cookie (web) or `OLLAMA_SESSION_TOKEN` (web).
+- **Cards**: one card per usage meter (legacy markup: Session and Weekly usage windows)
+- **Authentication**: Browser cookie (web, pushed by the sidecar) or `OLLAMA_SESSION_TOKEN` (web).
 
 ## Setup Methods Quick Overview
 
 The Ollama collector supports the following authentication methods:
 
-1.  **Browser Cookie**: Automatically extracted from your local browser.
+1.  **Browser Cookie**: Extracted from your local browser by the sidecar.
     *   **Method**: Log in to `https://ollama.com/settings` in your browser (Chrome/Safari/Firefox/Edge). Runway will automatically pick up the session cookie.
     *   **Details**: See [Primary: Ollama Plan & Settings Page](#primary-ollama-plan--settings-page).
 
@@ -27,8 +27,8 @@ The Ollama collector supports the following authentication methods:
 
 ### Primary: Ollama Plan & Settings Page
 **Endpoint:** `https://ollama.com/settings`
-**Auth:** Browser `session` or `ollama_session` cookie
-**Details:** The collector fetches the HTML, uses regex to find usage blocks, parses percentage used, and extracts `data-time` for reset timestamps. Reads plan tier (Free/Pro/Max) from the Cloud Usage header. If multiple session cookies are available, it uses the first one found in the registry-defined order.
+**Auth:** Browser `__Secure-session` (or `session`) cookie — a bare value or a full `Cookie` header is accepted
+**Details:** The collector fetches the HTML, reads each `data-usage-track` meter's `aria-label` (e.g. `Free usage 0% used`) for percentage used, and the nearby `data-time` for reset timestamps; legacy labeled usage blocks (`Session usage` / `Weekly usage`) remain supported as a fallback. Plan tier (Free/Pro/Max) is read from the `Included usage` (legacy: `Cloud Usage`) heading badge. Multiple cookie sources are tried in order: settings UI → `OLLAMA_SESSION_TOKEN` → sidecar push.
 
 ## Output Format
 
@@ -59,10 +59,10 @@ The Ollama collector supports the following authentication methods:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OLLAMA_SESSION_TOKEN` | Optional* | Ollama session cookie value (auto-discovered if not set) |
+| `OLLAMA_SESSION_TOKEN` | Optional* | Ollama session cookie value or full `Cookie` header (auto-discovered if not set) |
 
 > [!CAUTION]
-> **API Keys are not supported**: Ollama Cloud API keys (found at `ollama.com/settings/keys`) cannot be used for quota tracking as there is currently no public API for account usage. You **must** provide a browser session cookie (`ollama_session`).
+> **API Keys are not supported**: Ollama Cloud API keys (found at `ollama.com/settings/keys`) cannot be used for quota tracking as there is currently no public API for account usage. You **must** provide a browser session cookie (`__Secure-session`, or a bare value from the `Cookie` header).
 
 *Either auto-discovery or environment variable required.
 
@@ -117,7 +117,7 @@ If the cookie doesn't appear in the "Application" tab, use the **Network** tab:
 3. Refresh the page.
 4. Click on the request named **`settings`**.
 5. Look at the **Request Headers** section for the **`Cookie`** header.
-6. Copy the entire value of the `Cookie` header (it should contain `ollama_session=...`).
+6. Copy either the full value of the `Cookie` header or just the `__Secure-session=...` entry (a bare value with no cookie name also works — Runway sends it under both `session` and `__Secure-session`).
 7. Paste this into the Runway settings for Ollama.
 
 ## Related Files

@@ -3,15 +3,17 @@ Ollama Cloud quota collector.
 
 Collection Strategy:
 1. Primary: Scrape https://ollama.com/settings
-   - Requires session cookie from environment (OLLAMA_SESSION_TOKEN) or browser.
-   - Parses Cloud Usage section for session and weekly quotas.
+   - Requires session cookie from environment (OLLAMA_SESSION_TOKEN), settings UI,
+     or a sidecar-pushed browser cookie.
+   - Parses usage meters (WorkOS "Included usage" redesign; pre-rename
+     "Cloud Usage" / labeled blocks still supported) for window quotas.
    - Extracts plan name, account email, usage percentages, and reset timestamps.
 """
 
 import asyncio
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -47,13 +49,28 @@ class OllamaCollector(BaseCollector):
     )
 
     # Pre-compiled regex patterns for performance
-    RE_PLAN_NAME = re.compile(r"Cloud Usage\s*</span>\s*<span[^>]*>([^<]+)</span>")
-    RE_PLAN_NAME_FALLBACK = re.compile(r"<span[^>]*capitalize[^>]*>([^<]+)</span>")
+    RE_PLAN_NAME = re.compile(
+        r"(?:Cloud Usage|Included usage)\s*</span>\s*<span[^>]*>([^<]+)</span\s*>"
+    )
+    RE_PLAN_NAME_FALLBACK = re.compile(r"<span[^>]*capitalize[^>]*>([^<]+)</span\s*>")
     RE_EMAIL = re.compile(r'id="header-email"[^>]*>([^<]+)<')
     RE_PERCENT_USED = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*used", re.IGNORECASE)
     RE_PERCENT_REMAINING = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*remaining", re.IGNORECASE)
     RE_WIDTH = re.compile(r"width:\s*([0-9]+(?:\.[0-9]+)?)%", re.IGNORECASE)
     RE_DATA_TIME = re.compile(r'data-time="([^"]+)"')
+    # WorkOS redesign: usage lives in <div data-usage-track aria-label="Free usage 0% used">
+    RE_USAGE_TRACK_TAG = re.compile(r"<[^>]*\bdata-usage-track\b[^>]*>", re.IGNORECASE)
+    RE_ARIA_LABEL = re.compile(r'aria-label="([^"]+)"', re.IGNORECASE)
+
+    # Meter label → window_type; labels with no keyword fall back to reset horizon.
+    WINDOW_TYPE_KEYWORDS = (
+        ("hourly", "session"),
+        ("session", "session"),
+        ("weekly", "weekly"),
+        ("daily", "daily"),
+        ("monthly", "monthly"),
+        ("free", "monthly"),
+    )
 
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
@@ -123,35 +140,42 @@ class OllamaCollector(BaseCollector):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
 
+    def _wrap_cookie(self, token: str) -> str:
+        """Turn a bare cookie value into a usable Cookie header.
+
+        The WorkOS migration serves the same value under both `session` and
+        `__Secure-session`; only the latter is accepted. A value without a
+        recognized cookie name is therefore emitted under both names.
+        """
+        if self.RE_COOKIE_PATTERN.search(token):
+            return token
+        # A full Cookie header under other names still passes through untouched
+        parts = [part.strip() for part in token.split(";") if part.strip()]
+        if len(parts) > 1 and all("=" in part for part in parts):
+            return token
+        return f"session={token}; __Secure-session={token}"
+
     async def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
         # 1. DB-stored session cookie (manual override set via settings UI)
         db_token = credential_provider.get_provider_session_cookie("ollama")
         if db_token:
             self._current_input_source = "config"
-            token = db_token.strip()
-            # If the user pasted a string that already contains a recognized cookie name, return as is.
-            # Otherwise, default to prepending "session=" for backward compatibility.
-            if self.RE_COOKIE_PATTERN.search(token):
-                return token
-            return f"session={token}"
+            return self._wrap_cookie(db_token.strip())
 
         # 2. Check environment variable
         env_token = settings.OLLAMA_SESSION_TOKEN
         if env_token:
             self._current_input_source = "server"
-            return f"session={env_token}"
+            return self._wrap_cookie(env_token.strip())
 
         # 3. Sidecar-pushed cookie via token cache (browser scraping moved to sidecar)
-        cookie = await token_cache.get_token(
-            "ollama", "session_cookie", account_id=self.account_id or "default"
-        )
+        # Sidecar rules store under `cookie_session`; settings UI uses `session_cookie`.
+        tokens = await token_cache.get("ollama", account_id=self.account_id or "default")
+        cookie = (tokens.get("session_cookie") or tokens.get("cookie_session")) if tokens else None
         if cookie:
             self._current_input_source = "sidecar"
-            cookie = cookie.strip()
-            if self.RE_COOKIE_PATTERN.search(cookie):
-                return cookie
-            return f"session={cookie}"
+            return self._wrap_cookie(cookie.strip())
 
         return None
 
@@ -172,16 +196,15 @@ class OllamaCollector(BaseCollector):
         if not header:
             return False
 
-        # Extract only the value if it's "session=value"
-        clean_value = header
-        if header.startswith("session="):
-            clean_value = header[len("session=") :]
-
-        # Check if the value looks like an API key instead of a session cookie
-        if self.RE_API_KEY_PATTERN.search(clean_value):
-            logger.debug("Ollama: API key format detected instead of session cookie")
-            self._last_error_reason = "invalid_credential_type"
-            return False
+        # Check every pair's value: a wrapped bare token ("session=<value>") must
+        # still trip the API-key guard, not just a bare value.
+        for part in header.split(";"):
+            name, _, value = part.strip().partition("=")
+            candidate = value or name
+            if self.RE_API_KEY_PATTERN.match(candidate):
+                logger.debug("Ollama: API key format detected instead of session cookie")
+                self._last_error_reason = "invalid_credential_type"
+                return False
 
         return self.RE_COOKIE_PATTERN.search(header) is not None
 
@@ -233,25 +256,27 @@ class OllamaCollector(BaseCollector):
             self._last_error_reason = "not_logged_in"
             return []  # Empty list signals "not logged in" to error handler
 
-        # Check if no usage blocks found (but not logged out)
-        # Parse both blocks in one pass to avoid double html.find() calls
-        session_block, weekly_block = self._get_usage_blocks(html)
+        now = datetime.now(UTC)
 
-        if not session_block and not weekly_block:
+        blocks = self._get_usage_blocks(html, now)
+        if not blocks:
             logger.debug("Ollama: no usage data found in response")
             self._last_error_reason = "missing_data"
             return []
 
         # If we get here, we have data - parse normally
-        now = datetime.now(UTC)
 
         # 1. Extract Plan Name
-        # The badge sits near "Cloud Usage": <span class="... capitalize">free</span>
-        # Search within a small window after "Cloud Usage" to avoid matching usage blocks.
+        # The badge sits next to the usage heading:
+        #   <span>Included usage</span> <span class="... capitalize">free</span>
+        # (legacy markup: "Cloud Usage"). Search a small window after the heading
+        # to avoid matching usage blocks.
         plan_name = None
-        cu_idx = html.find("Cloud Usage")
-        if cu_idx != -1:
-            plan_window = html[cu_idx : cu_idx + self.WINDOW_PLAN]
+        heading_idx = html.find("Cloud Usage")
+        if heading_idx == -1:
+            heading_idx = html.find("Included usage")
+        if heading_idx != -1:
+            plan_window = html[heading_idx : heading_idx + self.WINDOW_PLAN]
             # Try specific pattern first (Swift approach), fallback to capitalize class
             plan_match = self.RE_PLAN_NAME.search(plan_window)
             if not plan_match:
@@ -272,15 +297,13 @@ class OllamaCollector(BaseCollector):
             )
             self.account_label = email
 
-        # 3. Build cards using already-parsed blocks
-        cards = []
-        if session_block:
-            cards.append(self._make_card("Ollama", "session", session_block, plan_name, email, now))
-
-        if weekly_block:
-            cards.append(self._make_card("Ollama", "weekly", weekly_block, plan_name, email, now))
-
-        return cards
+        # 3. Build cards using already-parsed blocks (session/weekly first)
+        order = {"session": 0, "weekly": 1}
+        blocks.sort(key=lambda block: order.get(block["window_type"], 2))
+        return [
+            self._make_card("Ollama", block["window_type"], block, plan_name, email, now)
+            for block in blocks
+        ]
 
     def _get_usage_block(self, labels: list[str], html: str) -> dict[str, Any] | None:
         for label in labels:
@@ -325,61 +348,116 @@ class OllamaCollector(BaseCollector):
             return {"used_percent": pct, "resets_at": resets_at}
         return None
 
-    def _get_usage_blocks(self, html: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Parse both session and weekly usage blocks in one pass.
+    def _get_usage_blocks(self, html: str, now: datetime) -> list[dict[str, Any]]:
+        """Parse every usage meter on the page.
 
-        Returns:
-            Tuple of (session_block, weekly_block)
+        The WorkOS redesign replaced labeled usage blocks with `data-usage-track`
+        meters whose aria-label carries the percentage; the label loop remains as
+        the fallback for the pre-rename markup.
         """
-        session_block = None
-        weekly_block = None
+        blocks = self._get_meter_blocks(html, now)
+        if blocks:
+            return blocks
+        return self._get_label_blocks(html)
 
-        session_labels = ["Session usage", "Hourly usage"]
+    def _parse_percent(self, text: str) -> float | None:
+        pct_match = self.RE_PERCENT_USED.search(text)
+        if pct_match:
+            return float(pct_match.group(1))
+        # "% remaining" and bar width both describe remaining capacity — invert
+        pct_match = self.RE_PERCENT_REMAINING.search(text)
+        if pct_match:
+            return 100.0 - float(pct_match.group(1))
+        pct_match = self.RE_WIDTH.search(text)
+        if pct_match:
+            return 100.0 - float(pct_match.group(1))
+        return None
 
-        for label in session_labels + ["Weekly usage"]:
+    def _parse_reset(self, text: str) -> datetime | None:
+        date_match = self.RE_DATA_TIME.search(text)
+        if not date_match:
+            return None
+        raw_date = date_match.group(1)
+        try:
+            return parse_iso8601_utc(raw_date)
+        except ValueError:
+            logger.debug("Failed to parse Ollama reset date %r", raw_date, exc_info=True)
+            return None
+
+    def _window_type_for(self, label: str, resets_at: datetime | None, now: datetime) -> str:
+        lower_label = label.lower()
+        for keyword, window_type in self.WINDOW_TYPE_KEYWORDS:
+            if keyword in lower_label:
+                return window_type
+        if resets_at is None:
+            return self.DEFAULT_WINDOW_TYPE
+        horizon = resets_at - now
+        if horizon <= timedelta(days=1.5):
+            return "daily"
+        if horizon <= timedelta(days=8):
+            return "weekly"
+        if horizon <= timedelta(days=35):
+            return "monthly"
+        return "rolling"
+
+    def _get_meter_blocks(self, html: str, now: datetime) -> list[dict[str, Any]]:
+        """Parse WorkOS `data-usage-track` meters (aria-label carries the %)."""
+        blocks: list[dict[str, Any]] = []
+        seen_types: set[str] = set()
+
+        for tag_match in self.RE_USAGE_TRACK_TAG.finditer(html):
+            label_match = self.RE_ARIA_LABEL.search(tag_match.group(0))
+            if not label_match:
+                continue
+            label = label_match.group(1).strip()
+
+            # aria-label is authoritative; the visible text is only a fallback
+            window = html[tag_match.end() : tag_match.end() + self.WINDOW_USAGE]
+            pct = self._parse_percent(label)
+            if pct is None:
+                pct = self._parse_percent(window)
+            if pct is None:
+                continue
+
+            resets_at = self._parse_reset(window)
+            window_type = self._window_type_for(label, resets_at, now)
+            if window_type in seen_types:
+                continue
+            seen_types.add(window_type)
+            blocks.append({"used_percent": pct, "resets_at": resets_at, "window_type": window_type})
+
+        return blocks
+
+    def _get_label_blocks(self, html: str) -> list[dict[str, Any]]:
+        """Parse legacy labeled blocks ("Session usage" / "Weekly usage" + bar)."""
+        blocks: list[dict[str, Any]] = []
+        label_types = (
+            ("Session usage", "session"),
+            ("Hourly usage", "session"),
+            ("Weekly usage", "weekly"),
+        )
+
+        for label, window_type in label_types:
+            if any(block["window_type"] == window_type for block in blocks):
+                continue
             idx = html.find(label)
             if idx == -1:
                 continue
 
             window = html[idx : idx + self.WINDOW_USAGE]
-
-            pct = None
-            pct_match = self.RE_PERCENT_USED.search(window)
-            if pct_match:
-                pct = float(pct_match.group(1))
-            else:
-                pct_match = self.RE_PERCENT_REMAINING.search(window)
-                if pct_match:
-                    pct = 100.0 - float(pct_match.group(1))
-                else:
-                    pct_match = self.RE_WIDTH.search(window)
-                    if pct_match:
-                        pct = 100.0 - float(pct_match.group(1))
-
+            pct = self._parse_percent(window)
             if pct is None:
                 continue
 
-            resets_at = None
-            date_match = self.RE_DATA_TIME.search(window)
-            if date_match:
-                raw_date = date_match.group(1)
-                try:
-                    resets_at = parse_iso8601_utc(raw_date)
-                except ValueError:
-                    logger.debug(
-                        "Failed to parse Ollama block reset date %r", raw_date, exc_info=True
-                    )
+            blocks.append(
+                {
+                    "used_percent": pct,
+                    "resets_at": self._parse_reset(window),
+                    "window_type": window_type,
+                }
+            )
 
-            block = {"used_percent": pct, "resets_at": resets_at}
-
-            if label in session_labels and session_block is None:
-                block["window_type"] = "session"
-                session_block = block
-            elif label == "Weekly usage" and weekly_block is None:
-                block["window_type"] = "weekly"
-                weekly_block = block
-
-        return session_block, weekly_block
+        return blocks
 
     def _make_card(
         self,
