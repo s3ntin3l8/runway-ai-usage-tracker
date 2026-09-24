@@ -1196,6 +1196,14 @@ async def delete_provider_config_for_account(
 
     Cascades:
       - ``LatestUsage`` cards evicted from ``latest_usage``.
+      - stored credentials cleared (``api_key`` / ``session_cookie`` →
+        ``None``) — Remove is destructive: the dialog's confirm copy
+        promises the stored credentials go with it, and keeping them
+        would let a later re-enable re-cache them
+        (PR #317 round-2 review warning). Note the distinction from
+        PUT-archive (``archived: true`` via the ProviderPage archive
+        toggle), which only hides the account and keeps credentials
+        for easy un-archive.
       - in-memory ``token_cache`` entry dropped so collectors don't keep
         fetching credentials for the removed account.
       - ``credential_tags`` rows whose ``account_id`` matches are deleted
@@ -1249,9 +1257,15 @@ async def delete_provider_config_for_account(
 
     # Soft-archive instead of hard-delete (see docstring). Mirrors the
     # PUT helper's archived-toggle cascade: archiving forces enabled=False
-    # so no collector keeps polling.
+    # so no collector keeps polling. Also wipe the stored credential blobs —
+    # Remove is destructive (the dialog's confirm copy promises it), and a
+    # kept credential could be re-cached if the row were ever re-enabled
+    # (PR #317 round-2 review warning). PUT-archive deliberately does NOT
+    # clear credentials; archive ≠ remove.
     row.archived = True
     row.enabled = False
+    row.api_key = None
+    row.session_cookie = None
     session.add(row)
     session.commit()
 
@@ -1504,6 +1518,17 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # the Settings dialog always sends both fields).
         elif body.enabled is None and not body.archived and not row.enabled:
             row.enabled = True
+    # PR #317 round-2 review warning: enforce the archive invariant AFTER
+    # both field assignments. A plain ``{"enabled": true}`` PUT on an
+    # archived row (exactly what the dialog's master switch sends for every
+    # disabled account) used to leave the row ``archived=True,
+    # enabled=True`` — re-caching its credential and respawning a collector
+    # while ``archived_pairs`` kept hiding it from the fleet view (invisible
+    # collection). An archived row must never be enabled implicitly; the
+    # only way out is an explicit ``archived: false`` un-archive, which the
+    # assignment above handles before this invariant runs.
+    if row.archived and row.enabled:
+        row.enabled = False
     if body.account_label is not None:
         row.account_label = body.account_label or None
     if body.poll_interval_seconds is not None:

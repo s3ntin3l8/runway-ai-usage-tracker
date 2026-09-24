@@ -583,13 +583,34 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     ``archived_pairs`` skip-set. Soft-archive keeps the pair in the
     skip-set and the dashboard filters it out cleanly.
     """
-    # Seed a row.
+    # Seed a row with a stored credential — the DELETE must wipe it
+    # (PR #317 round-2 review warning: the dialog's confirm copy
+    # promises "deletes the configuration row and its stored
+    # credentials"; a kept credential could be re-cached on re-enable).
     r = client.put(
         "/api/v1/system/provider-config/openrouter/alice@example.com",
-        json={"account_label": "Alice"},
+        json={
+            "account_label": "Alice",
+            "api_key": "sk-or-test-alice",  # pragma: allowlist secret
+        },
         headers=_admin_headers(),
     )
     assert r.status_code == 200
+
+    # session_cookie isn't accepted for openrouter via PUT (no cookie
+    # support), so set it directly to pin that branch of the wipe too.
+    from app.models.db import ProviderConfig
+
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "openrouter",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).one()
+    assert row.api_key is not None
+    row.session_cookie = "sessionKey=stale"  # pragma: allowlist secret
+    session.add(row)
+    session.commit()
 
     # Seed a LatestUsage card that should be evicted by the delete.
     _seed_latest_usage(session, "openrouter", "alice@example.com")
@@ -647,6 +668,26 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     assert by_id["alice@example.com"]["archived"] is True
     assert by_id["alice@example.com"]["enabled"] is False
 
+    # PR #317 round-2 review warning: stored credentials are wiped on
+    # Remove — the dialog's confirm copy promises it, and a kept blob
+    # could be re-cached if the row were ever re-enabled.
+    session.refresh(
+        session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "openrouter",
+                ProviderConfig.account_id == "alice@example.com",
+            )
+        ).one()
+    )
+    wiped = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "openrouter",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).one()
+    assert wiped.api_key is None, "DELETE must clear the stored api_key"
+    assert wiped.session_cookie is None, "DELETE must clear the stored session_cookie"
+
     # LatestUsage card was evicted.
     assert (
         session.exec(
@@ -666,6 +707,8 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     # pair, _fetch_fleet_view_sync's synthetic loop must NOT re-create a
     # card — that's the whole reason we soft-archive instead of
     # hard-delete. Pin it end-to-end.
+    from datetime import UTC, datetime
+
     from app.models.db import UsageEvent
 
     session.add(
@@ -674,8 +717,7 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
             account_id="alice@example.com",
             event_id="evt-still-in-history-1",
             kind="message",
-            ts=__import__("datetime").datetime.now(__import__("datetime").UTC),
-            role="assistant",
+            ts=datetime.now(UTC),
             session_id="sess-after-delete",
         )
     )
@@ -954,53 +996,158 @@ def test_delete_provider_config_writes_audit_row(client: TestClient, session: Se
 
 def test_delete_provider_config_drops_smart_collector(client: TestClient, session: Session) -> None:
     """PR #317 round-2 review suggestion: pin the ``_sync_collectors(force=True)``
-    call. Without it, ``manager.smart_collectors`` keeps a SmartCollector
-    for the removed pair alive and the next poll re-writes a
-    ``LatestUsage`` card, undoing the eviction.
+    call with the manager's real pair key shape.
 
-    Mirrors the PUT helper's post-commit sync. Rather than mocking the
-    method (the singleton carries monkeypatch state from prior tests via
-    ``manager._sync_collectors`` instance attrs that conflict with class
-    patches — see test_debug_raw_endpoint), we register a real
-    ``SmartCollector`` under the deleted pair's key and assert the DELETE
-    prunes it via the natural ``_sync_collectors`` flow. End-to-end
-    behavior, no method patching.
+    Without the sync, ``manager.smart_collectors`` keeps a SmartCollector
+    for the removed pair alive and the next poll re-writes a
+    ``LatestUsage`` card, undoing the eviction. Round-2 review noted the
+    earlier version registered under the bare provider id (``"openrouter"``),
+    which passes via step 3's generic prune of any key not in
+    ``active_keys`` — it pinned the presence of a sync call, not the pair
+    semantics. This version:
+      - registers under the real ``f"{pid}:{aid}"`` key,
+      - seeds the token cache for the pair so before-DELETE the pair is
+        genuinely active (cache entry + collector both present),
+      - after DELETE asserts BOTH are gone (cache cleared by the handler,
+        collector pruned because the pair left ``active_keys``),
+      - restores the manager singleton so later tests see prior state.
     """
+    import time
+
     from app.services.collector_manager import manager
     from app.services.smart_collector import SmartCollector
+    from app.services.token_cache import token_cache
 
-    # Use a dedicated provider+account so we don't collide with
-    # other tests' SmartCollectors on the openrouter key.
+    pid = "openrouter"
+    aid = "alice@example.com"
+    pair_key = f"{pid}:{aid}"
+
+    # Isolate the singleton: snapshot and restore around the test.
+    saved_collectors = dict(manager.smart_collectors)
+    try:
+        # Seed config + token cache so the pair is a genuinely active
+        # dynamic collector before the DELETE.
+        r = client.put(
+            f"/api/v1/system/provider-config/{pid}/{aid}",
+            json={"account_label": "Alice"},
+            headers=_admin_headers(),
+        )
+        assert r.status_code == 200
+
+        token_cache.seed_sync(
+            pid,
+            aid,
+            {"api_key": "sk-or-test-pair"},  # pragma: allowlist secret
+            {"account_label": "Alice", "source": "config"},
+            time.time(),
+        )
+        assert token_cache._cache.get(pid, {}).get(aid) is not None
+
+        collector = SmartCollector.__new__(SmartCollector)
+        collector.provider_id = pid
+        collector.account_id = aid
+        manager.smart_collectors[pair_key] = collector
+
+        # Before DELETE: pair active in both cache and collectors.
+        assert pair_key in manager.smart_collectors
+        assert token_cache._cache.get(pid, {}).get(aid) is not None
+
+        # Delete.
+        r = client.delete(
+            f"/api/v1/system/provider-config/{pid}/{aid}",
+            headers=_admin_headers(),
+        )
+        assert r.status_code == 200
+
+        # The DELETE handler must trigger a sync that prunes the removed
+        # pair from manager.smart_collectors (it left active_keys once the
+        # handler dropped its cache entry) — otherwise the next poll would
+        # re-write a LatestUsage card and undo the eviction.
+        assert pair_key not in manager.smart_collectors, (
+            f"DELETE must drop the SmartCollector for the removed pair; "
+            f"manager.smart_collectors={list(manager.smart_collectors)}"
+        )
+        # And the cache entry the pair was active on is gone.
+        assert token_cache._cache.get(pid, {}).get(aid) is None
+    finally:
+        manager.smart_collectors.clear()
+        manager.smart_collectors.update(saved_collectors)
+
+
+def test_delete_provider_config_reenable_put_stays_disabled(
+    client: TestClient, session: Session
+) -> None:
+    """PR #317 round-2 review warning: an archived row must never re-enable.
+
+    The dialog's master toggle sends ``{"enabled": true}`` PUTs for every
+    disabled account. On a Remove'd (archived) row that used to leave
+    ``archived=True, enabled=True`` — the manual-cache sync gate
+    (``collector_manager.py:113``) would re-cache the credential and
+    step-2 would respawn a collector while ``archived_pairs`` kept hiding
+    the pair from the fleet view: invisible collection.
+
+    Pins the invariant ``row.archived ⇒ row.enabled is False`` enforced in
+    ``_apply_provider_config_update``, and that an explicit un-archive
+    (``archived: false``) is still the recovery path.
+    """
+    from app.models.db import ProviderConfig
+    from app.services.token_cache import token_cache
+
     pid = "openrouter"
     aid = "alice@example.com"
 
-    # Seed.
     r = client.put(
         f"/api/v1/system/provider-config/{pid}/{aid}",
-        json={"account_label": "Alice"},
+        json={
+            "account_label": "Alice",
+            "api_key": "sk-or-test-reenable",  # pragma: allowlist secret
+        },
         headers=_admin_headers(),
     )
     assert r.status_code == 200
 
-    # Force-sync so the SmartCollector for (pid, aid) is registered
-    # before we ask the DELETE to prune it. SmartCollectors are keyed by
-    # provider_id in this manager, so we register one under pid.
-    collector = SmartCollector.__new__(SmartCollector)
-    collector.provider_id = pid
-    manager.smart_collectors[pid] = collector
-    assert pid in manager.smart_collectors
-
-    # Delete.
     r = client.delete(
         f"/api/v1/system/provider-config/{pid}/{aid}",
         headers=_admin_headers(),
     )
     assert r.status_code == 200
 
-    # The DELETE handler must trigger a sync that prunes the just-removed
-    # pair from manager.smart_collectors — otherwise the next poll would
-    # re-write a LatestUsage card and undo the eviction.
-    assert pid not in manager.smart_collectors, (
-        f"DELETE must drop the SmartCollector for the removed pair; "
-        f"manager.smart_collectors={list(manager.smart_collectors)}"
+    # Master-switch style enable PUT — the exact payload the dialog sends.
+    r = client.put(
+        f"/api/v1/system/provider-config/{pid}/{aid}",
+        json={"enabled": True},
+        headers=_admin_headers(),
     )
+    assert r.status_code == 200, r.text
+
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == pid,
+            ProviderConfig.account_id == aid,
+        )
+    ).one()
+    assert row.archived is True
+    assert row.enabled is False, (
+        "enabling an archived row must be a no-op (archived ⇒ enabled=False)"
+    )
+    # Credentials were wiped by DELETE and must not be re-cached by the
+    # PUT's post-commit collector sync.
+    assert token_cache._cache.get(pid, {}).get(aid) is None
+
+    # Recovery path: explicit un-archive re-enables the row (existing
+    # flow — ProviderPage archive toggle / settings dialog).
+    r = client.put(
+        f"/api/v1/system/provider-config/{pid}/{aid}",
+        json={"archived": False},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    session.expire_all()
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == pid,
+            ProviderConfig.account_id == aid,
+        )
+    ).one()
+    assert row.archived is False
+    assert row.enabled is True
