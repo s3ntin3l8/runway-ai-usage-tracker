@@ -22,8 +22,11 @@ Covers:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # scripts/sidecar_pkg/credentials — token fetch + redeem
@@ -1407,3 +1410,57 @@ def test_run_collection_keeps_prior_cache_when_fetch_identity_hints_returns_none
     # will retry (the snapshot is preserved, not the freshness claim).
     assert cache.is_fresh() is False
     assert cache._identities_fetched_at == initial_tokens_at
+
+
+# ---------------------------------------------------------------------------
+# scripts/sidecar.py — real path-list extractors through the dispatch table
+# (issue #320: ``_make_account_extractor`` fed parsers one ``Path`` at a
+# time while they expect ``list[Path]``, so anthropic/chatgpt/gemini
+# extraction raised ``TypeError`` every cycle. The tests above stub the
+# factory, which is how the regression slipped through — these run the
+# real parser against the checked-in fixtures.)
+# ---------------------------------------------------------------------------
+
+_FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "discover_fn", "fixture_name"),
+    [
+        ("anthropic", "_discover_anthropic_log_paths", "anthropic-sample.jsonl"),
+        ("chatgpt", "_discover_codex_log_paths", "chatgpt-sample.jsonl"),
+        ("gemini", "_discover_gemini_log_paths", "gemini-sample.jsonl"),
+    ],
+)
+def test_extract_events_for_provider_runs_real_path_list_parser(
+    monkeypatch, caplog, provider_id, discover_fn, fixture_name
+):
+    import datetime as _dt
+
+    import scripts.sidecar as sc
+
+    fixture = _FIXTURES_DIR / fixture_name
+    # Two paths — the discovery helpers return a list, and the parser must
+    # receive that list (not each element) exactly once.
+    monkeypatch.setattr(sc, discover_fn, lambda: [fixture, fixture])
+
+    watermark = MagicMock(
+        last_pushed=MagicMock(return_value=_dt.datetime(2020, 1, 1, tzinfo=_dt.UTC))
+    )
+    out: list[dict] = []
+    with caplog.at_level("WARNING"):
+        sc._extract_events_for_provider(
+            provider_id,
+            ["u@example.com"],
+            watermark=watermark,
+            bootstrap_days=90,
+            out_events=out,
+        )
+
+    assert "event extraction error" not in caplog.text
+    assert out, f"{provider_id}: expected events from {fixture_name}"
+    assert all(e["provider_id"] == provider_id for e in out)
+    assert all(e["account_id"] == "u@example.com" for e in out)
+    # The same file listed twice must not double-count.
+    event_ids = [e["event_id"] for e in out]
+    assert len(event_ids) == len(set(event_ids))

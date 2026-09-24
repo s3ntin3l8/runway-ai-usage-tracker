@@ -1738,7 +1738,11 @@ def _extract_events_for_provider(
                 canonical_hints=canonical_hints,
             )
         except Exception as e:
-            logging.warning(f"  [{provider_id}/{account_id}] event extraction error: {e}")
+            # Keep the traceback: a bare ``str(e)`` is what hid #320's
+            # type mismatch for several releases.
+            logging.warning(
+                f"  [{provider_id}/{account_id}] event extraction error: {e}", exc_info=True
+            )
             continue
         if evts:
             logging.info(f"  [{provider_id}/{account_id}] {len(evts)} new event(s)")
@@ -1798,18 +1802,17 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
         paths = paths_finder()
         if not paths:
             return []
-        if isinstance(paths, list):
-            paths_iter = paths  # antigravity returns a list
-        else:
-            paths_iter = [paths]
-        all_evts = []
-        for p in paths_iter:
-            since = watermark.last_pushed(__extract_provider_id(parser), account_id) or (
-                datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
-            )
-            all_evts.extend(parser(p, account_id=account_id, since=since))
-        # Deduplicate by event_id across paths (antigravity emits one event
-        # per DB file; if a user has multiple we may double-count).
+        # Every path-list parser (anthropic / chatgpt / gemini) takes the
+        # whole ``list[Path]`` — passing one ``Path`` at a time made the
+        # parser iterate a PosixPath and raise ``TypeError`` (issue #320).
+        paths_list = list(paths) if isinstance(paths, (list, tuple)) else [paths]
+        since = watermark.last_pushed(__extract_provider_id(parser), account_id) or (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+        )
+        all_evts = parser(paths_list, account_id=account_id, since=since)
+        # Deduplicate by event_id across paths (the same session file can be
+        # reachable via overlapping discovery roots, e.g. CLAUDE_CONFIG_DIR
+        # plus ~/.claude/projects).
         seen: set[str] = set()
         deduped = []
         for ev in all_evts:
