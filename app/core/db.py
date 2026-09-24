@@ -128,6 +128,7 @@ def init_db() -> None:
         _rebuild_quota_snapshot_indexes(conn)
         _backfill_quota_snapshot_variant(conn)
         _migrate_webhook_uniqueness(conn)
+        _migrate_credential_tag_scoping(conn)
         _scrub_residual_stale_health(conn)
 
     from app.services.pricing_seed import seed_pricing_table
@@ -342,6 +343,61 @@ def get_session() -> Iterator[Session]:
     """FastAPI dependency for DB session."""
     with Session(engine) as session:
         yield session
+
+
+def _migrate_credential_tag_scoping(conn: Any) -> None:
+    """Rebuild credential_tags for per-sidecar scoping (#319).
+
+    Pre-#319 tables carry a table-level UNIQUE on
+    ``(provider_id, credential_origin)`` (``uq_credential_tag_identity``)
+    baked into CREATE TABLE — SQLite can't drop a table constraint in
+    place, so the table is rebuilt with the post-#319 shape: a nullable
+    ``sidecar_id`` column plus two partial unique indexes (the model's
+    ``__table_args__``). NULLs are distinct in SQLite unique indexes, so
+    the split is what keeps one deployment-wide row per origin while
+    still allowing one scoped row per sidecar for the same origin.
+
+    Existing rows are copied with ``sidecar_id = NULL`` — deployment-
+    wide, matching their pre-migration semantics. Idempotent: fresh
+    databases are created by ``create_all()`` in the final shape (no
+    ``uq_credential_tag_identity`` in the table DDL) and already-migrated
+    tables don't carry the legacy constraint either, so both skip.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from app.models.db import CredentialTag
+
+    row = conn.execute(
+        text("SELECT sql FROM sqlite_master WHERE type='table' AND name='credential_tags'")
+    ).first()
+    if row is None or row[0] is None or "uq_credential_tag_identity" not in row[0]:
+        return  # fresh DB (final shape) or already migrated
+
+    # Compile the model's CREATE TABLE so the new shape stays in lockstep
+    # with __table_args__ / column definitions (no hand-maintained DDL).
+    dialect = conn.engine.dialect
+    create_sql = str(CreateTable(CredentialTag.__table__).compile(dialect=dialect)).strip()  # type: ignore[attr-defined]
+    create_sql = create_sql.replace(
+        "CREATE TABLE credential_tags", "CREATE TABLE credential_tags_new", 1
+    )
+    conn.execute(text(create_sql))
+    conn.execute(
+        text(
+            "INSERT INTO credential_tags_new "
+            "(id, provider_id, credential_origin, account_id, sidecar_id, set_by, set_at) "
+            "SELECT id, provider_id, credential_origin, account_id, NULL, set_by, set_at "
+            "FROM credential_tags"
+        )
+    )
+    conn.execute(text("DROP TABLE credential_tags"))
+    conn.execute(text("ALTER TABLE credential_tags_new RENAME TO credential_tags"))
+    # Indexes (including the two partial unique ones) travel with the model.
+    for index in CredentialTag.__table__.indexes:  # type: ignore[attr-defined]
+        index_sql = str(CreateIndex(index).compile(dialect=dialect)).strip()
+        conn.execute(text(index_sql))
+    conn.commit()
+    logger.info("Migrated: rebuilt credential_tags for per-sidecar scoping (#319)")
 
 
 def _scrub_residual_stale_health(conn: Any) -> None:

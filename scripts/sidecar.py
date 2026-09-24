@@ -2612,7 +2612,9 @@ def run_collection(
         cache = _get_credential_cache()
         api_url_for_tokens = os.environ.get("RUNWAY_API_URL") or config.get("api_url")
         if api_url_for_tokens and not cache.is_fresh():
-            fetched = fetch_identity_hints(api_url_for_tokens)
+            # ``sidecar_id`` (#319) lets the server scope
+            # account_tag_hints to this machine's credential tags.
+            fetched = fetch_identity_hints(api_url_for_tokens, sidecar_id=get_hostname())
             # ``fetched is None`` distinguishes outage from a valid
             # empty response. The cache skips the update on None, so
             # the prior snapshot survives and ``is_fresh()`` returns
