@@ -184,6 +184,19 @@ class SidecarTray:
         # Queue for icon/title updates from background threads; drained on the
         # pystray thread to avoid AppKit/Win32 cross-thread mutation.
         self._update_queue: queue.Queue[str] = queue.Queue()
+        # Version of the kept `.previous` build (None = no rollback offered).
+        # Probed once here and after a failed rollback; an update relaunches
+        # the process, which re-probes.
+        self._rollback_version: str | None = None
+        self._refresh_rollback()
+
+    def _refresh_rollback(self) -> None:
+        try:
+            from scripts.sidecar_pkg.self_update import rollback_available
+
+            self._rollback_version = rollback_available()
+        except Exception:
+            self._rollback_version = None
 
     # ------------------------------------------------------------------
     # Public
@@ -313,6 +326,33 @@ class SidecarTray:
 
             threading.Thread(target=_run, name="runway-self-update", daemon=True).start()
 
+        def rollback_text(item: pystray.MenuItem) -> str:
+            version = self._rollback_version
+            return (
+                f"Roll Back to v{version.lstrip('v')}"
+                if version
+                else "Roll Back to Previous Version"
+            )
+
+        def on_rollback(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            """Swap the kept previous build back in and relaunch (worker thread)."""
+
+            def _run() -> None:
+                from sidecar_app import __version__
+
+                try:
+                    from scripts.sidecar_pkg.self_update import rollback
+
+                    ok = rollback(__version__)
+                except Exception:
+                    ok = False
+                if not ok:
+                    _notify(icon, "Could not roll back — see the sidecar log for details.")
+                    self._refresh_rollback()
+                    icon.update_menu()
+
+            threading.Thread(target=_run, name="runway-rollback", daemon=True).start()
+
         def on_launch_at_login(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             from scripts.sidecar_pkg.self_update import running_from_disk_image
 
@@ -359,6 +399,11 @@ class SidecarTray:
                 "Download & Install Update",
                 on_install_update,
                 visible=lambda item: self._update_available,  # noqa: ARG005
+            ),
+            pystray.MenuItem(
+                rollback_text,
+                on_rollback,
+                visible=lambda item: self._rollback_version is not None,  # noqa: ARG005
             ),
             pystray.MenuItem("About", on_about),
             pystray.MenuItem("Quit", on_quit),

@@ -109,6 +109,7 @@ The sidecar runs as a background app with a menu icon showing its status:
 - **View Logs**: Open the log file for debugging
 - **Check for Updates…**: Open the releases page to download a newer version manually
 - **Download & Install Update**: Appears only when an update is available — downloads, verifies, installs, and relaunches in place
+- **Roll Back to vX.Y.Z**: Appears only after a self-update. It restores the build that update replaced and relaunches.
 - **Quit**: Exit the app
 
 ### Automatic Startup
@@ -132,7 +133,8 @@ You can install the update without leaving the app:
 **Constraints & safety:**
 - Self-update only runs for the packaged (PyInstaller) binaries. **From-source runs (`python3 scripts/sidecar.py`) and Docker containers are notify-only** — update them with `git pull` / by repulling the image.
 - The checksum is **mandatory**: a missing or mismatched `.sha256` aborts the install, leaving the running copy untouched.
-- The previous binary/bundle is kept alongside as `*.old` — a rollback breadcrumb you can restore by hand if a build misbehaves.
+- **Rollback:** the build an update replaced is kept next to the install as `<name>.previous` (e.g. `Runway Sidecar.app.previous`, `RunwaySidecar.exe.previous`), with its version in `<name>.previous.version`. If a new build misbehaves, use the tray's **Roll Back to vX.Y.Z** item (shown only when a backup exists) or `runway-sidecar-cli --rollback`. A rollback keeps the newer build as the backup, so you can undo it. Only one backup is kept.
+- On Windows, installs made with the setup.exe also get their *Apps & Features* version refreshed after each self-update or rollback.
 - Self-update always downloads the portable `.zip` / `.tar.gz` payload, never the `.dmg` / `-setup.exe`, and swaps it in place. It works on every platform and both channels.
 - If the install path isn't writable (e.g. `/Applications` for a non-admin macOS account, or `/usr/local/bin`), the update is skipped with a log message and you install the new DMG / setup.exe via **Check for Updates…**. The Windows installer's per-user location is always writable.
 

@@ -3346,6 +3346,11 @@ def main():
         help="Download, verify and install the latest build, then exit",
     )
     parser.add_argument(
+        "--rollback",
+        action="store_true",
+        help="Swap the build kept by the last self-update back in, then exit",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {_SIDECAR_VERSION}",
@@ -3364,6 +3369,10 @@ def main():
         channel = os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
         ok = self_update(_SIDECAR_VERSION, channel, restart=False)
         sys.exit(0 if ok else 1)
+    if args.rollback:
+        from scripts.sidecar_pkg.self_update import rollback
+
+        sys.exit(0 if rollback(_SIDECAR_VERSION, restart=False) else 1)
 
     # Tri-state local override: explicit true/false wins over the server flag;
     # absent (None) defers to the server's fleet-wide setting.
