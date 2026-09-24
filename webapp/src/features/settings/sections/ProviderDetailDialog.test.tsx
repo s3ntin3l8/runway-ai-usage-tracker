@@ -47,6 +47,21 @@ const orphan: ProviderAccount = {
   is_orphaned: true,
 };
 
+// Remove'd account — soft-archived server-side, must be fully hidden from
+// the dialog (Hermes review on PR #317 round-2 re-review): not listed, no Edit/Remove
+// menu, excluded from the master toggle blast radius.
+const carolArchived: ProviderAccount = {
+  account_id: 'carol@example.com',
+  account_label: 'Carol',
+  enabled: false,
+  api_key_set: false,
+  session_cookie_set: false,
+  poll_interval_seconds: null,
+  collection_strategies: null,
+  is_orphaned: false,
+  archived: true,
+};
+
 const multiAccount: ProviderConfig = {
   provider_id: 'anthropic',
   name: 'Anthropic',
@@ -275,7 +290,7 @@ describe('ProviderDetailDialog — account list + menu', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /actions for alice/i }));
     await userEvent.click(within(dialog).getByRole('menuitem', { name: /remove/i }));
 
-    expect(within(dialog).getByText(/This deletes the configuration row/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/This archives the account/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /remove account/i })).toBeInTheDocument();
   });
@@ -288,7 +303,7 @@ describe('ProviderDetailDialog — account list + menu', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
 
     expect(api.deleteProviderConfig).not.toHaveBeenCalled();
-    expect(within(dialog).queryByText(/This deletes the configuration row/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/This archives the account/)).not.toBeInTheDocument();
   });
 
   it('Confirm calls deleteProviderConfig, surfaces onAccountDeleted, shows toast', async () => {
@@ -324,6 +339,59 @@ describe('ProviderDetailDialog — account list + menu', () => {
     expect(
       within(dialog).queryByText(/no usage data — safe to remove/i),
     ).not.toBeInTheDocument();
+  });
+
+  it('hides archived accounts from the list and the header count (Hermes #317 r2)', async () => {
+    const withArchived: ProviderConfig = {
+      ...multiAccount,
+      accounts: [alice, carolArchived],
+      account_count: 2,
+    };
+    renderDialog(withArchived);
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText('Alice')).toBeInTheDocument();
+    // Archived row fully hidden: no name, no actions menu.
+    expect(within(dialog).queryByText('Carol')).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('button', { name: /actions for carol/i }),
+    ).not.toBeInTheDocument();
+    // Header count reflects only visible (non-archived) accounts.
+    expect(within(dialog).getByText(/1 account · poll 60s/)).toBeInTheDocument();
+  });
+
+  it('renders "Not configured" when every account is archived', async () => {
+    const allArchived: ProviderConfig = {
+      ...singleAccount,
+      accounts: [carolArchived],
+      account_count: 1,
+    };
+    renderDialog(allArchived);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/^Not configured$/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/no accounts configured/i)).toBeInTheDocument();
+  });
+
+  it('never PUTs an archived account from the master toggle (Hermes #317 r2)', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const withArchived: ProviderConfig = {
+      ...multiAccount,
+      // alice enabled, carol archived+disabled — master must reflect only
+      // config-visible rows (alice → checked) and PUT only alice.
+      accounts: [alice, carolArchived],
+      account_count: 2,
+    };
+    renderDialog(withArchived);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    const calls = vi.mocked(api.putProviderConfig).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['anthropic', 'alice@example.com', { enabled: false }]);
+    expect(calls.every((c) => c[1] !== 'carol@example.com')).toBe(true);
   });
 });
 
@@ -390,7 +458,7 @@ describe('ProviderDetailDialog — header description + close behavior', () => {
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /actions for alice/i }));
     await userEvent.click(within(dialog).getByRole('menuitem', { name: /remove/i }));
-    expect(within(dialog).getByText(/This deletes the configuration row/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/This archives the account/)).toBeInTheDocument();
 
     // Close via Escape on the underlying dialog → ResponsiveDialog triggers onClose.
     await userEvent.keyboard('{Escape}');

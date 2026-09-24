@@ -1170,6 +1170,150 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
 
 
+@router.delete("/provider-config/{provider_id}/{account_id}")
+@limiter.limit("20/minute")
+async def delete_provider_config_for_account(
+    request: Request,
+    provider_id: str,
+    account_id: str,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Remove one ``(provider_id, account_id)`` row and its live ``LatestUsage`` cards.
+
+    The webapp's ``ProviderDetailDialog`` Remove action calls this endpoint
+    to clean up orphan ``default`` rows left over from initial setup, and
+    any other labeled account the operator no longer wants to track.
+
+    Implementation: **soft-archive** rather than hard-delete. The repo
+    convention is that ``provider_configs`` rows never leave the table —
+    ``archived=True`` is the established hide-from-dashboard flag, picked
+    up by ``_fetch_fleet_view_sync`` in ``app/api/endpoints/usage.py`` at
+    both the real-card skip-set (line ~236) and the synthetic-from-events
+    skip-set (line ~260). Hard-deleting a row whose ``usage_events`` still
+    has rows would let the synthetic loop resurrect the pair as a
+    PAYG-style card (PR #317 round-2 review warning).
+
+    Cascades:
+      - ``LatestUsage`` cards evicted from ``latest_usage``.
+      - stored credentials cleared (``api_key`` / ``session_cookie`` →
+        ``None``) — Remove is destructive: the dialog's confirm copy
+        promises the stored credentials go with it, and keeping them
+        would let a later re-enable re-cache them
+        (PR #317 round-2 re-review warning). Note the distinction from
+        PUT-archive (``archived: true`` via the ProviderPage archive
+        toggle), which only hides the account and keeps credentials
+        for easy un-archive.
+      - in-memory ``token_cache`` entry dropped so collectors don't keep
+        fetching credentials for the removed account.
+      - ``credential_tags`` rows whose ``account_id`` matches are deleted
+        so the sidecar stops receiving ``origin -> account_id`` hints for
+        the removed account on subsequent ``/fleet/config`` heartbeats
+        (PR #317 round-2 review warning).
+      - ``audit_log`` records ``action="provider_config.delete"``,
+        ``target_id=f"{provider_id}/{account_id}"`` (mirrors
+        ``sidecar.delete`` + ``credential.tag_set`` conventions).
+
+    ``usage_events`` / rollups are intentionally left in place — they're
+    event-sourced history and stay readable via ``/usage/cumulative`` and
+    ``/usage/archived-providers`` even without a live card.
+    """
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == provider_id,
+            ProviderConfig.account_id == account_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No provider_config for {provider_id}/{account_id}",
+        )
+
+    # Evict matching LatestUsage rows so the dashboard doesn't show ghost cards
+    # for an account the operator just removed. usage_events / rollups are
+    # intentionally left in place — they're event-sourced history and stay
+    # readable via /usage/cumulative even without a live card.
+    session.exec(
+        delete(LatestUsage).where(
+            col(LatestUsage.provider_id) == provider_id,
+            col(LatestUsage.account_id) == account_id,
+        )
+    )
+
+    # Drop every credential_tags row tied to this account_id. Otherwise
+    # list_pending_payload (app/services/credential_tags.py:124) keeps
+    # shipping the hint to sidecars and the /fleet/ingest path stamps
+    # every new event with the now-removed account — effectively
+    # resurrecting the pair on the dashboard via the synthetic loop.
+    from app.services.credential_tags import CredentialTagRepo
+
+    tags_cleared = CredentialTagRepo.delete_by_account(
+        session, provider_id=provider_id, account_id=account_id
+    )
+
+    # Soft-archive instead of hard-delete (see docstring). Mirrors the
+    # PUT helper's archived-toggle cascade: archiving forces enabled=False
+    # so no collector keeps polling. Also wipe the stored credential blobs —
+    # Remove is destructive (the dialog's confirm copy promises it), and a
+    # kept credential could be re-cached if the row were ever re-enabled
+    # (PR #317 round-2 re-review warning). PUT-archive deliberately does NOT
+    # clear credentials; archive ≠ remove. ``oai_sc_cookie`` is ChatGPT's
+    # companion to ``session_cookie`` — the sibling ``clear_session_cookie``
+    # path wipes both (parity nit from the round-3 approve review).
+    row.archived = True
+    row.enabled = False
+    row.api_key = None
+    row.session_cookie = None
+    row.oai_sc_cookie = None
+    session.add(row)
+    session.commit()
+
+    # Drop the in-memory token cache entry. The async lock is held inside
+    # ``remove()``; safe to call from an async endpoint because FastAPI runs
+    # the handler on a loop and the cache uses asyncio.Lock.
+    await token_cache.remove(provider_id, account_id)
+
+    audit_log.record(
+        session,
+        request,
+        action="provider_config.delete",
+        target_id=f"{provider_id}/{account_id}",
+        payload={"tags_cleared": tags_cleared},
+    )
+
+    # Invalidate cached fleet/limits responses so the next dashboard poll
+    # reflects the deletion immediately.
+    from app.core.cache import cache_clear
+
+    cache_clear()
+
+    # Trigger an immediate collector sync so the just-removed account's
+    # SmartCollector instance (if any) drops out of
+    # ``manager.smart_collectors`` — otherwise the next poll could re-
+    # write a ``LatestUsage`` card and undo the eviction above. Mirrors
+    # the PUT helper's post-commit sync (the ``try/except`` swallows
+    # any background error so the user's mutation still succeeds even
+    # if the sync itself flakes).
+    try:
+        await manager._sync_collectors(force=True)
+    except Exception as e:
+        logger.warning(
+            f"Failed to trigger sync after provider_config delete for "
+            f"{scrub_log(provider_id)}/{scrub_log(account_id)}: {e}"
+        )
+
+    return {
+        "status": "deleted",
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "tags_cleared": tags_cleared,
+    }
+
+
 @router.post("/provider-config/preview-account")
 @limiter.limit("30/minute")
 async def preview_account_identity(
@@ -1377,6 +1521,17 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # the Settings dialog always sends both fields).
         elif body.enabled is None and not body.archived and not row.enabled:
             row.enabled = True
+    # PR #317 round-2 re-review warning: enforce the archive invariant AFTER
+    # both field assignments. A plain ``{"enabled": true}`` PUT on an
+    # archived row (exactly what the dialog's master switch sends for every
+    # disabled account) used to leave the row ``archived=True,
+    # enabled=True`` — re-caching its credential and respawning a collector
+    # while ``archived_pairs`` kept hiding it from the fleet view (invisible
+    # collection). An archived row must never be enabled implicitly; the
+    # only way out is an explicit ``archived: false`` un-archive, which the
+    # assignment above handles before this invariant runs.
+    if row.archived and row.enabled:
+        row.enabled = False
     if body.account_label is not None:
         row.account_label = body.account_label or None
     if body.poll_interval_seconds is not None:

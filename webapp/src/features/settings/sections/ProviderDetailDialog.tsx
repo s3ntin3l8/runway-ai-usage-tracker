@@ -57,7 +57,15 @@ export function ProviderDetailDialog({
   // (persisting an opaque hash), and Remove has nothing to delete. Master
   // toggle therefore only drives config-backed accounts; discovered rows
   // are read-only "auto" entries (Hermes review on PR #309).
-  const configAccounts = (provider?.accounts ?? []).filter((a) => a.source !== 'discovered');
+  //
+  // Archived rows are hidden entirely (Hermes review on PR #317 round-2 re-review):
+  // the Remove action soft-archives server-side, and leaving the row
+  // visible as "disabled" with a live Edit/Remove menu contradicts the
+  // confirm copy. They're also excluded from the master toggle so a
+  // bulk enable can't resurrect them — the server-side invariant
+  // (archived ⇒ enabled=False) is the hard stop; this is the UI layer.
+  const visibleAccounts = (provider?.accounts ?? []).filter((a) => !a.archived);
+  const configAccounts = visibleAccounts.filter((a) => a.source !== 'discovered');
   const masterEnabled = configAccounts.length > 0 && configAccounts.every((a) => a.enabled);
 
   const setMasterEnabled = useMutation({
@@ -121,9 +129,9 @@ export function ProviderDetailDialog({
         title={provider?.name ?? ''}
         description={
           provider
-            ? provider.account_count === 0
+            ? visibleAccounts.length === 0
               ? 'Not configured'
-              : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
+              : `${visibleAccounts.length} ${visibleAccounts.length === 1 ? 'account' : 'accounts'} · poll ${
                   provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
                 }s`
             : ''
@@ -150,7 +158,7 @@ export function ProviderDetailDialog({
               />
             </div>
 
-            {provider.accounts.length === 0 ? (
+            {visibleAccounts.length === 0 ? (
               <EmptyState
                 title="No accounts configured"
                 description="Add a credential to start collecting usage for this provider."
@@ -168,7 +176,7 @@ export function ProviderDetailDialog({
               />
             ) : (
               <ul className="flex flex-col gap-1.5" aria-label="Provider accounts">
-                {provider.accounts.map((account) => {
+                {visibleAccounts.map((account) => {
                   const isMenuOpen = menuFor === account.account_id;
                   return (
                     <li
@@ -260,7 +268,7 @@ export function ProviderDetailDialog({
               </ul>
             )}
 
-            {provider.accounts.length > 0 ? (
+            {visibleAccounts.length > 0 ? (
               onAddAccount ? (
                 <Button
                   variant="secondary"
@@ -285,7 +293,8 @@ export function ProviderDetailDialog({
                     {maskAccountId(pendingDelete.account_id)}
                   </code>
                   )?
-                  This deletes the configuration row and its stored credentials.
+                  This archives the account and clears its stored credentials. It will
+                  disappear from Settings.
                 </p>
                 <div className="flex justify-end gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setPendingDelete(null)}>
