@@ -581,7 +581,7 @@ def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> 
     via the Untagged Credentials dialog.
 
     Tracking: ``credential_tags`` is planned to gain a ``sidecar_id``
-    column (phase-2 of #288) which will let this heuristic resume
+    column (#319) which will let this heuristic resume
     per-host scoping. Until then, the multi-host deployment is the
     safer default — explicit tags never cross-contaminate.
     """

@@ -204,7 +204,7 @@ class CredentialTagRepo:
         is suppressed and operators must tag explicitly via the
         Untagged Credentials dialog. Tracking: the
         ``credential_tags`` table is planned to gain a ``sidecar_id``
-        column (phase-2 of #288) which will let this heuristic resume
+        column (#319) which will let this heuristic resume
         per-host scoping.
 
         Empty ``providers`` returns an empty map. Defensively filters
