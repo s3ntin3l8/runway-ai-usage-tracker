@@ -48,7 +48,7 @@ const orphan: ProviderAccount = {
 };
 
 // Remove'd account — soft-archived server-side, must be fully hidden from
-// the dialog (Hermes review on PR #317 round-2): not listed, no Edit/Remove
+// the dialog (Hermes review on PR #317 round-2 re-review): not listed, no Edit/Remove
 // menu, excluded from the master toggle blast radius.
 const carolArchived: ProviderAccount = {
   account_id: 'carol@example.com',

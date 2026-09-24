@@ -58,7 +58,7 @@ export function ProviderDetailDialog({
   // toggle therefore only drives config-backed accounts; discovered rows
   // are read-only "auto" entries (Hermes review on PR #309).
   //
-  // Archived rows are hidden entirely (Hermes review on PR #317 round-2):
+  // Archived rows are hidden entirely (Hermes review on PR #317 round-2 re-review):
   // the Remove action soft-archives server-side, and leaving the row
   // visible as "disabled" with a live Edit/Remove menu contradicts the
   // confirm copy. They're also excluded from the master toggle so a

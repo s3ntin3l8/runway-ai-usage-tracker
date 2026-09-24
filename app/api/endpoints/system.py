@@ -1200,7 +1200,7 @@ async def delete_provider_config_for_account(
         ``None``) — Remove is destructive: the dialog's confirm copy
         promises the stored credentials go with it, and keeping them
         would let a later re-enable re-cache them
-        (PR #317 round-2 review warning). Note the distinction from
+        (PR #317 round-2 re-review warning). Note the distinction from
         PUT-archive (``archived: true`` via the ProviderPage archive
         toggle), which only hides the account and keeps credentials
         for easy un-archive.
@@ -1260,7 +1260,7 @@ async def delete_provider_config_for_account(
     # so no collector keeps polling. Also wipe the stored credential blobs —
     # Remove is destructive (the dialog's confirm copy promises it), and a
     # kept credential could be re-cached if the row were ever re-enabled
-    # (PR #317 round-2 review warning). PUT-archive deliberately does NOT
+    # (PR #317 round-2 re-review warning). PUT-archive deliberately does NOT
     # clear credentials; archive ≠ remove.
     row.archived = True
     row.enabled = False
@@ -1518,7 +1518,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # the Settings dialog always sends both fields).
         elif body.enabled is None and not body.archived and not row.enabled:
             row.enabled = True
-    # PR #317 round-2 review warning: enforce the archive invariant AFTER
+    # PR #317 round-2 re-review warning: enforce the archive invariant AFTER
     # both field assignments. A plain ``{"enabled": true}`` PUT on an
     # archived row (exactly what the dialog's master switch sends for every
     # disabled account) used to leave the row ``archived=True,

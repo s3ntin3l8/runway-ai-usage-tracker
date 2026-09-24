@@ -584,7 +584,7 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     skip-set and the dashboard filters it out cleanly.
     """
     # Seed a row with a stored credential — the DELETE must wipe it
-    # (PR #317 round-2 review warning: the dialog's confirm copy
+    # (PR #317 round-2 re-review warning: the dialog's confirm copy
     # promises "deletes the configuration row and its stored
     # credentials"; a kept credential could be re-cached on re-enable).
     r = client.put(
@@ -668,7 +668,7 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     assert by_id["alice@example.com"]["archived"] is True
     assert by_id["alice@example.com"]["enabled"] is False
 
-    # PR #317 round-2 review warning: stored credentials are wiped on
+    # PR #317 round-2 re-review warning: stored credentials are wiped on
     # Remove — the dialog's confirm copy promises it, and a kept blob
     # could be re-cached if the row were ever re-enabled.
     session.refresh(
@@ -995,7 +995,7 @@ def test_delete_provider_config_writes_audit_row(client: TestClient, session: Se
 
 
 def test_delete_provider_config_drops_smart_collector(client: TestClient, session: Session) -> None:
-    """PR #317 round-2 review suggestion: pin the ``_sync_collectors(force=True)``
+    """PR #317 round-2 re-review suggestion: pin the ``_sync_collectors(force=True)``
     call with the manager's real pair key shape.
 
     Without the sync, ``manager.smart_collectors`` keeps a SmartCollector
@@ -1077,7 +1077,7 @@ def test_delete_provider_config_drops_smart_collector(client: TestClient, sessio
 def test_delete_provider_config_reenable_put_stays_disabled(
     client: TestClient, session: Session
 ) -> None:
-    """PR #317 round-2 review warning: an archived row must never re-enable.
+    """PR #317 round-2 re-review warning: an archived row must never re-enable.
 
     The dialog's master toggle sends ``{"enabled": true}`` PUTs for every
     disabled account. On a Remove'd (archived) row that used to leave
