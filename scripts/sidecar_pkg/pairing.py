@@ -148,5 +148,6 @@ def write_config(config_path: pathlib.Path, api_url: str, api_key: str) -> None:
         try:
             os.unlink(tmp)
         except OSError:
+            # Temp file already gone; the original error below is what matters.
             pass
         raise

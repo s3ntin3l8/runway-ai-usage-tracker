@@ -81,7 +81,7 @@ class TestAssetNames:
 
     def test_attest_verifies_against_the_build_workflow_identity(self):
         assert "sidecar-build\\.yml@" in BUILD_WF
-        assert "https://token.actions.githubusercontent.com" in BUILD_WF
+        assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in BUILD_WF
 
 
 # ---------------------------------------------------------------------------

@@ -875,6 +875,8 @@ class SettingsServer:
             try:
                 control.unlink()
             except OSError:
+                # Already removed; a stale file is harmless (its token dies
+                # with this process and the port is re-probed on connect).
                 pass
         if self._server:
             self._server.shutdown()

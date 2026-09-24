@@ -30,8 +30,9 @@ _K_INTERNET_EVENT_CLASS = 0x4755524C  # kInternetEventClass 'GURL'
 _K_AE_GET_URL = 0x4755524C  # kAEGetURL 'GURL'
 _KEY_DIRECT_OBJECT = 0x2D2D2D2D  # keyDirectObject '----'
 
-# Keep the Objective-C handler object alive for the process lifetime.
-_macos_handler: object | None = None
+# Keeps the Objective-C handler object alive for the process lifetime
+# (NSAppleEventManager does not retain it).
+_KEEPALIVE: list[object] = []
 
 
 def pair_url_from_argv(argv: list[str]) -> str | None:
@@ -71,7 +72,6 @@ def install_macos_url_handler(callback: Callable[[str], None]) -> bool:
     ``pystray.Icon.run``) so a link that *launched* the app is delivered too.
     Returns False when not on macOS or PyObjC is unavailable.
     """
-    global _macos_handler
     if sys.platform != "darwin":
         return False
     try:
@@ -97,5 +97,5 @@ def install_macos_url_handler(callback: Callable[[str], None]) -> bool:
         _K_INTERNET_EVENT_CLASS,
         _K_AE_GET_URL,
     )
-    _macos_handler = handler
+    _KEEPALIVE.append(handler)
     return True

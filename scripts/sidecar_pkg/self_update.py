@@ -722,6 +722,8 @@ def rollback(current_version: str, *, restart: bool = True) -> bool:
             try:
                 os.rename(incoming, previous)  # leave the backup where we found it
             except OSError:
+                # Best-effort: the failed swap is already logged; the backup
+                # stays at `<install>.rollback` for manual recovery.
                 pass
         return ok
 

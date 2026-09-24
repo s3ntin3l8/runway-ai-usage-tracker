@@ -209,7 +209,7 @@ class TestSettingsServerPairing:
         assert status == 200
         assert 'id="target">https://runway.example.com<' in html
         assert "readonly" in html
-        assert "https://current.example.com" in html  # "this replaces …" note
+        assert "reports to: <strong>https://current.example.com</strong>" in html
 
     def test_confirmation_page_escapes_input(self, settings_srv):
         _, html = _http(settings_srv, "GET", "/pair?server=%22%3E%3Cscript%3E&code=x")
