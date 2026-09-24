@@ -29,6 +29,24 @@ Run with the server STOPPED (SQLite is single-writer) and APP_HOST=127.0.0.1:
   # eyeball counts, then:
   RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \\
       python scripts/merge_antigravity_accounts.py --apply
+
+Exit codes:
+  0  success (apply) or pre-flight only (dry-run)
+  1  no non-`default` antigravity account found (also tried `latest_usage`/
+     `quota_snapshots` fallback)
+  2  ambiguous multi-account discovery
+  3  default-account `latest_usage`/`quota_snapshots` rows present (gauge gate)
+  4  twin pairs diverge on tokens or cost_usd (divergence gate) — only on
+     `--apply`; `--dry-run` warns and continues so the pre-flight remains
+     runnable
+
+Divergence gate detail (round-3 + round-4):
+  Blocking fields: tokens_input/output/cache_read/cache_create/
+  cache_create_1h/cache_create_5m/reasoning, cost_usd. Pair count is
+  DISTINCT event_ids (not per-field sums) so the abort message matches
+  reality. `model_id` / `ts` divergences stay print-only — they're the
+  documented `agy` reclassify artifact (raw vs canonical model name) where
+  the email side carries the canonical answer.
 """
 
 from __future__ import annotations
@@ -36,6 +54,24 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import NamedTuple
+
+# Fields whose divergence between a `default` row and its email twin means the
+# deleted row may carry usage the survivor lacks. `model_id` / `ts` divergences
+# stay print-only — they're the documented `agy` reclassify artifact (raw vs
+# canonical model name) where the email side carries the canonical answer.
+# `tokens_cache_create_1h` / `_5m` are usage-bearing (2x / 1.25x base input
+# multiplier; round-4 finding) — included alongside `_cache_create`.
+_BLOCKING_DIVERGENCE_FIELDS = (
+    "tokens_input",
+    "tokens_output",
+    "tokens_cache_read",
+    "tokens_cache_create",
+    "tokens_cache_create_1h",
+    "tokens_cache_create_5m",
+    "tokens_reasoning",
+    "cost_usd",
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -66,6 +102,10 @@ def _discover_canonical_account(session: Session) -> str:
     Fails loudly if more than one non-`default` account exists — with two,
     picking one arbitrarily would silently leak `default` rows twinned with
     the other as orphans.
+
+    Falls back to `latest_usage` / `quota_snapshots` when no non-`default`
+    account appears in `usage_events` (Hermes round-3 finding) — the
+    LSP-only host shape `cleanup_antigravity.py` Phase A targets.
     """
     rows = session.exec(
         select(UsageEvent.account_id)
@@ -73,15 +113,37 @@ def _discover_canonical_account(session: Session) -> str:
         .where(UsageEvent.account_id != _LEGACY_ACCOUNT)
         .distinct()
     ).all()
+    source = "usage_events"
+    if not rows:
+        rows = session.exec(
+            select(LatestUsage.account_id)
+            .where(LatestUsage.provider_id == _PROVIDER)
+            .where(LatestUsage.account_id != _LEGACY_ACCOUNT)
+            .distinct()
+        ).all()
+        source = "latest_usage"
+    if not rows:
+        # Final fallback: the gauge-only host whose canonical email appears
+        # only in `quota_snapshots` (e.g. a brand-new account where the
+        # `latest_usage` upsert hasn't fired yet). Round-4 finding: previous
+        # version advertised this fallback but never queried it.
+        rows = session.exec(
+            select(QuotaSnapshot.account_id)
+            .where(QuotaSnapshot.provider_id == _PROVIDER)
+            .where(QuotaSnapshot.account_id != _LEGACY_ACCOUNT)
+            .distinct()
+        ).all()
+        source = "quota_snapshots"
     if not rows:
         print(
-            "No non-`default` antigravity account found — nothing to merge into.",
+            "No non-`default` antigravity account found in `usage_events` "
+            "(or `latest_usage`/`quota_snapshots` fallback) — nothing to merge into.",
             file=sys.stderr,
         )
         sys.exit(1)
     if len(rows) > 1:
         print(
-            f"Found {len(rows)} non-`default` antigravity accounts: {rows!r}. "
+            f"Found {len(rows)} non-`default` antigravity accounts (via {source}): {rows!r}. "
             "Merge target is ambiguous; aborting.",
             file=sys.stderr,
         )
@@ -125,82 +187,79 @@ def _count_default_non_message(session: Session) -> int:
     )
 
 
-def _count_twin_divergence(session: Session, email: str) -> dict[str, int]:
-    """Pre-flight scan: per twin (by event_id), how many pairs disagree on each field.
+class _DivergenceResult(NamedTuple):
+    """Combined twin-divergence scan result.
+
+    Round-5 finding: keeping `_count_twin_divergence` and
+    `_find_blocking_divergent_event_ids` as two functions that each ran
+    their own row query risked drift between the printed scan and the
+    gate that acts on it. One pass now returns both: the per-field counts
+    (for the print) and the distinct event_ids that diverge on any
+    blocking field (for the gate).
+    """
+
+    per_field_counts: dict[str, int]
+    divergent_event_ids: list[str]
+
+
+def _scan_twin_divergence(session: Session, email: str) -> _DivergenceResult:
+    """Single pass: returns per-field counts AND the distinct event_ids of
+    twin pairs that diverge on any blocking field.
 
     Useful when the dual-ingest paths differ — e.g. `agy` raw `model_id`
     vs canonical name, or timestamp drift between two collectors. The
-    caller can gate on `diverge_any` or any specific field.
+    caller prints `per_field_counts` for the operator and acts on
+    `divergent_event_ids` for the gate.
 
     Reads only.
     """
-    sql = select(
-        UsageEvent.event_id,
-        UsageEvent.model_id,
-        UsageEvent.ts,
-        UsageEvent.tokens_input,
-        UsageEvent.tokens_output,
-        UsageEvent.tokens_cache_read,
-        UsageEvent.tokens_cache_create,
-        UsageEvent.tokens_reasoning,
-        UsageEvent.cost_usd,
-    ).where(
-        UsageEvent.provider_id == _PROVIDER,
-        UsageEvent.account_id == _LEGACY_ACCOUNT,
-        UsageEvent.kind == "message",
-    )
-    default_rows = session.exec(sql).all()
-    twin_sql = select(
-        UsageEvent.event_id,
-        UsageEvent.model_id,
-        UsageEvent.ts,
-        UsageEvent.tokens_input,
-        UsageEvent.tokens_output,
-        UsageEvent.tokens_cache_read,
-        UsageEvent.tokens_cache_create,
-        UsageEvent.tokens_reasoning,
-        UsageEvent.cost_usd,
-    ).where(
-        UsageEvent.provider_id == _PROVIDER,
-        UsageEvent.account_id == email,
-        UsageEvent.kind == "message",
-    )
-    twin_rows = {row[0]: row for row in session.exec(twin_sql).all()}
-
-    diverge = {
-        "model_id": 0,
-        "ts": 0,
-        "tokens_input": 0,
-        "tokens_output": 0,
-        "tokens_cache_read": 0,
-        "tokens_cache_create": 0,
-        "tokens_reasoning": 0,
-        "cost_usd": 0,
-        "any": 0,
-    }
-    FIELDS = (
+    fields = (
         "model_id",
         "ts",
         "tokens_input",
         "tokens_output",
         "tokens_cache_read",
         "tokens_cache_create",
+        "tokens_cache_create_1h",
+        "tokens_cache_create_5m",
         "tokens_reasoning",
         "cost_usd",
     )
+    sql_cols = [getattr(UsageEvent, f) for f in fields]
+    sql = select(UsageEvent.event_id, *sql_cols).where(
+        UsageEvent.provider_id == _PROVIDER,
+        UsageEvent.account_id == _LEGACY_ACCOUNT,
+        UsageEvent.kind == "message",
+    )
+    default_rows = session.exec(sql).all()
+    twin_sql = select(UsageEvent.event_id, *sql_cols).where(
+        UsageEvent.provider_id == _PROVIDER,
+        UsageEvent.account_id == email,
+        UsageEvent.kind == "message",
+    )
+    twin_rows = {row[0]: row for row in session.exec(twin_sql).all()}
+
+    per_field: dict[str, int] = dict.fromkeys(fields, 0)
+    per_field["any"] = 0
+    divergent: list[str] = []
     for drow in default_rows:
         eid = drow[0]
-        if eid not in twin_rows:
+        trow = twin_rows.get(eid)
+        if trow is None:
             continue
-        trow = twin_rows[eid]
+        blocking_diff = False
         any_diff = False
-        for i, field in enumerate(FIELDS, start=1):
+        for i, field in enumerate(fields, start=1):
             if drow[i] != trow[i]:
-                diverge[field] += 1
+                per_field[field] += 1
                 any_diff = True
+                if field in _BLOCKING_DIVERGENCE_FIELDS:
+                    blocking_diff = True
         if any_diff:
-            diverge["any"] += 1
-    return diverge
+            per_field["any"] += 1
+        if blocking_diff:
+            divergent.append(eid)
+    return _DivergenceResult(per_field_counts=per_field, divergent_event_ids=divergent)
 
 
 def _count_default_rollups(session: Session) -> int:
@@ -213,7 +272,22 @@ def _count_default_rollups(session: Session) -> int:
     )
 
 
-def phase_dedup_delete(session: Session, email: str, dry_run: bool) -> dict[str, int]:
+class _DedupResult(NamedTuple):
+    """Return shape for `phase_dedup_delete`.
+
+    Round-5 finding: returning `dict[str, object]` left the call site
+    (`surviving_ids - dedup_counts.delete_ids`) untypecheckable.
+    A NamedTuple gives the call site attribute access with full
+    type info (per-field `int` + the `set[int]` delete_ids).
+    """
+
+    default_message_events_total: int
+    default_events_with_email_twin: int
+    default_events_orphan_no_twin: int
+    delete_ids: set[int]
+
+
+def phase_dedup_delete(session: Session, email: str, dry_run: bool) -> _DedupResult:
     """Delete legacy-account `message` events whose event_id has an email twin.
 
     Every default-account message event in the current DB has an email
@@ -239,6 +313,7 @@ def phase_dedup_delete(session: Session, email: str, dry_run: bool) -> dict[str,
     ).all()
     to_delete = [ev for ev in default_events if ev.event_id in email_event_ids]
     skipped_orphan = len(default_events) - len(to_delete)
+    delete_ids = {ev.id for ev in to_delete if ev.id is not None}
 
     verb = "Would delete" if dry_run else "Deleting"
     print(
@@ -250,7 +325,7 @@ def phase_dedup_delete(session: Session, email: str, dry_run: bool) -> dict[str,
 
     if not dry_run and to_delete:
         BATCH = 1000
-        ids = [ev.id for ev in to_delete if ev.id is not None]
+        ids = sorted(delete_ids)
         total = 0
         for i in range(0, len(ids), BATCH):
             chunk = ids[i : i + BATCH]
@@ -265,11 +340,12 @@ def phase_dedup_delete(session: Session, email: str, dry_run: bool) -> dict[str,
             total += len(chunk)
             print(f"  …deleted {total:,}/{len(to_delete):,}", flush=True)
 
-    return {
-        "default_message_events_total": len(default_events),
-        "default_events_with_email_twin": len(to_delete),
-        "default_events_orphan_no_twin": skipped_orphan,
-    }
+    return _DedupResult(
+        default_message_events_total=len(default_events),
+        default_events_with_email_twin=len(to_delete),
+        default_events_orphan_no_twin=skipped_orphan,
+        delete_ids=delete_ids,
+    )
 
 
 def phase_f_gauge_unchanged(session: Session, email: str) -> dict[str, int]:
@@ -327,9 +403,10 @@ def main() -> int:
         "--force",
         action="store_true",
         help=(
-            "Skip the default-keyed live-gauge hard gate (latest_usage / quota_snapshots). "
-            "Use only after a manual cleanup of those rows. The script still reports "
-            "twin divergence and orphan counts before deletion."
+            "Bypass both the default-keyed live-gauge gate (latest_usage / "
+            "quota_snapshots, rc=3) and the twin-divergence gate (rc=4). "
+            "Use only after manual cleanup / inspection. The script still "
+            "reports both gate failures before deletion."
         ),
     )
     args = p.parse_args()
@@ -354,17 +431,55 @@ def main() -> int:
                 flush=True,
             )
 
-        diverge = _count_twin_divergence(session, email)
+        # Hermes round-5: single-pass scan now returns both the per-field
+        # counts (for the print) and the distinct divergent event_ids (for
+        # the gate). The print and the gate no longer drift.
+        divergence = _scan_twin_divergence(session, email)
+        diverge = divergence.per_field_counts
         print(
             f"{prefix}Twin divergence scan ({n_with_twin:,} pairs): "
             f"model_id={diverge['model_id']:,} | ts={diverge['ts']:,} | "
             f"tokens_input={diverge['tokens_input']:,} | tokens_output={diverge['tokens_output']:,} | "
             f"tokens_cache_read={diverge['tokens_cache_read']:,} | "
             f"tokens_cache_create={diverge['tokens_cache_create']:,} | "
+            f"tokens_cache_create_1h={diverge['tokens_cache_create_1h']:,} | "
+            f"tokens_cache_create_5m={diverge['tokens_cache_create_5m']:,} | "
             f"tokens_reasoning={diverge['tokens_reasoning']:,} | "
             f"cost_usd={diverge['cost_usd']:,} | ANY={diverge['any']:,}",
             flush=True,
         )
+
+        # Hermes round-3 finding: divergence scan was print-only, but the PR
+        # body's "nothing to correct" claim rests on the invariant that no
+        # blocking field (tokens / cost) diverges. Enforce it here.
+        # Hermes round-4: count DISTINCT event_ids (not per-field sums), include
+        # the offending event_ids so the operator can act on the abort, and
+        # don't trip the gate in dry-run (the operator's only pre-flight must
+        # remain runnable).
+        divergent_event_ids = divergence.divergent_event_ids
+        if divergent_event_ids:
+            sample = ", ".join(divergent_event_ids[:5])
+            more = (
+                f" (and {len(divergent_event_ids) - 5} more)"
+                if len(divergent_event_ids) > 5
+                else ""
+            )
+            print(
+                f"\n{prefix}TWIN DIVERGENCE WARNING — "
+                f"{len(divergent_event_ids):,} twin pair(s) disagree on "
+                "tokens or cost; the deleted `default` row may carry usage "
+                f"the survivor lacks. Sample event_ids: {sample}{more}.",
+                file=sys.stderr,
+                flush=True,
+            )
+            if not dry_run and not args.force:
+                print(
+                    f"{prefix}Aborting with rc=4. Re-run with --force only "
+                    "after manual inspection.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                sys.exit(4)
 
         n_default_rollups = _count_default_rollups(session)
         print(
@@ -375,23 +490,49 @@ def main() -> int:
 
         gauge = phase_f_gauge_unchanged(session, email)
 
-        if not args.force and (gauge["default_latest_usage"] or gauge["default_quota_snapshots"]):
+        # Round-5 finding: dry-run used to trip this gate too, so the only
+        # runnable pre-flight was --force. Same fix as the divergence gate:
+        # print a warning in dry-run, abort on apply.
+        if gauge["default_latest_usage"] or gauge["default_quota_snapshots"]:
             print(
-                f"\n{prefix}HARD GATE FAILED — default-account latest_usage or quota_snapshots "
-                "rows exist. The merge refuses to leave them behind (they would still surface "
-                "as a `default` account identity in fleet views). Re-run with --force only "
-                "after manually cleaning those rows. Aborting.",
+                f"\n{prefix}GAUGE GATE WARNING — default-account latest_usage "
+                f"({gauge['default_latest_usage']:,}) or quota_snapshots "
+                f"({gauge['default_quota_snapshots']:,}) rows exist. They "
+                "would still surface as a `default` account identity in "
+                "fleet views after the merge.",
                 file=sys.stderr,
                 flush=True,
             )
-            sys.exit(3)
+            if not dry_run and not args.force:
+                print(
+                    f"{prefix}Aborting with rc=3. Re-run with --force only "
+                    "after manually cleaning those rows.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                sys.exit(3)
 
         dedup_counts = phase_dedup_delete(session, email, dry_run)
 
         verb = "rebuilding" if not dry_run else "previewing"
         verb_done = "rebuilt" if not dry_run else "would rebuild"
         print(f"{prefix}Phase C — {verb} antigravity rollups from events…", flush=True)
-        n_events = phase_c_rollups(session, [_PROVIDER], dry_run)
+        if dry_run:
+            # Hermes round-3 finding: phase_c_rollups(dry_run=True) counts
+            # events in the live DB — still includes the about-to-be-deleted
+            # `default` rows. The operator's only pre-flight must reflect the
+            # post-DEDUP state, so recompute here.
+            surviving_ids = set(
+                session.exec(
+                    select(UsageEvent.id).where(
+                        UsageEvent.provider_id == _PROVIDER,
+                        UsageEvent.kind == "message",
+                    )
+                ).all()
+            )
+            n_events = len(surviving_ids - dedup_counts.delete_ids)
+        else:
+            n_events = phase_c_rollups(session, [_PROVIDER], dry_run)
         print(
             f"{prefix}Phase C done — rollups {verb_done} from {n_events:,} event(s).",
             flush=True,
@@ -406,10 +547,10 @@ def main() -> int:
 
     print(f"\n{prefix}Summary for {_PROVIDER!r} merge into {email!r}:")
     print(
-        f"  Default-account events deleted (with email twin): {dedup_counts['default_events_with_email_twin']:,}"
+        f"  Default-account events deleted (with email twin): {dedup_counts.default_events_with_email_twin:,}"
     )
     print(
-        f"  Default-account events left (no email twin)     : {dedup_counts['default_events_orphan_no_twin']:,}"
+        f"  Default-account events left (no email twin)     : {dedup_counts.default_events_orphan_no_twin:,}"
     )
     print(f"  Default-account non-message events (left alone) : {n_default_non_message:,}")
     print(f"  Default-account rollup rows (deleted by Phase C): {n_default_rollups:,}")
