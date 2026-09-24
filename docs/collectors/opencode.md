@@ -2,178 +2,166 @@
 
 **File:** `app/services/collectors/opencode.py`
 
-OpenCode quota collector with web API (Chrome cookies) and local database fallback.
+OpenCode quota collector with API-key and session-cookie strategies.
 
 ## Overview
 
-- **Collection Strategy**: web (Web API) → local (SQLite DB)
-- **Cards**: 3 cards (5h session, 7d weekly, 30d monthly windows)
-- **Authentication:** Chrome session cookie (web) or local SQLite database (local)
+- **Strategy:** `api` (primary, bearer token) → `web` (fallback, console session cookies)
+- **Cards:** 3 cards per account (5h rolling, 7d weekly, 30d monthly)
+- **Auth:** OpenCode Go API key (`oc_sk_…`), session cookies (`auth` + `__Host-console_session`)
 
-## Setup Methods Quick Overview
+## Auth Sources (in priority order)
 
-The OpenCode collector supports the following authentication methods:
+The collector tries each source in order; the first one that yields a valid response wins. The sidecar automatically wires each source up to the same `api_key` / `cookie_session` token-cache slot so the collector doesn't need to know which mechanism delivered it.
 
-1.  **Manual Cookie (recommended for testing / Docker)**: Paste the `auth` cookie value from opencode.ai into the Runway settings panel.
-    *   **Method**: See [Manual Cookie Setup](#manual-cookie-setup) below.
+### 1. CLI auto-discovery (zero config)
 
-2.  **Chrome Session Cookie**: Automatically extracted from your Chrome browser — nothing to configure if you're already logged into opencode.ai in Chrome.
-    *   **Details**: See [Troubleshooting: Web API returns empty](#web-api-returns-empty) if this isn't working.
+The opencode CLI stores every configured provider's credential in
+`~/.local/share/opencode/auth.json`. Runway reads `opencode-go.key` from
+this file on every host that has the opencode CLI installed — no env
+variable or UI paste needed. The same file also has keys for other
+providers (`openrouter.key`, `minimax-coding-plan.key`,
+`kimi-code-plan-global.key`); the sidecar picks those up too so those
+providers light up automatically.
 
-3.  **Local SQLite Database**: Directly reads usage data from the OpenCode IDE's local database.
-    *   **Method**: Use the OpenCode IDE on your machine at least once to create the DB.
-    *   **Details**: See [Troubleshooting: Database not found](#database-not-found).
+```
+~/.local/share/opencode/auth.json
+└── "opencode-go": {"type": "api", "key": "oc_sk_…"}
+```
 
-## Data Sources
+The same extraction works from `~/.opencode/auth.json` (alternate install
+location).
 
-### Tier 1: web (Web API)
-**Endpoints:**
-- `opencode.ai/_server` (workspaces - get workspace ID)
-- `opencode.ai/_server` (subscription - get usage data)
+### 2. Environment variable
 
-**Auth:** Chrome `session` cookie (web)
-**Response:** JavaScript with regex-parsable usage data
+`OPENCODE_API_KEY=oc_sk_…` in the sidecar's environment. Useful for
+Docker hosts without a host opencode CLI, or for sharing a key across
+hosts via env injection.
 
-### Secondary: Sidecar Events
-Per-message events extracted from `~/.local/share/opencode/opencode.db` (or
-`~/.opencode/opencode.db` on installs that use the flatter location) on each
-host are pushed by the sidecar and ingested into `usage_events`. The dashboard
-derives per-model and per-sidecar splits from those events via
-`usage_period_rollup` and the `/api/v1/usage/fleet` `window_aggregations` field.
+### 3. UI / `provider_configs` manual paste
 
-### Tier 2: local (SQLite DB)
-**Location:** `~/.local/share/opencode/opencode.db` or `~/.opencode/opencode.db`
-**Mechanism:** Directly reads the message database for cost snapshots.
-**Windows:** 5h ($12), 7d ($30), 30d ($60) limits.
+The Providers → opencode page exposes an `OpenCode API Key (api)` field
+that encrypts and persists the key into `provider_configs.api_key_encrypted`.
+The collector reads it via the token cache on every cycle.
 
-## Window Types
+### 4. Cookie fallback (legacy / non-migrated workspaces)
 
-OpenCode tracks usage across three time windows with different reset behaviors:
+Two cookies are required: `auth` and `__Host-console_session`. The
+sidecar extracts both from the browser on each cycle, and the manual UI
+paste accepts a multi-cookie string that gets split into the two
+tokens. Without both cookies, the console handshake returns 401 /
+`{"_tag":"Unauthorized"}` and the dashboard surfaces an auth_failed
+error card.
 
-| Window | Label | window_type | Reset Behavior |
-|--------|-------|------------|---------------|
-| 5h | "5h" | `session` | Rolling - resets ~5 hours from now |
-| 7d | "7d" | `weekly` | Fixed - resets on fixed date (~4 days from now) |
-| 30d | "Monthly" | `monthly` | Fixed - resets on fixed date (~10 days from now) |
+## Endpoints
 
-The collector detects window type by examining `resetInSec` from the OpenCode API:
-- `resetInSec > 86,400` (1 day) → **fixed** reset (7d, 30d)
-- `resetInSec < 86,400` → **rolling** window (5h)
+### Primary (new)
 
-## Output Format
+- `GET https://opencode.ai/zen/go/v1/usage` — bearer auth.
+  Returns `{usage: {rolling, weekly, monthly: {percent, status, resetsAt}}}`.
+- `GET https://opencode.ai/console/api/go/status` — bearer auth.
+  Returns the richer `{access.meters.fiveHour|week|month: {usedMicroCents, limitMicroCents, resetsAt, startsAt}}`.
+
+The collector tries `console/api/go/status` first (richer data) and
+falls back to `zen/go/v1/usage` if that returns 401/403.
+
+### Fallback (cookie)
+
+- `GET https://opencode.ai/console/api/orgs` — lists workspaces
+  (`[{id, name}]`). Cookie auth only; bearer returns 401.
+- `GET https://opencode.ai/console/api/go_status` with `x-org-id` header —
+  same body shape as the bearer variant.
+
+## Card Schema
 
 ```python
 {
-    "service_name": "OpenCode (5h)",
+    "service_name": "OpenCode",
     "icon": "⚡",
-    "remaining": "$6.60",
-    "unit": "$12 limit",
-    "reset": "5h",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "$5.40 used (45.0%) · Web API | user@email.com",
-    "used_value": 5.40,
-    "limit_value": 12.0,
+    "remaining": f"${remaining:.2f}",
+    "unit": f"${limit:.0f} limit",
+    "reset": "5h" | "7d" | "30d",
+    "health": "good" | "warning" | "critical",
+    "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+    "detail": f"${used:.2f} used ({pct:.1f}%) · OpenCode Go API",
+    "used_value": used,
+    "limit_value": limit,
+    "pct_used": pct,
     "is_unlimited": False,
     "unit_type": "currency",
     "currency": "USD",
-    "reset_at": "2026-04-26T19:43:00+00:00",  # Rolling window - resets in ~5 hours
-    "window_type": "session",  # 5h=session, 7d=weekly, 30d=monthly
-    "data_source": "web",
-    "input_source": "config",
+    "account_label": "<email>" | "",
+    "reset_at": "<ISO 8601>" | None,
+    "window_type": "session" | "weekly" | "monthly",
+    "provider_id": "opencode",
     "tier": "Go",
-    "usage_url": "https://opencode.ai/workspace/{workspace_id}/go",
-    "updated_at": "2026-04-26T14:30:00+00:00",
-    # Token breakdown fields (when usage data available)
-    "token_usage": {
-        "input": 300,
-        "output": 22014,
-        "reasoning": 0,
-        "cache_read": 6812194,
-        "total": 22314,
-    },
-    "by_model": {"qwen3.5-plus": {"cost": 0.23, "msgs": 50}},
-    "msgs": 50,
-    "pct_used": 1.0,
+    "data_source": "api" | "web",
+    "input_source": "sidecar" | "config" | "server",
+    "usage_url": "https://opencode.ai/console/usage",
+    "updated_at": "<ISO 8601>",
 }
 ```
 
-## Token Breakdown Fields
+## Window Mapping
 
-When usage data is available from the OpenCode usage page, the collector enriches cards with structured token data:
+The OpenCode API uses different keys depending on the endpoint:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `token_usage` | dict | Token breakdown: `input`, `output`, `reasoning`, `cache_read`, `total` |
-| `by_model` | dict | Per-model breakdown with `cost` and `msgs` |
-| `msgs` | int | Total message count |
-| `pct_used` | float | Percentage used based on cost vs limit |
+| API shape | Internal `window_type` | Default limit (USD) |
+|---|---|---|
+| `fiveHour` / `rolling` | `session` | $12 |
+| `week` / `weekly` | `weekly` | $30 |
+| `month` / `monthly` | `monthly` | $60 |
 
-This data enables token usage display in the UI and history graphs.
+`window_type` is the canonical Runway enum used for card identity across
+the dashboard.
 
-## Manual Cookie Setup
+## Failure Modes
 
-Use this method when browser cookie auto-extraction isn't available (Docker, Linux without Chrome, or just for testing).
+The collector no longer silently returns `[]`. Every failure mode is
+mapped to an `_last_error_reason` that `_error_handler` translates into
+a visible error card with `error_type`:
 
-### Step 1 — Get the cookie value
+| Reason | Error type | Card message |
+|---|---|---|
+| `missing_api_key` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
+| `invalid_api_key` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
+| `missing_cookies` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
+| `session_invalid` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
+| `no_workspace` | `parse_error` | OpenCode: no workspace found for the configured account. |
+| `api_unavailable` | `api_error` | OpenCode: usage API unreachable. Will retry on next cycle. |
+| (other) | `unknown` | OpenCode quota collection failed. |
 
-1. Open [opencode.ai](https://opencode.ai) in your browser and log in.
-2. Open DevTools (`F12` or `Cmd+Option+I`).
-3. Go to **Application** → **Storage** → **Cookies** → `https://opencode.ai`.
-4. Find the cookie named **`auth`** and copy its **Value** column.
+The same `auth_failed` message covers every auth-related case so the
+dashboard doesn't change wording based on which mechanism failed — the
+fix is always the same (paste a fresh key, or ensure the sidecar can
+read the auth file).
 
-The value is a long opaque string. Do **not** include the cookie name — paste only the value itself (not `auth=<value>`, just `<value>`). Runway will also accept the full `auth=<value>` format and strip the prefix automatically.
+## Migration from the Legacy `_server` Path
 
-### Step 2 — Paste it into Runway
+The old collector called `/_server?id=def3997…` with the `auth` Iron
+cookie. That endpoint is no longer the right surface for migrated
+workspaces: opencode now answers with a 302-encoded redirect to
+`/console/login` (encoded as a `new Response(null, {status:302, location:…})`
+in the RSC stream), or returns the SPA shell. The collector detects
+both as `_last_error_reason = "session_invalid"` and surfaces an error
+card.
 
-1. Open the Runway dashboard → **SYS** → **Providers** → **opencode**.
-2. In the **Auth Cookie (web)** field, click **Edit** and paste the value.
-3. Click **Save**.
-
-The next collection cycle will use this cookie to fetch your usage from the OpenCode web API.
-
-### Notes
-
-- The `auth` cookie typically expires after 30 days. If the web API cards stop appearing, refresh the cookie using the steps above.
-- This method works in Docker (where browser extraction is unavailable) if you set the cookie via the dashboard or pass it via sidecar.
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENCODE_GO_API_KEY` | Optional | API key for OpenCode Go billing (future integration) |
-
-## Sidecar Support
-
-Sidecar queries local DB or extracts Chrome cookie. See [sidecar documentation](../sidecar.md).
-
-## Troubleshooting
-
-### Web API returns empty
-**Checklist:**
-1. Are you logged into [opencode.ai](https://opencode.ai) in Chrome? Browser cookie extraction only works with Chrome/Chromium on the same machine.
-2. Verify browser extraction: `python3 -c "from app.core.browser_cookies import get_opencode_session_cookie; print(get_opencode_session_cookie())"`
-3. If that prints `None`, use [Manual Cookie Setup](#manual-cookie-setup) instead.
-
-### Web API shows "public actor" error in logs
-The `auth` cookie was sent to OpenCode but not recognised. Causes:
-- Cookie has **expired** — get a fresh one from DevTools (see [Manual Cookie Setup](#manual-cookie-setup)).
-- Cookie **value is wrong** — make sure you copied only the Value column, not the full `auth=<value>` string (Runway strips the prefix but double-check DevTools).
-
-### Database not found
-**Fix:** Use OpenCode IDE at least once to create `~/.local/share/opencode/opencode.db`
-(or `~/.opencode/opencode.db`, depending on the install). Check both locations
-if events still aren't being ingested.
+The `auth` cookie alone is also no longer sufficient — the console
+handshake requires `__Host-console_session` too. The sidecar's cookie
+rule now extracts both names.
 
 ## Related Files
 
 | File | Purpose |
 |------|---------|
 | `app/services/collectors/opencode.py` | Main collector |
-| `app/core/browser_cookies.py` | Cookie extraction |
-| `scripts/sidecar_pkg/event_extractors/opencode.py` | Sidecar event extractor (reads `opencode.db`) |
-| `app/services/event_ingestor.py` | Server-side event ingestion (deduped by `event_id`) |
+| `scripts/sidecar.py` (opencode block, ~:400-440) | Sidecar credential rules |
+| `app/core/registry.json` (`providers.opencode`) | UI labels + sidecar rule mirror |
+| `app/services/collector_manager.py` (`_sync_manual_config_to_cache`) | DB → token-cache bridge for manual UI pastes |
+| `app/api/endpoints/system.py` (`upsert_provider_config_for_account`) | Opencode-specific cookie / API-key parsing |
 
 ## References
 
+- **CodexBar opencode.md** — the canonical description of the two
+  endpoints the collector targets.
 - **OpenCode:** https://opencode.ai
