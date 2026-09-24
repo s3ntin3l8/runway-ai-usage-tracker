@@ -566,6 +566,32 @@ export interface UpdateCheckResult {
   update_available: boolean;
 }
 
+// GET /system/sidecar-downloads — latest sidecar builds for the Fleet page's
+// "Add a sidecar" card. Mirrors SidecarDownloadsResponse in app/models/schemas.py.
+export type SidecarPlatform = 'macOS' | 'Windows' | 'Linux' | 'Linux-CLI';
+export type SidecarChannel = 'stable' | 'edge';
+
+export interface SidecarDownloadAsset {
+  platform: SidecarPlatform;
+  // installer = .dmg / -setup.exe; payload = portable .zip / .tar.gz
+  kind: 'installer' | 'payload';
+  name: string;
+  url: string;
+  size?: number | null;
+  sha256_url?: string | null;
+}
+
+export interface SidecarDownloads {
+  channel: SidecarChannel;
+  version?: string | null;
+  published_at?: string | null;
+  release_url: string;
+  checksums_url?: string | null;
+  assets: SidecarDownloadAsset[];
+  // Set (with empty assets) when the server couldn't reach GitHub.
+  error?: string | null;
+}
+
 export interface AppConfig {
   browser_preference?: string | null;
   default_poll_interval_seconds?: number;

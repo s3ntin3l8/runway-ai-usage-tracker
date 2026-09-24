@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
   Pause,
+  Plus,
   Pencil,
   Play,
   RefreshCw,
@@ -35,6 +36,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
+import { AddSidecarCard } from './AddSidecarCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
@@ -69,6 +71,7 @@ export function FleetPage() {
   const [deleting, setDeleting] = useState<Sidecar | null>(null);
   const [updating, setUpdating] = useState<Sidecar | null>(null);
   const [confirmUpdateAll, setConfirmUpdateAll] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
   // Silent-listener dialog state. ``null`` = closed; an
   // ``UntaggedCredential`` = single-row entry (per-card badge); ``undefined`` =
   // open in banner mode (all pending rows for the operator).
@@ -126,6 +129,18 @@ export function FleetPage() {
         description="Sidecar registry"
         actions={
           <div className="flex items-center gap-2">
+            {/* The empty state already shows the card inline. */}
+            {(sidecars.data?.sidecars.length ?? 0) > 0 ? (
+              <Button
+                size="sm"
+                variant={showAdd ? 'primary' : 'secondary'}
+                aria-expanded={showAdd}
+                onClick={() => setShowAdd((v) => !v)}
+              >
+                <Plus className="size-3.5" aria-hidden />
+                Add sidecar
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="secondary"
@@ -156,13 +171,17 @@ export function FleetPage() {
             <Skeleton className="h-40" />
           </div>
         ) : (sidecars.data?.sidecars.length ?? 0) === 0 ? (
-          <EmptyState
-            icon={Server}
-            title="No sidecars yet"
-            description="Install the Runway sidecar on a machine you work from; it will register here on its first check-in."
-          />
+          <>
+            <EmptyState
+              icon={Server}
+              title="No sidecars yet"
+              description="Install the Runway sidecar on a machine you work from; it will register here on its first check-in."
+            />
+            <AddSidecarCard className="mx-auto max-w-2xl" />
+          </>
         ) : (
           <>
+            {showAdd ? <AddSidecarCard className="mb-4" /> : null}
             <UntaggedBanner
               counts={untagged.data?.counts_by_sidecar ?? {}}
               items={untagged.data?.items ?? []}

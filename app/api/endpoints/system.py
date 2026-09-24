@@ -27,10 +27,11 @@ from app.models.db import (
     SystemConfig,
     WebhookConfig,
 )
-from app.models.schemas import LimitCard
+from app.models.schemas import LimitCard, SidecarDownloadsResponse
 from app.services import audit_log
 from app.services.collector_manager import manager
 from app.services.credential_provider import CredentialProvider
+from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import token_cache
 from app.services.token_health import token_health_service
@@ -230,6 +231,20 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to sync collectors for status: {e}")
     return manager.get_collector_stats()
+
+
+@router.get("/sidecar-downloads", response_model=SidecarDownloadsResponse)
+@limiter.limit("30/minute")
+async def get_sidecar_downloads(
+    request: Request, channel: Literal["stable", "edge"] = "stable"
+) -> SidecarDownloadsResponse:
+    """Latest sidecar installers + portable builds for *channel* (Fleet page card).
+
+    Public release metadata only (the same data github.com shows anonymously),
+    so it needs no admin auth. Cached for an hour; degrades to an ``error``
+    field instead of failing when GitHub is unreachable.
+    """
+    return await sidecar_downloads.get(channel)
 
 
 @router.get("/audit-log")

@@ -28,6 +28,8 @@ import type {
   SessionEntry,
   SessionsPaginatedResponse,
   Sidecar,
+  SidecarChannel,
+  SidecarDownloads,
   SystemSettings,
   TokenHealthEntry,
   TopModelsResponse,
@@ -186,6 +188,9 @@ export const fetchSettings = () => api<SystemSettings>('/api/v1/system/settings'
 // Force an immediate GitHub release poll (server + sidecars); admin-gated.
 export const checkForUpdates = () =>
   api<UpdateCheckResult>('/api/v1/system/check-updates', { method: 'POST' });
+
+export const fetchSidecarDownloads = (channel: SidecarChannel = 'stable') =>
+  api<SidecarDownloads>(`/api/v1/system/sidecar-downloads${qs({ channel })}`);
 
 export const fetchStatus = () => api<CollectorStatus>('/api/v1/system/status');
 

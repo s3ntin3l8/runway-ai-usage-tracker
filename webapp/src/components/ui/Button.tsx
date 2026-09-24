@@ -2,7 +2,9 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
-const buttonVariants = cva(
+// Exported so links that should look like buttons (e.g. downloads) can reuse
+// the styles without nesting a <button> inside an <a>.
+export const buttonVariants = cva(
   'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {

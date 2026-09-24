@@ -17,6 +17,11 @@ vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
   items: [],
   counts_by_sidecar: {},
 });
+vi.mocked(api.fetchSidecarDownloads).mockResolvedValue({
+  channel: 'stable',
+  release_url: 'https://example/releases',
+  assets: [],
+});
 
 const sidecar = (o: Partial<Sidecar> = {}): Sidecar => ({
   sidecar_id: 'laptop',
@@ -36,6 +41,17 @@ describe('FleetPage', () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
     renderWithProviders(<FleetPage />);
     expect(await screen.findByText(/no sidecars yet/i)).toBeInTheDocument();
+    // The empty state leads straight into the install flow.
+    expect(screen.getByText('Add a sidecar')).toBeInTheDocument();
+  });
+
+  it('toggles the Add sidecar card from the header', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+    renderWithProviders(<FleetPage />);
+    await screen.findByText('laptop');
+    expect(screen.queryByText('Add a sidecar')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /add sidecar/i }));
+    expect(screen.getByText('Add a sidecar')).toBeInTheDocument();
   });
 
   it('renders a sidecar card with its identity', async () => {
