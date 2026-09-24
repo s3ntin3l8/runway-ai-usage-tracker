@@ -17,8 +17,8 @@ def manager():
 class TestCollectorManagerInitialization:
     def test_init_registry_count(self, manager):
         """Test that default registry contains expected providers."""
-        # 13 providers (antigravity now has a server-side API collector)
-        assert len(manager.collector_registry) == 13
+        # 14 providers (antigravity + the new xai token-status stub)
+        assert len(manager.collector_registry) == 14
         assert "anthropic" in manager.collector_registry
         assert "antigravity" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key

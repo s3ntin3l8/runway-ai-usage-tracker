@@ -25,6 +25,7 @@ from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.ollama import OllamaCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
+from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
@@ -59,6 +60,7 @@ class CollectorManager:
             "openrouter": (OpenRouterCollector, "OpenRouter", 900),
             "minimax": (MiniMaxCollector, "MiniMax", 900),
             "ollama": (OllamaCollector, "Ollama Cloud", 900),
+            "xai": (XaiCollector, "xAI (Grok)", 900),
         }
 
         # Active collectors keyed by "provider_id:account_id"
@@ -294,6 +296,9 @@ class CollectorManager:
                 token_val = token_val[7:].strip()
 
             all_tokens["oauth_token"] = token_val
+            # Providers like opencode read the key under "api_key" rather than
+            # "oauth_token"; mirror it so the collector's first lookup hits.
+            all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)
                 if acc_id:
@@ -308,6 +313,14 @@ class CollectorManager:
                     "cookie_session": r.session_cookie,
                     "cookie_sessionKey": r.session_cookie,
                     "cookie___Secure-next-auth.session-token": r.session_cookie,
+                    # opencode's two-step console handshake uses
+                    # "__Host-console_session" in addition to "auth". The UI
+                    # only exposes a single cookie field, so the same value
+                    # is mirrored into both names — when an operator pastes
+                    # only one cookie the collector still finds *something*
+                    # under each key, and the missing-key path is detected
+                    # at fetch time by the 401/400 response.
+                    "console_session": r.session_cookie,
                 }
             )
 
