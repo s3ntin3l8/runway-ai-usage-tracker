@@ -3145,6 +3145,13 @@ class DaemonRunner:
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
+                if isinstance(result, dict) and result.get("events_reattributed"):
+                    # A retag / hint change moved already-stored events onto
+                    # the account this cycle stamped — surfaced for diagnosis.
+                    logging.info(
+                        f"  server re-attributed {result['events_reattributed']} "
+                        "previously stored event(s) to their new account"
+                    )
                 if len(event_batches) > 1:
                     logging.info(
                         f"  sent batch {batch_idx + 1}/{len(event_batches)} "

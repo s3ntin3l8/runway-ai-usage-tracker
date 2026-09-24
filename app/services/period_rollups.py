@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session
 
@@ -31,6 +32,20 @@ _INDEX_ELEMENTS = (
 
 _ROLLUP_TABLE = UsagePeriodRollup.__table__  # type: ignore[attr-defined]
 
+# Additive per-event columns summed into each rollup grain (msgs is +/-1).
+_SUM_FIELDS = (
+    "tokens_input",
+    "tokens_output",
+    "tokens_cache_read",
+    "tokens_cache_create",
+    "tokens_reasoning",
+    "cost_usd",
+    "cost_input",
+    "cost_output",
+    "cost_cache_read",
+    "cost_cache_create",
+)
+
 
 def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1) -> None:
     """Atomically upsert the rollup rows touched by this event.
@@ -59,50 +74,36 @@ def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1)
     unique_grains = list(dict.fromkeys(grains))
     now = datetime.now(UTC)
     table = _ROLLUP_TABLE
+    deltas = {field: sign * (getattr(ev, field) or 0) for field in _SUM_FIELDS}
 
     for period_type, period_key in _period_keys(ev.ts):
         for model_id, sidecar_id in unique_grains:
+            key = {
+                "provider_id": ev.provider_id,
+                "account_id": ev.account_id,
+                "period_type": period_type,
+                "period_key": period_key,
+                "model_id": model_id,
+                "sidecar_id": sidecar_id,
+            }
+            increments = {field: table.c[field] + delta for field, delta in deltas.items()}
+            increments["msgs"] = table.c.msgs + sign
+            increments["last_updated"] = now
+            if sign < 0:
+                # Subtraction only ever adjusts an existing row: with no row
+                # there is nothing to subtract from, and an upsert would
+                # insert negative totals (e.g. on a DB whose events were
+                # imported without rollup replays).
+                session.execute(
+                    sa_update(UsagePeriodRollup)
+                    .where(*(table.c[k] == v for k, v in key.items()))
+                    .values(increments)
+                )
+                continue
             stmt = sqlite_insert(UsagePeriodRollup).values(
-                provider_id=ev.provider_id,
-                account_id=ev.account_id,
-                period_type=period_type,
-                period_key=period_key,
-                model_id=model_id,
-                sidecar_id=sidecar_id,
-                msgs=sign,
-                tokens_input=sign * (ev.tokens_input or 0),
-                tokens_output=sign * (ev.tokens_output or 0),
-                tokens_cache_read=sign * (ev.tokens_cache_read or 0),
-                tokens_cache_create=sign * (ev.tokens_cache_create or 0),
-                tokens_reasoning=sign * (ev.tokens_reasoning or 0),
-                cost_usd=sign * (ev.cost_usd or 0),
-                cost_input=sign * (ev.cost_input or 0),
-                cost_output=sign * (ev.cost_output or 0),
-                cost_cache_read=sign * (ev.cost_cache_read or 0),
-                cost_cache_create=sign * (ev.cost_cache_create or 0),
-                last_updated=now,
+                **key, msgs=sign, **deltas, last_updated=now
             )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=list(_INDEX_ELEMENTS),
-                set_={
-                    "msgs": table.c.msgs + sign,
-                    "tokens_input": table.c.tokens_input + sign * (ev.tokens_input or 0),
-                    "tokens_output": table.c.tokens_output + sign * (ev.tokens_output or 0),
-                    "tokens_cache_read": table.c.tokens_cache_read
-                    + sign * (ev.tokens_cache_read or 0),
-                    "tokens_cache_create": table.c.tokens_cache_create
-                    + sign * (ev.tokens_cache_create or 0),
-                    "tokens_reasoning": table.c.tokens_reasoning
-                    + sign * (ev.tokens_reasoning or 0),
-                    "cost_usd": table.c.cost_usd + sign * (ev.cost_usd or 0),
-                    "cost_input": table.c.cost_input + sign * (ev.cost_input or 0),
-                    "cost_output": table.c.cost_output + sign * (ev.cost_output or 0),
-                    "cost_cache_read": table.c.cost_cache_read + sign * (ev.cost_cache_read or 0),
-                    "cost_cache_create": table.c.cost_cache_create
-                    + sign * (ev.cost_cache_create or 0),
-                    "last_updated": now,
-                },
-            )
+            stmt = stmt.on_conflict_do_update(index_elements=list(_INDEX_ELEMENTS), set_=increments)
             session.execute(stmt)
 
 

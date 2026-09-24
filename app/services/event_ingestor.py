@@ -32,6 +32,15 @@ class IngestResult:
     windows_closed: int = 0
 
 
+# Everything a re-attributed row takes from the re-push. Identity columns
+# (id, provider_id, event_id, sidecar_id — the same by construction) stay.
+_REFRESHED_FIELDS = tuple(
+    name
+    for name in UsageEvent.model_fields
+    if name not in ("id", "provider_id", "event_id", "sidecar_id")
+)
+
+
 class EventIngestor:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -65,7 +74,7 @@ class EventIngestor:
                     )
                     if self._try_insert_event(ev):
                         result.events_inserted += 1
-                    elif self._reattribute(ev, rollups=False):
+                    elif self._reattribute(ev):
                         result.events_reattributed += 1
                     else:
                         result.events_duplicate += 1
@@ -134,7 +143,7 @@ class EventIngestor:
                     web_fetch_requests=push.web_fetch_requests,
                 )
                 if not self._try_insert_event(ev):
-                    if self._reattribute(ev, rollups=True):
+                    if self._reattribute(ev):
                         result.events_reattributed += 1
                     else:
                         result.events_duplicate += 1
@@ -150,7 +159,7 @@ class EventIngestor:
         self.session.commit()
         return result
 
-    def _reattribute(self, incoming: UsageEvent, *, rollups: bool) -> bool:
+    def _reattribute(self, incoming: UsageEvent) -> bool:
         """Move an already-stored event to ``incoming.account_id`` if warranted.
 
         Called after the insert hit the ``(provider_id, event_id)`` unique
@@ -160,8 +169,11 @@ class EventIngestor:
         was withdrawn), and the host is authoritative for its own events.
         A different sidecar sending the same event (e.g. a shared home
         directory) keeps the first attribution, so two hosts can't flip it
-        back and forth. Rollups move with the event. Returns True when the
-        row moved.
+        back and forth. The moved row takes the re-push's payload (model,
+        project context, tokens, cost), so a retag can't leave stale
+        enrichment behind, and rollups move with it: the stored values are
+        subtracted from the old account, the refreshed ones added to the new.
+        Returns True when the row moved.
         """
         existing = self.session.exec(
             select(UsageEvent).where(
@@ -175,12 +187,15 @@ class EventIngestor:
             or existing.sidecar_id != incoming.sidecar_id
         ):
             return False
-        if rollups and existing.kind == "message":
+        # Only messages roll up; decide on the stored kind before the
+        # refresh and on the pushed kind after it.
+        if existing.kind == "message":
             update_rollups_for_event(self.session, existing, sign=-1)
-        existing.account_id = incoming.account_id
+        for field in _REFRESHED_FIELDS:
+            setattr(existing, field, getattr(incoming, field))
         self.session.add(existing)
         self.session.flush()
-        if rollups and existing.kind == "message":
+        if existing.kind == "message":
             update_rollups_for_event(self.session, existing)
         return True
 

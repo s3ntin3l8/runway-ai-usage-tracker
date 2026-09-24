@@ -112,6 +112,52 @@ def test_error_events_reattribute_without_rollups(session: Session):
     assert session.exec(select(UsagePeriodRollup)).all() == []
 
 
+def test_reattributed_row_takes_the_repushed_payload(session: Session):
+    """The moved row is refreshed from the re-push, and rollups follow the
+    refreshed values — no stale model / project / cost left behind."""
+    EventIngestor(session).ingest([_push("default")], sidecar_id="laptop")
+
+    enriched = _push("alice@example.com")
+    enriched.tokens_input = 250
+    enriched.cwd = "/home/me/work/runway"
+    EventIngestor(session).ingest([enriched], sidecar_id="laptop")
+
+    row = session.exec(select(UsageEvent)).one()
+    assert (row.account_id, row.tokens_input, row.project) == (
+        "alice@example.com",
+        250,
+        "runway",
+    )
+    assert _lifetime(session, "alice@example.com") == (1, 250)
+    assert _lifetime(session, "default") == (0, 0)
+
+
+def test_error_repush_over_a_message_removes_its_rollups(session: Session):
+    EventIngestor(session).ingest([_push("default")], sidecar_id="laptop")
+    EventIngestor(session).ingest([_push("alice@example.com", kind="error")], sidecar_id="laptop")
+    row = session.exec(select(UsageEvent)).one()
+    assert (row.account_id, row.kind) == ("alice@example.com", "error")
+    assert _lifetime(session, "default") == (0, 0)
+    assert _lifetime(session, "alice@example.com") == (0, 0)
+
+
+def test_negative_rollup_delta_never_inserts_a_row(session: Session):
+    """Subtracting an event whose rollup row doesn't exist (e.g. events
+    imported without rollup replays) is a no-op, not a negative row."""
+    ev = UsageEvent(
+        provider_id="anthropic",
+        account_id="ghost@example.com",
+        sidecar_id="laptop",
+        event_id="msg_x",
+        ts=datetime(2026, 9, 1, 10, tzinfo=UTC),
+        kind="message",
+        model_id="sonnet-4.5",
+        tokens_input=100,
+    )
+    update_rollups_for_event(session, ev, sign=-1)
+    assert session.exec(select(UsagePeriodRollup)).all() == []
+
+
 # ---------------------------------------------------------------------------
 # One-shot migration of existing databases
 # ---------------------------------------------------------------------------
