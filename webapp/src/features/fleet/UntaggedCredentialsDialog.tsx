@@ -10,6 +10,16 @@
 // `/fleet/config`'s account_tag_hints on its next cycle and starts
 // stamping cards under the chosen account_id.
 //
+// Scope toggle (#319): a dialog-level "This machine / All machines"
+// switch sets the request's `scope` field. "This machine" (default)
+// scopes the tag to the reporting sidecar; "All machines" persists a
+// deployment-wide (sidecar_id NULL) tag that applies to every host —
+// useful for shared credential origins (e.g. NFS home dirs) and for
+// retagging a known origin from a second machine without visiting the
+// first. The dialog-level switch applies to every row in that open —
+// multi-machine deployments tag per machine by re-opening the dialog
+// per entry (singleEntry).
+//
 // No free-form label entry: the dialog always maps to an existing
 // provider_configs row. Empty dropdown state links to the existing
 // provider-config form (precondition: identity must exist server-side
@@ -75,6 +85,9 @@ export function UntaggedCredentialsDialog({
 }: UntaggedCredentialsDialogProps) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<DialogState>(INITIAL);
+  // #319 scope: false = "This machine" (scope: 'sidecar', the server
+  // default); true = "All machines" (scope: 'deployment').
+  const [applyToAllMachines, setApplyToAllMachines] = useState(false);
 
   const untagged = useQuery({
     queryKey: ['fleet', 'untagged_credentials', sidecarId ?? 'all'],
@@ -91,6 +104,7 @@ export function UntaggedCredentialsDialog({
   // Reset the staged tag each time the dialog reopens or the row changes.
   useEffect(() => {
     if (!open) return;
+    setApplyToAllMachines(false);
     if (singleEntry) {
       setState({
         sidecar_id: singleEntry.sidecar_id,
@@ -150,6 +164,8 @@ export function UntaggedCredentialsDialog({
       account_id: accountId,
     });
 
+  const scopeLabel = applyToAllMachines ? 'All machines' : 'This machine';
+
   return (
     <ResponsiveDialog
       open={open}
@@ -170,12 +186,58 @@ export function UntaggedCredentialsDialog({
         </p>
       ) : (
         <div className="flex flex-col gap-3">
+          {/* #319 scope toggle — dialog-level; stageToBody reads the
+              current switch when the Tag button is clicked. */}
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-[12px] font-medium">Scope</p>
+              <p className="text-[11px] text-fg-subtle">
+                {applyToAllMachines
+                  ? 'Applies to every sidecar that reports this credential.'
+                  : 'Applies only to the sidecar that reported it.'}
+              </p>
+            </div>
+            <div
+              className="flex shrink-0 rounded-md border border-border bg-surface-1 p-0.5"
+              role="radiogroup"
+              aria-label="Tag scope"
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!applyToAllMachines}
+                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                  !applyToAllMachines
+                    ? 'bg-accent text-fg-inverse'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+                onClick={() => setApplyToAllMachines(false)}
+              >
+                This machine
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={applyToAllMachines}
+                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                  applyToAllMachines
+                    ? 'bg-accent text-fg-inverse'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+                onClick={() => setApplyToAllMachines(true)}
+              >
+                All machines
+              </button>
+            </div>
+          </div>
+
           {visibleEntries.map((entry) => (
             <UntaggedRow
               key={`${entry.sidecar_id}/${entry.provider_id}/${entry.credential_origin}`}
               entry={entry}
               accounts={accountsByProvider[entry.provider_id] ?? []}
               currentSelection={state}
+              scopeLabel={scopeLabel}
               onSelect={(accountId) => stage(entry, accountId)}
               onSave={() =>
                 save.mutate(
@@ -183,6 +245,7 @@ export function UntaggedCredentialsDialog({
                     entry,
                     accountsByProvider[entry.provider_id] ?? [],
                     state,
+                    applyToAllMachines,
                   ),
                 )
               }
@@ -194,7 +257,7 @@ export function UntaggedCredentialsDialog({
 
       <p className="mt-3 text-[11px] text-fg-subtle">
         Tagging persists an operator-resolved mapping the sidecar consumes on its next heartbeat. The audit
-        log records the action with credential_origin + sidecar_id only (no plaintext credentials).
+        log records the action with credential_origin + sidecar_id + scope only (no plaintext credentials).
       </p>
 
       <div className="mt-4 flex justify-end gap-2">
@@ -208,10 +271,12 @@ function stageToBody(
   entry: UntaggedCredential,
   matchingAccounts: ProviderAccount[],
   state: DialogState,
+  applyToAllMachines: boolean,
 ): CredentialTagRequest {
   // The state machine keeps a single staged selection per dialog open.
   // The Save button is rendered per-row, so the body comes from that
   // row's currently staged account_id (state at the time of click).
+  // ``scope`` (#319) is the dialog-level switch's value at click time.
   return {
     sidecar_id: entry.sidecar_id,
     provider_id: entry.provider_id,
@@ -223,6 +288,7 @@ function stageToBody(
       // first matching account's id so the click isn't a no-op.
       matchingAccounts[0]?.account_id ||
       '',
+    scope: applyToAllMachines ? 'deployment' : 'sidecar',
   };
 }
 
@@ -230,6 +296,7 @@ interface UntaggedRowProps {
   entry: UntaggedCredential;
   accounts: ProviderAccount[];
   currentSelection: DialogState;
+  scopeLabel: string;
   onSelect: (accountId: string) => void;
   onSave: () => void;
   saving: boolean;
@@ -239,6 +306,7 @@ function UntaggedRow({
   entry,
   accounts,
   currentSelection,
+  scopeLabel,
   onSelect,
   onSave,
   saving,
@@ -270,6 +338,9 @@ function UntaggedRow({
           </p>
           <p className="truncate text-[11px] text-fg-subtle">
             from <span className="font-mono">{entry.sidecar_id}</span>
+            {scopeLabel === 'All machines' && (
+              <span className="text-accent"> · applies to all machines</span>
+            )}
           </p>
         </div>
       </div>

@@ -432,12 +432,14 @@ def test_tag_endpoint_creates_tag_and_clears_pending(client: TestClient, session
     )
     assert resp.status_code == 200, resp.text
 
-    # Tag persisted; pending row cleared.
+    # Tag persisted (default scope = this machine → scoped row);
+    # pending row cleared.
     assert (
         CredentialTagRepo.get_account_id(
             session,
             provider_id="anthropic",
             credential_origin="path:/.claude/.credentials.json",
+            sidecar_id="alpha-host",
         )
         == "alice@example.com"
     )
@@ -465,6 +467,94 @@ def test_tag_endpoint_404_when_provider_account_missing(client: TestClient):
     )
     assert resp.status_code == 404
     assert "provider_configs" in resp.text
+
+
+def test_tag_endpoint_sidecar_scope_clears_only_that_sidecar(client: TestClient, session: Session):
+    """scope="sidecar" (default): tag is sidecar-scoped; only that
+    sidecar's pending row is cleared (#319)."""
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+    for sc in ("alpha-host", "beta-host"):
+        PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=sc,
+            provider_id="anthropic",
+            credential_origin="path:/shared/.claude/.credentials.json",
+        )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha-host",
+            "provider_id": "anthropic",
+            "credential_origin": "path:/shared/.claude/.credentials.json",
+            "account_id": "alice@example.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Tag scoped to alpha only.
+    rows = CredentialTagRepo.list_by_provider(session, provider_id="anthropic")
+    assert len(rows) == 1
+    assert rows[0].sidecar_id == "alpha-host"
+    # Only alpha's pending row cleared; beta still prompts.
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha-host",
+            provider_id="anthropic",
+            credential_origin="path:/shared/.claude/.credentials.json",
+        )
+        is None
+    )
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="beta-host",
+            provider_id="anthropic",
+            credential_origin="path:/shared/.claude/.credentials.json",
+        )
+        is not None
+    )
+
+
+def test_tag_endpoint_deployment_scope_clears_all_sidecars(client: TestClient, session: Session):
+    """scope="deployment": tag is deployment-wide (sidecar_id NULL);
+    every sidecar's pending row for that origin is cleared (#319)."""
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+    for sc in ("alpha-host", "beta-host"):
+        PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=sc,
+            provider_id="anthropic",
+            credential_origin="path:/shared/.claude/.credentials.json",
+        )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha-host",
+            "provider_id": "anthropic",
+            "credential_origin": "path:/shared/.claude/.credentials.json",
+            "account_id": "alice@example.com",
+            "scope": "deployment",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = CredentialTagRepo.list_by_provider(session, provider_id="anthropic")
+    assert len(rows) == 1
+    assert rows[0].sidecar_id is None
+    assert PendingCredentialTagRepo.list_all(session) == []
 
 
 def test_pending_endpoint_lists_all(client: TestClient, session: Session):
@@ -705,6 +795,242 @@ def test_auto_hint_independent_per_provider(client: TestClient, session: Session
     assert "minimax" in hints
     assert "anthropic" not in hints
     assert "opencode" not in hints
+
+
+# ---------------------------------------------------------------------------
+# Per-sidecar hint scoping (#319) — /fleet/config?sidecar_id= +
+# multi-host auto-hint delivery gate
+# ---------------------------------------------------------------------------
+
+
+def _add_live_sidecar(session: Session, sidecar_id: str, hostname: str) -> None:
+    from app.models.db import SidecarRegistry
+
+    session.add(SidecarRegistry(sidecar_id=sidecar_id, hostname=hostname))
+    session.commit()
+
+
+def test_config_scoped_tag_not_visible_to_other_sidecar(
+    client: TestClient, session: Session
+) -> None:
+    """A machine-scoped credential tag only ships to its sidecar;
+    other sidecars fall back to the deployment-wide view."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/home/alice/.claude/.credentials.json",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    session.commit()
+
+    r_alpha = client.get("/api/v1/fleet/config?sidecar_id=alpha")
+    assert r_alpha.status_code == 200
+    assert r_alpha.json()["account_tag_hints"] == {
+        "anthropic": {"path:/home/alice/.claude/.credentials.json": "alice@example.com"},
+    }
+
+    r_beta = client.get("/api/v1/fleet/config?sidecar_id=beta")
+    assert r_beta.status_code == 200
+    assert r_beta.json()["account_tag_hints"] == {}
+
+
+def test_config_deployment_tag_visible_to_every_sidecar(
+    client: TestClient, session: Session
+) -> None:
+    """A deployment-wide (legacy / "All machines") tag ships to every
+    identified sidecar."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/shared/.claude/.credentials.json",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    session.commit()
+
+    for sc in ("alpha", "beta"):
+        r = client.get(f"/api/v1/fleet/config?sidecar_id={sc}")
+        assert r.status_code == 200
+        assert r.json()["account_tag_hints"] == {
+            "anthropic": {"path:/shared/.claude/.credentials.json": "alice@example.com"},
+        }
+
+
+def test_auto_hint_withheld_for_unreported_sidecar_in_multi_host(
+    client: TestClient, session: Session
+) -> None:
+    """Multi-host: a sidecar that never reported ``provider:minimax``
+    gets no auto-hint (cross-host attribution block)."""
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    _add_live_sidecar(session, "beta", "beta-host")
+
+    r = client.get("/api/v1/fleet/config?sidecar_id=beta")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_auto_hint_ships_to_reporting_sidecar_in_multi_host(
+    client: TestClient, session: Session
+) -> None:
+    """Multi-host: the sidecar that reported ``provider:minimax`` (via
+    the manifest) receives the auto-hint; its peer does not."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    _add_live_sidecar(session, "beta", "beta-host")
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="minimax",
+        credential_origin="provider:minimax",
+    )
+    session.commit()
+
+    r_alpha = client.get("/api/v1/fleet/config?sidecar_id=alpha")
+    assert r_alpha.status_code == 200
+    assert r_alpha.json()["account_tag_hints"] == {
+        "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
+    }
+
+    r_beta = client.get("/api/v1/fleet/config?sidecar_id=beta")
+    assert r_beta.status_code == 200
+    assert r_beta.json()["account_tag_hints"] == {}
+
+
+def test_auto_hint_withheld_when_unidentified_in_multi_host(
+    client: TestClient, session: Session
+) -> None:
+    """Old sidecar binary (no ``?sidecar_id=``) in a multi-host
+    deployment: no auto-hints — the safe pre-#319 behavior."""
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    _add_live_sidecar(session, "beta", "beta-host")
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_manifest_keeps_auto_hint_pending_row_when_sidecar_stops_reporting(
+    client: TestClient, session: Session
+) -> None:
+    """Stickiness (#319): once the auto-hint resolves ``provider:minimax``,
+    the sidecar stops reporting it — but the pending row must survive so
+    multi-host auto-hint delivery keeps recognizing the reporter, without
+    the hint oscillating off. The row is hidden from the Untagged dialog
+    (effective-hint filter) while still sticky."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    session.add(
+        ProviderConfig(
+            provider_id="minimax",
+            account_id="s3ntin318@gmail.com",
+            enabled=True,
+        )
+    )
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    _add_live_sidecar(session, "beta", "beta-host")
+
+    # Cycle 1: sidecar reports the synthetic origin.
+    r1 = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha",
+            "entries": [{"provider_id": "minimax", "credential_origin": "provider:minimax"}],
+        },
+    )
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["resolved"] == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
+    assert PendingCredentialTagRepo.get(
+        session,
+        sidecar_id="alpha",
+        provider_id="minimax",
+        credential_origin="provider:minimax",
+    )
+
+    # Cycle 2: sidecar resolved via the hint and reports nothing for
+    # minimax — stickiness must keep the pending row.
+    r2 = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
+    assert r2.status_code == 200, r2.text
+    assert PendingCredentialTagRepo.get(
+        session,
+        sidecar_id="alpha",
+        provider_id="minimax",
+        credential_origin="provider:minimax",
+    ), "sticky auto-hint pending row must survive a resolve-and-stop-reporting cycle"
+
+    # Sticky row is hidden from the Untagged dialog (already resolved).
+    r_pending = client.get("/api/v1/fleet/credentials/tags/pending")
+    assert r_pending.status_code == 200
+    assert r_pending.json()["items"] == []
+
+    # Auto-hint still ships to alpha on the next config fetch.
+    r_cfg = client.get("/api/v1/fleet/config?sidecar_id=alpha")
+    assert r_cfg.json()["account_tag_hints"] == {
+        "minimax": {"provider:minimax": "s3ntin318@gmail.com"}
+    }
+
+
+def test_pending_endpoint_hides_origin_with_effective_hint(
+    client: TestClient, session: Session
+) -> None:
+    """Pending rows whose origin already has an explicit tag (e.g. a
+    tag applied while the row was still mid-flight) are hidden — the
+    operator shouldn't be re-prompted for a resolved origin."""
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/tagged",
+        account_id="alice@example.com",
+        sidecar_id=None,
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/tagged",
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/untagged",
+    )
+    session.commit()
+
+    r = client.get("/api/v1/fleet/credentials/tags/pending")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert [i["credential_origin"] for i in items] == ["path:/untagged"]
+    # Counts reflect only the visible (still-untagged) rows.
+    assert r.json()["counts_by_sidecar"] == {"alpha": 1}
 
 
 # ---------------------------------------------------------------------------

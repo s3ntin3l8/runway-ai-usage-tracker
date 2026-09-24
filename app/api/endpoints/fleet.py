@@ -1,8 +1,8 @@
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
@@ -25,6 +25,7 @@ from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usa
 from app.services.credential_tags import (
     CredentialTagRepo,
     PendingCredentialTagRepo,
+    live_sidecar_ids,
 )
 from app.services.credential_token import issue_credential_token
 from app.services.fleet_registry import fleet_registry
@@ -320,25 +321,30 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "update_now": update_now,
         # Tag hints the sidecar consumes on its next collection cycle to
         # stamp cards it couldn't resolve via local discovery alone (silent
-        # listener model — see PR #288).
-        "account_tag_hints": _account_tag_hints_for_providers(session, list(poll_providers))
+        # listener model — see PR #288). Scoped to the ingesting sidecar (#319).
+        "account_tag_hints": _account_tag_hints_for_providers(
+            session, list(poll_providers), sidecar_id=payload.sidecar_id or None
+        )
         if poll_providers
         else {},
     }
 
 
 def _account_tag_hints_for_providers(
-    session: Session, providers: list[str]
+    session: Session, providers: list[str], *, sidecar_id: str | None = None
 ) -> dict[str, dict[str, str]]:
     """Return ``{provider_id: {credential_origin: account_id, ...}}`` for the
-    requested providers. Powers both ``/fleet/config`` and the ``/fleet/ingest``
-    response, so the sidecar can stamp cards it couldn't resolve locally.
+    requested providers, scoped to the requesting sidecar (#319).
 
-    Thin wrapper over :meth:`CredentialTagRepo.list_pending_payload` —
-    the lookup key lives in the repo so future callers (and the
-    sidecar's ``GenericCollector.collect_provider`` block-guard unit
-    tests) all read through the same SQL shape (PR #290 round-2
-    review Hermes body suggestion #6).
+    Powers ``/fleet/config``, ``/fleet/ingest``, and the manifest
+    response, so the sidecar can stamp cards it couldn't resolve
+    locally.
+
+    Thin wrapper over :meth:`CredentialTagRepo.list_pending_payload` +
+    :meth:`CredentialTagRepo.auto_hints_for_single_account_providers`
+    — the lookup keys live in the repo so future callers all read
+    through the same SQL shape (PR #290 round-2 review Hermes body
+    suggestion #6).
 
     Merges the operator-resolved ``credential_tags`` rows on top of the
     auto-hints for single-account providers — the auto-hint is the
@@ -349,9 +355,30 @@ def _account_tag_hints_for_providers(
     the quota gauge and the sidecar events merge into one Fleet
     entry. Operator tags (when present) always win, since they're
     explicit and the auto-hint is implicit.
+
+    Requester identity: with ``sidecar_id`` given, both that sidecar's
+    scoped tags and deployment-wide (NULL) tags ship (scoped winning).
+    Without one (old sidecar binaries that don't send
+    ``?sidecar_id=`` on ``/fleet/config``), the caller is treated as
+    the deployment's only live sidecar when exactly one exists — so a
+    single-host operator's newly created machine-scoped tags still
+    reach an un-upgraded binary — and falls back to deployment-wide
+    tags only when zero or 2+ sidecars are live.
     """
-    resolved = CredentialTagRepo.list_pending_payload(session, providers=providers)
-    auto = CredentialTagRepo.auto_hints_for_single_account_providers(session, providers=providers)
+    effective_sidecar_id = sidecar_id
+    if effective_sidecar_id is None:
+        live = live_sidecar_ids(session)
+        if len(live) == 1:
+            effective_sidecar_id = live[0]
+    resolved = CredentialTagRepo.list_pending_payload(
+        session, providers=providers, sidecar_id=effective_sidecar_id
+    )
+    # Auto-hints key off the *original* requester identity: an
+    # unidentified fetcher in a multi-host deployment gets no auto-hints
+    # (safe default), while ≤1 live sidecar ships unconditionally.
+    auto = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session, providers=providers, sidecar_id=sidecar_id
+    )
     # Operator tags win over auto-hints — explicit operator choice is
     # never overridden by the implicit single-account heuristic.
     for pid, by_origin in auto.items():
@@ -433,6 +460,27 @@ async def post_credential_manifest(
             credential_origin=origin,
         )
 
+    # Count before stickiness folds synthetic auto-hint origins into the
+    # keep-set — entries_received must reflect what the sidecar reported.
+    entries_received = sum(len(v) for v in keep_by_provider.values())
+
+    # Auto-hint stickiness (#319): the sidecar stops reporting a
+    # synthetic ``provider:<pid>`` origin the moment the auto-hint
+    # resolves it, and delete_stale would then prune the pending row —
+    # which is exactly the signal multi-host auto-hint delivery keys
+    # off, so the hint would oscillate off one manifest cycle after it
+    # turned on. Retain those rows for as long as their auto-hint is
+    # still active (they're hidden from the Untagged dialog via the
+    # effective-hint filter on GET .../tags/pending). Candidates: pids
+    # reported this cycle plus pids of rows still pending from before.
+    existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
+    candidate_pids = sorted({r.provider_id for r in existing_rows} | set(keep_by_provider))
+    auto = CredentialTagRepo.auto_hints_for_single_account_providers(
+        session, providers=candidate_pids, sidecar_id=payload.sidecar_id
+    )
+    for pid, by_origin in auto.items():
+        keep_by_provider.setdefault(pid, set()).update(by_origin)
+
     removed = PendingCredentialTagRepo.delete_stale(
         session,
         sidecar_id=payload.sidecar_id,
@@ -440,12 +488,14 @@ async def post_credential_manifest(
     )
     session.commit()
 
-    resolved = _account_tag_hints_for_providers(session, list(keep_by_provider.keys()))
+    resolved = _account_tag_hints_for_providers(
+        session, candidate_pids, sidecar_id=payload.sidecar_id
+    )
 
     return {
         "status": "ok",
         "sidecar_id": payload.sidecar_id,
-        "entries_received": sum(len(v) for v in keep_by_provider.values()),
+        "entries_received": entries_received,
         "entries_pruned": removed,
         "resolved": resolved,
     }
@@ -465,6 +515,11 @@ class CredentialTagRequest(BaseModel):
     # The chosen provider_configs row's account_id. The server looks up
     # the row to verify it exists before persisting the tag.
     account_id: str
+    # "sidecar" (default): the tag applies only to ``sidecar_id`` —
+    # "this machine" in the dialog. "deployment": the tag applies to
+    # every sidecar (``credential_tags.sidecar_id = NULL``) — the
+    # dialog's "All machines" scope for shared origins (NFS home dirs).
+    scope: Literal["sidecar", "deployment"] = "sidecar"
 
 
 @router.post("/credentials/tags")
@@ -479,8 +534,10 @@ async def post_credential_tag(
 
     Validates the chosen ``account_id`` corresponds to an existing
     ``provider_configs`` row for the same provider, persists a
-    :class:`CredentialTag`, deletes the corresponding
-    :class:`PendingCredentialTag`, and writes an audit-log row.
+    :class:`CredentialTag` (scoped per ``scope`` — #319), clears the
+    matching pending row(s), and writes an audit-log row. A
+    deployment-wide scope clears every sidecar's pending row for the
+    origin; a sidecar scope clears only that sidecar's.
     """
     row = session.exec(
         select(ProviderConfig).where(
@@ -503,16 +560,24 @@ async def post_credential_tag(
         provider_id=body.provider_id,
         credential_origin=body.credential_origin,
         account_id=body.account_id,
+        sidecar_id=body.sidecar_id if body.scope == "sidecar" else None,
         set_by=getattr(request.state.auth, "actor", "operator")
         if hasattr(request.state, "auth")
         else "operator",
     )
-    PendingCredentialTagRepo.delete(
-        session,
-        sidecar_id=body.sidecar_id,
-        provider_id=body.provider_id,
-        credential_origin=body.credential_origin,
-    )
+    if body.scope == "deployment":
+        PendingCredentialTagRepo.delete_by_origin(
+            session,
+            provider_id=body.provider_id,
+            credential_origin=body.credential_origin,
+        )
+    else:
+        PendingCredentialTagRepo.delete(
+            session,
+            sidecar_id=body.sidecar_id,
+            provider_id=body.provider_id,
+            credential_origin=body.credential_origin,
+        )
 
     audit_log.record(
         session,
@@ -522,6 +587,7 @@ async def post_credential_tag(
         payload={
             "credential_origin": body.credential_origin,
             "sidecar_id": body.sidecar_id,
+            "scope": body.scope,
         },
     )
 
@@ -539,8 +605,34 @@ async def list_pending_credential_tags(
     When ``sidecar_id`` is given, returns just that sidecar's pending set
     (used by the per-card badge on the fleet view). When omitted, returns
     all pending entries across sidecars (the top-of-page banner).
+
+    Rows whose origin already has an effective hint (an explicit tag or
+    an active single-account auto-hint) are hidden: #319 keeps
+    auto-resolved synthetic ``provider:<pid>`` rows in the table so the
+    auto-hint doesn't oscillate, but they're not "untagged" from the
+    operator's perspective.
     """
-    rows = PendingCredentialTagRepo.list_all(session, sidecar_id=sidecar_id)
+    all_rows = PendingCredentialTagRepo.list_all(session)
+
+    # Group by sidecar so hints resolve with that host's scope.
+    by_sidecar: dict[str, list] = {}
+    for r in all_rows:
+        by_sidecar.setdefault(r.sidecar_id, []).append(r)
+
+    visible_rows = []
+    counts_by_sidecar: dict[str, int] = {}
+    for sc_id, sc_rows in by_sidecar.items():
+        pids = sorted({r.provider_id for r in sc_rows})
+        hints = _account_tag_hints_for_providers(session, pids, sidecar_id=sc_id)
+        for r in sc_rows:
+            if r.credential_origin in hints.get(r.provider_id, {}):
+                continue
+            visible_rows.append(r)
+            counts_by_sidecar[sc_id] = counts_by_sidecar.get(sc_id, 0) + 1
+
+    if sidecar_id is not None:
+        visible_rows = [r for r in visible_rows if r.sidecar_id == sidecar_id]
+
     return {
         "items": [
             {
@@ -550,9 +642,9 @@ async def list_pending_credential_tags(
                 "first_seen": r.first_seen.isoformat() if r.first_seen else None,
                 "last_seen": r.last_seen.isoformat() if r.last_seen else None,
             }
-            for r in rows
+            for r in visible_rows
         ],
-        "counts_by_sidecar": PendingCredentialTagRepo.pending_count_by_sidecar(session),
+        "counts_by_sidecar": counts_by_sidecar,
     }
 
 
@@ -804,6 +896,7 @@ async def update_sidecar_now(
 @limiter.limit("60/minute")
 async def get_fleet_config(
     request: Request,
+    sidecar_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Retrieve active collection configuration for sidecars.
@@ -811,6 +904,14 @@ async def get_fleet_config(
     This endpoint does not require the admin key (as sidecars do not have it)
     but relies on rate limiting. It returns only the logical state (enabled/disabled
     providers and strategies), no sensitive keys or tokens.
+
+    Optional ``?sidecar_id=<hostname>`` (#319) identifies the requesting
+    sidecar so ``account_tag_hints`` can be scoped to it: machine-scoped
+    credential tags only ship to their host, and in a multi-host
+    deployment the single-account auto-hint only reaches sidecars that
+    reported the credential. Old sidecar binaries omit the parameter —
+    they receive deployment-wide tags only, and no auto-hints while 2+
+    sidecars are live (the safe pre-#319 behavior).
 
     The response carries two parallel shapes for backward compatibility:
 
@@ -827,6 +928,9 @@ async def get_fleet_config(
     format without playing catch-up.
     """
     from app.models.db import ProviderConfig
+
+    if sidecar_id:
+        sidecar_id = normalize_sidecar_id(sidecar_id)
 
     rows = session.exec(select(ProviderConfig)).all()
 
@@ -929,8 +1033,10 @@ async def get_fleet_config(
     # silent-listener fall-through path (see PR #288). Sidecar uses these
     # when local credential discovery doesn't surface an account_id; the
     # hint maps the credential's `origin_descriptor` to a known
-    # provider_configs.account_id.
-    account_tag_hints = _account_tag_hints_for_providers(session, list(config["providers"].keys()))
+    # provider_configs.account_id. Scoped to ?sidecar_id= when given (#319).
+    account_tag_hints = _account_tag_hints_for_providers(
+        session, list(config["providers"].keys()), sidecar_id=sidecar_id
+    )
 
     return {
         "status": "ok",
