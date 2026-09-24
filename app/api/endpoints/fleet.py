@@ -658,6 +658,10 @@ async def delete_credential_tag(
     operator can re-tag it.
     """
     scoped_id = (normalize_sidecar_id(sidecar_id) if sidecar_id else "") or None
+    if sidecar_id and scoped_id is None:
+        # A sidecar_id that normalizes to nothing must not silently fall
+        # through to deleting the deployment-wide ("All machines") row.
+        raise HTTPException(status_code=422, detail=f"Invalid sidecar_id: {sidecar_id!r}")
     removed = CredentialTagRepo.delete_tag_in_scope(
         session,
         provider_id=provider_id,

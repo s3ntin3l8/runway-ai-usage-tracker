@@ -179,6 +179,9 @@ export function FleetPage() {
               description="Install the Runway sidecar on a machine you work from; it will register here on its first check-in."
             />
             <AddSidecarCard className="mx-auto max-w-2xl" />
+            {/* "All machines" mappings outlive the last sidecar and apply to
+                the next one — keep them visible and removable here too. */}
+            <CredentialMappingsCard className="mx-auto mt-4 max-w-2xl" />
           </>
         ) : (
           <>

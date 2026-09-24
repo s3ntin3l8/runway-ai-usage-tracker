@@ -1218,3 +1218,30 @@ def test_deleting_sidecar_drops_its_scoped_tags_and_pending_rows(
     assert resp.status_code == 200, resp.text
     assert CredentialTagRepo.list_all(session) == []
     assert PendingCredentialTagRepo.list_all(session) == []
+
+
+def test_delete_tag_rejects_sidecar_id_that_normalizes_to_empty(
+    client: TestClient, session: Session
+) -> None:
+    """A malformed sidecar_id must 422, not fall through to deleting the
+    deployment-wide row (#324 review)."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="team@example.com",
+    )
+    session.commit()
+
+    resp = client.delete(
+        "/api/v1/fleet/credentials/tags",
+        params={
+            "provider_id": "anthropic",
+            "credential_origin": "provider:anthropic",
+            "sidecar_id": "..",
+        },
+    )
+    assert resp.status_code == 422
+    assert len(CredentialTagRepo.list_all(session)) == 1

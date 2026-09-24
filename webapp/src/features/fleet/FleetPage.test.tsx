@@ -45,6 +45,24 @@ describe('FleetPage', () => {
     expect(screen.getByText('Add a sidecar')).toBeInTheDocument();
   });
 
+  it('keeps all-machines credential mappings visible with no sidecars', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
+    vi.mocked(api.fetchCredentialTags).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'anthropic',
+          credential_origin: 'provider:anthropic',
+          account_id: 'team@example.com',
+          sidecar_id: null,
+          set_by: 'operator',
+          set_at: null,
+        },
+      ],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByText('Credential mappings')).toBeInTheDocument();
+  });
+
   it('toggles the Add sidecar card from the header', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     renderWithProviders(<FleetPage />);
