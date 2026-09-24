@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useInstallPrompt } from '@/hooks/useInstallPrompt';
 
-const RELEASES_URL = 'https://github.com/s3ntin3l8/runway/releases';
+const RELEASES_URL = 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases';
 
 // Friendly labels for the `auth_methods` the /settings probe advertises —
 // raw values (`admin_key`, `forward_auth`) are internal wire strings.

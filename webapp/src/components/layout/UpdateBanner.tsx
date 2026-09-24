@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowUpCircle, X } from 'lucide-react';
 import { fetchSettings } from '@/api/endpoints';
 
-const RELEASES_URL = 'https://github.com/s3ntin3l8/runway/releases';
+const RELEASES_URL = 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases';
 const DISMISS_PREFIX = 'runway:update-dismissed:';
 
 export function UpdateBanner() {

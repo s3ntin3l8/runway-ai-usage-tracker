@@ -4,6 +4,7 @@
 
 import json as _json
 import os
+import re as _re
 
 # PyInstaller 6+ resolves relative paths against the spec's directory.
 # Anchor everything to the repo root regardless of the invoking CWD.
@@ -11,6 +12,10 @@ _ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Read version from package.json so CFBundleVersion stays in sync with releases.
 _VERSION = _json.loads(open(os.path.join(_ROOT, "package.json")).read()).get("version", "0.0.0")
+# CFBundleVersion / CFBundleShortVersionString must be dotted integers: drop a
+# pre-release or ``+edge.<sha>`` suffix (the full string still ships in the
+# bundled package.json, which is what the updater reads).
+_BUNDLE_VERSION = _re.split(r"[-+]", _VERSION.lstrip("vV"), maxsplit=1)[0] or "0.0.0"
 
 a = Analysis(
     [os.path.join(_ROOT, "sidecar_app", "__main__.py")],
@@ -19,7 +24,6 @@ a = Analysis(
     datas=[
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
-        (os.path.join(_ROOT, "assets", "logo_reference.png"), "assets"),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=[
@@ -91,13 +95,17 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Runway Sidecar.app",
-    icon=None,
+    # Rendered from assets/logo.svg by `make logo` (installer/generate_app_icons.py).
+    icon=os.path.join(_ROOT, "installer", "assets", "app.icns"),
     bundle_identifier="com.runway.sidecar",
     info_plist={
         "LSUIElement": True,
+        "CFBundleName": "Runway Sidecar",
         "CFBundleDisplayName": "Runway Sidecar",
-        "CFBundleVersion": _VERSION,
-        "CFBundleShortVersionString": _VERSION,
+        "CFBundleVersion": _BUNDLE_VERSION,
+        "CFBundleShortVersionString": _BUNDLE_VERSION,
+        "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
+        "NSHumanReadableCopyright": "Runway contributors. Licensed under AGPL-3.0.",
     },
 )

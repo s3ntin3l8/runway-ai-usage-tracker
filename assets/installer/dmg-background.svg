@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="480" viewBox="0 0 760 480">
+  <!--
+    Runway Sidecar — macOS DMG window background (canonical source).
+    Rendered to installer/assets/dmg-background{,@2x}.png by `make logo`
+    (webapp/scripts/render-brand-rasters.mjs); never hand-edit the PNGs.
+
+    Layout contract (must match create-dmg in .github/workflows/sidecar-build.yml
+    and the Makefile `sidecar-dmg` target): window 760x480, app icon centred at
+    (180,320), Applications drop-link at (580,320), icon size 128.
+
+    The icon row sits on a light panel on purpose: Finder draws the icon
+    labels in the system text colour, which is black in light mode and would
+    vanish on a dark canvas. The brand dark lives in the header instead.
+  -->
+  <defs>
+    <radialGradient id="baseGrad" cx="512" cy="512" r="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0.6" stop-color="#18181b"/>
+      <stop offset="0.95" stop-color="#09090b"/>
+      <stop offset="1" stop-color="#000000"/>
+    </radialGradient>
+    <linearGradient id="pillGrad" x1="512" y1="280" x2="512" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="0.5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+    <linearGradient id="runwayGrad" x1="272" y1="0" x2="488" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="0.5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="760" y2="170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#09090b"/>
+      <stop offset="1" stop-color="#18181b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Brand-dark header -->
+  <rect width="760" height="170" fill="url(#headerGrad)"/>
+
+  <!-- The mark (assets/logo.svg geometry, glow filters dropped so it stays crisp small) -->
+  <svg x="48" y="37" width="96" height="96" viewBox="82 82 860 860">
+    <circle cx="512" cy="512" r="430" fill="url(#baseGrad)"/>
+    <circle cx="512" cy="512" r="428" fill="none" stroke="#3f3f46" stroke-width="8" stroke-opacity="0.8"/>
+    <rect x="424" y="280" width="176" height="464" rx="88" fill="url(#pillGrad)"/>
+    <rect x="450" y="320" width="40" height="120" rx="20" fill="#ffffff" fill-opacity="0.3"/>
+    <line x1="512" y1="362" x2="512" y2="662" stroke="#ffffff" stroke-opacity="0.92"
+          stroke-width="24" stroke-linecap="round" stroke-dasharray="52 48"/>
+  </svg>
+
+  <!-- Wordmark -->
+  <text x="168" y="84" font-family="Inter, 'Helvetica Neue', 'Liberation Sans', Arial, sans-serif"
+        font-size="30" font-weight="700" fill="#fafafa">Runway Sidecar</text>
+  <text x="168" y="114" font-family="Inter, 'Helvetica Neue', 'Liberation Sans', Arial, sans-serif"
+        font-size="15" fill="#a1a1aa">Drag the app into Applications to install</text>
+
+  <!-- Gradient hairline between header and panel -->
+  <rect y="168" width="760" height="2" fill="url(#runwayGrad)" opacity="0.9"/>
+
+  <!-- Light icon panel -->
+  <rect y="170" width="760" height="310" fill="#f4f4f5"/>
+
+  <!-- Runway centreline arrow between the two icon slots -->
+  <line x1="272" y1="320" x2="446" y2="320" stroke="url(#runwayGrad)" stroke-width="8"
+        stroke-linecap="round" stroke-dasharray="22 16"/>
+  <path d="M466 304 L490 320 L466 336" fill="none" stroke="#d946ef" stroke-width="8"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

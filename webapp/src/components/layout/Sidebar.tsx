@@ -11,7 +11,7 @@ import { RunwayMark } from './RunwayMark';
 
 // Updating the server means pulling a new image — link to the GitHub releases
 // page, mirroring UpdateBanner.
-const RELEASES_URL = 'https://github.com/s3ntin3l8/runway/releases';
+const RELEASES_URL = 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases';
 
 export function Sidebar() {
   // Reuses the cached settings query (primed at boot — no extra request). The

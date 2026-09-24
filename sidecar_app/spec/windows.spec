@@ -3,10 +3,18 @@
 # Build with: pyinstaller sidecar_app/spec/windows.spec
 
 import os
+import sys
 
 # PyInstaller 6+ resolves relative paths against the spec's directory.
 # Anchor everything to the repo root regardless of the invoking CWD.
 _ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
+
+# Stamp a VSVersionInfo resource (Explorer → Properties → Details) from
+# package.json; the same helper feeds makensis its version (see win_version.py).
+sys.path.insert(0, SPECPATH)
+from win_version import write_version_file  # noqa: E402
+
+_VERSION_FILE = write_version_file(os.path.join(workpath, "version_info.txt"))  # noqa: F821
 
 a = Analysis(
     [os.path.join(_ROOT, "sidecar_app", "__main__.py")],
@@ -15,7 +23,6 @@ a = Analysis(
     datas=[
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
-        (os.path.join(_ROOT, "assets", "logo_reference.png"), "assets"),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=[
@@ -75,4 +82,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
+    # Rendered from assets/logo.svg by `make logo` (installer/generate_app_icons.py).
+    icon=os.path.join(_ROOT, "installer", "assets", "app.ico"),
+    version=_VERSION_FILE,
 )

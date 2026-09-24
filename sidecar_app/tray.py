@@ -14,13 +14,14 @@ from PIL import Image, ImageDraw
 from sidecar_app.autostart import install_login_item, is_login_item_installed, remove_login_item
 from sidecar_app.daemon import TrayDaemon
 
-RELEASES_URL = "https://github.com/s3ntin3l8/runway/releases"
+RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
 
-# Logo used as the base tray icon (bundled from assets/logo_reference.png)
+# Logo used as the base tray icon — rendered from assets/logo.svg by `make logo`
+# (sidecar_app/assets/generate_app_icons.py); bundled via the specs' assets dir.
 if getattr(sys, "frozen", False):
-    _LOGO_PATH = pathlib.Path(sys._MEIPASS) / "assets" / "logo_reference.png"  # type: ignore[attr-defined]
+    _LOGO_PATH = pathlib.Path(sys._MEIPASS) / "assets" / "tray-logo.png"  # type: ignore[attr-defined]
 else:
-    _LOGO_PATH = pathlib.Path(__file__).parent.parent / "assets" / "logo_reference.png"
+    _LOGO_PATH = pathlib.Path(__file__).parent / "assets" / "tray-logo.png"
 
 _STATUS_TITLE: dict[str, str] = {
     "ok": "Runway Sidecar — Healthy",
@@ -41,11 +42,10 @@ _STATUS_DOT_COLOR: dict[str, tuple[int, int, int]] = {
 
 
 def _build_status_icon(status: str) -> Image.Image:
-    """Return a 128×128 RGBA icon: logo with transparent background + status dot.
+    """Return a 128×128 RGBA tray icon for *status*.
 
-    The source image has a white/light-gray background (JPEG-in-PNG).  We strip
-    any pixel with all channels > 220, tight-crop the result, add a small pad,
-    then scale to 128×128 so the logo fills the full icon area.
+    macOS gets a monochrome template glyph; Windows/Linux get the full-colour
+    mark (``tray-logo.png``) tight-cropped to fill the icon, plus a status dot.
     """
     if sys.platform == "darwin":
         return _build_status_icon_macos(status)
@@ -107,29 +107,17 @@ def _build_status_icon_macos(status: str) -> Image.Image:
 
 
 def _build_status_icon_generic(status: str) -> Image.Image:
-    """Windows/Linux version (original implementation)."""
+    """Windows/Linux: the full-colour Runway mark with a status dot."""
     SIZE = 128
     DOT = 24
     MARGIN = 2
 
-    # Resize to workable intermediate size before per-pixel background removal
-    WORK = 256
-    work = Image.open(_LOGO_PATH).convert("RGBA").resize((WORK, WORK), Image.LANCZOS)
-
-    # Strip white/near-white background — threshold: all channels > 220
-    px = work.load()
-    for y in range(WORK):
-        for x in range(WORK):
-            r, g, b, a = px[x, y]  # type: ignore[misc]
-            if r > 220 and g > 220 and b > 220:
-                px[x, y] = (r, g, b, 0)  # type: ignore[index]
-
-    # Tight crop to the non-transparent bounding box
-    bbox = work.getbbox()
+    # tray-logo.png is the master mark on a transparent canvas; crop to the
+    # disc so it fills the tray slot, then add a hair of padding.
+    work = Image.open(_LOGO_PATH).convert("RGBA")
+    bbox = work.getchannel("A").point(lambda a: 255 if a > 16 else 0).getbbox()
     if bbox:
         work = work.crop(bbox)
-
-    # Add ~1 % padding so the logo fills as much of the icon as possible
     w, h = work.size
     pad = max(int(w * 0.01), int(h * 0.01), 2)
     canvas = Image.new("RGBA", (w + 2 * pad, h + 2 * pad), (0, 0, 0, 0))

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="57" viewBox="0 0 150 57">
+  <!--
+    Runway Sidecar — NSIS inner-page header (MUI_HEADERIMAGE_BITMAP, right-aligned).
+    Canonical source; rendered to installer/assets/installer-header.bmp by
+    `make logo`. NSIS requires exactly 150x57, 24-bit BMP. White ground to
+    blend with the stock MUI2 header strip.
+  -->
+  <defs>
+    <radialGradient id="baseGrad" cx="512" cy="512" r="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0.6" stop-color="#18181b"/>
+      <stop offset="1" stop-color="#09090b"/>
+    </radialGradient>
+    <linearGradient id="pillGrad" x1="512" y1="280" x2="512" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="0.5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+  </defs>
+  <rect width="150" height="57" fill="#ffffff"/>
+  <svg x="101" y="8" width="41" height="41" viewBox="82 82 860 860">
+    <circle cx="512" cy="512" r="430" fill="url(#baseGrad)"/>
+    <rect x="424" y="280" width="176" height="464" rx="88" fill="url(#pillGrad)"/>
+    <line x1="512" y1="362" x2="512" y2="662" stroke="#ffffff" stroke-opacity="0.92"
+          stroke-width="28" stroke-linecap="round" stroke-dasharray="52 48"/>
+  </svg>
+</svg>

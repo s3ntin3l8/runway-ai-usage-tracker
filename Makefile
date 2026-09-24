@@ -74,6 +74,8 @@ logo: ## Regenerate every brand surface from the canonical assets/logo.svg (see 
 	cp assets/logo.svg webapp/public/favicon.svg
 	npm --prefix webapp run generate-pwa-assets
 	$(PYTHON) sidecar_app/assets/generate_icons.py
+	npm --prefix webapp run render-brand-rasters
+	$(PYTHON) installer/generate_app_icons.py
 
 secrets: ## Gate: fail if any tracked file has a secret not in the baseline (matches CI)
 	git ls-files -z | xargs -0 $(VENV)/bin/detect-secrets-hook --baseline .secrets.baseline

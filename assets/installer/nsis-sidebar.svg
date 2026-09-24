@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="164" height="314" viewBox="0 0 164 314">
+  <!--
+    Runway Sidecar — NSIS welcome/finish page sidebar (MUI_WELCOMEFINISHPAGE_BITMAP).
+    Canonical source; rendered to installer/assets/installer-sidebar.bmp by
+    `make logo`. NSIS requires exactly 164x314, 24-bit BMP.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="164" y2="314" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18181b"/>
+      <stop offset="1" stop-color="#09090b"/>
+    </linearGradient>
+    <radialGradient id="baseGrad" cx="512" cy="512" r="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0.6" stop-color="#27272a"/>
+      <stop offset="1" stop-color="#09090b"/>
+    </radialGradient>
+    <linearGradient id="pillGrad" x1="512" y1="280" x2="512" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="0.5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+    <linearGradient id="stripe" x1="0" y1="0" x2="0" y2="314" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="0.5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+  </defs>
+  <rect width="164" height="314" fill="url(#bg)"/>
+  <svg x="32" y="48" width="100" height="100" viewBox="82 82 860 860">
+    <circle cx="512" cy="512" r="430" fill="url(#baseGrad)"/>
+    <circle cx="512" cy="512" r="428" fill="none" stroke="#3f3f46" stroke-width="8"/>
+    <rect x="424" y="280" width="176" height="464" rx="88" fill="url(#pillGrad)"/>
+    <rect x="450" y="320" width="40" height="120" rx="20" fill="#ffffff" fill-opacity="0.3"/>
+    <line x1="512" y1="362" x2="512" y2="662" stroke="#ffffff" stroke-opacity="0.92"
+          stroke-width="24" stroke-linecap="round" stroke-dasharray="52 48"/>
+  </svg>
+  <text x="82" y="182" text-anchor="middle" font-family="Inter, 'Segoe UI', 'Liberation Sans', Arial, sans-serif"
+        font-size="20" font-weight="700" fill="#fafafa">Runway</text>
+  <text x="82" y="204" text-anchor="middle" font-family="Inter, 'Segoe UI', 'Liberation Sans', Arial, sans-serif"
+        font-size="13" fill="#a1a1aa">Sidecar</text>
+  <!-- Runway centreline motif -->
+  <line x1="82" y1="236" x2="82" y2="296" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3"
+        stroke-linecap="round" stroke-dasharray="8 8"/>
+  <rect x="160" width="4" height="314" fill="url(#stripe)"/>
+</svg>
