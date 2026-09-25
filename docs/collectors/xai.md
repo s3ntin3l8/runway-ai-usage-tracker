@@ -2,111 +2,63 @@
 
 **File:** `app/services/collectors/xai.py`
 
-Quota collector for xAI's consumer Grok subscriptions (SuperGrok / SuperGrok Heavy). Reads the OAuth access bearer the opencode CLI stores in `~/.local/share/opencode/auth.json["xai"]["access"]` and surfaces credits + on-demand usage against the documented CLI-proxy billing endpoint.
+Collects the consumer Grok subscription's credit balance and on-demand usage through xAI's CLI chat proxy. The OpenAI-compatible `XAI_API_KEY` developer API is a separate product and is not used by this collector.
 
-## Overview
+## Authentication
 
-- **Collection Strategy**: `api` (bearer) — single-strategy.
-- **Cards**: one credits card (`weekly` or `monthly` window from the API's `currentPeriod.type`) plus an optional on-demand card when the user has a non-zero `onDemandCap`.
-- **Authentication**: xAI OAuth access token (auto-extracted from opencode `auth.json` or pasted into provider settings). A pasted bearer is stored as `xai_access`; only the CLI file's actual refresh token is stored as `xai_refresh`. Runway does not refresh tokens itself. The `oc_sk_…` developer API key surface (https://api.x.ai/v1/…) is a different auth — not for the consumer subscription; Runway doesn't use it for this collector.
+The collector reads the access bearer from `xai_access`. The sidecar can obtain it from:
 
-## Auth Sources
+- OpenCode `auth.json`, mapping `xai.access` to `xai_access` and `xai.refresh` to `xai_refresh`.
+- Grok CLI `~/.grok/auth.json` (or `$GROK_HOME/auth.json`), selecting an xAI OIDC scope entry and mapping `key` to `xai_access` and `refresh_token` to `xai_refresh`.
+- `GROK_OAUTH_TOKEN`, mapped to `xai_access`.
+- A bearer pasted into provider settings, stored as `xai_access` only.
 
-### Primary: opencode CLI auto-discovery
+Runway does not refresh these tokens. For Grok CLI credentials, both the quota card and usage events use the selected scope entry's email as the account identity, then its user ID. If neither is available, the normal credential tagging flow lets the operator associate the credential with an account.
 
-If you have the [opencode CLI](opencode.md) installed and logged in to xAI there, the sidecar's standard JSON file-rule dispatcher maps `xai.access` to `xai_access` and `xai.refresh` to `xai_refresh` from `~/.local/share/opencode/auth.json` (or `~/.opencode/auth.json`) on every host that runs a sidecar. No custom parser is involved.
+The collector checks a readable JWT expiry before sending requests. An expired token or a rejected request produces an `auth_failed` card that points to the CLI re-login flow.
 
-```json
-{
-  "xai": {
-    "type": "oauth",
-    "access": "<JWT>",
-    "refresh": "<opaque-refresh-token>",
-    "expires": 1788205330512
-  }
-}
-```
+## Usage history
 
-When the access token is a JWT with a readable `exp` claim, the collector checks it before making requests. Expired tokens short-circuit to an `auth_failed` card pointing the operator at the CLI re-login flow. An undecodable token is sent to the endpoint, where a 401 or 403 produces the same card. The refresh is handled by the CLI itself — Runway doesn't refresh server-side.
+The sidecar reads completed turns from `~/.grok/sessions/<url-encoded-cwd>/<session-id>/updates.jsonl`. It ignores `signals.json`: `totalTokensBeforeCompaction` is a cumulative sum of context tokens at compaction and is not session usage.
 
-If you paste a bearer in the provider settings, Runway stores it as `xai_access` only. A manually pasted access token is not treated as a refresh token.
+Each completed turn with usage produces stable event IDs from session, prompt, and model. If `modelUsage` is present, the sidecar emits one event per model; otherwise it uses turn totals and the latest model selection recorded in the update stream. Input, cache-read, cache-create, output, and reasoning buckets are split so cached input and reasoning are not counted twice. Reported cost is included only when usage is complete and cost is not marked partial. Replays include a one-second watermark overlap so turns sharing a timestamp are retained; stable event IDs let the server deduplicate them.
 
-### OpenCode CLI events -> xai provider
+The bootstrap window comes from `SIDECAR_BOOTSTRAP_DAYS` (90 days by default). OpenCode events tagged with `providerID: "xai"` are also retagged onto `provider_id: "xai"`.
 
-The opencode event extractor retags events with `providerID: "xai"` onto the canonical `provider_id: "xai"` (see `_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py`). Token-usage events from opencode calling Grok models (e.g. `grok-4-fast`, `grok-4.20-non-reasoning`) land on the same `xai` quota card fed by the auto-extracted OAuth token.
+Grok usage pricing coverage is tracked separately in [issue #346](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/346).
 
 ## Endpoints
 
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
-| `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | GET | `Authorization: Bearer <oauth>` + `x-xai-token-auth: xai-grok-cli` | Quota gauge: `creditUsagePercent`, `onDemandUsed`, `onDemandCap`, `currentPeriod.{start,end,type}`, `productUsage[]`. |
-| `https://cli-chat-proxy.grok.com/v1/settings` | GET | same | Best-effort enrichment: `subscription_tier_display` ("SuperGrok" vs "SuperGrok Heavy"). 5s budget; failures degrade silently. |
+| `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | GET | Bearer OAuth token plus `x-xai-token-auth: xai-grok-cli` | Credits and on-demand usage |
+| `https://cli-chat-proxy.grok.com/v1/settings` | GET | Same | Best-effort subscription tier enrichment |
 
-The CodexBar docs (https://github.com/steipete/CodexBar/blob/main/docs/grok.md) document a richer fallback chain (`grok agent stdio` ACP JSON-RPC, `grok.com` gRPC-web with WKE keypair, browser cookies). Runway sticks to the OAuth-bearer CLI-proxy path because the other surfaces require either a local `grok` CLI binary (which Runway can't reasonably shell out to from a server) or a browser-held WKE keypair the sidecar can't obtain.
+## Card schema
 
-## Card Schema
+The collector emits a credits card (`weekly` or `monthly` according to `currentPeriod.type`) and an optional on-demand card when the account has a non-zero `onDemandCap`. The on-demand card reports currency in USD. Subscription tier enrichment from `/v1/settings` is best effort.
 
-```python
-{
-    "service_name": "xAI",
-    "icon": "🤖",
-    "remaining": "82.0%",  # credits card
-    "unit": "remaining",
-    "reset": "Sustainable",
-    "health": "good",
-    "pace": "Sustainable",
-    "detail": "Credits used",  # or "$0.12 of $500.00 on-demand used"
-    "used_value": 18.0,  # percent for credits, USD for on-demand
-    "limit_value": 100.0,  # percent for credits, USD for on-demand
-    "pct_used": 18.0,
-    "is_unlimited": False,
-    "unit_type": "percent",  # or "currency" for on-demand
-    "currency": None,  # or "USD" for on-demand
-    "reset_at": "2026-10-01T23:01:54+00:00",
-    "account_label": "<account label>",
-    "window_type": "weekly",  # or "monthly" per currentPeriod.type
-    "provider_id": "xai",
-    "tier": "SuperGrok Heavy",  # None when settings enrichment failed
-    "data_source": "api",
-    "input_source": "sidecar",
-    "usage_url": "https://grok.com",
-    "updated_at": "<ISO 8601>",
-}
-```
-
-## Window Mapping
-
-| `currentPeriod.type` | Internal `window_type` |
-|---|---|
-| `USAGE_PERIOD_TYPE_WEEKLY` | `weekly` |
-| `USAGE_PERIOD_TYPE_MONTHLY` | `monthly` |
-| (anything else) | `monthly` (fallback) |
-
-xAI doesn't publish a 5-hour rolling window — weekly and monthly are the only two surfaces.
-
-## Failure Modes
+## Failure modes
 
 | Reason | Error type | Card message |
 |---|---|---|
-| `invalid_api_key` | `auth_failed` | "xAI session expired — re-login with the Grok or OpenCode CLI" |
-| `parse_error` | `parse_error` | "xAI quota response could not be parsed." |
-| (timeout/network) | (silent — base collector retries) | — |
+| `invalid_api_key` | `auth_failed` | xAI session expired; re-login with the Grok or OpenCode CLI |
+| `parse_error` | `parse_error` | xAI quota response could not be parsed |
+| Timeout or network failure | Base collector retry | No error card |
 
-## Migration from the Stub
-
-The first iteration of this collector was a token-status stub that surfaced an error card when the OAuth JWT was expired but did not fetch quota. The current collector fetches `/v1/billing?format=credits` + `/v1/settings` and surfaces the actual quota while keeping the expired-token error path.
-
-## Related Files
+## Related files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/xai.py` | Main collector |
-| `scripts/sidecar.py` | Baked xAI file rule, using the generic nested-key mapping dispatcher |
-| `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags opencode events with `providerID: "xai"` onto `provider_id: "xai"` |
-| `app/core/registry.json` (`providers.xai`) | UI label + sidecar rule mirror |
+|---|---|
+| `app/services/collectors/xai.py` | Quota collector |
+| `scripts/sidecar.py` | Credential dispatch, identity selection, and session discovery |
+| `scripts/sidecar_pkg/event_extractors/xai.py` | Completed-turn event extraction |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags OpenCode events tagged with `providerID: "xai"` |
+| `app/core/registry.json` (`providers.xai`) | UI credential instructions and sidecar rule mirror |
 
 ## References
 
-- **xAI:** https://x.ai
-- **CodexBar docs:** https://github.com/steipete/CodexBar/blob/main/docs/grok.md (documents the fallback chain Runway doesn't currently use — `grok agent stdio`, `grok.com` gRPC-web, browser cookies)
-- **OpenCode CLI:** https://opencode.ai
+- [xAI](https://x.ai)
+- [Grok CLI usage signals](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/session/signals.rs)
+- [Grok CLI session update schema](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/notification.rs)
+- [OpenCode CLI](https://opencode.ai)
