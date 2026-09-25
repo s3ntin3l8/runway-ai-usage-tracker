@@ -204,6 +204,19 @@ __REGISTRY__: dict[str, Any] = {
             "rules": [
                 {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}},
                 {
+                    # The opencode CLI stores a per-provider key in its
+                    # `~/.local/share/opencode/auth.json` under the
+                    # `openrouter.key` field. Pulling from there means a
+                    # host with the opencode CLI installed lights up
+                    # automatically — no env-var setup needed.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"openrouter.key": "api_key"},
+                },
+                {
                     "type": "env",
                     "variable": "OPENROUTER_HTTP_REFERER",
                     "mapping": {"value": "http_referer"},
@@ -215,7 +228,18 @@ __REGISTRY__: dict[str, Any] = {
             "name": "MiniMax",
             "icon": "\ud83e\udd16",
             "rules": [
-                {"type": "env", "variable": "MINIMAX_API_KEY", "mapping": {"value": "api_key"}}
+                {"type": "env", "variable": "MINIMAX_API_KEY", "mapping": {"value": "api_key"}},
+                {
+                    # opencode CLI keeps its kimi-style plan keys under
+                    # provider-specific names; the opencode "coding plan"
+                    # variant is exposed as `minimax-coding-plan.key` here.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"minimax-coding-plan.key": "api_key"},
+                },
             ],
         },
         "github": {
@@ -368,6 +392,18 @@ __REGISTRY__: dict[str, Any] = {
             "rules": [
                 {"type": "env", "variable": "KIMI_CODE_API_KEY", "mapping": {"value": "api_key"}},
                 {
+                    # opencode CLI also stores a Kimi Coding API key in
+                    # auth.json under `kimi-code-plan-global.key`. Pick it
+                    # up alongside the env-var rule so hosts with the
+                    # opencode CLI don't need extra setup.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"kimi-code-plan-global.key": "api_key"},
+                },
+                {
                     "type": "env",
                     "variable": "KIMI_AUTH_TOKEN",
                     "mapping": {"value": "session_cookie"},
@@ -402,6 +438,27 @@ __REGISTRY__: dict[str, Any] = {
             "name": "OpenCode",
             "icon": "\u26a1",
             "rules": [
+                # Primary: CLI auto-discovery of the opencode-go API key from
+                # the local opencode CLI auth file (same shape as Claude's
+                # .credentials.json). Falls through to env / cookies below.
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"opencode-go.key": "api_key"},
+                },
+                {
+                    "type": "env",
+                    "variable": "OPENCODE_API_KEY",
+                    "mapping": {"value": "api_key"},
+                },
+                # Cookie fallback for legacy / non-migrated workspaces. Both
+                # cookies are needed for the documented 2-step console handshake
+                # (`/console/api/orgs` -> workspace id -> `/console/api/go/status`
+                # with `x-org-id` header); the collector prefers the API-key
+                # path and only falls back to these when no key is configured.
                 {
                     "type": "file",
                     "paths": [
@@ -451,10 +508,48 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
+        "xai": {
+            "name": "xAI (Grok)",
+            "icon": "\ud83e\udd16",
+            "rules": [
+                # Primary: opencode CLI stores the xai OAuth credential as
+                # {"type":"oauth","refresh":...,"access":...,"expires":...}
+                # in auth.json. xAI doesn't expose a programmatic quota API,
+                # so the token is exposed as `xai_access`/`xai_refresh`/
+                # `xai_expires` for the collector to surface an auth_status
+                # card when the access JWT expires (Runway can't refresh it
+                # — the opencode CLI is the source of truth).
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "parser": "xai_oauth",
+                },
+            ],
+        },
         "ollama": {
             "name": "Ollama Cloud",
             "icon": "\ud83e\udd99",
             "rules": [
+                # Primary: opencode CLI stores the ollama-cloud API key in
+                # `~/.local/share/opencode/auth.json["ollama-cloud"].key`.
+                # The collector uses it as `Authorization: Bearer …` against
+                # `https://ollama.com/api/usage` for monthly quota.
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"ollama-cloud.key": "api_key"},
+                },
+                {
+                    "type": "env",
+                    "variable": "OLLAMA_API_KEY",
+                    "mapping": {"value": "api_key"},
+                },
                 {
                     "type": "env",
                     "variable": "OLLAMA_SESSION_TOKEN",
@@ -1710,7 +1805,12 @@ class BrowserCookieExtractor:
                             if row:
                                 return row[0]
             except Exception:
-                logging.debug("Cookie extraction failed for browser target", exc_info=True)
+                logging.warning(
+                    "Cookie extraction failed for browser target (%s, name=%s): %s",
+                    target.get("browser"),
+                    name,
+                    exc_info=True,
+                )
                 continue
         return None
 
@@ -2376,7 +2476,45 @@ class GenericCollector:
                 except Exception:
                     logging.debug("exec credential rule failed", exc_info=True)
 
-            # 7. Specialized: SQLite (OpenCode)
+            # 7. Specialized: xAI OAuth block from opencode auth.json.
+            # The opencode CLI stores the credential as
+            # {"type":"oauth","refresh":"...","access":"...","expires":<epoch_ms>}
+            # under the provider key (e.g. "xai"). Runway's xai collector reads
+            # the access JWT and surfaces an auth_required card when it
+            # expires — xAI doesn't expose a programmatic refresh endpoint that
+            # a server-side collector can hit, so this is read-only.
+            elif rule_type == "xai_oauth":
+                provider_key = rule.get("provider_key") or provider_id
+                for path in expand_file_rule_paths(rule.get("paths", [])):
+                    try:
+                        with open(path) as f:
+                            data = json.load(f)
+                        block = data.get(provider_key) if isinstance(data, dict) else None
+                        if not isinstance(block, dict):
+                            continue
+                        access = block.get("access")
+                        refresh = block.get("refresh")
+                        expires = block.get("expires")
+                        candidate_tokens: dict[str, Any] = {}
+                        if access:
+                            candidate_tokens["xai_access"] = access
+                        if refresh:
+                            candidate_tokens["xai_refresh"] = refresh
+                        if expires is not None:
+                            candidate_tokens["xai_expires"] = str(expires)
+                        if candidate_tokens:
+                            token_candidates.append(
+                                (
+                                    candidate_tokens,
+                                    f"path:{Path(path).resolve()}",
+                                    "file",
+                                )
+                            )
+                            logging.info(f"  [{provider_id}] xai OAuth block matched: {path}")
+                    except Exception as exc:
+                        logging.debug("xai OAuth extraction failed for %s: %s", path, exc)
+
+            # 8. Specialized: SQLite (OpenCode)
             elif rule_type == "sqlite":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)
@@ -2447,7 +2585,7 @@ class GenericCollector:
                         except Exception as e:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
 
-            # 8. Specialized: Claude Statusline
+            # 9. Specialized: Claude Statusline
             elif rule_type == "file_json_statusline":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)

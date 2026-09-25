@@ -1,13 +1,20 @@
 """
 Ollama Cloud quota collector.
 
-Collection Strategy:
-1. Primary: Scrape https://ollama.com/settings
-   - Requires session cookie from environment (OLLAMA_SESSION_TOKEN), settings UI,
-     or a sidecar-pushed browser cookie.
-   - Parses usage meters (WorkOS "Included usage" redesign; pre-rename
-     "Cloud Usage" / labeled blocks still supported) for window quotas.
-   - Extracts plan name, account email, usage percentages, and reset timestamps.
+Collection Strategies:
+1. ``api`` (PRIMARY, when an API key is available):
+   - Bearer `Authorization: Bearer <key>` against
+     `GET https://ollama.com/api/usage`.
+   - Returns structured monthly quota (``limits.monthly.usage`` plus a
+     per-model breakdown and ``activity.period`` reset window). Cleaner
+     than the HTML scrape and unaffected by WorkOS redesign churn.
+
+2. ``web`` (FALLBACK, when only a session cookie is available):
+   - Scrape `https://ollama.com/settings`.
+   - Parses WorkOS "Included usage" meters and pre-rename "Cloud Usage"
+     blocks for window quotas; falls back to legacy labeled blocks
+     ("Session usage", "Hourly usage", "Weekly usage").
+   - Extracts plan name and account email.
 """
 
 import asyncio
@@ -26,6 +33,7 @@ from app.core.utils import (
     error_card,
     http_request_with_retry,
     human_delta,
+    scrub_log,
 )
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
@@ -37,6 +45,11 @@ logger = logging.getLogger(__name__)
 class OllamaCollector(BaseCollector):
     PROVIDER_ID = "ollama"
     DEFAULT_WINDOW_TYPE = "session"
+
+    STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
+        "api": ("Ollama API key", "_get_ollama_api"),
+        "web": ("Web session (scrape)", "_get_ollama_web"),
+    }
 
     RECOGNIZED_COOKIE_NAMES = (
         "session",
@@ -135,7 +148,11 @@ class OllamaCollector(BaseCollector):
         self._current_input_source: str = "server"
 
     async def is_configured(self) -> bool:
-        """Check if Ollama session cookie is present."""
+        """Ollama is configured when either an API key or a session cookie is cached."""
+        acc = self.account_id or "default"
+        for token_type in ("api_key", "OPENCODE_API_KEY", "session_cookie", "cookie_session"):
+            if await token_cache.get_token("ollama", token_type, account_id=acc):
+                return True
         return self._is_valid_credential(await self._get_cookie_header())
 
     async def reset(self):
@@ -156,6 +173,15 @@ class OllamaCollector(BaseCollector):
         if ";" in token:
             return token
         return f"session={token}; __Secure-session={token}"
+
+    async def _get_api_key(self) -> str | None:
+        """Pull the Ollama API key from the token cache (sidecar / UI / env)."""
+        acc = self.account_id or "default"
+        for token_type in ("api_key", "OPENCODE_API_KEY"):
+            key = await token_cache.get_token("ollama", token_type, account_id=acc)
+            if key:
+                return key.strip() if isinstance(key, str) else key
+        return None
 
     async def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
@@ -211,7 +237,149 @@ class OllamaCollector(BaseCollector):
         return self.RE_COOKIE_PATTERN.search(header) is not None
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Scrape Ollama settings page."""
+        """API key path is preferred when available — cleaner than HTML scrape
+        and unaffected by WorkOS redesign churn."""
+        return await self._get_ollama_api(client)
+
+    def _fallback_strategies(self) -> list[Any]:
+        """Cookie scrape is the fallback when no API key is configured."""
+        return []
+
+    async def _get_ollama_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Bearer-token path: GET https://ollama.com/api/usage."""
+        api_key = await self._get_api_key()
+        if not api_key:
+            return []  # No API key — base collector falls through to ``web``.
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "runway-ai-usage-tracker/1.0",
+        }
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                "https://ollama.com/api/usage",
+                headers=headers,
+                timeout=self.TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning("Ollama API fetch timed out: %s", scrub_log(str(exc)))
+            return []
+        except Exception as exc:
+            logger.warning("Ollama API fetch failed: %s", scrub_log(str(exc)))
+            return []
+        if resp.status_code in (401, 403):
+            self._last_error_reason = "invalid_api_key"
+            return []
+        if resp.status_code != 200:
+            return []
+        try:
+            body = resp.json()
+        except Exception:
+            self._last_error_reason = "missing_data"
+            return []
+        if not isinstance(body, dict):
+            self._last_error_reason = "missing_data"
+            return []
+        # Best-effort input_source detection: sidecar (vs config) when the
+        # cache metadata has a source. Falls back to ``server`` when unknown.
+        meta = await token_cache.get_with_metadata(
+            "ollama", account_id=self.account_id or "default"
+        )
+        if meta:
+            self._current_input_source = "sidecar" if meta[1].get("source") else "config"
+        return self._build_cards_from_api_usage(body)
+
+    def _build_cards_from_api_usage(self, body: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build a monthly quota card from `/api/usage`'s ``limits`` / ``activity`` shape.
+
+        The shape observed live (Sep 2026):
+
+            {
+              "activity": {
+                "cost": "0.00000",
+                "period": {"type": "last_4_weeks",
+                           "starting_at": "2026-08-31T00:00:00Z",
+                           "ending_at":   "2026-09-24T22:29:17Z"},
+                "models": [...],
+              },
+              "limits": {"monthly": {"usage": 0.002,
+                                      "models": [{"name": "web search",
+                                                  "request_count": 1}]}},
+            }
+
+        ``limits.monthly.usage`` is a numeric magnitude — the documented unit
+        is dollar-credits but Ollama doesn't expose a separate currency, so
+        we surface it as ``unit_type="token"`` (count) and let the dashboard
+        label it as ``<N> usage`` rather than fabricate a currency. Plans
+        without a monthly cap (free tier) report no ``limits.monthly``;
+        that case degrades gracefully into an empty card list rather than
+        a parse error.
+        """
+        limits = body.get("limits") or {}
+        monthly = limits.get("monthly") or {}
+        usage_raw = monthly.get("usage")
+        if usage_raw is None:
+            self._last_error_reason = "missing_data"
+            return []
+        try:
+            usage = float(usage_raw)
+        except (TypeError, ValueError):
+            self._last_error_reason = "missing_data"
+            return []
+        activity = body.get("activity") or {}
+        period = activity.get("period") or {}
+        ends_at = self._parse_iso(period.get("ending_at"))
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        pct = min(100.0, max(0.0, usage * 100.0)) if usage <= 1.0 else min(100.0, usage)
+        # When the API reports usage as a fraction (0..1), `usage * 100` is
+        # the pct; when it reports an absolute count, the dashboard treats
+        # it as a token count (limit_value=None, unit_type="token").
+        is_fraction = usage <= 1.0
+        card = {
+            "service_name": "Ollama",
+            "icon": "🦙",
+            "remaining": f"{usage:.2f}" if not is_fraction else f"{(1 - usage) * 100:.1f}%",
+            "unit": "monthly" if not is_fraction else "remaining",
+            "reset": human_delta(ends_at),
+            "health": HealthCalculator.from_percentage(pct),
+            "pace": PaceCalculator.estimate_longevity(pct, ends_at) if ends_at else "—",
+            "detail": (
+                f"{usage:.2f} used · Ollama API"
+                if not is_fraction
+                else f"{pct:.1f}% used · Ollama API"
+            ),
+            "used_value": usage,
+            "limit_value": 1.0 if is_fraction else None,
+            "pct_used": pct,
+            "is_unlimited": False,
+            "unit_type": "token" if not is_fraction else "percent",
+            "reset_at": ends_at.isoformat() if ends_at else None,
+            "account_label": self.account_label or "",
+            "window_type": "monthly",
+            "provider_id": "ollama",
+            "tier": "cloud",
+            "data_source": self.DATA_SOURCE_API,
+            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "usage_url": "https://ollama.com/settings/billing",
+            "updated_at": now_iso,
+        }
+        return [card]
+
+    @staticmethod
+    def _parse_iso(s: str | None):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(UTC)
+        except Exception:
+            return None
+
+    async def _get_ollama_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Cookie-scrape fallback — WorkOS /settings page parse."""
         cookie_header = await self._get_cookie_header()
         if not cookie_header:
             return []
@@ -237,6 +405,7 @@ class OllamaCollector(BaseCollector):
             if resp.status_code == 200:
                 return self._parse_html(resp.text)
             if resp.status_code in (401, 403):
+                self._last_error_reason = "not_logged_in"
                 logger.debug("Ollama auth failed (401/403)")
             else:
                 logger.debug(f"Ollama fetch failed with status {resp.status_code} at {resp.url}")
@@ -509,9 +678,6 @@ class OllamaCollector(BaseCollector):
             "usage_url": self.target_url,
             "updated_at": now.isoformat(),
         }
-
-    def _fallback_strategies(self) -> list[Any]:
-        return []
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         error_type = self.ERROR_TYPE_MAP.get(self._last_error_reason, "unknown")

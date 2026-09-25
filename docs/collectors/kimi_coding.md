@@ -37,6 +37,7 @@ browser cookie.
 |--------|-------|-------|
 | **API key (recommended)** | Settings → Kimi Coding → "API Key (Kimi Code Console)", or `KIMI_CODE_API_KEY` | Create at [kimi.com/code/console](https://www.kimi.com/code/console). Never expires; works on hosts without a browser. |
 | Kimi Code CLI | auto-discovered from `~/.kimi-code/credentials/kimi-code*.json` | Read-only reuse of the CLI's access token; the refresh token is never used. |
+| OpenCode CLI | auto-discovered from `~/.local/share/opencode/auth.json["kimi-code-plan-global"].key` | If you also use [opencode](opencode.md), the Kimi Coding Plan key it stores in its auth file feeds this collector automatically — no `KIMI_CODE_API_KEY` env or UI paste needed on hosts with the opencode CLI. The key is the same one opencode uses for its own `kimi-code-plan-global` backend. |
 | Cookie (legacy) | `KIMI_AUTH_TOKEN` env or browser `kimi-auth` cookie | Web JWT; expires. Only source that can see the weekly window + plan title on plans where the Code API omits them. |
 
 > **Note:** OpenCode events served by its `kimi-code-plan-global` backend are
@@ -44,7 +45,10 @@ browser cookie.
 > `scripts/sidecar_pkg/event_extractors/opencode.py`) with their own account
 > kept (pass-through), so their token counts enrich the same account's quota
 > cards — set an account label on the Kimi Coding provider to match your
-> OpenCode login email if the cards split.
+> OpenCode login email if the cards split. The token-usage events coming
+> from opencode (modelID = `kimi-for-coding`, `k3-256k`, …) land on this
+> same card as long as the credential and the opencode identity resolve to
+> the same account.
 
 ## Endpoints
 

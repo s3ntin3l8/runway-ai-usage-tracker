@@ -80,6 +80,10 @@ _OC_PROVIDER_MAP: dict[str, str] = {
     "open-design-byok": "opencode-byok",
     "openrouter": "opencode-openrouter",
     "ollama-cloud": "opencode-ollama",
+    "xai": "xai",  # Canonical retag (see _OC_CANONICAL_MAP below) — listed
+    # here too so the opencode event extractor doesn't
+    # synthesize a derived "opencode-xai" id before the
+    # canonical map fires.
 }
 
 
@@ -130,6 +134,19 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # lands on the same grain. Forcing "default" would split enrichment from
     # the quota card because the card account is the email, not "default".
     "ollama-cloud": ("ollama", None),
+    # OpenRouter — events proxied through opencode's "openrouter" backend
+    # already land on the openrouter provider's quota card via the
+    # `api_key` extraction in sidecar.py + openrouter collector. Pass the
+    # account through (same identity-pinning reasoning as kimi/ollama
+    # above); the server's tag-hint flow carries the operator's chosen
+    # account_id back when no in-band identity is set.
+    "openrouter": ("openrouter", None),
+    # xAI (Grok) — opencode stores the xai OAuth credential and logs events
+    # under providerID="xai". xAI doesn't expose a programmatic quota API,
+    # so the canonical "xai" provider is a thin token-status stub that
+    # surfaces an auth_required card when the access JWT expires. Account
+    # passes through (same identity-pinning reasoning as kimi/ollama above).
+    "xai": ("xai", None),
 }
 
 

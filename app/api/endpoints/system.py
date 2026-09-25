@@ -1616,7 +1616,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # Propagate to token_cache if this is also mapped as an OAuth token.
         # Stamp under the resolved account_id (no longer hard-coded "default")
         # so the new per-account endpoint keeps credentials and identity aligned.
-        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini"):
+        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini", "ollama"):
             tokens = {"oauth_token": row.api_key}
 
             # For ChatGPT, try to extract the account_id from the token if it's a JWT
@@ -1633,6 +1633,10 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             ):
                 tokens["session_cookie"] = row.api_key
                 tokens["cookie_sessionKey"] = row.api_key
+
+            # Ollama reads the API key under the "api_key" token-cache slot.
+            if provider_id == "ollama":
+                tokens["api_key"] = row.api_key
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below

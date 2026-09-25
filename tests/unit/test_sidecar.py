@@ -499,9 +499,9 @@ class TestKimiCliCredentialGlob:
 
     def _kimi_file_rule(self) -> dict:
         for rule in sidecar.__REGISTRY__["providers"]["kimi_coding"]["rules"]:
-            if rule.get("type") == "file":
+            if rule.get("type") == "file" and "kimi-code*" in (rule.get("paths") or [""])[0]:
                 return rule
-        raise AssertionError("kimi_coding has no file rule")
+        raise AssertionError("kimi_coding has no kimi-code glob rule")
 
     def test_registry_rule_globs_credentials_dir(self):
         rule = self._kimi_file_rule()

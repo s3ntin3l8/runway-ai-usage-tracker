@@ -546,3 +546,175 @@ def test_window_type_for(label, days_out, expected):
     resets_at = now + timedelta(days=days_out) if days_out is not None else None
 
     assert collector._window_type_for(label, resets_at, now) == expected
+
+
+# ---------------------------------------------------------------------------
+# Bearer /api/usage path (primary strategy when an API key is configured).
+# Mirrors the TestOllamaApiCollector coverage that lives in test_collectors.py
+# in some branches; kept here on PR #340 so the new code path has tests on
+# its own branch (no dependency on a later merge).
+# ---------------------------------------------------------------------------
+
+
+def _usage_body(usage: float = 0.002) -> dict:
+    return {
+        "activity": {
+            "cost": "0.00000",
+            "period": {
+                "type": "last_4_weeks",
+                "starting_at": "2026-08-31T00:00:00Z",
+                "ending_at": "2026-09-24T22:29:17Z",
+            },
+            "models": [],
+        },
+        "limits": {"monthly": {"usage": usage, "models": []}},
+    }
+
+
+def _make_response(body, status=200):
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status
+    resp.json = MagicMock(return_value=body)
+    resp.text = str(body)
+    return resp
+
+
+class TestOllamaApiCollector:
+    """Bearer `GET /api/usage` path (primary when an API key is present)."""
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_emits_monthly_card(self):
+        collector = OllamaCollector(account_id="acc_test")
+
+        async def fake_get_token(*args, **kwargs):
+            return "test-key"
+
+        with (
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_token",
+                new_callable=AsyncMock,
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response(_usage_body(usage=0.002)),
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert len(cards) == 1
+        assert cards[0]["provider_id"] == "ollama"
+        assert cards[0]["window_type"] == "monthly"
+        assert cards[0]["unit_type"] == "percent"
+        assert cards[0]["data_source"] == OllamaCollector.DATA_SOURCE_API
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_no_key_returns_empty_for_fallback(self):
+        """No API key configured → return [] so the base collector falls
+        through to the cookie-scrape fallback. The collector does not
+        emit an error card itself; that's the base collector's job."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        with patch(
+            "app.services.collectors.ollama.token_cache.get_token",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == []
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_401_sets_invalid_api_key(self):
+        collector = OllamaCollector(account_id="acc_test")
+
+        async def fake_get_token(*args, **kwargs):
+            return "bad-key"
+
+        with (
+            patch(
+                "app.services.collectors.ollama.token_cache.get_token",
+                new_callable=AsyncMock,
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response({"error": "unauthenticated"}, status=401),
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "invalid_api_key"
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_timeout_returns_empty(self):
+        """httpx.TimeoutException → empty list, no _last_error_reason set
+        (base default treats empty as error → _error_handler runs)."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        async def fake_http(*args, **kwargs):
+            raise httpx.TimeoutException("boom")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.token_cache.get_token",
+                new_callable=AsyncMock,
+                return_value="test-key",
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                side_effect=fake_http,
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == []
+
+    def test_build_cards_from_api_usage_fraction(self):
+        """Usage as 0..1 fraction → percentage card (e.g. free tier)."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(_usage_body(usage=0.45))
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["unit_type"] == "percent"
+        assert card["pct_used"] == pytest.approx(45.0)
+        assert card["limit_value"] == 1.0
+
+    def test_build_cards_from_api_usage_absolute_count(self):
+        """Usage as absolute number (e.g. paid tier with credit cap) →
+        token-count card. ``pct_used`` is clamped to [0, 100] but is NOT
+        forced to 100 — it's the numeric usage itself when usage > 1
+        (the dashboard renders ``<N> usage`` in that mode)."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(_usage_body(usage=42.5))
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["unit_type"] == "token"
+        assert card["limit_value"] is None
+        assert card["pct_used"] == 42.5
+        assert card["used_value"] == 42.5
+
+    def test_build_cards_from_api_usage_missing_monthly(self):
+        """Free-tier / no-cap response — limits.monthly missing → empty
+        list with _last_error_reason='missing_data'."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({"limits": {}, "activity": {}})
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    def test_build_cards_from_api_usage_invalid_usage(self):
+        """Non-numeric usage value → empty list with missing_data."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(
+            {"limits": {"monthly": {"usage": "not-a-number"}}, "activity": {}}
+        )
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
