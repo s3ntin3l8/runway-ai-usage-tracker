@@ -49,19 +49,19 @@ SETTINGS_SUPERGROK_HEAVY = {"subscription_tier_display": "SuperGrok Heavy"}
 SETTINGS_SUPERGROK = {"subscription_tier_display": "SuperGrok"}
 
 
-class TestExtractExpMs:
+class TestExtractExpSeconds:
     def test_jwt_with_seconds_payload(self):
         exp_s = int(time.time()) + 3600
         jwt = _make_jwt(exp_s)
-        assert XaiCollector._extract_exp_ms(jwt, None) == exp_s * 1000
+        assert XaiCollector._extract_exp_seconds(jwt) == exp_s
 
     def test_jwt_with_ms_payload(self):
         exp_ms = int((time.time() + 3600) * 1000)
         jwt = _make_jwt(exp_ms)
-        assert XaiCollector._extract_exp_ms(jwt, None) == exp_ms
+        assert XaiCollector._extract_exp_seconds(jwt) == exp_ms // 1000
 
     def test_no_jwt_no_exp_returns_none(self):
-        assert XaiCollector._extract_exp_ms("not-a-jwt", None) is None
+        assert XaiCollector._extract_exp_seconds("not-a-jwt") is None
 
 
 class TestIsExpired:
@@ -204,7 +204,38 @@ class TestGetXaiApi:
         assert len(cards) == 1
         assert cards[0]["tier"] == "SuperGrok Heavy"
         assert cards[0]["pct_used"] == 18.0
+        assert cards[0]["usage_url"] == "https://grok.com"
         assert c._plan_tier == "SuperGrok Heavy"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [("config", "config"), ("manual_config", "config"), ("sidecar-123", "sidecar")],
+    )
+    async def test_emitted_card_reports_the_credential_source(self, source, expected):
+        access = "eyJ.eyJ.zzz"
+        c = XaiCollector(account_id="alice@example.com")
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                new_callable=AsyncMock,
+                return_value=access,
+            ),
+            patch(
+                "app.services.collectors.xai.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"xai_access": access}, {"source": source}),
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[_make_response(SETTINGS_SUPERGROK), _make_response(WEEKLY_BILLING)],
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert cards[0]["input_source"] == expected
+        assert cards[0]["usage_url"] == "https://grok.com"
 
     @pytest.mark.asyncio
     async def test_settings_failure_does_not_block_quota(self):

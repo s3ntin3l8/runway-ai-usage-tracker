@@ -41,6 +41,25 @@ class TestCollectorManagerInitialization:
         assert store.call_args.args[1] == {"xai_access": "xai-test-access"}
 
     @pytest.mark.asyncio
+    async def test_manual_minimax_key_is_mirrored_to_api_key_slot(self, manager):
+        row = MagicMock(
+            provider_id="minimax",
+            api_key="placeholder",  # pragma: allowlist secret
+            session_cookie=None,
+            oai_sc_cookie=None,
+            account_id="default",
+        )
+        with patch(
+            "app.services.collector_manager.token_cache.store", new_callable=AsyncMock
+        ) as store:
+            await manager._sync_manual_config_to_cache(row)
+
+        assert store.call_args.args[1] == {
+            "oauth_token": "placeholder",
+            "api_key": "placeholder",  # pragma: allowlist secret
+        }
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_default(self, manager):
         """Test that default collectors are spawned."""
         # Clean state

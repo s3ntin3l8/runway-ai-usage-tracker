@@ -20,7 +20,7 @@ Runway uses the OAuth access token that the opencode CLI stores in
 by the sidecar). Tokens expire after ~7 days; refresh is handled by
 the CLI itself (``grok login``), not Runway — when the access JWT is
 expired the collector surfaces an ``auth_required`` card pointing the
-operator at the opencode CLI re-login flow.
+operator at the Grok or OpenCode CLI re-login flow.
 
 The CodexBar docs (https://github.com/steipete/CodexBar/blob/main/docs/grok.md)
 document a richer fallback chain (``grok agent stdio`` ACP JSON-RPC,
@@ -72,6 +72,7 @@ class XaiCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
         self._last_error_reason: str = "unknown"
         self._plan_tier: str | None = None  # from /v1/settings (best-effort enrichment)
+        self._current_input_source = self.INPUT_SOURCE_SERVER
 
     async def is_configured(self) -> bool:
         """xAI needs an access bearer; refresh-only credentials aren't consumed here."""
@@ -86,9 +87,19 @@ class XaiCollector(BaseCollector):
 
     async def _get_xai_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Bearer OAuth path: ``/v1/billing`` + optional ``/v1/settings``."""
-        access = await token_cache.get_token(
-            "xai", "xai_access", account_id=self.account_id or "default"
-        )
+        account_id = self.account_id or "default"
+        access = await token_cache.get_token("xai", "xai_access", account_id=account_id)
+        cache_data = await token_cache.get_with_metadata("xai", account_id=account_id)
+        if cache_data and cache_data[0].get("xai_access") == access:
+            source = cache_data[1].get("source")
+            if source:
+                self._current_input_source = (
+                    "config" if source in ("config", "manual_config") else "sidecar"
+                )
+            else:
+                self._current_input_source = self.INPUT_SOURCE_SERVER
+        else:
+            self._current_input_source = self.INPUT_SOURCE_SERVER
         if not access:
             return []
         access = access.strip() if isinstance(access, str) else access
@@ -170,7 +181,7 @@ class XaiCollector(BaseCollector):
                 return None
             tier = body.get("subscription_tier_display")
             return tier.strip() if isinstance(tier, str) and tier.strip() else None
-        except (httpx.TimeoutException, Exception):
+        except Exception:
             return None
 
     def _build_cards_from_billing(self, body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -360,15 +371,15 @@ class XaiCollector(BaseCollector):
             "provider_id": "xai",
             "tier": self._plan_tier,
             "data_source": self.DATA_SOURCE_API,
-            "input_source": "sidecar",
-            "usage_url": "https://console.x.ai",
+            "input_source": self._current_input_source,
+            "usage_url": "https://grok.com",
             "updated_at": ctx["now_iso"],
         }
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         reason = self._last_error_reason
         if reason == "invalid_api_key":
-            message = "xAI session expired — re-login opencode CLI"
+            message = "xAI session expired — re-login with the Grok or OpenCode CLI"
             error_type = "auth_failed"
         else:
             message = "xAI quota collection failed."
@@ -376,15 +387,13 @@ class XaiCollector(BaseCollector):
         return [error_card("xAI", "🤖", message, error_type=error_type)]
 
     def _is_expired(self, access: str) -> bool:
-        """JWT ``exp`` claim check. Same format as before — seconds since
-        epoch or milliseconds for tokens carrying the opencode-CLI flavor.
+        """JWT ``exp`` claim check, normalized to seconds by the extractor.
         Returns False when we can't decode (no false positives on malformed
         tokens; we let the real call's 401 surface the failure)."""
-        exp_ms = self._extract_exp_ms(access, None)
-        if exp_ms is None:
+        exp_seconds = self._extract_exp_seconds(access)
+        if exp_seconds is None:
             return False
-        exp_s = exp_ms / 1000 if exp_ms > 1e12 else exp_ms
-        return exp_s <= datetime.now(UTC).timestamp()
+        return exp_seconds <= datetime.now(UTC).timestamp()
 
     @staticmethod
     def _percent_or_none(raw: Any) -> float | None:
@@ -396,12 +405,8 @@ class XaiCollector(BaseCollector):
             return None
 
     @staticmethod
-    def _extract_exp_ms(access: str, explicit_expires: Any) -> int | None:
-        if explicit_expires is not None:
-            try:
-                return int(explicit_expires)
-            except (TypeError, ValueError):
-                pass
+    def _extract_exp_seconds(access: str) -> int | None:
+        """Return the JWT expiry as Unix seconds, accepting legacy ms claims."""
         parts = access.split(".")
         if len(parts) < 2:
             return None
@@ -414,7 +419,8 @@ class XaiCollector(BaseCollector):
             exp = payload.get("exp")
             if exp is None:
                 return None
-            return int(exp) * 1000 if int(exp) < 1e12 else int(exp)
+            exp_value = int(exp)
+            return exp_value // 1000 if exp_value > 1e12 else exp_value
         except Exception as exc:
             logger.debug("xAI: failed to decode JWT exp: %s", scrub_log(str(exc)))
             return None

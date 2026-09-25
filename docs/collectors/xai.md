@@ -63,13 +63,13 @@ The CodexBar docs (https://github.com/steipete/CodexBar/blob/main/docs/grok.md) 
     "unit_type": "percent",  # or "currency" for on-demand
     "currency": None,  # or "USD" for on-demand
     "reset_at": "2026-10-01T23:01:54+00:00",
-    "account_label": "<team email>",
+    "account_label": "<account label>",
     "window_type": "weekly",  # or "monthly" per currentPeriod.type
     "provider_id": "xai",
     "tier": "SuperGrok Heavy",  # None when settings enrichment failed
     "data_source": "api",
     "input_source": "sidecar",
-    "usage_url": "https://console.x.ai",
+    "usage_url": "https://grok.com",
     "updated_at": "<ISO 8601>",
 }
 ```
@@ -88,7 +88,7 @@ xAI doesn't publish a 5-hour rolling window — weekly and monthly are the only 
 
 | Reason | Error type | Card message |
 |---|---|---|
-| `invalid_api_key` | `auth_failed` | "xAI session expired — re-login opencode CLI" |
+| `invalid_api_key` | `auth_failed` | "xAI session expired — re-login with the Grok or OpenCode CLI" |
 | `parse_error` | `parse_error` | "xAI quota collection failed." (default message — `_error_handler` only specializes `invalid_api_key`) |
 | (timeout/network) | (silent — base collector retries) | — |
 
