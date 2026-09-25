@@ -19,6 +19,7 @@ Collection Strategies:
 
 import asyncio
 import logging
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -140,8 +141,14 @@ class OllamaCollector(BaseCollector):
         "Upgrade-Insecure-Requests": "1",
     }
 
-    def __init__(self, account_id: str | None = None, account_label: str | None = None):
+    def __init__(
+        self,
+        account_id: str | None = None,
+        account_label: str | None = None,
+        credential_account_id: str | None = None,
+    ):
         super().__init__(account_id=account_id, account_label=account_label)
+        self.credential_account_id = credential_account_id or account_id or "default"
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
         self._last_error_reason: str = "unknown"
@@ -150,9 +157,15 @@ class OllamaCollector(BaseCollector):
     async def is_configured(self) -> bool:
         """Ollama is configured when either an API key or a session cookie is cached."""
         acc = self.account_id or "default"
-        for token_type in ("api_key", "session_cookie", "cookie_session"):
-            if await token_cache.get_token("ollama", token_type, account_id=acc):
-                return True
+        if credential_provider.get_provider_api_key(
+            "ollama", account_id=self.credential_account_id
+        ):
+            return True
+        if self.credential_account_id == "default" and settings.OLLAMA_API_KEY:
+            return True
+        tokens = await token_cache.get("ollama", account_id=acc)
+        if tokens and tokens.get("api_key"):
+            return True
         return self._is_valid_credential(await self._get_cookie_header())
 
     async def reset(self):
@@ -175,34 +188,56 @@ class OllamaCollector(BaseCollector):
         return f"session={token}; __Secure-session={token}"
 
     async def _get_api_key(self) -> str | None:
-        """Pull the Ollama API key from the token cache (settings UI / sidecar push)."""
+        """Resolve config, sidecar, then server environment credentials."""
         acc = self.account_id or "default"
-        key = await token_cache.get_token("ollama", "api_key", account_id=acc)
+        self._current_input_source = "unknown"
+        key = credential_provider.get_provider_api_key(
+            "ollama", account_id=self.credential_account_id
+        )
         if key:
-            return key.strip() if isinstance(key, str) else key
+            self._current_input_source = "config"
+            return key.strip()
+        cached = await token_cache.get_with_metadata("ollama", account_id=acc)
+        if cached and cached[0].get("api_key"):
+            self._current_input_source = (
+                "config" if cached[1].get("source") in ("config", "manual_config") else "sidecar"
+            )
+            return cached[0]["api_key"].strip()
+        if self.credential_account_id == "default" and settings.OLLAMA_API_KEY:
+            self._current_input_source = "server"
+            return settings.OLLAMA_API_KEY.strip()
         return None
 
     async def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
         # 1. DB-stored session cookie (manual override set via settings UI)
-        db_token = credential_provider.get_provider_session_cookie("ollama")
+        self._current_input_source = "unknown"
+        db_token = credential_provider.get_provider_session_cookie(
+            "ollama", account_id=self.credential_account_id
+        )
         if db_token:
             self._current_input_source = "config"
             return self._wrap_cookie(db_token.strip())
 
-        # 2. Check environment variable
-        env_token = settings.OLLAMA_SESSION_TOKEN
-        if env_token:
-            self._current_input_source = "server"
-            return self._wrap_cookie(env_token.strip())
-
-        # 3. Sidecar-pushed cookie via token cache (browser scraping moved to sidecar)
+        # 2. Sidecar-pushed cookie via token cache (browser scraping moved to sidecar)
         # Sidecar rules store under `cookie_session`; settings UI uses `session_cookie`.
-        tokens = await token_cache.get("ollama", account_id=self.account_id or "default")
+        cached = await token_cache.get_with_metadata(
+            "ollama", account_id=self.account_id or "default"
+        )
+        tokens = cached[0] if cached else None
         cookie = (tokens.get("session_cookie") or tokens.get("cookie_session")) if tokens else None
         if cookie:
-            self._current_input_source = "sidecar"
+            source = cached[1].get("source") if cached else None
+            self._current_input_source = (
+                "config" if source in ("config", "manual_config") else "sidecar"
+            )
             return self._wrap_cookie(cookie.strip())
+
+        # 3. Server environment is the default-account fallback.
+        env_token = settings.OLLAMA_SESSION_TOKEN
+        if env_token and self.credential_account_id == "default":
+            self._current_input_source = "server"
+            return self._wrap_cookie(env_token.strip())
 
         return None
 
@@ -282,21 +317,6 @@ class OllamaCollector(BaseCollector):
         if not isinstance(body, dict):
             self._last_error_reason = "missing_data"
             return []
-        # Input-source provenance: assign an unconditional default first so a
-        # prior cycle's label can never leak through (token_cache lookups can
-        # return None), then override from cache metadata using the same
-        # mapping as zai/minimax/kimi_api: only UI-stored creds are "config";
-        # a sidecar push sets source to its sidecar id, so anything else is
-        # "sidecar".
-        self._current_input_source = "config"
-        meta = await token_cache.get_with_metadata(
-            "ollama", account_id=self.account_id or "default"
-        )
-        if meta:
-            source = meta[1].get("source") or "sidecar"
-            self._current_input_source = (
-                "config" if source in ("config", "manual_config") else "sidecar"
-            )
         return self._build_cards_from_api_usage(body)
 
     def _build_cards_from_api_usage(self, body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -327,7 +347,7 @@ class OllamaCollector(BaseCollector):
         """
         limits = body.get("limits") or {}
         monthly = limits.get("monthly") or {}
-        usage_raw = monthly.get("usage")
+        usage_raw = monthly.get("usage") if isinstance(monthly, dict) else None
         if usage_raw is None:
             self._last_error_reason = "missing_data"
             return []
@@ -336,38 +356,27 @@ class OllamaCollector(BaseCollector):
         except (TypeError, ValueError):
             self._last_error_reason = "missing_data"
             return []
-        activity = body.get("activity") or {}
-        period = activity.get("period") or {}
-        ends_at = self._parse_iso(period.get("ending_at"))
+        if not math.isfinite(usage) or not 0 <= usage <= 1:
+            self._last_error_reason = "missing_data"
+            return []
         now = datetime.now(UTC)
         now_iso = now.isoformat()
-        pct = min(100.0, max(0.0, usage * 100.0)) if usage <= 1.0 else min(100.0, usage)
-        # When the API reports usage as a fraction (0..1), `usage * 100` is
-        # the pct; when it reports an absolute count, the dashboard treats
-        # it as a token count (limit_value=None, unit_type="token").
-        is_fraction = usage <= 1.0
+        pct = usage * 100.0
         card = {
             "service_name": "Ollama",
             "icon": "🦙",
-            "remaining": f"{usage:.2f}" if not is_fraction else f"{(1 - usage) * 100:.1f}%",
-            "unit": "monthly" if not is_fraction else "remaining",
-            "reset": human_delta(ends_at),
+            "remaining": f"{100 - pct:.1f}%",
+            "unit": "remaining",
+            "reset": "—",
             "health": HealthCalculator.from_percentage(pct),
-            "pace": PaceCalculator.estimate_longevity(pct, ends_at) if ends_at else "—",
-            "detail": (
-                f"{usage:.2f} used · Ollama API"
-                if not is_fraction
-                else f"{pct:.1f}% used · Ollama API"
-            ),
-            "used_value": usage,
-            "limit_value": 1.0 if is_fraction else None,
-            # pct_used only for the fraction branch: webapp cardPct() reads it
-            # before cardKind() checks unit_type, so a value here would force
-            # the absolute-count card into the percent gauge (PR #340 review).
-            "pct_used": pct if is_fraction else None,
+            "pace": "—",
+            "detail": f"{pct:.1f}% used · Ollama API",
+            "used_value": pct,
+            "limit_value": 100.0,
+            "pct_used": pct,
             "is_unlimited": False,
-            "unit_type": "token" if not is_fraction else "percent",
-            "reset_at": ends_at.isoformat() if ends_at else None,
+            "unit_type": "percent",
+            "reset_at": None,
             "account_label": self.account_label or "",
             "window_type": "monthly",
             "provider_id": "ollama",

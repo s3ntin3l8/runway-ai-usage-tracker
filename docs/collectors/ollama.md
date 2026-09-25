@@ -5,8 +5,10 @@
 The Ollama provider supports two collection strategies:
 
 - **`api`** (preferred when an API key is available): bearer `Authorization: Bearer …`
-  against `GET https://ollama.com/api/usage`. Returns structured monthly quota
-  (`limits.monthly.usage` + per-model breakdown + `activity.period` reset window).
+  against `GET https://ollama.com/api/usage`. `limits.monthly.usage` is accepted
+  only as a finite fraction from 0 to 1 and displayed as a percentage.
+  The API response does not provide a quota reset, so the card leaves reset
+  and pace unavailable. Missing or unsupported values fall through to web.
   Cleaner than the HTML scrape and unaffected by WorkOS redesign churn.
 - **`web`** (fallback): scrape `https://ollama.com/settings` for included-usage meters
   (one card per usage meter; window type comes from a concrete meter label —
@@ -19,7 +21,8 @@ The Ollama provider supports two collection strategies:
 - **Collection Strategies**: `api` (bearer) → `web` (cookie scrape) fallback.
 - **Cards**: one monthly card (api path) or one card per usage meter (web path).
 - **Authentication**: bearer API key (preferred), or browser cookie (web, pushed by
-  the sidecar) / `OLLAMA_SESSION_TOKEN` (web).
+  the sidecar) / `OLLAMA_SESSION_TOKEN` (web). Saved account credentials take
+  precedence, followed by sidecar values and then server environment variables.
 
 ## Setup Methods Quick Overview
 
@@ -30,7 +33,7 @@ The Ollama collector supports the following authentication methods:
     *   **Details**: See [Primary: Ollama Plan & Settings Page](#primary-ollama-plan--settings-page).
 
 2.  **Session Token (OLLAMA_SESSION_TOKEN)**:
-    *   **Method**: If running headless, obtain your session token from browser Developer Tools and set it as the `OLLAMA_SESSION_TOKEN` environment variable.
+    *   **Method**: If running headless, set the session token as `OLLAMA_SESSION_TOKEN` on the server.
     *   **Details**: See [Configuration](#configuration).
 
 ## Data Source
@@ -38,7 +41,7 @@ The Ollama collector supports the following authentication methods:
 ### Primary: Ollama Plan & Settings Page
 **Endpoint:** `https://ollama.com/settings`
 **Auth:** Browser `__Secure-session` (or `session`) cookie — a bare value or a full `Cookie` header is accepted
-**Details:** The collector fetches the HTML, reads each `data-usage-track` meter's `aria-label` (e.g. `Free usage 0% used`) for percentage used, and the nearby `data-time` for reset timestamps; legacy labeled usage blocks (`Session usage` / `Weekly usage`) remain supported as a fallback. Plan tier (Free/Pro/Max) is read from the `Included usage` (legacy: `Cloud Usage`) heading badge. Multiple cookie sources are tried in order: settings UI → `OLLAMA_SESSION_TOKEN` → sidecar push.
+**Details:** The collector fetches the HTML, reads each `data-usage-track` meter's `aria-label` (e.g. `Free usage 0% used`) for percentage used, and the nearby `data-time` for reset timestamps; legacy labeled usage blocks (`Session usage` / `Weekly usage`) remain supported as a fallback. Plan tier (Free/Pro/Max) is read from the `Included usage` (legacy: `Cloud Usage`) heading badge. Cookie sources are checked in order: account settings → sidecar push → server `OLLAMA_SESSION_TOKEN`.
 
 ## Output Format
 
@@ -69,10 +72,12 @@ The Ollama collector supports the following authentication methods:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OLLAMA_SESSION_TOKEN` | Optional* | Ollama session cookie value or full `Cookie` header (auto-discovered if not set) |
+| `OLLAMA_API_KEY` | Optional | Ollama Cloud key for the `/api/usage` quota endpoint; server env applies to the default account |
+| `OLLAMA_SESSION_TOKEN` | Optional | Ollama session cookie value or full `Cookie` header; server env applies to the default account |
 
-> [!CAUTION]
-> **API Keys are not supported**: Ollama Cloud API keys (found at `ollama.com/settings/keys`) cannot be used for quota tracking as there is currently no public API for account usage. You **must** provide a browser session cookie (`__Secure-session`, or a bare value from the `Cookie` header).
+The API strategy requires a finite usage fraction between 0 and 1. If the
+endpoint returns a count or another shape, collection falls back to the web
+settings page. That page may require a browser session cookie.
 
 *Either auto-discovery or environment variable required.
 

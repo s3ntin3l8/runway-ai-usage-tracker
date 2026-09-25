@@ -1785,7 +1785,7 @@ class BrowserCookieExtractor:
                                 return row[0]
             except Exception:
                 logging.warning(
-                    "Cookie extraction failed for browser target (%s, name=%s): %s",
+                    "Cookie extraction failed for browser target (%s, name=%s)",
                     target.get("browser"),
                     name,
                     exc_info=True,

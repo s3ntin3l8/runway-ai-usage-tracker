@@ -304,10 +304,10 @@
     "opencode": {
       "name": "OpenCode",
       "icon": "⚡",
-      "api_key_label": "OpenCode API Key (api)",
-      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"opencode-go\"].key. Env: opencode_api_key=oc_sk_…. Manual: paste an oc_sk_… key from the opencode console.",
-      "session_cookie_label": "Session Cookies (web, fallback)",
-      "session_cookie_help": "Fallback: paste both 'auth' AND '__Host-console_session' cookie values from opencode.ai. Required only when no API key is configured.",
+      "api_key_label": "OpenCode Go API Key (api)",
+      "api_key_help": "Sidecar discovers opencode-go keys from auth.json; keys without a known account identity must be tagged in Settings.",
+      "session_cookie_label": "Auth Cookie (web)",
+      "session_cookie_help": "Paste the 'auth' cookie value from opencode.ai",
       "rules": [
         {
           "type": "file",
@@ -373,11 +373,11 @@
     "ollama": {
       "name": "Ollama Cloud",
       "icon": "🦙",
-      "description": "Monitor your Ollama Cloud usage. Bearer API key (preferred) or session cookie (web).",
-      "api_key_label": "Ollama API Key (api)",
-      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"ollama-cloud\"].key. Env: ollama_api_key=…. Manual: paste a key from ollama.com/settings/keys. Used against https://ollama.com/api/usage for monthly quota.",
-      "session_cookie_label": "Web Session (web, fallback)",
-      "session_cookie_help": "Fallback: paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings. Used to scrape /settings when no API key is configured.",
+      "description": "Monitor Ollama Cloud quota with an API key or session cookie.",
+      "api_key_label": "Ollama Cloud API Key (api)",
+      "api_key_help": "Used with https://ollama.com/api/usage; monthly.usage must be a fraction from 0 to 1.",
+      "session_cookie_label": "Web Session (web)",
+      "session_cookie_help": "Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings",
       "rules": [
         {
           "type": "file",

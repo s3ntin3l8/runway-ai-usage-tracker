@@ -54,9 +54,10 @@ async def test_multi_account_isolation(cache):
 
 
 @pytest.mark.asyncio
-async def test_remove_tokens_preserves_other_credential_family(cache):
+@pytest.mark.parametrize("provider_id", ["opencode", "ollama"])
+async def test_remove_tokens_preserves_other_credential_family(cache, provider_id):
     await cache.store(
-        "opencode",
+        provider_id,
         {
             "api_key": "key",  # pragma: allowlist secret
             "oauth_token": "key",  # pragma: allowlist secret
@@ -66,9 +67,9 @@ async def test_remove_tokens_preserves_other_credential_family(cache):
         source="config",
     )
 
-    await cache.remove_tokens("opencode", "default", {"api_key", "oauth_token"})
+    await cache.remove_tokens(provider_id, "default", {"api_key", "oauth_token"})
 
-    assert await cache.get("opencode", "default") == {"cookie_session": "cookie"}
+    assert await cache.get(provider_id, "default") == {"cookie_session": "cookie"}
 
 
 @pytest.mark.asyncio
