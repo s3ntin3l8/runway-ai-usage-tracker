@@ -534,10 +534,8 @@ class TestIsConfigured:
             assert await c.is_configured() is True
 
     @pytest.mark.asyncio
-    async def test_true_when_xai_refresh_present(self):
-        """Refresh-only (no access) still counts as configured — the
-        collector's is_configured doesn't distinguish; _is_expired will
-        catch the bad access and surface the auth_required card."""
+    async def test_false_when_only_xai_refresh_is_present(self):
+        """The CLI refresh token is retained, but Runway doesn't refresh it."""
         c = XaiCollector(account_id="acc_test")
 
         async def fake_get_token(provider, token_type, account_id=None):
@@ -547,7 +545,7 @@ class TestIsConfigured:
             "app.services.collectors.xai.token_cache.get_token",
             side_effect=fake_get_token,
         ):
-            assert await c.is_configured() is True
+            assert await c.is_configured() is False
 
     @pytest.mark.asyncio
     async def test_false_when_no_xai_token(self):

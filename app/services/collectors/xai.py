@@ -74,12 +74,9 @@ class XaiCollector(BaseCollector):
         self._plan_tier: str | None = None  # from /v1/settings (best-effort enrichment)
 
     async def is_configured(self) -> bool:
-        """xai is configured when the opencode-sidecar pushed any xai token."""
+        """xAI needs an access bearer; refresh-only credentials aren't consumed here."""
         acc = self.account_id or "default"
-        for token_type in ("xai_access", "xai_refresh"):
-            if await token_cache.get_token("xai", token_type, account_id=acc):
-                return True
-        return False
+        return bool(await token_cache.get_token("xai", "xai_access", account_id=acc))
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         return await self._get_xai_api(client)
