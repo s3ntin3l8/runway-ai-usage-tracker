@@ -2189,7 +2189,8 @@ class GenericCollector:
         """
         results: list[dict[str, Any]] = []
         blocked_origins: list[dict[str, str]] = []
-        tokens: dict[str, Any] = {}
+        token_candidates: list[tuple[dict[str, Any], str, str]] = []
+        browser_tokens: dict[str, Any] = {}
 
         name = config.get("name", provider_id)
         icon = config.get("icon", "❓")
@@ -2206,7 +2207,9 @@ class GenericCollector:
                 if val:
                     target = mapping.get("value")
                     if target:
-                        tokens[target] = val
+                        token_candidates.append(
+                            ({target: val}, f"env:{rule.get('variable')}", "env")
+                        )
 
             # 2. Local Files (JSON/YAML)
             elif rule_type == "file":
@@ -2229,11 +2232,23 @@ class GenericCollector:
                             else:
                                 data = json.load(f)
 
+                        candidate_tokens: dict[str, Any] = {}
                         for key_path, target in mapping.items():
                             val = GenericCollector.get_nested(data, key_path)
                             if val:
-                                tokens[target] = val
-                        if tokens:
+                                candidate_tokens[target] = val
+                        if provider_id == "anthropic" and isinstance(data, dict):
+                            oauth_account = data.get("oauthAccount", {})
+                            if isinstance(oauth_account, dict):
+                                email = oauth_account.get("emailAddress") or oauth_account.get(
+                                    "email"
+                                )
+                                if email:
+                                    candidate_tokens["account_id"] = email
+                        if candidate_tokens:
+                            token_candidates.append(
+                                (candidate_tokens, f"path:{Path(path).resolve()}", "file")
+                            )
                             logging.info(f"  [{provider_id}] token file matched: {path}")
                     except Exception as e:
                         logging.debug(f"Error reading file {path}: {e}")
@@ -2254,14 +2269,28 @@ class GenericCollector:
                         fmt = rule.get("format", "raw")
                         if fmt == "json":
                             data = json.loads(raw)
+                            candidate_tokens = {}
                             for key_path, target in mapping.items():
                                 val = GenericCollector.get_nested(data, key_path)
                                 if val:
-                                    tokens[target] = val
+                                    candidate_tokens[target] = val
+                            if provider_id == "anthropic" and isinstance(data, dict):
+                                oauth_account = data.get("oauthAccount", {})
+                                if isinstance(oauth_account, dict):
+                                    email = oauth_account.get("emailAddress") or oauth_account.get(
+                                        "email"
+                                    )
+                                    if email:
+                                        candidate_tokens["account_id"] = email
                         else:
                             target = mapping.get("value")
                             if target:
-                                tokens[target] = raw
+                                candidate_tokens = {target: raw}
+                        if candidate_tokens:
+                            service = rule.get("service_name", "")
+                            token_candidates.append(
+                                (candidate_tokens, f"keychain:{service}", "keychain")
+                            )
                 except Exception:
                     logging.debug("File credential extraction failed", exc_info=True)
 
@@ -2271,7 +2300,9 @@ class GenericCollector:
                 if val:
                     target = mapping.get("value")
                     if target:
-                        tokens[target] = val
+                        token_candidates.append(
+                            ({target: val}, f"keychain:{rule.get('target')}", "keychain")
+                        )
 
             # 5. Browser Cookies
             elif rule_type == "cookie":
@@ -2281,7 +2312,7 @@ class GenericCollector:
                     if val:
                         target = mapping.get("value")
                         if target:
-                            tokens[target] = val
+                            browser_tokens[target] = val
                             logging.info(
                                 f"  [{provider_id}] cookie '{name_to_find}' found on {domain}"
                             )
@@ -2298,7 +2329,13 @@ class GenericCollector:
                             if val:
                                 target = mapping.get("value")
                                 if target:
-                                    tokens[target] = val
+                                    token_candidates.append(
+                                        (
+                                            {target: val},
+                                            credential_origin_for_provider(provider_id),
+                                            "exec",
+                                        )
+                                    )
                 except Exception:
                     logging.debug("exec credential rule failed", exc_info=True)
 
@@ -2443,6 +2480,22 @@ class GenericCollector:
                         except Exception:
                             logging.debug("Statusline file rule failed", exc_info=True)
 
+        if browser_tokens:
+            token_candidates.append((browser_tokens, f"cookie:{provider_id}/session", "cookie"))
+            # Some providers expose the same cookie through an environment
+            # variable and browser storage. Keep the browser value as the
+            # single candidate for that credential field so it cannot be
+            # pushed twice with conflicting account hints.
+            token_candidates = [
+                candidate
+                for candidate in token_candidates
+                if not (
+                    candidate[2] == "env"
+                    and candidate[0]
+                    and candidate[0].keys() <= browser_tokens.keys()
+                )
+            ]
+
         # Convert antigravity's raw ISO8601 token.expiry into expiry_date (ms
         # epoch, matching gemini's oauth_creds.json convention) so the server's
         # token_cache._is_staler can compare freshness. Without this, agy's
@@ -2454,174 +2507,103 @@ class GenericCollector:
         # the file for Runway to refresh with), so pushing it would just keep
         # re-poisoning the shared cache entry every cycle until the user re-runs
         # agy. Let a sidecar with a live agy session keep serving quota instead.
-        if provider_id == "antigravity" and tokens.get("_raw_expiry"):
-            raw_expiry = tokens.pop("_raw_expiry")
-            try:
-                expiry_dt = datetime.datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
-                if expiry_dt.timestamp() < time.time():
-                    logging.warning(
-                        f"  [{provider_id}] local token expired at {raw_expiry} — "
-                        "not pushing (run `agy` to refresh)"
+        for tokens, origin, candidate_kind in token_candidates:
+            if provider_id == "antigravity" and tokens.get("_raw_expiry"):
+                raw_expiry = tokens.pop("_raw_expiry")
+                try:
+                    expiry_dt = datetime.datetime.fromisoformat(
+                        str(raw_expiry).replace("Z", "+00:00")
                     )
-                    tokens.pop("oauth_token", None)
-                    tokens.pop("refresh_token", None)
+                    if expiry_dt.timestamp() < time.time():
+                        logging.warning(
+                            f"  [{provider_id}] local token expired at {raw_expiry} — "
+                            "not pushing (run `agy` to refresh)"
+                        )
+                        tokens.pop("oauth_token", None)
+                        tokens.pop("refresh_token", None)
+                    else:
+                        tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))
+                except (ValueError, TypeError):
+                    logging.debug(f"  [{provider_id}] could not parse token expiry: {raw_expiry!r}")
+
+            if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
+                tokens["account_id"] = _ag_account_email()
+            if provider_id == "chatgpt" and candidate_kind == "file" and tokens:
+                codex_identity = _decode_id_token_email(tokens.get("id_token", ""))
+                if not codex_identity:
+                    mapped_account_id = str(tokens.get("account_id", ""))
+                    codex_identity = mapped_account_id if "@" in mapped_account_id else "default"
+                tokens["account_id"] = codex_identity
+            if tokens and not tokens.get("account_id"):
+                cli_identity: str = ""
+                if provider_id == "gemini" and candidate_kind == "file":
+                    cli_identity = _decode_id_token_email(tokens.get("id_token", "")) or ""
+                if cli_identity and cli_identity != "default":
+                    tokens["account_id"] = cli_identity
+            if tokens and tokens.get("account_id"):
+                from scripts.sidecar_pkg.identity import canonical_account_id
+
+                tokens["account_id"] = canonical_account_id(tokens["account_id"])
+            if tokens:
+                logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
+                if candidate_kind == "cookie":
+                    unit = "cookie"
+                    data_source = "web"
+                elif "api_key" in tokens:
+                    unit = "api_key"
+                    data_source = "api"
                 else:
-                    tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))
-            except (ValueError, TypeError):
-                logging.debug(f"  [{provider_id}] could not parse token expiry: {raw_expiry!r}")
-
-        # Stamp the antigravity token with the resolved account identity. The agy
-        # token file carries no id_token/email, so without this the server hashes
-        # the refresh_token into a cache key that won't match the email-seeded
-        # collector identity (durable seeding from LatestUsage) — leaving quota
-        # blank. _ag_account_email() returns the email once the server has
-        # propagated it (else "default", caught by the server's "default" cache
-        # fallback). Mirrors how gemini/opencode/codex key their cards on the email.
-        if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
-            tokens["account_id"] = _ag_account_email()
-
-        # Stamp the codex/chatgpt token with the resolved account identity.
-        # The registry's file-rule mapping copies auth.json's own
-        # `tokens.account_id` through verbatim — Codex CLI's internal OpenAI
-        # account UUID — but the server's durable collector identity is
-        # seeded from LatestUsage's historical account_id, which is the
-        # email (see event extraction above, which already uses
-        # _codex_account_email()). The UUID and the email never match as a
-        # token_cache key, so the collector's lookup misses and silently
-        # falls back to whatever's cached under "default" (typically a
-        # stale dashboard-configured cookie). Unconditionally override: a
-        # resolved email is always the better identity here, not just a
-        # fallback for an absent value.
-        if provider_id == "chatgpt" and tokens:
-            tokens["account_id"] = _codex_account_email()
-
-        # Stamp CLI-derived credentials with the same local identity the
-        # events branch uses (``_LEGACY_EVENT_ACCOUNT_DISCOVERY``), so the
-        # token card, the collector's card and the events all land on one
-        # account. Only for credentials read from that CLI's own install —
-        # a browser cookie (claude.ai sessionKey) may belong to a different
-        # account than the CLI login, so it stays on the hint/tag path.
-        if tokens and not tokens.get("account_id"):
-            cli_identity: str = ""
-            has_cookie = any(k.startswith("cookie_") for k in tokens)
-            if provider_id == "anthropic" and tokens.get("oauth_token") and not has_cookie:
-                cli_identity = discover_anthropic_email()
-            elif provider_id == "gemini" and not has_cookie:
-                # The collected id_token covers every discovered creds path
-                # ({{CONFIG_DIR:gemini}} included); the home-dir helper is
-                # the fallback when the rule didn't carry one.
-                cli_identity = (
-                    _decode_id_token_email(tokens.get("id_token", "")) or _gemini_account_email()
+                    unit = "oauth"
+                    data_source = "api"
+                local_account_id = tokens.get("account_id")
+                hint_account_id = provider_hints.get(origin)
+                accepts_legacy_provider_hint = provider_id not in {"chatgpt", "anthropic"} or (
+                    candidate_kind in {"file", "keychain"}
                 )
-            if cli_identity and cli_identity != "default":
-                tokens["account_id"] = cli_identity
-
-        # Canonicalize a locally discovered id to the server's form
-        # (lowercased email) so token-cache keys match cards and events.
-        if tokens and tokens.get("account_id"):
-            from scripts.sidecar_pkg.identity import canonical_account_id
-
-            tokens["account_id"] = canonical_account_id(tokens["account_id"])
-
-        # If tokens were extracted, add a hidden token card
-        if tokens:
-            logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
-
-            if any(k.startswith("cookie_") for k in tokens):
-                unit = "cookie"
-                data_source = "web"
-            elif "api_key" in tokens:
-                unit = "api_key"
-                data_source = "api"
-            else:
-                unit = "oauth"
-                data_source = "api"
-
-            # Apply the silent-listener block guard (PR #288, fixed in
-            # PR #290): if no ``account_id`` is resolvable for this
-            # provider's tokens, the card must not ship. The card never
-            # sees a server-side ``account_id`` of "default" or None —
-            # operators see the unresolved origin in the fleet UI's
-            # "Untagged credentials" panel and resolve it by selecting
-            # a configured ``provider_configs`` row. Resolutions flow
-            # back via ``/fleet/config``'s ``account_tag_hints`` on the
-            # next cycle, OR via the ``resolved`` field of the manifest
-            # response on the *same* cycle (PR #290 round-2 review).
-            #
-            # Phase-1 simplification: emit ONE credential origin per
-            # provider per cycle (``provider:<provider_id>``). Per-rule
-            # origin expansion is the follow-up issue.
-            local_account_id = tokens.get("account_id")
-            hint_account_id = provider_hints.get(credential_origin_for_provider(provider_id))
-            # "default" (antigravity / codex without an email) is the absence
-            # of an identity: an operator tag must win over it. Without a
-            # hint it still ships as "default" — the server collector
-            # bootstraps the real identity from that token.
-            if local_account_id == "default" and hint_account_id is not None:
-                local_account_id = None
-            if local_account_id is not None:
-                resolved_account_id = local_account_id
-            elif hint_account_id is not None:
-                resolved_account_id = hint_account_id
-                # Stamp the hint into ``tokens`` so the card's metadata
-                # carries the operator-resolved ``account_id`` (the
-                # server's ingest endpoint reads it from
-                # ``metadata.account_id``).
-                tokens["account_id"] = hint_account_id
-                logging.info(
-                    f"  [{provider_id}] token card stamped via server hint → "
-                    f"account_id={hint_account_id}"
-                )
-            else:
-                resolved_account_id = None
-
-            if resolved_account_id is None:
-                origin = credential_origin_for_provider(provider_id)
-                logging.warning(
-                    f"  [{provider_id}] token card blocked (origin={origin}) — "
-                    "no account_id resolved (local discovery + server hint both empty); "
-                    "not shipping. Operator will see this in the fleet view's "
-                    "Untagged Credentials panel."
-                )
-                blocked_origins.append(
-                    {
-                        "provider_id": provider_id,
-                        # Coarse per-provider descriptor — phase 2 will
-                        # subdivide per-rule. Operators keying off this
-                        # today get a single row per provider regardless
-                        # of how many credentials the host has on disk.
-                        "credential_origin": origin,
-                    }
-                )
-            else:
-                results.append(
-                    {
-                        "service_name": name,
-                        "icon": icon,
-                        "remaining": "Token",
-                        "unit": unit,
-                        "reset": "—",
-                        "health": "good",
-                        "pace": "Token",
-                        "detail": "[Token Extracted] [Sidecar]",
-                        "data_source": data_source,
-                        "metadata": {**tokens, "provider_id": provider_id},
-                    }
-                )
-
-        # Post-process: propagate discovered account identity to all cards.
-        # When the token card was blocked above, ``tokens["account_id"]`` is
-        # still useful for the quota cards this provider emits (none today —
-        # quota cards don't come from the sidecar, see fleet.py:178), so the
-        # propagation continues as before.
-        acc_id = tokens.get("account_id")
-        acc_label = tokens.get("account_label")
-        if acc_id or acc_label:
-            for card in results:
-                if acc_id and not card.get("account_id"):
-                    card["account_id"] = acc_id
-                if acc_label and not card.get("account_label"):
-                    card["account_label"] = acc_label
+                if hint_account_id is None and accepts_legacy_provider_hint:
+                    hint_account_id = provider_hints.get(
+                        credential_origin_for_provider(provider_id)
+                    )
+                if local_account_id == "default" and hint_account_id is not None:
+                    local_account_id = None
+                if local_account_id is not None:
+                    resolved_account_id = local_account_id
+                elif hint_account_id is not None:
+                    resolved_account_id = hint_account_id
+                    tokens["account_id"] = hint_account_id
+                    logging.info(
+                        f"  [{provider_id}] token card stamped via server hint → "
+                        f"account_id={hint_account_id}"
+                    )
+                else:
+                    resolved_account_id = None
+                if resolved_account_id is None:
+                    logging.warning(
+                        f"  [{provider_id}] token card blocked (origin={origin}) — "
+                        "no account_id resolved (local discovery + server hint both empty); "
+                        "not shipping. Operator will see this in the fleet view's "
+                        "Untagged Credentials panel."
+                    )
+                    blocked_origins.append(
+                        {"provider_id": provider_id, "credential_origin": origin}
+                    )
+                else:
+                    results.append(
+                        {
+                            "service_name": name,
+                            "icon": icon,
+                            "remaining": "Token",
+                            "unit": unit,
+                            "reset": "—",
+                            "health": "good",
+                            "pace": "Token",
+                            "detail": "[Token Extracted] [Sidecar]",
+                            "data_source": data_source,
+                            "account_id": resolved_account_id,
+                            "account_label": tokens.get("account_label"),
+                            "metadata": {**tokens, "provider_id": provider_id},
+                        }
+                    )
 
         return results, blocked_origins
 

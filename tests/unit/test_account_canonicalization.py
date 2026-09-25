@@ -320,7 +320,14 @@ class TestSidecarIdentityPrecedence:
         import scripts.sidecar as sidecar
 
         creds = tmp_path / ".credentials.json"
-        creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "sk-ant-x"}}))
+        creds.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {"accessToken": "sk-ant-x"},
+                    "oauthAccount": {"emailAddress": "Alice@Example.com"},
+                }
+            )
+        )
         config = {
             "name": "Claude",
             "icon": "x",
@@ -333,7 +340,6 @@ class TestSidecarIdentityPrecedence:
                 }
             ],
         }
-        monkeypatch.setattr(sidecar, "discover_anthropic_email", lambda: "Alice@Example.com")
         cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         # Same (canonical) identity the anthropic events are stamped with.
@@ -346,7 +352,14 @@ class TestSidecarIdentityPrecedence:
         import scripts.sidecar as sidecar
 
         creds = tmp_path / ".credentials.json"
-        creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "sk-ant-x"}}))
+        creds.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {"accessToken": "sk-ant-x"},
+                    "oauthAccount": {"emailAddress": "cli@example.com"},
+                }
+            )
+        )
         config = {
             "name": "Claude",
             "icon": "x",
@@ -359,19 +372,64 @@ class TestSidecarIdentityPrecedence:
                 }
             ],
         }
-        monkeypatch.setattr(sidecar, "discover_anthropic_email", lambda: "cli@example.com")
-        # A browser cookie collected alongside the CLI token.
+        # A browser cookie collected alongside the CLI token must stay unresolved.
         config["rules"].append(
             {
-                "type": "env",
-                "variable": "RUNWAY_TEST_CLAUDE_COOKIE",
+                "type": "cookie",
+                "domains": ["claude.ai"],
+                "name": "sessionKey",
                 "mapping": {"value": "cookie_sessionKey"},
             }
         )
-        monkeypatch.setenv("RUNWAY_TEST_CLAUDE_COOKIE", "sk-ant-sid01-x")
+        monkeypatch.setattr(
+            sidecar.BrowserCookieExtractor,
+            "get_cookie",
+            staticmethod(lambda _domain, _name: "sk-ant-sid01-x"),
+        )
         cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
-        assert [c for c in cards if c.get("remaining") == "Token"] == []
-        assert [b["provider_id"] for b in blocked] == ["anthropic"]
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert [c["account_id"] for c in token_cards] == ["cli@example.com"]
+        assert blocked == [
+            {"provider_id": "anthropic", "credential_origin": "cookie:anthropic/session"}
+        ]
+
+    def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import scripts.sidecar as sidecar
+
+        monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            sidecar.subprocess,
+            "run",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "claudeAiOauth": {"accessToken": "sk-ant-keychain"},
+                        "oauthAccount": {"emailAddress": "Keychain@Example.com"},
+                    }
+                ),
+            ),
+        )
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "anthropic",
+            {
+                "name": "Claude",
+                "rules": [
+                    {
+                        "type": "keychain",
+                        "service_name": "Claude Code-credentials",
+                        "format": "json",
+                        "mapping": {
+                            "claudeAiOauth.accessToken": "oauth_token",
+                        },
+                    }
+                ],
+            },
+        )
+        assert [card["account_id"] for card in cards] == ["keychain@example.com"]
+        assert blocked == []
 
     def test_gemini_stamp_reads_collected_id_token(self, tmp_path, monkeypatch):
         """Covers creds under {{CONFIG_DIR:gemini}}, not just ~/.gemini."""
