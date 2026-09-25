@@ -3457,6 +3457,7 @@ class DaemonRunner:
                 # network-level failures (no connectivity, code 0)
                 self._status_reason = "error" if code > 0 else "queued"
             self._fire_status_change()
+            # Earlier successful batches may have consumed one-shot server instructions.
             self._apply_ingest_instructions(
                 latest_successful_result,
                 requested_poll_providers,
