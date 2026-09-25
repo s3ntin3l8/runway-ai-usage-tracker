@@ -306,7 +306,7 @@ class CollectorManager:
             else:
                 all_tokens["oauth_token"] = token_val
                 # These collectors read the credential from the api_key slot.
-                if r.provider_id in ("opencode", "ollama"):
+                if r.provider_id in ("opencode", "ollama", "minimax"):
                     all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)
@@ -324,6 +324,10 @@ class CollectorManager:
                     "cookie___Secure-next-auth.session-token": r.session_cookie,
                 }
             )
+            # OpenCode's console handshake uses both auth and console_session.
+            # Scope the extra slot to the provider that reads it.
+            if r.provider_id == "opencode":
+                all_tokens["console_session"] = r.session_cookie
 
         # Handle oai-sc service-credential cookie (ChatGPT only)
         if r.provider_id == "chatgpt" and r.oai_sc_cookie:

@@ -148,6 +148,26 @@ class TestBuildCardsFromBilling:
         c = XaiCollector(account_id="acc_test")
         assert c._build_cards_from_billing({}) == []
 
+    def test_annual_period_falls_back_to_monthly_window(self):
+        """xAI doesn't publish a YEARLY window_type yet — unknown period
+        types fall back to ``monthly`` per the collector's documented
+        mapping (see xai.py ``_PERIOD_WINDOW_TYPE`` + comment)."""
+        body = {
+            "config": {
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_ANNUAL",
+                    "start": "2026-01-01T00:00:00Z",
+                    "end": "2027-01-01T00:00:00Z",
+                },
+                "creditUsagePercent": 7.5,
+            }
+        }
+        c = XaiCollector(account_id="acc_test")
+        cards = c._build_cards_from_billing(body)
+        assert len(cards) == 1
+        assert cards[0]["window_type"] == "monthly"
+        assert cards[0]["pct_used"] == 7.5
+
 
 class TestGetXaiApi:
     """End-to-end tests of ``_get_xai_api`` with mocked HTTP responses.
@@ -308,7 +328,195 @@ class TestGetXaiApi:
             side_effect=fake_get_token,
         ):
             cards = await c._get_xai_api(MagicMock())
+
         assert cards == []
+
+    @pytest.mark.asyncio
+    async def test_billing_500_returns_empty(self):
+        """5xx from /v1/billing is a server-side fault, not auth — returns
+        [] with ``_last_error_reason`` left at default. BaseCollector's
+        default heuristic (empty == error) routes this to ``_error_handler``
+        which emits the generic 'quota collection failed' card."""
+        c = XaiCollector(account_id="acc_test")
+
+        async def fake_get_token(provider, token_type, account_id=None):
+            return _make_jwt(int(time.time()) + 86400) if token_type == "xai_access" else None
+
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _make_response(SETTINGS_SUPERGROK),
+                    _make_response({"error": "boom"}, status=500),
+                ],
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert cards == []
+        assert c._last_error_reason == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_billing_timeout_returns_empty(self):
+        """Network timeout on /v1/billing — the retry helper raises
+        TimeoutException, the strategy catches and returns ``[]``. Base
+        default treats empty as error → ``_error_handler`` runs."""
+        import httpx
+
+        c = XaiCollector(account_id="acc_test")
+
+        async def fake_get_token(provider, token_type, account_id=None):
+            return _make_jwt(int(time.time()) + 86400) if token_type == "xai_access" else None
+
+        async def fake_http(*args, **kwargs):
+            raise httpx.TimeoutException("boom")
+
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                side_effect=fake_http,
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert cards == []
+
+    @pytest.mark.asyncio
+    async def test_billing_malformed_json_returns_empty(self):
+        """Non-JSON 200 from /v1/billing — parse_error path. _last_error_reason
+        set to ``parse_error`` so ``_error_handler`` emits the generic
+        'quota collection failed' card."""
+        c = XaiCollector(account_id="acc_test")
+
+        async def fake_get_token(provider, token_type, account_id=None):
+            return _make_jwt(int(time.time()) + 86400) if token_type == "xai_access" else None
+
+        bad_resp = MagicMock(spec=httpx.Response)
+        bad_resp.status_code = 200
+        bad_resp.json = MagicMock(side_effect=ValueError("not json"))
+        bad_resp.text = "<html>oops</html>"
+
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _make_response(SETTINGS_SUPERGROK),
+                    bad_resp,
+                ],
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert cards == []
+        assert c._last_error_reason == "parse_error"
+
+    @pytest.mark.asyncio
+    async def test_malformed_jwt_does_not_short_circuit(self):
+        """Garbage in xai_access: ``_is_expired`` returns False (we don't
+        false-positive on undecodable tokens — let the real API call's
+        401 surface it). The call goes out and the API's 401 path takes
+        over."""
+        c = XaiCollector(account_id="acc_test")
+
+        async def fake_get_token(provider, token_type, account_id=None):
+            return "not.a.real.jwt" if token_type == "xai_access" else None
+
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _make_response(SETTINGS_SUPERGROK),
+                    _make_response({"error": "unauthenticated"}, status=401),
+                ],
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert cards == []
+        assert c._last_error_reason == "invalid_api_key"
+
+    @pytest.mark.asyncio
+    async def test_billing_403_returns_empty_with_invalid_api_key(self):
+        """403 from /v1/billing — token valid but lacks scope; surface as
+        ``auth_required`` (matches the 401 path)."""
+        c = XaiCollector(account_id="acc_test")
+
+        async def fake_get_token(provider, token_type, account_id=None):
+            return _make_jwt(int(time.time()) + 86400) if token_type == "xai_access" else None
+
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _make_response(SETTINGS_SUPERGROK),
+                    _make_response({"error": "forbidden"}, status=403),
+                ],
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert cards == []
+        assert c._last_error_reason == "invalid_api_key"
+
+    @pytest.mark.asyncio
+    async def test_collect_empty_results_falls_through_to_error_handler(self):
+        """Hermes Finding 2 fix: BaseCollector.collect() must call
+        ``_error_handler`` when ``_primary_strategy`` returns ``[]`` (the
+        default ``_is_error_result`` heuristic). Without this, an expired
+        token would silently produce an empty card list and the user would
+        see nothing actionable on the dashboard."""
+
+        c = XaiCollector(account_id="acc_test")
+        expired = _make_jwt(int(time.time()) - 7200)
+
+        async def fake_get_token(provider, token_type, account_id=None):
+            return expired if token_type == "xai_access" else None
+
+        with patch(
+            "app.services.collectors.xai.token_cache.get_token",
+            side_effect=fake_get_token,
+        ):
+            # ``c.collect`` is the public entry; runs through
+            # ``_resolve_strategies`` -> ``_primary_strategy`` -> ``_get_xai_api``
+            # which short-circuits on the expired JWT, then
+            # ``_is_error_result`` -> True -> ``_error_handler``.
+            cards = await c.collect(MagicMock())
+
+        assert len(cards) == 1
+        card = cards[0]
+        # error_card helper puts the message under ``detail`` (truncated
+        # to 40 chars) and marks ``remaining="ERR"``. Just check the
+        # auth_failed signal made it through.
+        assert card.get("remaining") == "ERR"
+        assert card.get("error_type") == "auth_failed"
+        assert (
+            "opencode" in card.get("detail", "").lower()
+            or "expired" in card.get("detail", "").lower()
+        )
 
 
 class TestIsConfigured:
