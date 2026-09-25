@@ -1040,12 +1040,17 @@ def queue_flush(
                     lines = f.readlines()
 
             failed_lines = []
-            for line in lines:
+            interrupted = False
+            for line_idx, line in enumerate(lines):
                 if stop_event and stop_event.is_set():
                     logging.info("queue_flush: stop requested, aborting flush")
-                    if dir_fd >= 0:
-                        os.close(dir_fd)
-                    return count
+                    failed_lines.extend(
+                        remaining.rstrip("\r\n")
+                        for remaining in lines[line_idx:]
+                        if remaining.strip()
+                    )
+                    interrupted = True
+                    break
                 line = line.strip()
                 if not line:
                     continue
@@ -1054,14 +1059,24 @@ def queue_flush(
                     entry = json.loads(line)
                     payload = entry.get("payload", {})
 
-                    success, _, _ = http_post_signed_with_retry(
+                    success, result, _ = http_post_signed_with_retry(
                         target_url, payload, api_key, stop_event=stop_event
                     )
 
-                    if success:
+                    events_failed = bool(
+                        payload.get("events")
+                        and isinstance(result, dict)
+                        and result.get("events_error")
+                    )
+                    if success and not events_failed:
                         count += 1
                     else:
                         failed_lines.append(line)
+                        if success and events_failed:
+                            logging.warning(
+                                "Server reported an event-ingest failure; "
+                                "keeping queued payload for retry"
+                            )
                 except json.JSONDecodeError:
                     logging.error(f"Invalid JSON in queue file: {line[:100]}")
                 except Exception as e:
@@ -1090,6 +1105,9 @@ def queue_flush(
                 logging.warning(
                     f"Queue file has {len(failed_lines)} failed entries: {getattr(queue_file, 'name', queue_file)}"
                 )
+
+            if interrupted:
+                break
 
         except Exception as e:
             logging.error(
