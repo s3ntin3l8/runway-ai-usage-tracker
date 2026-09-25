@@ -269,8 +269,22 @@ def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_
             _envelope(
                 "2026-09-25T12:00:04Z",
                 _turn(
-                    "partial-headless",
-                    {"input_tokens": 1, "total_cost_usd": 90.0, "cost_is_partial": True},
+                    "partial-headless-int",
+                    {"input_tokens": 1, "total_cost_usd": 90.0, "cost_is_partial": 1},
+                ),
+            ),
+            _envelope(
+                "2026-09-25T12:00:05Z",
+                _turn(
+                    "partial-headless-string",
+                    {"input_tokens": 1, "total_cost_usd": 90.0, "cost_is_partial": "true"},
+                ),
+            ),
+            _envelope(
+                "2026-09-25T12:00:06Z",
+                _turn(
+                    "incomplete-headless-string",
+                    {"input_tokens": 1, "total_cost_usd": 90.0, "usage_is_incomplete": "true"},
                 ),
             ),
         ],
@@ -283,7 +297,9 @@ def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_
         ("xai|grok|session-1|headless-ticks|unknown", 2.0),
         ("xai|grok|session-1|headless-float|unknown", 3.5),
         ("xai|grok|session-1|incomplete-headless|unknown", None),
-        ("xai|grok|session-1|partial-headless|unknown", None),
+        ("xai|grok|session-1|partial-headless-int|unknown", None),
+        ("xai|grok|session-1|partial-headless-string|unknown", None),
+        ("xai|grok|session-1|incomplete-headless-string|unknown", None),
     ]
 
 

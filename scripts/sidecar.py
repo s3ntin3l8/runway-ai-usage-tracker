@@ -2496,7 +2496,9 @@ class GenericCollector:
                         label = f"{first} {last}".strip()
                         if label:
                             candidate_tokens["account_label"] = label
-                        if candidate_tokens:
+                        # Grok quota collection requires an access bearer; a
+                        # refresh-only or identity-only entry is not usable.
+                        if candidate_tokens.get("xai_access"):
                             token_candidates.append(
                                 (candidate_tokens, f"path:{Path(path).resolve()}", "file")
                             )

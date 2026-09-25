@@ -2126,6 +2126,23 @@ def test_xai_grok_uses_user_id_then_operator_tag_when_email_missing(monkeypatch,
     assert sidecar._grok_account_identity() is None
 
 
+def test_grok_refresh_only_scope_does_not_register_credential(monkeypatch, tmp_path):
+    auth_path = _seed_grok_auth_json(
+        tmp_path,
+        block={"refresh_token": "refresh-only", "email": "user@example.com"},
+    )
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+    monkeypatch.delenv("GROK_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [auth_path])
+
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "xai", sidecar.__REGISTRY__["providers"]["xai"]
+    )
+
+    assert cards == []
+    assert blocked == []
+
+
 def test_grok_identity_prefers_email_across_multiple_scope_entries():
     data = {
         "https://auth.x.ai::user-scope": {"key": "user-token", "user_id": "user-42"},

@@ -113,7 +113,7 @@ def _usage_row(
         ticks = raw.get("cost_usd_ticks")
     if ticks is None:
         ticks = raw.get("total_cost_usd_ticks")
-    cost_partial = raw.get("costIsPartial", raw.get("cost_is_partial", False)) is True
+    cost_partial = bool(raw.get("costIsPartial", raw.get("cost_is_partial", False)))
     cost_usd = None
     if (
         not usage_incomplete
@@ -220,8 +220,8 @@ def parse_xai_events(
             ts = _timestamp(envelope.get("timestamp"), fallback_ts)
             if ts <= cutoff:
                 continue
-            incomplete = (
-                usage.get("usageIsIncomplete", usage.get("usage_is_incomplete", False)) is True
+            incomplete = bool(
+                usage.get("usageIsIncomplete", usage.get("usage_is_incomplete", False))
             )
             elapsed = update.get("elapsed_ms", update.get("elapsedMs"))
             elapsed_ms = (
