@@ -397,15 +397,18 @@ class TestGetOpencodeWeb:
                 "app.services.collectors.opencode.http_request_with_retry",
                 new_callable=AsyncMock,
                 side_effect=[
-                    _json_response([{"id": "one"}, {"id": "two"}]),
+                    _json_response([{"id": "one"}, {"id": "two"}, {"id": "three"}, {"id": "four"}]),
+                    _json_response(_go_status_body()),
+                    _json_response(_go_status_body()),
                     _json_response(_go_status_body()),
                     _json_response(_go_status_body()),
                 ],
-            ),
+            ) as request,
         ):
             cards = await collector._get_opencode_web(MagicMock())
 
         assert cards == []
+        assert request.await_count == 3  # org list plus the first two usable workspaces
         assert collector._last_error_reason == "invalid_config"
         error = await collector._error_handler()
         assert error[0]["error_type"] == "invalid_config"

@@ -141,7 +141,7 @@ def test_provider_config_put_stores_canonical_id(session: Session):
         app.dependency_overrides.clear()
 
 
-async def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Session):
+def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Session):
     """OpenCode cookie and workspace settings persist in the account row."""
     from fastapi.testclient import TestClient
 

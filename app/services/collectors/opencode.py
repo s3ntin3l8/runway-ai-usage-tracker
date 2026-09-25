@@ -490,6 +490,8 @@ class OpenCodeCollector(BaseCollector):
             body = await self._fetch_go_status(client, headers, workspace_id)
             if body is not None:
                 usable.append((workspace_id, body))
+                if not selected and len(usable) > 1:
+                    break
         if selected and not usable:
             if self._last_error_reason == "unknown":
                 self._set_error("no_workspace")

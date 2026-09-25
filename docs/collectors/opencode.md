@@ -129,7 +129,7 @@ a visible error card with `error_type`:
 | `missing_cookies` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
 | `session_invalid` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
 | `no_workspace` | `parse_error` | OpenCode: no workspace found for the configured account. |
-| `invalid_config` | `invalid_config` | Set the OpenCode workspace ID for this account. |
+| `invalid_config` | `invalid_config` | Set the OpenCode workspace ID in settings. |
 | `api_unavailable` | `api_error` | OpenCode: usage API unreachable. Will retry on next cycle. |
 | (other) | `unknown` | OpenCode quota collection failed. |
 
