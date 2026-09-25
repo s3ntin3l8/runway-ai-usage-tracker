@@ -594,6 +594,7 @@ function Step3({
   const accountId = step2Result.preview.suggested_account_id;
   const maskedAccountId = maskAccountId(accountId);
   const [label, setLabel] = useState<string>(step2Result.preview.suggested_label ?? '');
+  const [workspaceId, setWorkspaceId] = useState('');
   const [pollInterval, setPollInterval] = useState('');
   const [strategies, setStrategies] = useState<{ id: string; enabled: boolean }[]>(() =>
     initStrategies(provider),
@@ -609,6 +610,7 @@ function Step3({
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
         collection_strategies: strategies.map(({ id, enabled: e }) => ({ id, enabled: e })),
       };
+      if (provider.provider_id === 'opencode') body.opencode_workspace_id = workspaceId.trim();
       // Send the credentials the user typed in step 2 if non-empty — the
       // endpoint treats absence as "keep existing" and non-empty as "set".
       // Empty-string-vs-absent is distinguished server-side: an empty
@@ -658,6 +660,20 @@ function Step3({
           />
         </div>
       </div>
+
+      {provider.provider_id === 'opencode' ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="wiz-opencode-workspace-id">OpenCode workspace ID</Label>
+          <Input
+            id="wiz-opencode-workspace-id"
+            autoComplete="off"
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+            placeholder="Required when this account has multiple Go workspaces"
+          />
+          <HelperText>Find the ID in your OpenCode Console workspace settings.</HelperText>
+        </div>
+      ) : null}
 
       {strategies.length > 0 ? (
         <fieldset className="flex flex-col gap-2 rounded-sm border border-edge p-3">

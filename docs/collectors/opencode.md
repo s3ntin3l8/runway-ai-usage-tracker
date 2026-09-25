@@ -8,21 +8,20 @@ OpenCode quota collector with API-key and session-cookie strategies.
 
 - **Strategy:** `api` (primary, bearer token) → `web` (fallback, console session cookies)
 - **Cards:** 3 cards per account (5h rolling, 7d weekly, 30d monthly)
-- **Auth:** OpenCode Go API key (`oc_sk_…`), session cookies (`auth` + `__Host-console_session`)
+- **Auth:** OpenCode Go API key (`oc_sk_…`), or session cookies (`auth` + `__Host-console_session`)
 
-## Auth Sources (in priority order)
+## Auth Sources
 
-The collector tries each source in order; the first one that yields a valid response wins. The sidecar automatically wires each source up to the same `api_key` / `cookie_session` token-cache slot so the collector doesn't need to know which mechanism delivered it.
+Saved provider credentials take precedence for their account, followed by credentials discovered by the sidecar and then server environment variables. Local files and browser cookies are read by the sidecar; the server does not inspect another machine's filesystem.
 
-### 1. CLI auto-discovery (zero config)
+### 1. CLI discovery
 
 The opencode CLI stores every configured provider's credential in
 `~/.local/share/opencode/auth.json`. Runway reads `opencode-go.key` from
-this file on every host that has the opencode CLI installed — no env
-variable or UI paste needed. The same file also has keys for other
-providers (`openrouter.key`, `minimax-coding-plan.key`,
-`kimi-code-plan-global.key`); the sidecar picks those up too so those
-providers light up automatically.
+this file on hosts where the sidecar runs. Since the file can contain
+keys for several provider accounts without reliable account identity,
+newly discovered keys appear under Untagged Credentials until assigned
+to a provider account.
 
 ```
 ~/.local/share/opencode/auth.json
@@ -34,15 +33,16 @@ location).
 
 ### 2. Environment variable
 
-`OPENCODE_API_KEY=oc_sk_…` in the sidecar's environment. Useful for
-Docker hosts without a host opencode CLI, or for sharing a key across
-hosts via env injection.
+`OPENCODE_API_KEY=oc_sk_…` may be set on the sidecar or server. The
+sidecar reports local environment values; a server uses its environment
+value for the default account.
 
 ### 3. UI / `provider_configs` manual paste
 
 The Providers → opencode page exposes an `OpenCode API Key (api)` field
 that encrypts and persists the key into `provider_configs.api_key_encrypted`.
-The collector reads it via the token cache on every cycle.
+The collector reads the account-scoped value directly, so it remains
+available after restart and does not expire with the sidecar token cache.
 
 ### 4. Cookie fallback (legacy / non-migrated workspaces)
 
@@ -59,18 +59,19 @@ error card.
 
 - `GET https://opencode.ai/zen/go/v1/usage` — bearer auth.
   Returns `{usage: {rolling, weekly, monthly: {percent, status, resetsAt}}}`.
-- `GET https://opencode.ai/console/api/go/status` — bearer auth.
-  Returns the richer `{access.meters.fiveHour|week|month: {usedMicroCents, limitMicroCents, resetsAt, startsAt}}`.
-
-The collector tries `console/api/go/status` first (richer data) and
-falls back to `zen/go/v1/usage` if that returns 401/403.
+- `GET https://opencode.ai/console/api/go/status` — cookie auth with
+  `x-org-id`. Returns subscription meters with usage, limits, and resets.
 
 ### Fallback (cookie)
 
 - `GET https://opencode.ai/console/api/orgs` — lists workspaces
   (`[{id, name}]`). Cookie auth only; bearer returns 401.
-- `GET https://opencode.ai/console/api/go_status` with `x-org-id` header —
+- `GET https://opencode.ai/console/api/go/status` with `x-org-id` header —
   same body shape as the bearer variant.
+
+When the cookie account has one Go workspace, it is selected automatically.
+When several workspaces have Go access, enter that workspace's ID in the
+OpenCode account settings. The collector never guesses from list order.
 
 ## Card Schema
 
@@ -128,13 +129,12 @@ a visible error card with `error_type`:
 | `missing_cookies` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
 | `session_invalid` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
 | `no_workspace` | `parse_error` | OpenCode: no workspace found for the configured account. |
+| `invalid_config` | `invalid_config` | Set the OpenCode workspace ID for this account. |
 | `api_unavailable` | `api_error` | OpenCode: usage API unreachable. Will retry on next cycle. |
 | (other) | `unknown` | OpenCode quota collection failed. |
 
-The same `auth_failed` message covers every auth-related case so the
-dashboard doesn't change wording based on which mechanism failed — the
-fix is always the same (paste a fresh key, or ensure the sidecar can
-read the auth file).
+Auth errors identify expired or missing credentials. Untagged CLI keys
+must first be assigned to an OpenCode account in Settings.
 
 ## Migration from the Legacy `_server` Path
 

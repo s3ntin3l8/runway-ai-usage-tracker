@@ -164,6 +164,11 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     collector_instance = cls(account_id=durable_aid, account_label=db_label)
+                    if isinstance(collector_instance, OpenCodeCollector):
+                        # The default collector can carry a durable resolved
+                        # identity for its cards while its saved settings remain
+                        # scoped to the default ProviderConfig row.
+                        collector_instance.credential_account_id = "default"
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)
@@ -294,6 +299,8 @@ class CollectorManager:
                 token_val = token_val[7:].strip()
 
             all_tokens["oauth_token"] = token_val
+            if r.provider_id in ("opencode", "ollama"):
+                all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)
                 if acc_id:

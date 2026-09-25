@@ -141,23 +141,22 @@ def test_provider_config_put_stores_canonical_id(session: Session):
         app.dependency_overrides.clear()
 
 
-async def test_provider_config_put_splits_opencode_console_cookie(session: Session):
-    """PR #339 round-1 regression: pasting ``auth=X; __Host-console_session=Y``
-    must populate BOTH token-cache slots. The old code collapsed the pasted
-    string to the bare ``auth=`` value before the split loop ran, so
-    ``console_session`` was never stored."""
+async def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Session):
+    """OpenCode cookie and workspace settings persist in the account row."""
     from fastapi.testclient import TestClient
 
     from app.core.db import get_session
     from app.main import app
-    from app.services.token_cache import token_cache
 
     app.dependency_overrides[get_session] = lambda: session
     try:
         client = TestClient(app)
         resp = client.put(
             "/api/v1/system/provider-config/opencode/default",
-            json={"session_cookie": "auth=oc_x; __Host-console_session=st_y"},
+            json={
+                "session_cookie": "auth=oc_x; __Host-console_session=st_y",
+                "opencode_workspace_id": "workspace-123",
+            },
         )
         assert resp.status_code == 200, resp.text
 
@@ -169,20 +168,11 @@ async def test_provider_config_put_splits_opencode_console_cookie(session: Sessi
             )
         ).one()
         assert row.session_cookie == "auth=oc_x; __Host-console_session=st_y"
-
-        # The cache gets the split bare values both collector lookups read.
-        assert (
-            await token_cache.get_token("opencode", "cookie_session", account_id="default")
-            == "oc_x"
-        )
-        assert (
-            await token_cache.get_token("opencode", "session_cookie", account_id="default")
-            == "oc_x"
-        )
-        assert (
-            await token_cache.get_token("opencode", "console_session", account_id="default")
-            == "st_y"
-        )
+        assert row.opencode_workspace_id == "workspace-123"
+        configs = client.get("/api/v1/system/provider-configs").json()["providers"]
+        opencode = next(config for config in configs if config["provider_id"] == "opencode")
+        assert opencode["opencode_workspace_id"] == "workspace-123"
+        assert opencode["accounts"][0]["opencode_workspace_id"] == "workspace-123"
 
         # A bare ``auth=`` paste (no console cookie) still collapses to the value.
         resp = client.put(
@@ -192,10 +182,7 @@ async def test_provider_config_put_splits_opencode_console_cookie(session: Sessi
         assert resp.status_code == 200, resp.text
         session.refresh(row)
         assert row.session_cookie == "oc_z"
-        assert (
-            await token_cache.get_token("opencode", "cookie_session", account_id="default")
-            == "oc_z"
-        )
+        assert row.opencode_workspace_id == "workspace-123"
     finally:
         app.dependency_overrides.clear()
 

@@ -6,10 +6,7 @@ Collection Strategy (priority order):
 1. ``api`` (PRIMARY): OpenCode Go usage API.
    - Auth: ``Authorization: Bearer <oc_sk_…>`` (or whatever the opencode CLI
      stores as ``opencode-go.key``).
-   - Endpoint: ``GET https://opencode.ai/console/api/go/status`` first
-     (richer micro-cent detail).
-   - Falls back to ``GET https://opencode.ai/zen/go/v1/usage`` when the
-     console endpoint is rejected (401/403).
+   - Endpoint: ``GET https://opencode.ai/zen/go/v1/usage``.
 
 2. ``web`` (FALLBACK): OpenCode Console session cookies.
    - Auth: ``auth`` + ``__Host-console_session`` cookies (browser-imported
@@ -30,8 +27,10 @@ from typing import Any
 
 import httpx
 
+from app.core.config import settings
 from app.core.utils import PaceCalculator, error_card, http_request_with_retry, scrub_log
 from app.services.collectors.base import BaseCollector, normalize_account_id
+from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -69,8 +68,14 @@ class OpenCodeCollector(BaseCollector):
         "web": ("Console session cookies", "_get_opencode_web"),
     }
 
-    def __init__(self, account_id: str | None = None, account_label: str | None = None):
+    def __init__(
+        self,
+        account_id: str | None = None,
+        account_label: str | None = None,
+        credential_account_id: str | None = None,
+    ):
         super().__init__(account_id=account_id, account_label=account_label)
+        self.credential_account_id = credential_account_id or account_id or "default"
         self._cookie_owner: str | None = None
         self._last_error_reason: str = "unknown"
         self._last_error_warned: bool = False
@@ -78,6 +83,18 @@ class OpenCodeCollector(BaseCollector):
     async def is_configured(self) -> bool:
         """OpenCode is configured when either an API key or session cookies are cached."""
         acc = self.account_id or "default"
+        if credential_provider.get_provider_api_key(
+            "opencode", account_id=self.credential_account_id
+        ):
+            return True
+        if credential_provider.get_provider_session_cookie(
+            "opencode", account_id=self.credential_account_id
+        ):
+            return True
+        if self.credential_account_id == "default" and (
+            settings.OPENCODE_API_KEY or settings.OPENCODE_GO_API_KEY
+        ):
+            return True
         api_key = await token_cache.get_token("opencode", "api_key", account_id=acc)
         if api_key:
             return True
@@ -86,6 +103,16 @@ class OpenCodeCollector(BaseCollector):
             if val:
                 return True
         return False
+
+    async def reset(self):
+        """Reset per-cycle error diagnosis."""
+        self._last_error_reason = "unknown"
+        self._last_error_warned = False
+
+    async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Start each strategy chain with a fresh diagnostic state."""
+        await self.reset()
+        return await super().collect(client)
 
     # Both methods satisfy the abstract contract on BaseCollector. They are
     # unused at runtime: STRATEGIES declares the api/web order, and base
@@ -120,6 +147,9 @@ class OpenCodeCollector(BaseCollector):
         elif reason == "api_unavailable":
             message = "OpenCode: usage API unreachable. Will retry on next cycle."
             error_type = "api_error"
+        elif reason == "invalid_config":
+            message = "Set the OpenCode workspace ID in settings."
+            error_type = "invalid_config"
         else:
             message = "OpenCode quota collection failed."
             error_type = "unknown"
@@ -150,7 +180,7 @@ class OpenCodeCollector(BaseCollector):
                 self.account_id = normalize_account_id(identity)
 
     async def _get_credentials(self) -> tuple[dict[str, Any], str]:
-        """Return ``(tokens, input_source)`` from the token cache, or ``({}, "unknown")``.
+        """Return cached credentials and provenance for this collector account.
 
         Also stamps ``_cookie_owner`` from the metadata's ``account_label``
         so ``_pin_identity`` can prefer the credential's identity over the
@@ -176,6 +206,20 @@ class OpenCodeCollector(BaseCollector):
         return dict(tokens), "sidecar" if source else "config"
 
     def _set_error(self, reason: str) -> None:
+        priority = {
+            "unknown": 0,
+            "missing_api_key": 1,
+            "missing_cookies": 1,
+            "no_workspace": 2,
+            "invalid_api_key": 3,
+            "session_invalid": 3,
+            "api_error": 4,
+            "api_unavailable": 4,
+            "parse_error": 4,
+            "invalid_config": 5,
+        }
+        if priority.get(reason, 0) < priority.get(self._last_error_reason, 0):
+            return
         if reason != self._last_error_reason:
             self._last_error_reason = reason
             self._last_error_warned = False
@@ -188,7 +232,17 @@ class OpenCodeCollector(BaseCollector):
     async def _get_opencode_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Bearer-authenticated OpenCode Go usage API."""
         tokens, input_source = await self._get_credentials()
-        api_key = tokens.get("api_key") or tokens.get("OPENCODE_API_KEY")
+        api_key = credential_provider.get_provider_api_key(
+            "opencode", account_id=self.credential_account_id
+        )
+        if api_key:
+            input_source = "config"
+        else:
+            api_key = tokens.get("api_key") or tokens.get("OPENCODE_API_KEY")
+        if not api_key and self.credential_account_id == "default":
+            api_key = settings.OPENCODE_API_KEY or settings.OPENCODE_GO_API_KEY or None
+            if api_key:
+                input_source = "server"
         if not api_key:
             self._set_error("missing_api_key")
             return []
@@ -225,23 +279,19 @@ class OpenCodeCollector(BaseCollector):
             "Accept": "application/json",
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
         }
-        # Prefer the richer console endpoint; fall back to zen/go/v1/usage.
-        body, source = await self._get_first_2xx(
-            client,
-            [
-                (f"{_BASE_URL}/console/api/go/status", headers),
-                (f"{_BASE_URL}/zen/go/v1/usage", headers),
-            ],
+        if api_key.lower().startswith("bearer "):
+            headers["Authorization"] = api_key
+        body, _source = await self._get_first_2xx(
+            client, [(f"{_BASE_URL}/zen/go/v1/usage", headers)]
         )
         if body is None:
             self._set_error("invalid_api_key")
             return []
-        if source == "console_go_status":
-            cards = self._build_cards_from_go_status(body, input_source)
-        else:
-            cards = self._build_cards_from_zen_usage(body, input_source)
+        cards = self._build_cards_from_zen_usage(body, input_source)
         if not cards:
             self._set_error("parse_error")
+        else:
+            self._last_error_reason = "unknown"
         return cards
 
     async def _get_first_2xx(
@@ -253,16 +303,23 @@ class OpenCodeCollector(BaseCollector):
                     client, "GET", url, headers=headers, timeout=15.0, follow_redirects=True
                 )
             except httpx.TimeoutException:
+                self._set_error("api_unavailable")
                 continue
             except Exception as exc:
+                self._set_error("api_unavailable")
                 logger.debug("OpenCode: GET %s failed: %s", url, scrub_log(str(exc)))
                 continue
             if resp.status_code != 200:
+                if resp.status_code in (401, 403):
+                    self._set_error("invalid_api_key")
+                elif resp.status_code >= 500:
+                    self._set_error("api_error")
                 continue
             label = "console_go_status" if "/console/api/go/status" in url else "zen_go_v1_usage"
             try:
                 return resp.json(), label
             except Exception:
+                self._set_error("parse_error")
                 logger.debug("OpenCode: non-JSON response from %s", url)
                 continue
         return None, None
@@ -393,32 +450,62 @@ class OpenCodeCollector(BaseCollector):
 
     async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Cookie-authenticated console handshake (2 steps)."""
-        # Fresh diagnosis per strategy run — ``_last_error_reason`` persists
-        # on the instance across cycles (nothing calls ``reset()``), and a
-        # stale reason from a prior cycle must not leak into this one.
-        self._last_error_reason = "unknown"
         tokens, input_source = await self._get_credentials()
-        cookie_session = tokens.get("cookie_session") or tokens.get("session_cookie")
+        cookie_session = credential_provider.get_provider_session_cookie(
+            "opencode", account_id=self.credential_account_id
+        )
+        if cookie_session:
+            input_source = "config"
+        else:
+            cookie_session = tokens.get("cookie_session") or tokens.get("session_cookie")
         console_session = tokens.get("console_session")
+        if cookie_session and "__Host-console_session=" in cookie_session:
+            for part in cookie_session.split(";"):
+                part = part.strip()
+                if part.startswith("__Host-console_session="):
+                    console_session = part[len("__Host-console_session=") :].strip()
+                elif part.startswith("auth="):
+                    cookie_session = part[5:].strip()
         if not cookie_session and not console_session:
             self._set_error("missing_cookies")
             return []
         headers = self._build_cookie_headers(cookie_session, console_session)
-        workspace_id = await self._fetch_workspace_id(client, headers)
-        if not workspace_id:
-            # ``_fetch_workspace_id`` already diagnosed a 401/403 as
-            # ``session_invalid`` — an expired cookie must not be masked
-            # as the generic no_workspace (PR #339 round-1 review).
+        workspaces = await self._fetch_workspaces(client, headers)
+        if not workspaces:
             if self._last_error_reason == "unknown":
                 self._set_error("no_workspace")
             return []
-        body = await self._fetch_go_status(client, headers, workspace_id)
-        if body is None:
-            self._set_error("session_invalid")
+        selected = credential_provider.get_opencode_workspace_id(
+            account_id=self.credential_account_id
+        )
+        if selected:
+            if selected not in {wid for wid, _ in workspaces}:
+                self._set_error("invalid_config")
+                return []
+            candidates = [(selected, next((n for wid, n in workspaces if wid == selected), None))]
+        else:
+            candidates = workspaces
+        usable: list[tuple[str, dict[str, Any]]] = []
+        for workspace_id, _ in candidates:
+            body = await self._fetch_go_status(client, headers, workspace_id)
+            if body is not None:
+                usable.append((workspace_id, body))
+        if selected and not usable:
+            if self._last_error_reason == "unknown":
+                self._set_error("no_workspace")
             return []
-        cards = self._build_cards_from_go_status(body, input_source)
+        if not selected and len(usable) > 1:
+            self._set_error("invalid_config")
+            return []
+        if not usable:
+            if self._last_error_reason == "unknown":
+                self._set_error("no_workspace")
+            return []
+        cards = self._build_cards_from_go_status(usable[0][1], input_source)
         if not cards:
             self._set_error("parse_error")
+        else:
+            self._last_error_reason = "unknown"
         return cards
 
     def _build_cookie_headers(
@@ -437,9 +524,9 @@ class OpenCodeCollector(BaseCollector):
             "Origin": "https://opencode.ai",
         }
 
-    async def _fetch_workspace_id(
+    async def _fetch_workspaces(
         self, client: httpx.AsyncClient, headers: dict[str, str]
-    ) -> str | None:
+    ) -> list[tuple[str, str | None]]:
         try:
             resp = await http_request_with_retry(
                 client,
@@ -450,25 +537,29 @@ class OpenCodeCollector(BaseCollector):
                 follow_redirects=True,
             )
         except Exception as exc:
+            self._set_error("api_unavailable")
             logger.warning("OpenCode: /console/api/orgs failed: %s", scrub_log(str(exc)))
-            return None
+            return []
         if resp.status_code in (401, 403):
             self._set_error("session_invalid")
-            return None
+            return []
         if resp.status_code != 200:
-            return None
+            if resp.status_code >= 500:
+                self._set_error("api_error")
+            return []
         try:
             orgs = resp.json()
         except Exception:
-            return None
-        if not isinstance(orgs, list) or not orgs:
-            return None
-        first = orgs[0]
-        if isinstance(first, dict):
-            wid = first.get("id")
-            if isinstance(wid, str) and wid:
-                return wid
-        return None
+            self._set_error("parse_error")
+            return []
+        if not isinstance(orgs, list):
+            self._set_error("parse_error")
+            return []
+        return [
+            (org["id"], org.get("name"))
+            for org in orgs
+            if isinstance(org, dict) and isinstance(org.get("id"), str) and org["id"]
+        ]
 
     async def _fetch_go_status(
         self,
@@ -490,16 +581,23 @@ class OpenCodeCollector(BaseCollector):
                 follow_redirects=True,
             )
         except Exception as exc:
+            self._set_error("api_unavailable")
             logger.warning("OpenCode: /console/api/go/status failed: %s", scrub_log(str(exc)))
             return None
         if resp.status_code in (401, 403):
             self._set_error("session_invalid")
             return None
         if resp.status_code != 200:
+            if resp.status_code >= 500:
+                self._set_error("api_error")
             return None
         try:
-            return resp.json()
+            body = resp.json()
+            if not isinstance(body, dict) or not (body.get("access") or {}).get("meters"):
+                return None
+            return body
         except Exception:
+            self._set_error("parse_error")
             return None
 
     # --- helpers ----------------------------------------------------------

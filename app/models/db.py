@@ -91,6 +91,7 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
     account_label: str | None = None
     poll_interval_seconds: int | None = None  # None = use collector default TTL
     collection_strategies_json: str | None = Field(default=None)  # JSON list of {id, enabled}
+    opencode_workspace_id: str | None = Field(default=None)
 
     @property
     def strategies(self) -> list[dict] | None:

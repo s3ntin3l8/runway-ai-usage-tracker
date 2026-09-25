@@ -403,10 +403,29 @@ __REGISTRY__: dict[str, Any] = {
             "icon": "\u26a1",
             "rules": [
                 {
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"opencode-go.key": "api_key"},
+                },
+                {
+                    "type": "env",
+                    "variable": "OPENCODE_API_KEY",
+                    "mapping": {"value": "api_key"},
+                },
+                {
                     "type": "cookie",
                     "domains": ["opencode.ai", ".opencode.ai"],
                     "name": "auth",
                     "mapping": {"value": "cookie_session"},
+                },
+                {
+                    "type": "cookie",
+                    "domains": ["opencode.ai", ".opencode.ai"],
+                    "name": "__Host-console_session",
+                    "mapping": {"value": "console_session"},
                 },
             ],
         },

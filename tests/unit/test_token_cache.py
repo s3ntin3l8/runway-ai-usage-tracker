@@ -54,6 +54,24 @@ async def test_multi_account_isolation(cache):
 
 
 @pytest.mark.asyncio
+async def test_remove_tokens_preserves_other_credential_family(cache):
+    await cache.store(
+        "opencode",
+        {
+            "api_key": "key",  # pragma: allowlist secret
+            "oauth_token": "key",  # pragma: allowlist secret
+            "cookie_session": "cookie",
+        },
+        account_id="default",
+        source="config",
+    )
+
+    await cache.remove_tokens("opencode", "default", {"api_key", "oauth_token"})
+
+    assert await cache.get("opencode", "default") == {"cookie_session": "cookie"}
+
+
+@pytest.mark.asyncio
 async def test_identity_promotion(cache):
     # Store token with anonymous ID
     await cache.store("anthropic", {"api_key": "token1"}, account_id="acc_1")

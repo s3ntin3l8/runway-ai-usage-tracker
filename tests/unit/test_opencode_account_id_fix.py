@@ -2,8 +2,8 @@
 
 Two surfaces are exercised:
 
-- ``_get_opencode_api`` / ``_build_cards_from_go_status``: Bearer-token path
-  against ``/console/api/go_status``. Asserts the three Go-tier windows are
+- ``_get_opencode_api`` / ``_build_cards_from_zen_usage``: Bearer-token path
+  against ``/zen/go/v1/usage``. Asserts the three Go-tier windows are
   emitted with correct ``pct_used``, ``limit_value``, ``reset_at`` and
   ``window_type`` (the dashboard's universal contract). Also asserts the
   rate-limited status short-circuits to ``health == "critical"``.
@@ -169,7 +169,7 @@ class TestBuildCardsFromZenUsage:
 
 
 class TestGetOpencodeApi:
-    """Bearer-token strategy against mocked /console/api/go/status."""
+    """Bearer-token strategy against mocked /zen/go/v1/usage."""
 
     @pytest.mark.asyncio
     async def test_successful_fetch_returns_three_cards(self):
@@ -182,13 +182,17 @@ class TestGetOpencodeApi:
 
         with (
             patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
                 "app.services.collectors.opencode.token_cache.get_with_metadata",
                 side_effect=fake_get_with_metadata,
             ),
             patch(
                 "app.services.collectors.opencode.http_request_with_retry",
                 new_callable=AsyncMock,
-                return_value=_json_response(_go_status_body()),
+                return_value=_json_response(_zen_usage_body()),
             ) as mock_http,
         ):
             cards = await collector._get_opencode_api(MagicMock())
@@ -196,6 +200,66 @@ class TestGetOpencodeApi:
         assert len(cards) == 3
         assert all(c["tier"] == "Go" for c in cards)
         assert mock_http.await_args.kwargs["headers"]["Authorization"] == "Bearer oc_sk_test"
+        assert mock_http.await_args.args[2] == "https://opencode.ai/zen/go/v1/usage"
+        assert all(card["input_source"] == "sidecar" for card in cards)
+
+    @pytest.mark.asyncio
+    async def test_server_environment_key_is_used_for_default_account(self):
+        collector = OpenCodeCollector()
+
+        async def no_tokens(*args, **kwargs):
+            return None
+
+        with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=no_tokens,
+            ),
+            patch("app.services.collectors.opencode.settings.OPENCODE_API_KEY", "oc_sk_env"),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_json_response(_zen_usage_body()),
+            ) as mock_http,
+        ):
+            cards = await collector._get_opencode_api(MagicMock())
+
+        assert len(cards) == 3
+        assert mock_http.await_args.kwargs["headers"]["Authorization"] == "Bearer oc_sk_env"
+        assert all(card["input_source"] == "server" for card in cards)
+
+    @pytest.mark.asyncio
+    async def test_saved_account_key_takes_precedence_over_sidecar_and_server(self):
+        collector = OpenCodeCollector(account_id="acc_test")
+
+        async def fake_get_with_metadata(provider, account_id=None):
+            return ({"api_key": "oc_sk_sidecar"}, {"source": "sidecar"})  # pragma: allowlist secret
+
+        with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_api_key",
+                return_value="oc_sk_saved",
+            ),
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=fake_get_with_metadata,
+            ),
+            patch("app.services.collectors.opencode.settings.OPENCODE_API_KEY", "oc_sk_env"),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_json_response(_zen_usage_body()),
+            ) as mock_http,
+        ):
+            cards = await collector._get_opencode_api(MagicMock())
+
+        assert len(cards) == 3
+        assert mock_http.await_args.kwargs["headers"]["Authorization"] == "Bearer oc_sk_saved"
+        assert all(card["input_source"] == "config" for card in cards)
 
     @pytest.mark.asyncio
     async def test_no_api_key_returns_error_card(self):
@@ -206,9 +270,17 @@ class TestGetOpencodeApi:
         async def fake_get_with_metadata(provider, account_id=None):
             return ({"cookie_session": "x"}, {"source": "config"})
 
-        with patch(
-            "app.services.collectors.opencode.token_cache.get_with_metadata",
-            side_effect=fake_get_with_metadata,
+        with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch("app.services.collectors.opencode.settings.OPENCODE_API_KEY", ""),
+            patch("app.services.collectors.opencode.settings.OPENCODE_GO_API_KEY", ""),
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=fake_get_with_metadata,
+            ),
         ):
             cards = await collector._get_opencode_api(MagicMock())
 
@@ -235,6 +307,10 @@ class TestGetOpencodeApi:
         bad_resp.text = '{"_tag":"Unauthorized"}'
 
         with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
             patch(
                 "app.services.collectors.opencode.token_cache.get_with_metadata",
                 side_effect=fake_get_with_metadata,
@@ -272,6 +348,10 @@ class TestGetOpencodeWeb:
 
         with (
             patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
                 "app.services.collectors.opencode.token_cache.get_with_metadata",
                 side_effect=fake_get_with_metadata,
             ),
@@ -294,6 +374,98 @@ class TestGetOpencodeWeb:
         assert "__Host-console_session=st_fake" in second_call_headers["Cookie"]
 
     @pytest.mark.asyncio
+    async def test_multiple_go_workspaces_requires_selection(self):
+        collector = OpenCodeCollector(account_id="acc_test")
+
+        async def fake_get_with_metadata(provider, account_id=None):
+            return ({"cookie_session": "auth", "console_session": "sess"}, {"source": "sidecar"})
+
+        with (
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=fake_get_with_metadata,
+            ),
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_opencode_workspace_id",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _json_response([{"id": "one"}, {"id": "two"}]),
+                    _json_response(_go_status_body()),
+                    _json_response(_go_status_body()),
+                ],
+            ),
+        ):
+            cards = await collector._get_opencode_web(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "invalid_config"
+        error = await collector._error_handler()
+        assert error[0]["error_type"] == "invalid_config"
+        assert "workspace ID" in error[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_selected_workspace_is_rejected(self):
+        collector = OpenCodeCollector(account_id="acc_test")
+
+        async def fake_get_with_metadata(provider, account_id=None):
+            return ({"cookie_session": "auth", "console_session": "sess"}, {"source": "sidecar"})
+
+        with (
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=fake_get_with_metadata,
+            ),
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_opencode_workspace_id",
+                return_value="missing",
+            ),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_json_response([{"id": "real"}]),
+            ),
+        ):
+            cards = await collector._get_opencode_web(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "invalid_config"
+
+    @pytest.mark.asyncio
+    async def test_missing_fallback_cookie_does_not_mask_prior_api_error(self):
+        collector = OpenCodeCollector(account_id="acc_test")
+        collector._set_error("api_error")
+
+        async def no_tokens(*args, **kwargs):
+            return None
+
+        with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=no_tokens,
+            ),
+        ):
+            cards = await collector._get_opencode_web(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "api_error"
+
+    @pytest.mark.asyncio
     async def test_401_on_orgs_returns_error_card(self):
         """Cookie session expired: surface an auth_failed card, not silence."""
         collector = OpenCodeCollector(account_id="acc_test")
@@ -305,6 +477,10 @@ class TestGetOpencodeWeb:
             return ({"cookie_session": "expired"}, {"source": "config"})
 
         with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
             patch(
                 "app.services.collectors.opencode.token_cache.get_with_metadata",
                 side_effect=fake_get_with_metadata,
@@ -339,6 +515,10 @@ class TestGetOpencodeWeb:
             return ({"cookie_session": "valid"}, {"source": "config"})
 
         with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
             patch(
                 "app.services.collectors.opencode.token_cache.get_with_metadata",
                 side_effect=fake_get_with_metadata,
