@@ -98,6 +98,7 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
   const [archived, setArchived] = useState(provider.archived ?? false);
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
+  const [workspaceId, setWorkspaceId] = useState(provider.opencode_workspace_id ?? '');
   const [label, setLabel] = useState(provider.account_label ?? '');
   const [pollInterval, setPollInterval] = useState(
     provider.poll_interval_seconds != null ? String(provider.poll_interval_seconds) : '',
@@ -119,6 +120,7 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
         collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
       };
+      if (provider.provider_id === 'opencode') body.opencode_workspace_id = workspaceId.trim();
       // Only send credentials the user actually typed — empty string means
       // "clear" server-side, absence means "keep".
       if (apiKey !== '') body.api_key = apiKey;
@@ -220,6 +222,20 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderConfig; onSaved
           {provider.session_cookie_help ? (
             <HelperText>{provider.session_cookie_help}</HelperText>
           ) : null}
+        </div>
+      ) : null}
+
+      {provider.provider_id === 'opencode' ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="opencode-workspace-id">OpenCode workspace ID</Label>
+          <Input
+            id="opencode-workspace-id"
+            autoComplete="off"
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+            placeholder="Required when this account has multiple Go workspaces"
+          />
+          <HelperText>Find the ID in your OpenCode Console workspace settings.</HelperText>
         </div>
       ) : null}
 

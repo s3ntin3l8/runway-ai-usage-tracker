@@ -1,66 +1,62 @@
 """
-OpenCode quota collector with web API (Chrome cookies) as primary source.
+OpenCode quota collector.
 
-Collection Strategy:
-1. OpenCode Web API (PRIMARY)
-   - Uses Chrome cookies to authenticate with opencode.ai
-   - Calls https://opencode.ai/_server endpoint
-   - Returns aggregated usage from ALL devices (web IDE, TUI, etc.)
-   - Shows rolling 5-hour and weekly windows
+Collection Strategy (priority order):
 
-2. Sidecar Aggregation (FALLBACK)
-   - Aggregates local DB data from multiple hosts via the sidecar push pipeline
-   - Used when web API fails (no Chrome login, cookie decryption fails)
-   - Each host runs sidecar script to push local data
+1. ``api`` (PRIMARY): OpenCode Go usage API.
+   - Auth: ``Authorization: Bearer <oc_sk_…>`` (or whatever the opencode CLI
+     stores as ``opencode-go.key``).
+   - Endpoint: ``GET https://opencode.ai/zen/go/v1/usage``.
+
+2. ``web`` (FALLBACK): OpenCode Console session cookies.
+   - Auth: ``auth`` + ``__Host-console_session`` cookies (browser-imported
+     or pasted).
+   - Endpoint A: ``GET https://opencode.ai/console/api/orgs`` lists
+     workspaces (cookie auth).
+   - Endpoint B: ``GET https://opencode.ai/console/api/go/status`` with
+     ``x-org-id`` header returns subscription meters.
+
+The legacy ``/_server?id=def3997…`` server-function path is no longer used
+— opencode migrated its workspaces to the console and that fn id either
+returns a 302-encoded login redirect or a client-rendered SPA shell.
 """
 
-import asyncio
-import json
 import logging
-import os
-import re
-import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
-from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import PaceCalculator, http_request_with_retry, scrub_log
-from app.services.collectors.base import BaseCollector, format_token_details, normalize_account_id
+from app.core.utils import PaceCalculator, error_card, http_request_with_retry, scrub_log
+from app.services.collectors.base import BaseCollector, normalize_account_id
+from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
-# Matches each inline JS record from the /usage page's embedded $R[N]={...} objects.
-# Supports both OLD format (direct) and NEW format (React Suspense wrapped with $R[N]= prefix).
-# Fields are in a fixed order so we can match them positionally.
-_USAGE_RECORD_RE = re.compile(
-    r"\{id:\"usg_[^\"]*\""
-    r",workspaceID:\"[^\"]*\""
-    r",timeCreated:(?:\$R\[\d+\]=)?new Date\(\"([^\"]+)\"\)"  # G1: ISO timestamp
-    r",timeUpdated:(?:\$R\[\d+\]=)?new Date\(\"[^\"]+\"\)"
-    r",timeDeleted:[^,]+"
-    r',model:"([^"]+)"'  # G2: model name
-    r',provider:"([^"]+)"'  # G3: provider
-    r",inputTokens:(-?\d+)"  # G4
-    r",outputTokens:(-?\d+)"  # G5
-    r",reasoningTokens:(-?\d+|null)"  # G6
-    r",cacheReadTokens:(-?\d+)"  # G7
-    r",cacheWrite5mTokens:(-?\d+|null)"  # G8: nullable
-    r",cacheWrite1hTokens:(-?\d+|null)"  # G9: nullable
-    r",cost:(-?\d+)"  # G10: cost raw int (÷1e8 = USD)
-    r',keyID:"[^"]*"'
-    r',sessionID:"[^"]*"'
-    r",enrichment:(null|\$R\[\d+\]=\{[^}]+\}|\{[^}]+\})"  # G11: Go marker
-    r"\}"
-)
-_USAGE_COST_SCALE: float = 1e-8  # raw cost int → USD
+_BASE_URL = "https://opencode.ai"
 
-# OpenCode _server function ID used for workspace discovery.
-# This is a stable server-side identifier for the workspaces endpoint.
-_SERVER_FN_ID = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
+# Window-key -> canonical Runway window_type mapping for the Go tier.
+_WINDOW_TYPE_MAP: dict[str, str] = {
+    "fiveHour": "session",
+    "week": "weekly",
+    "month": "monthly",
+    "rolling": "session",
+    "weekly": "weekly",
+    "monthly": "monthly",
+}
+
+# Default limits per window (USD), used when the API returns a missing /
+# null ``limitMicroCents``. Matches the documented OpenCode Go tier.
+_DEFAULT_LIMIT_USD: dict[str, float] = {
+    "fiveHour": 12.0,
+    "week": 30.0,
+    "month": 60.0,
+    "rolling": 12.0,
+    "weekly": 30.0,
+    "monthly": 60.0,
+}
 
 
 class OpenCodeCollector(BaseCollector):
@@ -68,817 +64,571 @@ class OpenCodeCollector(BaseCollector):
     DEFAULT_WINDOW_TYPE = "weekly"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
-        "web": ("Web API (session cookie)", "_get_opencode_web"),
+        "api": ("OpenCode API key", "_get_opencode_api"),
+        "web": ("Console session cookies", "_get_opencode_web"),
     }
 
-    def __init__(self, account_id: str | None = None, account_label: str | None = None):
+    def __init__(
+        self,
+        account_id: str | None = None,
+        account_label: str | None = None,
+        credential_account_id: str | None = None,
+    ):
         super().__init__(account_id=account_id, account_label=account_label)
-        # Email the session cookie belongs to, when the token cache knows it.
+        self.credential_account_id = credential_account_id or account_id or "default"
         self._cookie_owner: str | None = None
-        self._last_window_info: dict[str, dict] | None = self._load_persisted_state()
+        self._last_error_reason: str = "unknown"
+        self._last_error_warned: bool = False
 
-    def _pin_identity(self, scraped_email: str) -> None:
-        """Pin ``account_id`` / ``account_label`` for an unpinned collector.
+    async def is_configured(self) -> bool:
+        """OpenCode is configured when either an API key or session cookies are cached."""
+        acc = self.account_id or "default"
+        if credential_provider.get_provider_api_key(
+            "opencode", account_id=self.credential_account_id
+        ):
+            return True
+        if credential_provider.get_provider_session_cookie(
+            "opencode", account_id=self.credential_account_id
+        ):
+            return True
+        if self.credential_account_id == "default" and (
+            settings.OPENCODE_API_KEY or settings.OPENCODE_GO_API_KEY
+        ):
+            return True
+        api_key = await token_cache.get_token("opencode", "api_key", account_id=acc)
+        if api_key:
+            return True
+        for token_type in ("cookie_session", "console_session"):
+            val = await token_cache.get_token("opencode", token_type, account_id=acc)
+            if val:
+                return True
+        return False
 
-        The cookie owner (the identity the credential was cached under) is
-        authoritative; the email scraped from the workspace page is only a
-        fallback — with several opencode accounts the page can show a
-        different account than the cookie's (#315). A disagreement is
+    async def reset(self):
+        """Reset per-cycle error diagnosis."""
+        self._last_error_reason = "unknown"
+        self._last_error_warned = False
+
+    async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Start each strategy chain with a fresh diagnostic state."""
+        await self.reset()
+        return await super().collect(client)
+
+    # Both methods satisfy the abstract contract on BaseCollector. They are
+    # unused at runtime: STRATEGIES declares the api/web order, and base
+    # only invokes this legacy pair when STRATEGIES is empty.
+    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        return await self._get_opencode_api(client)
+
+    def _fallback_strategies(self) -> list[Any]:
+        return []
+
+    async def _error_handler(self) -> list[dict[str, Any]]:
+        """Emit an auth_failed / api_error card instead of returning []. The
+        pre-existing collector silently returned ``[]`` on every failure, which
+        meant the dashboard went blank with zero diagnostic signal."""
+        reason = self._last_error_reason
+        if reason in (
+            "invalid_api_key",
+            "session_invalid",
+            "missing_cookies",
+            "missing_api_key",
+        ):
+            message = (
+                "OpenCode session expired — paste a fresh `oc_sk_…` API key "
+                "from the opencode console into Providers → opencode, or "
+                "ensure the sidecar can read "
+                "`~/.local/share/opencode/auth.json`."
+            )
+            error_type = "auth_failed"
+        elif reason == "no_workspace":
+            message = "OpenCode: no workspace found for the configured account."
+            error_type = "parse_error"
+        elif reason == "api_unavailable":
+            message = "OpenCode: usage API unreachable. Will retry on next cycle."
+            error_type = "api_error"
+        elif reason == "invalid_config":
+            message = "Set the OpenCode workspace ID in settings."
+            error_type = "invalid_config"
+        else:
+            message = "OpenCode quota collection failed."
+            error_type = "unknown"
+        return [error_card("OpenCode", "⚡", message, error_type=error_type)]
+
+    def _pin_identity(self, scraped_email: str | None) -> None:
+        """Pin account_id / account_label so cards and events land under a
+        stable identity rather than "default" (#276, #315).
+
+        The cookie / key owner is authoritative; the API-scraped email is
+        only a fallback — with several opencode accounts the API can show
+        a different identity than the credential's. A disagreement is
         logged so the split is visible instead of silent.
         """
         owner = self._cookie_owner
-        if owner and scraped_email and owner.lower() != scraped_email.lower():
+        scraped = scraped_email if (scraped_email and "@" in scraped_email) else None
+        if owner and scraped and owner.lower() != scraped.lower():
             logger.warning(
-                "OpenCode: workspace page shows %s but the session cookie belongs to %s; "
-                "using the cookie owner",
-                scrub_log(scraped_email),
+                "OpenCode: API response shows %s but the credential belongs to %s; "
+                "using the credential owner",
+                scrub_log(scraped),
                 scrub_log(owner),
             )
-        identity = owner or scraped_email
-        self.account_label = identity
-        if not self.account_id or self.account_id == "default":
-            self.account_id = normalize_account_id(identity)
+        identity = owner or scraped
+        if identity:
+            self.account_label = identity
+            if not self.account_id or self.account_id == "default":
+                self.account_id = normalize_account_id(identity)
 
-    def _state_file_path(self) -> str:
-        """Path to the local state file for OpenCode."""
-        acc_id = self.account_id or "default"
-        return os.path.join(settings.data_dir, f"opencode_state_{acc_id}.json")
+    async def _get_credentials(self) -> tuple[dict[str, Any], str]:
+        """Return cached credentials and provenance for this collector account.
 
-    def _load_persisted_state(self) -> dict[str, dict] | None:
-        """Load window_info from local JSON state file."""
-        path = self._state_file_path()
-        if os.path.exists(path):
-            try:
-                with open(path) as f:
-                    data = json.load(f)
-                    # Convert ISO timestamps back to datetime objects
-                    for win in data.values():
-                        if win.get("cutoff"):
-                            win["cutoff"] = datetime.fromisoformat(win["cutoff"])
-                        if win.get("reset_at"):
-                            win["reset_at"] = datetime.fromisoformat(win["reset_at"])
-                    return data
-            except Exception as e:
-                logger.debug(f"Failed to load OpenCode state from {path}: {e}")
-        return None
-
-    def _save_persisted_state(self, window_info: dict[str, dict]) -> None:
-        """Save window_info to local JSON state file."""
-        path = self._state_file_path()
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            # Convert datetime objects to ISO strings for JSON
-            serializable = {}
-            for key, info in window_info.items():
-                copy = info.copy()
-                if isinstance(copy.get("cutoff"), datetime):
-                    copy["cutoff"] = copy["cutoff"].isoformat()
-                if isinstance(copy.get("reset_at"), datetime):
-                    copy["reset_at"] = copy["reset_at"].isoformat()
-                serializable[key] = copy
-
-            with open(path, "w") as f:
-                json.dump(serializable, f)
-        except Exception as e:
-            logger.debug(f"Failed to save OpenCode state to {path}: {e}")
-
-    async def is_configured(self) -> bool:
-        """Check if OpenCode session cookie is available (sidecar-pushed or UI)."""
-        session_cookie = await token_cache.get_token(
-            "opencode", "cookie_session", account_id=self.account_id or "default"
-        )
-        return bool(session_cookie)
-
-    def _fallback_strategies(self) -> list[Any]:
-        """No server-side fallback — sidecar event extractor handles per-message data."""
-        return []
-
-    async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """OpenCode Web API strategy."""
-        return await self._get_opencode_web(client)
-
-    async def _error_handler(self) -> list[dict[str, Any]]:
-        """Return empty list on failure (OpenCode is non-critical)."""
-        return []
-
-    async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        Also stamps ``_cookie_owner`` from the metadata's ``account_label``
+        so ``_pin_identity`` can prefer the credential's identity over the
+        API-scraped email when the two disagree (#315).
         """
-        Fetch OpenCode usage from web API using Chrome cookies.
-
-        This queries the opencode.ai servers and returns aggregated usage
-        from ALL devices where the user is logged in (web IDE, TUI, etc.).
-
-        Process:
-        1. Extract session cookie from Chrome
-        2. Call workspaces endpoint to get workspace ID
-        3. Call subscription endpoint to get usage data
-        4. Parse JavaScript response with regex
-
-        Returns:
-            List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
-        """
-        # Source: token cache — populated by sidecar push or via UI ProviderConfig
-        session_cookie = None
-        input_source = None
         res = await token_cache.get_with_metadata(
             "opencode", account_id=self.account_id or "default"
         )
-        if res:
-            tokens, metadata = res
-            session_cookie = tokens.get("cookie_session") or tokens.get("session_cookie")
-            if session_cookie:
-                source = metadata.get("source")
-                input_source = "sidecar" if source else "config"
-                # The credential's own identity (#315): the email the
-                # cookie was pushed/configured under. It outranks the
-                # workspace-page scrape, which can show another account.
-                owner = str(metadata.get("account_label") or "")
-                self._cookie_owner = owner if "@" in owner else None
+        if not res:
+            return {}, "unknown"
+        tokens, metadata = res
+        # Identity lives on the credential side, not the API response. The
+        # token-cache metadata's account_label carries it through from the
+        # sidecar push / UI paste — if it looks like an email, it's the
+        # credential owner. Otherwise fall back to the constructor's label.
+        meta_label = str(metadata.get("account_label") or "")
+        self._cookie_owner = (
+            meta_label
+            if "@" in meta_label
+            else (self.account_label if self.account_label and "@" in self.account_label else None)
+        )
+        source = metadata.get("source")
+        return dict(tokens), "sidecar" if source else "config"
 
-        if not session_cookie:
-            return []
+    def _set_error(self, reason: str) -> None:
+        priority = {
+            "unknown": 0,
+            "missing_api_key": 1,
+            "missing_cookies": 1,
+            "no_workspace": 2,
+            "invalid_api_key": 3,
+            "session_invalid": 3,
+            "api_error": 4,
+            "api_unavailable": 4,
+            "parse_error": 4,
+            "invalid_config": 5,
+        }
+        if priority.get(reason, 0) < priority.get(self._last_error_reason, 0):
+            return
+        if reason != self._last_error_reason:
+            self._last_error_reason = reason
+            self._last_error_warned = False
+        if not self._last_error_warned:
+            logger.warning("OpenCode collector: %s", reason)
+            self._last_error_warned = True
 
-        try:
-            headers = {
-                "Cookie": f"auth={session_cookie}",
-                "Content-Type": "application/json",
-                "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-                "Referer": "https://opencode.ai/",
-                "Origin": "https://opencode.ai",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-            }
+    # --- api strategy -----------------------------------------------------
 
-            # 1. Get workspace ID
-            workspace_id = await self._get_workspace_id(client, headers)
-            if not workspace_id:
-                return []
-
-            # 2. Get subscription data (rolling-window percentages from /go)
-            usage_data = await self._get_subscription_data(client, headers, workspace_id)
-            if not usage_data:
-                return []
-
-            # 3. Extract window info from usage_data first (for breakdown filtering)
-            window_info = self._extract_window_info(usage_data)
-            self._last_window_info = window_info
-            await asyncio.to_thread(self._save_persisted_state, window_info)
-
-            # Log window detection for debugging
-            for win_key, info in window_info.items():
-                logger.info(f"OpenCode: {win_key} window: is_fixed={info.get('is_fixed')}")
-
-            # 4. Fetch per-model usage records from /usage (best-effort enrichment)
-            breakdown: dict[str, Any] | None = None
-            try:
-                usage_page = await self._get_usage_page(client, headers, workspace_id)
-                if usage_page:
-                    records = self._parse_usage_records(usage_page)
-                    if records:
-                        breakdown = self._build_usage_breakdown(
-                            records, datetime.now(UTC), window_info
-                        )
-            except Exception as e:
-                logger.warning(f"OpenCode: /usage enrichment failed: {e}")
-
-            # 5. Parse and return cards (enriched when breakdown is available)
-            return self._parse_usage_data(
-                usage_data, workspace_id, breakdown, input_source or "server", window_info
-            )
-
-        except Exception as e:
-            logger.warning(f"OpenCode: Web API collection failed: {e}")
-            return []
-
-    async def _get_workspace_id(
-        self, client: httpx.AsyncClient, headers: dict[str, str]
-    ) -> str | None:
-        """Get the first workspace ID from opencode.ai."""
-        try:
-            # Check for env override first
-            env_workspace = os.getenv("OPENCODE_WORKSPACE_ID")
-            if env_workspace:
-                # Handle full URL format
-                if "workspace/" in env_workspace:
-                    return env_workspace.split("workspace/")[-1].split("/")[0]
-                return env_workspace
-
-            ws_headers = headers.copy()
-            ws_headers.update(
-                {
-                    "X-Server-Id": _SERVER_FN_ID,
-                    "X-Server-Instance": f"server-fn:{uuid.uuid4()}",
-                    "Accept": "text/javascript, application/json;q=0.9, */*;q=0.8",
-                }
-            )
-
-            # Try primary GET approach
-            url = f"https://opencode.ai/_server?id={_SERVER_FN_ID}"
-            resp = await http_request_with_retry(
-                client, "GET", url, headers=ws_headers, timeout=10.0, follow_redirects=True
-            )
-
-            # Fallback to POST with empty body if GET fails
-            if resp.status_code != 200:
-                resp = await http_request_with_retry(
-                    client,
-                    "POST",
-                    "https://opencode.ai/_server",
-                    headers=ws_headers,
-                    json=[],
-                    timeout=10.0,
-                    follow_redirects=True,
-                )
-
-            if resp.status_code != 200:
-                return None
-
-            # Parse JavaScript response
-            text = resp.text
-
-            # Try to capture email here too
-            email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
-            if email_match:
-                email = email_match.group(1)
-                # Pin account_id so cards and events land under a stable
-                # identity rather than "default" (issue #276); the cookie
-                # owner wins over the scraped email (#315).
-                self._pin_identity(email)
-
-            # Look for workspace ID pattern: id:"wrk_..."
-            match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
-            if match:
-                return match.group(1)
-
-            return None
-        except Exception as e:
-            logger.warning(f"OpenCode: Workspace discovery failed: {e}")
-            return None
-
-    async def _get_subscription_data(
-        self, client: httpx.AsyncClient, headers: dict[str, str], workspace_id: str
-    ) -> str | None:
-        """Get subscription/usage data from the workspace page (GET)."""
-        try:
-            url = f"https://opencode.ai/workspace/{workspace_id}/go"
-            # Switch to HTML accept header for the page fetch
-            usage_headers = headers.copy()
-            usage_headers["Accept"] = (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-
-            resp = await http_request_with_retry(
-                client, "GET", url, headers=usage_headers, timeout=15.0, follow_redirects=True
-            )
-
-            if resp.status_code != 200:
-                return None
-
-            return resp.text
-        except Exception as e:
-            logger.warning(f"OpenCode: Subscription data fetch failed: {e}")
-            return None
-
-    async def _get_usage_page(
-        self, client: httpx.AsyncClient, headers: dict[str, str], workspace_id: str
-    ) -> str | None:
-        """Fetch the /usage page which embeds per-model usage records as inline JS."""
-        try:
-            url = f"https://opencode.ai/workspace/{workspace_id}/usage"
-            page_headers = headers.copy()
-            page_headers["Accept"] = (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            resp = await http_request_with_retry(
-                client, "GET", url, headers=page_headers, timeout=15.0, follow_redirects=True
-            )
-
-            if resp.status_code == 200:
-                record_count = resp.text.count('id:"usg_')
-                logger.info(
-                    f"OpenCode: Fetched /usage page, length: {len(resp.text)}, records: {record_count}"
-                )
-            else:
-                logger.warning(f"OpenCode: /usage fetch failed, status: {resp.status_code}")
-
-            return resp.text if resp.status_code == 200 else None
-        except Exception as e:
-            logger.warning(f"OpenCode: /usage fetch exception: {e}")
-            return None
-
-    def _parse_usage_records(self, text: str) -> list[dict[str, Any]]:
-        """
-        Extract per-call usage records from the inline JS on the /usage page.
-
-        Each record has: ts (datetime), model_short (str), source ("go"|"free"|"api"),
-        input/output/reasoning/cache_read (int), cost_usd (float).
-
-        Classification rules:
-          enrichment != "null"         → go   (subscription, charged against Go quota)
-          enrichment == "null", cost=0 → free (free-tier model)
-          enrichment == "null", cost>0 → api  (own API key, pay-as-you-go)
-        """
-        records = []
-        for m in _USAGE_RECORD_RE.finditer(text):
-            (
-                ts_str,
-                model,
-                _provider,
-                t_in,
-                t_out,
-                t_reason,
-                cache_r,
-                _cw5,
-                _cw1,
-                cost_raw,
-                enrichment,
-            ) = m.groups()
-            try:
-                ts = parse_iso8601_utc(ts_str)
-            except ValueError:
-                continue
-
-            cost_int = int(cost_raw)
-            if enrichment != "null":
-                source = "go"
-            elif cost_int == 0:
-                source = "free"
-            else:
-                source = "api"
-
-            records.append(
-                {
-                    "ts": ts,
-                    "model": model,
-                    "model_short": self._short_model_id_oc(model),
-                    "source": source,
-                    "input": max(0, int(t_in)),
-                    "output": max(0, int(t_out)),
-                    "reasoning": 0 if t_reason == "null" else max(0, int(t_reason)),
-                    "cache_read": max(0, int(cache_r)),
-                    "cost_usd": max(0, cost_int) * _USAGE_COST_SCALE,
-                }
-            )
-
-        if records:
-            logger.info(f"OpenCode: Parsed {len(records)} usage records")
+    async def _get_opencode_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Bearer-authenticated OpenCode Go usage API."""
+        tokens, input_source = await self._get_credentials()
+        api_key = credential_provider.get_provider_api_key(
+            "opencode", account_id=self.credential_account_id
+        )
+        if api_key:
+            input_source = "config"
         else:
-            sample = text[:200] if text else "(empty)"
-            logger.debug(f"OpenCode: No usage records parsed (enrichment-only), sample: {sample}")
-
-        return records
-
-    def _build_usage_breakdown(
-        self,
-        records: list[dict[str, Any]],
-        now: datetime,
-        window_info: dict[str, dict] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Aggregate records into per-source / per-window totals.
-
-        Args:
-            records: List of parsed usage records
-            now: Current time
-            window_info: Dict keyed by window_name (e.g., "rollingUsage")
-                       with cutoff timestamps and is_fixed bool.
-                       If None/empty, falls back to rolling windows for backward compatibility.
-
-        Returns:
-            {
-              "go":  {"5h": {cost, msgs, tokens, by_model}, "7d": ..., "30d": ...},
-              "free": {"lifetime": {cost, msgs, tokens, by_model}},
-              "api":  {"lifetime": {cost, msgs, tokens, by_model}},
-            }
-        """
-
-        def _empty_bucket() -> dict[str, Any]:
-            return {
-                "cost": 0.0,
-                "msgs": 0,
-                "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
-                "by_model": {},
-            }
-
-        def _add_to_bucket(bucket: dict, r: dict) -> None:
-            bucket["cost"] += r["cost_usd"]
-            bucket["msgs"] += 1
-            for k in ("input", "output", "reasoning", "cache_read"):
-                bucket["tokens"][k] += r.get(k, 0)
-            entry = bucket["by_model"].setdefault(
-                r["model_short"],
-                {
-                    "cost": 0.0,
-                    "msgs": 0,
-                    "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
-                },
-            )
-            entry["cost"] += r["cost_usd"]
-            entry["msgs"] += 1
-            for k in ("input", "output", "reasoning", "cache_read"):
-                entry["tokens"][k] += r.get(k, 0)
-
-        # Map window keys to internal window names
-        window_map = {
-            "rollingUsage": "5h",
-            "weeklyUsage": "7d",
-            "monthlyUsage": "30d",
-        }
-
-        # If no window_info provided, fall back to rolling windows (backward compat)
-        use_fallback = not window_info
-
-        result: dict[str, Any] = {
-            "go": {w: _empty_bucket() for w in ["5h", "7d", "30d"]},
-            "free": {"lifetime": _empty_bucket()},
-            "api": {"lifetime": _empty_bucket()},
-        }
-
-        for r in records:
-            source = r["source"]
-            if source == "go":
-                # Find which windows this record belongs to
-                for win_key, internal_name in window_map.items():
-                    if use_fallback:
-                        # Fallback: use simple rolling windows
-                        if internal_name == "5h":
-                            cutoff = now - timedelta(hours=5)
-                        elif internal_name == "7d":
-                            cutoff = now - timedelta(days=7)
-                        else:
-                            cutoff = now - timedelta(days=30)
-                    elif win_key in window_info:
-                        cutoff = window_info[win_key]["cutoff"]
-                    else:
-                        continue
-
-                    if r["ts"] >= cutoff:
-                        _add_to_bucket(result["go"][internal_name], r)
-            elif source == "free":
-                _add_to_bucket(result["free"]["lifetime"], r)
+            api_key = tokens.get("api_key") or tokens.get("OPENCODE_API_KEY")
+        if not api_key and self.credential_account_id == "default":
+            api_key = settings.OPENCODE_API_KEY or settings.OPENCODE_GO_API_KEY or None
+            if api_key:
+                input_source = "server"
+        if not api_key:
+            self._set_error("missing_api_key")
+            return []
+        try:
+            return await self._fetch_api_meters(client, api_key, input_source)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                self._set_error("invalid_api_key")
             else:
-                _add_to_bucket(result["api"]["lifetime"], r)
+                self._set_error("api_error")
+            logger.warning(
+                "OpenCode API auth fetch failed (status=%s): %s",
+                exc.response.status_code,
+                scrub_log(str(exc)),
+            )
+            return []
+        except httpx.TimeoutException as exc:
+            self._set_error("api_unavailable")
+            logger.warning("OpenCode API fetch timed out: %s", scrub_log(str(exc)))
+            return []
+        except Exception as exc:
+            self._set_error("api_error")
+            logger.warning("OpenCode API fetch failed: %s", scrub_log(str(exc)))
+            return []
 
-        # Compute total tokens per model
-        for source_buckets in result.values():
-            for bucket in source_buckets.values():
-                for entry in bucket["by_model"].values():
-                    t = entry["tokens"]
-                    t["total"] = t["input"] + t["output"] + t["reasoning"]
-
-        return result
-
-    def _build_free_api_card(
+    async def _fetch_api_meters(
         self,
-        source: str,
-        data: dict[str, Any],
-        workspace_id: str,
-        email: str,
-        now_iso: str,
-        input_source: str = "server",
-    ) -> dict[str, Any]:
-        """Build a card for Free-tier or API (pay-as-you-go) usage."""
-        usage_url = f"https://opencode.ai/workspace/{workspace_id}/usage"
-        identity_suffix = f" | {email}" if email else ""
-
-        totals = {
-            "cost": data["cost"],
-            "msgs": data["msgs"],
-            "tokens": data["tokens"],
-            "by_model": data["by_model"],
-            "convos": 0,
+        client: httpx.AsyncClient,
+        api_key: str,
+        input_source: str,
+    ) -> list[dict[str, Any]]:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
         }
-        detail = self._build_oc_enrichment_detail(totals)
+        if api_key.lower().startswith("bearer "):
+            headers["Authorization"] = api_key
+        body, _source = await self._get_first_2xx(
+            client, [(f"{_BASE_URL}/zen/go/v1/usage", headers)]
+        )
+        if body is None:
+            self._set_error("invalid_api_key")
+            return []
+        cards = self._build_cards_from_zen_usage(body, input_source)
+        if not cards:
+            self._set_error("parse_error")
+        else:
+            self._last_error_reason = "unknown"
+        return cards
 
-        if source == "free":
-            t_in = data["tokens"]["input"]
-            t_out = data["tokens"]["output"]
-            total_tokens = t_in + t_out
-            # Format token count for the primary display (e.g. "1,234,567 tokens")
-            tok_display = f"{total_tokens:,} tokens"
-            detail += f" · Free tier{identity_suffix}"
-            return {
-                "service_name": "OpenCode",
-                "variant": "Free",
-                "window_type": "rolling",
-                "icon": "⚡",
-                "remaining": tok_display,
-                "unit": "free tier",
-                "reset": "Lifetime",
-                "health": "good",
-                "pace": "—",
-                "detail": detail,
-                "used_value": total_tokens,
-                "limit_value": None,
-                "is_unlimited": True,
-                "unit_type": "token",
-                "currency": "USD",
-                "account_label": email,
-                "reset_at": None,
-                "tier": "Free",
-                "provider_id": "opencode",
-                "data_source": self.DATA_SOURCE_WEB,
-                "input_source": input_source,
-                "usage_url": usage_url,
-                "updated_at": now_iso,
-            }
-        # api
-        detail += f" · API key{identity_suffix}"
+    async def _get_first_2xx(
+        self, client: httpx.AsyncClient, attempts: list[tuple[str, dict[str, str]]]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        for url, headers in attempts:
+            try:
+                resp = await http_request_with_retry(
+                    client, "GET", url, headers=headers, timeout=15.0, follow_redirects=True
+                )
+            except httpx.TimeoutException:
+                self._set_error("api_unavailable")
+                continue
+            except Exception as exc:
+                self._set_error("api_unavailable")
+                logger.debug("OpenCode: GET %s failed: %s", url, scrub_log(str(exc)))
+                continue
+            if resp.status_code != 200:
+                if resp.status_code in (401, 403):
+                    self._set_error("invalid_api_key")
+                elif resp.status_code >= 500:
+                    self._set_error("api_error")
+                continue
+            label = "console_go_status" if "/console/api/go/status" in url else "zen_go_v1_usage"
+            try:
+                return resp.json(), label
+            except Exception:
+                self._set_error("parse_error")
+                logger.debug("OpenCode: non-JSON response from %s", url)
+                continue
+        return None, None
+
+    def _build_cards_from_go_status(
+        self, body: dict[str, Any], input_source: str
+    ) -> list[dict[str, Any]]:
+        access = (body or {}).get("access") or {}
+        meters = access.get("meters") or {}
+        if not meters:
+            return []
+        account = body.get("subscriberUserId") or ""
+        if account and "@" in account:
+            self._pin_identity(account)
+        period_end_iso = access.get("endsAt")
+        period_end = self._parse_iso(period_end_iso) if period_end_iso else None
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        cards: list[dict[str, Any]] = []
+        for meter_key, window_type in _WINDOW_TYPE_MAP.items():
+            meter = meters.get(meter_key)
+            if not isinstance(meter, dict):
+                continue
+            used = self._microcents_to_usd(meter.get("usedMicroCents"))
+            # A meter without usage is incomplete; do not report a fabricated
+            # zero or let one malformed meter discard the other valid meters.
+            if used is None:
+                continue
+            limit = self._microcents_to_usd(meter.get("limitMicroCents"))
+            if limit is None or limit <= 0:
+                limit = _DEFAULT_LIMIT_USD.get(meter_key, 0.0)
+            pct = (used / limit * 100) if limit > 0 else 0
+            reset_iso = meter.get("resetsAt")
+            reset_at = self._parse_iso(reset_iso) if reset_iso else period_end
+            cards.append(
+                self._build_api_card(
+                    used=used,
+                    limit=limit,
+                    pct=pct,
+                    reset_at=reset_at,
+                    window_type=window_type,
+                    input_source=input_source,
+                    now_iso=now_iso,
+                    data_source=self.DATA_SOURCE_WEB,
+                )
+            )
+        return cards
+
+    def _build_cards_from_zen_usage(
+        self, body: dict[str, Any], input_source: str
+    ) -> list[dict[str, Any]]:
+        usage = (body or {}).get("usage") or {}
+        if not usage:
+            return []
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        cards: list[dict[str, Any]] = []
+        for key in ("rolling", "weekly", "monthly"):
+            window = usage.get(key)
+            if not isinstance(window, dict):
+                continue
+            pct_raw = window.get("percent")
+            if pct_raw is None:
+                continue
+            pct = float(pct_raw)
+            limit = _DEFAULT_LIMIT_USD.get(key, 0.0)
+            used = (pct / 100.0) * limit if limit > 0 else 0
+            reset_at = self._parse_iso(window.get("resetsAt"))
+            status = window.get("status")
+            cards.append(
+                self._build_api_card(
+                    used=used,
+                    limit=limit,
+                    pct=pct,
+                    reset_at=reset_at,
+                    window_type=_WINDOW_TYPE_MAP.get(key, key),
+                    input_source=input_source,
+                    now_iso=now_iso,
+                    status=status,
+                    data_source=self.DATA_SOURCE_API,
+                )
+            )
+        return cards
+
+    def _build_api_card(
+        self,
+        *,
+        used: float,
+        limit: float,
+        pct: float,
+        reset_at: datetime | None,
+        window_type: str,
+        input_source: str,
+        now_iso: str,
+        data_source: str,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        remaining = max(0.0, limit - used)
+        reset_label = self._reset_label(window_type)
+        # rate-limited windows can still be below 90% pct; mark them critical
+        # explicitly so the dashboard reflects "you've been throttled".
+        if status == "rate-limited" or pct >= 90:
+            health = "critical"
+        elif pct >= 70:
+            health = "warning"
+        else:
+            health = "good"
         return {
             "service_name": "OpenCode",
-            "variant": "API",
-            "window_type": "rolling",
             "icon": "⚡",
-            # remaining shows total spend; detail falls through to subtitle
-            "remaining": f"${data['cost']:.4f}",
-            "unit": "pay-as-you-go",
-            "reset": "Lifetime",
-            "health": "good",
-            "pace": "—",
-            "detail": detail,
-            "used_value": data["cost"],
-            "limit_value": None,
+            "remaining": f"${remaining:.2f}",
+            "unit": f"${limit:.0f} limit",
+            "reset": reset_label,
+            "health": health,
+            "pace": PaceCalculator.estimate_longevity(pct, reset_at) if reset_at else "—",
+            "detail": f"${used:.2f} used ({pct:.1f}%) · OpenCode Go API",
+            "used_value": used,
+            "limit_value": limit,
+            "pct_used": pct,
             "is_unlimited": False,
             "unit_type": "currency",
             "currency": "USD",
-            "account_label": email,
-            "reset_at": None,
-            "tier": "API",
+            "account_label": self.account_label or "",
+            "reset_at": reset_at.isoformat() if reset_at else None,
+            "window_type": window_type,
             "provider_id": "opencode",
-            "data_source": self.DATA_SOURCE_WEB,
+            "tier": "Go",
+            "data_source": data_source,
             "input_source": input_source,
-            "usage_url": usage_url,
+            "usage_url": "https://opencode.ai/console/usage",
             "updated_at": now_iso,
         }
 
-    def _parse_usage_data(
-        self,
-        text: str,
-        workspace_id: str,
-        breakdown: dict[str, Any] | None = None,
-        input_source: str = "server",
-        window_info: dict[str, dict] | None = None,
-    ) -> list[dict[str, Any]]:
-        """
-        Parse JavaScript/React stream response to extract usage data.
-        """
-        # logger.info(f"OpenCode parsing usage data (text length: {len(text)})")
+    # --- web strategy -----------------------------------------------------
 
-        cards = []
-        now = datetime.now(UTC)
-        now_iso = now.isoformat()
-        usage_url = f"https://opencode.ai/workspace/{workspace_id}/go"
-
-        # Discover email for account_label
-        email = ""
-        email_match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", text)
-        if email_match:
-            email = email_match.group(1)
-            # Sister site to `_get_workspace_id` — same pinning rule (#276, #315).
-            self._pin_identity(email)
-            email = self.account_label or email
-
-        identity_suffix = f" | {email}" if email else ""
-
-        # Definition of windows to search for
-        # Each tuple: (text-key, service_name, limit_usd, window_type, reset_label_for_display)
-        # window_type is the canonical enum used for card identity; reset_label is the human "in N days" hint.
-        windows = [
-            ("rollingUsage", "OpenCode", 12.0, "session", "5h"),
-            ("weeklyUsage", "OpenCode", 30.0, "weekly", "7d"),
-            ("monthlyUsage", "OpenCode", 60.0, "monthly", "30d"),
-        ]
-
-        for key, service_name, limit, window_type, reset_label in windows:
-            # Even more flexible regex
-            # key:($R[xx]=)?{...}
-            pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
-            match = re.search(pattern, text)
-
-            if not match:
-                logger.info(f"OpenCode: Could not find object for {key}")
-                continue
-
-            obj_content = match.group(1)
-            # logger.info(f"OpenCode: Found {key} object content: {obj_content}")
-
-            # Extract fields from the object content
-            pct_match = re.search(r"usagePercent:([\d.]+)", obj_content)
-            reset_match = re.search(r"resetInSec:(\d+)", obj_content)
-
-            if not pct_match or not reset_match:
-                logger.info(f"OpenCode: Missing fields in {key} object")
-                continue
-
-            pct = float(pct_match.group(1))
-            reset_sec = int(reset_match.group(1))
-
-            used = (pct / 100) * limit
-            remaining = max(0, limit - used)
-            reset_at = now + timedelta(seconds=reset_sec)
-
-            cards.append(
-                {
-                    "service_name": service_name,
-                    "icon": "⚡",
-                    "remaining": f"${remaining:.2f}",
-                    "unit": f"${limit:.0f} limit",
-                    "reset": reset_label,
-                    "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                    "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                    "detail": f"${used:.2f} used ({pct:.1f}%) · Web API{identity_suffix}",
-                    "used_value": used,
-                    "limit_value": limit,
-                    "pct_used": pct,
-                    "is_unlimited": False,
-                    "unit_type": "currency",
-                    "currency": "USD",
-                    "account_label": email,
-                    "reset_at": reset_at.isoformat(),
-                    "window_type": window_type,
-                    "provider_id": "opencode",
-                    "tier": "Go",
-                    "data_source": self.DATA_SOURCE_WEB,
-                    "input_source": input_source,
-                    "usage_url": usage_url,
-                    "updated_at": now_iso,
-                }
-            )
-
-        # Enrich Go cards with per-model token breakdown from the /usage page.
-        # Cards carry canonical window_type ("session"/"weekly"/"monthly"); the upstream
-        # API breakdown is keyed by the short codes "5h"/"7d"/"30d".
-        breakdown_key_for = {"session": "5h", "weekly": "7d", "monthly": "30d"}
-        if breakdown:
-            logger.info(f"OpenCode: breakdown keys: {breakdown.keys()}")
-            logger.info(f"OpenCode: breakdown[go] keys: {breakdown.get('go', {}).keys()}")
-            for card in cards:
-                wt = card.get("window_type")
-                wk = breakdown_key_for.get(wt)
-                logger.info(
-                    f"OpenCode: card {card.get('service_name')} ({wt}) -> breakdown key: {wk}"
-                )
-                if not wk:
-                    continue
-                go_data = breakdown.get("go", {}).get(wk)
-                logger.info(f"OpenCode: go_data for {wk}: {go_data}")
-                if not go_data or go_data["msgs"] == 0:
-                    logger.info(f"OpenCode: Skipping {wk} - no data")
-                    continue
-
-                # Build token_usage dict
-                tokens = go_data["tokens"]
-                # Enforce universal contract: output includes reasoning
-                token_usage = {
-                    "input": tokens.get("input", 0),
-                    "output": tokens.get("output", 0) + tokens.get("reasoning", 0),
-                    "reasoning": tokens.get("reasoning", 0),
-                    "cache_read": tokens.get("cache_read", 0),
-                }
-                # Total is exactly input + output
-                token_usage["total"] = token_usage["input"] + token_usage["output"]
-
-                # Add structured token fields to card
-                card["token_usage"] = token_usage
-                card["by_model"] = go_data.get("by_model", {})
-                card["msgs"] = go_data["msgs"]
-                card["pct_used"] = (
-                    (card.get("used_value", 0) / card.get("limit_value", 1)) * 100
-                    if card.get("limit_value")
-                    else 0
-                )
-                logger.info(
-                    f"OpenCode: Added token fields to {card.get('service_name')}: token={token_usage.get('total')}"
-                )
-
-                # Also update detail string for display
-                suffix = self._build_oc_enrichment_detail(
-                    {
-                        "cost": go_data["cost"],
-                        "msgs": go_data["msgs"],
-                        "tokens": go_data["tokens"],
-                        "by_model": go_data["by_model"],
-                        "convos": 0,
-                    }
-                )
-                if suffix:
-                    existing = card.get("detail", "").rstrip()
-                    card["detail"] = f"{existing} | {suffix}".strip(" |")
-
-            # Free-tier usage is tracked by the dedicated "opencode-free" passive
-            # provider (sidecar event extractor remaps providerID="opencode" →
-            # "opencode-free"); emitting a Free card here would duplicate it as a
-            # spurious "rolling free" window, so we don't. Only the pay-as-you-go
-            # API card has no separate provider and is still emitted below.
-
-            # Emit API card if there is any pay-as-you-go usage
-            api_data = breakdown.get("api", {}).get("lifetime", {})
-            if api_data.get("msgs", 0) > 0:
-                cards.append(
-                    self._build_free_api_card(
-                        "api", api_data, workspace_id, email, now_iso, input_source
-                    )
-                )
-
-        # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
+    async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Cookie-authenticated console handshake (2 steps)."""
+        tokens, input_source = await self._get_credentials()
+        cookie_session = credential_provider.get_provider_session_cookie(
+            "opencode", account_id=self.credential_account_id
+        )
+        if cookie_session:
+            input_source = "config"
+        else:
+            cookie_session = tokens.get("cookie_session") or tokens.get("session_cookie")
+        console_session = tokens.get("console_session")
+        if cookie_session and "__Host-console_session=" in cookie_session:
+            for part in cookie_session.split(";"):
+                part = part.strip()
+                if part.startswith("__Host-console_session="):
+                    console_session = part[len("__Host-console_session=") :].strip()
+                elif part.startswith("auth="):
+                    cookie_session = part[5:].strip()
+        if not cookie_session or not console_session:
+            self._set_error("missing_cookies")
+            return []
+        headers = self._build_cookie_headers(cookie_session, console_session)
+        workspaces = await self._fetch_workspaces(client, headers)
+        if not workspaces:
+            if self._last_error_reason == "unknown":
+                self._set_error("no_workspace")
+            return []
+        selected = credential_provider.get_opencode_workspace_id(
+            account_id=self.credential_account_id
+        )
+        if selected:
+            if selected not in {wid for wid, _ in workspaces}:
+                self._set_error("invalid_config")
+                return []
+            candidates = [(selected, next((n for wid, n in workspaces if wid == selected), None))]
+        else:
+            candidates = workspaces
+        usable: list[tuple[str, dict[str, Any]]] = []
+        for workspace_id, _ in candidates:
+            body = await self._fetch_go_status(client, headers, workspace_id)
+            if body is not None:
+                usable.append((workspace_id, body))
+                if not selected and len(usable) > 1:
+                    break
+        if selected and not usable:
+            if self._last_error_reason == "unknown":
+                self._set_error("no_workspace")
+            return []
+        if not selected and len(usable) > 1:
+            self._set_error("invalid_config")
+            return []
+        if not usable:
+            if self._last_error_reason == "unknown":
+                self._set_error("no_workspace")
+            return []
+        cards = self._build_cards_from_go_status(usable[0][1], input_source)
+        if not cards:
+            self._set_error("parse_error")
+        else:
+            self._last_error_reason = "unknown"
         return cards
 
-    def _short_model_id_oc(self, model_id: str) -> str:
-        """Shorten a model ID for display while preserving versioning.
+    def _build_cookie_headers(
+        self, cookie_session: str | None, console_session: str | None
+    ) -> dict[str, str]:
+        cookies: list[str] = []
+        if cookie_session:
+            cookies.append(f"auth={cookie_session}")
+        if console_session:
+            cookies.append(f"__Host-console_session={console_session}")
+        return {
+            "Cookie": "; ".join(cookies),
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+            "Referer": "https://opencode.ai/console/",
+            "Origin": "https://opencode.ai",
+        }
 
-        Examples:
-          claude-sonnet-3.5 -> sonnet-3.5
-          glm-5.1 -> glm-5.1
-          qwen-2.5-max -> qwen-2.5-max
-          gpt-4o-latest -> gpt-4o
-        """
-        m = model_id.lower()
-        # Strip provider prefixes
-        m = re.sub(r"^(claude|gpt|google|meta|mistral)-", "", m)
-        # Trim -free / -latest / -preview / -latest suffixes but KEEP version numbers
-        m = re.sub(r"-(free|latest|preview|latest)$", "", m)
-        # Only strip the very generic trailing version if it's long and likely a date/hash,
-        # but keep short version strings like -3.5, -4, -5.1, -4o
-        # (This avoids stripping -3.5 from sonnet-3.5)
-        return m or model_id
-
-    def _extract_window_info(self, text: str) -> dict[str, dict]:
-        """
-        Extract window type (rolling vs fixed) from the usage text.
-
-        Returns dict keyed by window name (e.g., "rollingUsage")
-        with cutoff timestamp and is_fixed flag.
-        """
-        now = datetime.now(UTC)
-        windows = [
-            ("rollingUsage", "5h"),
-            ("weeklyUsage", "7d"),
-            ("monthlyUsage", "30d"),
+    async def _fetch_workspaces(
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> list[tuple[str, str | None]]:
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                f"{_BASE_URL}/console/api/orgs",
+                headers=headers,
+                timeout=15.0,
+                follow_redirects=True,
+            )
+        except Exception as exc:
+            self._set_error("api_unavailable")
+            logger.warning("OpenCode: /console/api/orgs failed: %s", scrub_log(str(exc)))
+            return []
+        if resp.status_code in (401, 403):
+            self._set_error("session_invalid")
+            return []
+        if resp.status_code != 200:
+            if resp.status_code >= 500:
+                self._set_error("api_error")
+            return []
+        try:
+            orgs = resp.json()
+        except Exception:
+            self._set_error("parse_error")
+            return []
+        if not isinstance(orgs, list):
+            self._set_error("parse_error")
+            return []
+        return [
+            (org["id"], org.get("name"))
+            for org in orgs
+            if isinstance(org, dict) and isinstance(org.get("id"), str) and org["id"]
         ]
 
-        FIXED_RESET_THRESHOLD = 86400  # 1 day in seconds
-        result: dict[str, dict] = {}
+    async def _fetch_go_status(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict[str, str],
+        workspace_id: str,
+    ) -> dict[str, Any] | None:
+        # workspace_id header is required (CodexBar docs); without it the
+        # server answers HTTP 400 {"_tag":"BadRequest"}.
+        org_headers = dict(headers)
+        org_headers["x-org-id"] = workspace_id
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                f"{_BASE_URL}/console/api/go/status",
+                headers=org_headers,
+                timeout=15.0,
+                follow_redirects=True,
+            )
+        except Exception as exc:
+            self._set_error("api_unavailable")
+            logger.warning("OpenCode: /console/api/go/status failed: %s", scrub_log(str(exc)))
+            return None
+        if resp.status_code in (401, 403):
+            self._set_error("session_invalid")
+            return None
+        if resp.status_code != 200:
+            if resp.status_code >= 500:
+                self._set_error("api_error")
+            return None
+        try:
+            body = resp.json()
+            if not isinstance(body, dict) or not (body.get("access") or {}).get("meters"):
+                return None
+            return body
+        except Exception:
+            self._set_error("parse_error")
+            return None
 
-        for key, duration_label in windows:
-            pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
-            match = re.search(pattern, text)
-            if not match:
-                continue
+    # --- helpers ----------------------------------------------------------
 
-            obj_content = match.group(1)
-            reset_match = re.search(r"resetInSec:(\d+)", obj_content)
-            if not reset_match:
-                continue
+    @staticmethod
+    def _microcents_to_usd(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            return int(raw) / 100_000_000
+        except (TypeError, ValueError):
+            return None
 
-            reset_sec = int(reset_match.group(1))
-            is_fixed = reset_sec > FIXED_RESET_THRESHOLD
+    @staticmethod
+    def _parse_iso(s: str | None) -> datetime | None:
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(UTC)
+        except Exception:
+            return None
 
-            if is_fixed:
-                reset_at = now + timedelta(seconds=reset_sec)
-                if key == "weeklyUsage":
-                    cutoff = reset_at - timedelta(days=7)
-                elif key == "monthlyUsage":
-                    cutoff = reset_at - timedelta(days=30)
-                else:
-                    cutoff = reset_at - timedelta(hours=5)
-            elif key == "rollingUsage":
-                cutoff = now - timedelta(hours=5)
-            elif key == "weeklyUsage":
-                cutoff = now - timedelta(days=7)
-            else:
-                cutoff = now - timedelta(days=30)
-
-            result[key] = {
-                "cutoff": cutoff,
-                "is_fixed": is_fixed,
-            }
-
-        return result
-
-    def _build_oc_enrichment_detail(self, totals: dict) -> str:
-        """Build the enrichment detail string from per-window totals."""
-        parts: list[str] = []
-
-        cost = totals.get("cost", 0.0)
-        parts.append(f"${cost:.2f}")
-
-        # Token summary
-        tok = totals.get("tokens", {})
-        tok_str = format_token_details(tok)
-        if tok_str:
-            parts.append(tok_str)
-
-        by_model = totals.get("by_model", {})
-        if by_model:
-            top = sorted(by_model.items(), key=lambda x: x[1]["cost"], reverse=True)[:3]
-            model_segs = [f"{name}:${info['cost']:.2f}" for name, info in top]
-            parts.append(" ".join(model_segs))
-
-        convos = totals.get("convos", 0)
-        if convos:
-            parts.append(f"{convos} convos")
-
-        return " | ".join(parts)
+    @staticmethod
+    def _reset_label(window_type: str) -> str:
+        return {"session": "5h", "weekly": "7d", "monthly": "30d"}.get(window_type, "—")

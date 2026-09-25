@@ -57,6 +57,36 @@ class TestGeminiCredentialMapping:
         assert "email" not in mapping
 
 
+class TestOpenCodeCredentialRules:
+    def test_sidecar_registry_discovers_file_env_and_both_console_cookies(self):
+        opencode = sidecar.__REGISTRY__["providers"]["opencode"]
+        rules = opencode["rules"]
+        file_rule = next(rule for rule in rules if rule.get("type") == "file")
+        assert "~/.local/share/opencode/auth.json" in file_rule["paths"]
+        assert "~/.opencode/auth.json" in file_rule["paths"]
+        assert file_rule["mapping"]["opencode-go.key"] == "api_key"
+        assert any(
+            rule.get("type") == "env"
+            and rule.get("variable") == "OPENCODE_API_KEY"
+            and rule.get("mapping", {}).get("value") == "api_key"
+            for rule in rules
+        )
+        cookie_slots = {
+            rule["name"]: rule["mapping"]["value"] for rule in rules if rule.get("type") == "cookie"
+        }
+        assert cookie_slots["auth"] == "cookie_session"
+        assert cookie_slots["__Host-console_session"] == "console_session"
+
+    def test_canonical_registry_mirrors_sidecar_credential_rules(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        rules = registry["providers"]["opencode"]["rules"]
+        file_rule = next(rule for rule in rules if rule.get("type") == "file")
+        assert file_rule["mapping"]["opencode-go.key"] == "api_key"
+        assert any(rule.get("variable") == "OPENCODE_API_KEY" for rule in rules)
+        cookie_slots = {rule["name"] for rule in rules if rule.get("type") == "cookie"}
+        assert cookie_slots == {"auth", "__Host-console_session"}
+
+
 class TestAntigravityTokenStamp:
     """The agy token file carries no email, so the token card must be stamped with
     the resolved account identity (else the server hashes the refresh_token into a

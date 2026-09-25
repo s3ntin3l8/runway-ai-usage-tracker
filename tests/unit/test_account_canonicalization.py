@@ -141,6 +141,52 @@ def test_provider_config_put_stores_canonical_id(session: Session):
         app.dependency_overrides.clear()
 
 
+def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Session):
+    """OpenCode cookie and workspace settings persist in the account row."""
+    from fastapi.testclient import TestClient
+
+    from app.core.db import get_session
+    from app.main import app
+
+    app.dependency_overrides[get_session] = lambda: session
+    try:
+        client = TestClient(app)
+        resp = client.put(
+            "/api/v1/system/provider-config/opencode/default",
+            json={
+                "session_cookie": "auth=oc_x; __Host-console_session=st_y",
+                "opencode_workspace_id": "workspace-123",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        # DB keeps the full pasted blob so nothing is lost on round-trip.
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "opencode",
+                ProviderConfig.account_id == "default",
+            )
+        ).one()
+        assert row.session_cookie == "auth=oc_x; __Host-console_session=st_y"
+        assert row.opencode_workspace_id == "workspace-123"
+        configs = client.get("/api/v1/system/provider-configs").json()["providers"]
+        opencode = next(config for config in configs if config["provider_id"] == "opencode")
+        assert opencode["opencode_workspace_id"] == "workspace-123"
+        assert opencode["accounts"][0]["opencode_workspace_id"] == "workspace-123"
+
+        # A bare ``auth=`` paste (no console cookie) still collapses to the value.
+        resp = client.put(
+            "/api/v1/system/provider-config/opencode/default",
+            json={"session_cookie": "auth=oc_z"},
+        )
+        assert resp.status_code == 200, resp.text
+        session.refresh(row)
+        assert row.session_cookie == "oc_z"
+        assert row.opencode_workspace_id == "workspace-123"
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ---------------------------------------------------------------------------
 # Startup repair of legacy rows
 # ---------------------------------------------------------------------------

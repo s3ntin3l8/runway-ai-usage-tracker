@@ -420,6 +420,31 @@ class TokenCache:
                 return True
             return False
 
+    async def remove_tokens(self, provider: str, account_id: str, token_types: set[str]) -> None:
+        """Remove selected fields while preserving other credential families."""
+        account_id = canonical_account_id(account_id)
+        async with self._lock:
+            provider_entries = self._cache.get(provider)
+            if not provider_entries or account_id not in provider_entries:
+                return
+            tokens, metadata, timestamp = provider_entries[account_id]
+            timestamps = self._token_timestamps.setdefault(provider, {}).setdefault(account_id, {})
+            for token_type in token_types:
+                tokens.pop(token_type, None)
+                timestamps.pop(token_type, None)
+            if not tokens:
+                del provider_entries[account_id]
+                self._token_timestamps.get(provider, {}).pop(account_id, None)
+                if not provider_entries:
+                    self._cache.pop(provider, None)
+                    self._token_timestamps.pop(provider, None)
+                return
+            provider_entries[account_id] = (
+                tokens,
+                metadata,
+                max(timestamps.values(), default=timestamp),
+            )
+
     async def get_all_stats(self) -> dict[str, Any]:
         """Get flattened stats for all cached providers and accounts."""
         async with self._lock:

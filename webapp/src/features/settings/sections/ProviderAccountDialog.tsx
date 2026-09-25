@@ -125,6 +125,7 @@ function ProviderAccountForm({
   const [enabled, setEnabled] = useState(account.enabled);
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
+  const [workspaceId, setWorkspaceId] = useState(account.opencode_workspace_id ?? '');
   // PR #287 / #273 — explicit clear flags for the stored credentials. Set
   // by the "Clear" button next to each input. The flag wins over a
   // same-field write, so the user can't accidentally clear a credential
@@ -149,6 +150,7 @@ function ProviderAccountForm({
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
         collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
       };
+      if (provider.provider_id === 'opencode') body.opencode_workspace_id = workspaceId.trim();
       if (apiKey !== '') body.api_key = apiKey;
       if (cookie !== '') body.session_cookie = cookie;
       // Clear flags win over same-field writes (PR #287).
@@ -291,6 +293,20 @@ function ProviderAccountForm({
           {provider.session_cookie_help ? (
             <HelperText>{provider.session_cookie_help}</HelperText>
           ) : null}
+        </div>
+      ) : null}
+
+      {provider.provider_id === 'opencode' ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="opencode-workspace-id">OpenCode workspace ID</Label>
+          <Input
+            id="opencode-workspace-id"
+            autoComplete="off"
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+            placeholder="Required when this account has multiple Go workspaces"
+          />
+          <HelperText>Find the ID in your OpenCode Console workspace settings.</HelperText>
         </div>
       ) : null}
 

@@ -244,6 +244,7 @@ export interface ProviderConfigUpdate {
   account_label?: string;
   poll_interval_seconds?: number | null;
   collection_strategies?: { id: string; enabled: boolean }[];
+  opencode_workspace_id?: string;
 }
 
 // Multi-account canonical PUT (#281). accountId is required in the URL —

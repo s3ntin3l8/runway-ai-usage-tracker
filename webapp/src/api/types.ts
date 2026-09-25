@@ -660,6 +660,7 @@ export interface ProviderAccount {
   account_label?: string | null;
   poll_interval_seconds?: number | null;
   collection_strategies?: CollectionStrategy[] | null;
+  opencode_workspace_id?: string | null;
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
   // orphaned `account_id="default"` rows that have been shadowed by a real
   // sibling account on the same provider. Safe to remove. The flag only
@@ -702,6 +703,7 @@ export interface ProviderConfig {
   session_cookie_help?: string | null;
   supported_strategies?: CollectionStrategy[];
   collection_strategies?: CollectionStrategy[];
+  opencode_workspace_id?: string | null;
   // Multi-account view (one entry per ProviderConfig DB row, plus any
   // discovered-only identities — see ProviderAccount.source).
   accounts: ProviderAccount[];

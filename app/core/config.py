@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     MINIMAX_API_KEY: str = ""
     MINIMAX_HOST: str = ""  # Bare domain override for China: "minimaxi.com"
     OPENCODE_GO_API_KEY: str = ""
+    OPENCODE_API_KEY: str = ""
+    OLLAMA_API_KEY: str = ""
     ZAI_API_KEY: str = ""
     ZAI_API_HOST: str = ""  # Override: "open.bigmodel.cn" for China
     ZAI_QUOTA_URL: str = ""  # Override: full URL to quota endpoint

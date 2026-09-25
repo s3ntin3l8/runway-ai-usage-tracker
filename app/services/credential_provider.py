@@ -483,6 +483,20 @@ class CredentialProvider:
         return None
 
     @staticmethod
+    def get_opencode_workspace_id(*, account_id: str | None = None) -> str | None:
+        """Return the explicitly selected OpenCode workspace for an account."""
+        try:
+            cfg = (
+                _resolve_provider_config("opencode", account_id=account_id, require_enabled=False)
+                if account_id is not None
+                else _resolve_legacy_provider_config("opencode")
+            )
+            return cfg.opencode_workspace_id if cfg else None
+        except Exception:
+            logger.debug("Failed to read OpenCode workspace config", exc_info=True)
+            return None
+
+    @staticmethod
     def get_chatgpt_token() -> str:
         return CredentialProvider.get_chatgpt_data().get("access_token", "")
 

@@ -187,6 +187,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("quota_snapshots", "variant", "TEXT NOT NULL DEFAULT ''"),
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session
     ("provider_configs", "oai_sc_cookie_encrypted", "VARCHAR"),
+    ("provider_configs", "opencode_workspace_id", "VARCHAR"),
     # Archive: hide discontinued providers from the dashboard while preserving data.
     ("provider_configs", "archived", "BOOLEAN NOT NULL DEFAULT 0"),
     # Claude Code per-message dimensions previously discarded by the JSONL

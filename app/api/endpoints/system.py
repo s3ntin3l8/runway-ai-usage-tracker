@@ -107,6 +107,7 @@ async def _debug_run_one_strategy(
             {
                 "method": r.method,
                 "url": str(r.url),
+                "headers": _mask_headers(dict(r.headers)),
                 "timestamp": time.time(),
             }
         )
@@ -456,6 +457,7 @@ async def get_raw_provider_data(
             {
                 "method": request.method,
                 "url": str(request.url),
+                "headers": _mask_headers(dict(request.headers)),
                 "timestamp": time.time(),
             }
         )
@@ -932,6 +934,7 @@ class _ProviderConfigUpdate(BaseModel):
     account_label: str | None = None
     poll_interval_seconds: int | None = None
     collection_strategies: list[dict] | None = None  # [{"id": "web", "enabled": true}, ...]
+    opencode_workspace_id: str | None = None  # empty string clears; None = no change
 
 
 class _AccountPreviewRequest(BaseModel):
@@ -1019,6 +1022,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "cookie_sessionKey",
                     "cookie___Secure-next-auth.session-token",
                     "sessionKey",
+                    "console_session",
                 )
             )
             for rule in rules
@@ -1058,6 +1062,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "account_label": r.account_label,
                 "poll_interval_seconds": r.poll_interval_seconds,
                 "collection_strategies": r.strategies,
+                "opencode_workspace_id": r.opencode_workspace_id,
                 # `is_orphaned` surfaces the orphaned-bookkeeping-row
                 # bug in the settings UI: #286 highlights
                 # `account_id="default"` rows that have been shadowed
@@ -1097,6 +1102,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "account_label": c_name,
                     "poll_interval_seconds": None,
                     "collection_strategies": None,
+                    "opencode_workspace_id": None,
                     "is_orphaned": False,
                     "source": "discovered",
                 }
@@ -1121,6 +1127,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "account_label": None,
                         "poll_interval_seconds": None,
                         "collection_strategies": None,
+                        "opencode_workspace_id": None,
                         "is_orphaned": False,
                         "source": "discovered",
                     }
@@ -1149,6 +1156,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 # Strategy configuration
                 "supported_strategies": manager.get_supported_strategies(p_id),
                 "collection_strategies": db.strategies if db else None,
+                "opencode_workspace_id": db.opencode_workspace_id if db else None,
                 # Per-account breakdown: DB rows first (config-backed), then
                 # cache/latest_usage-only identities (discovered). The
                 # canonical row above is the first entry whose account_id is
@@ -1570,13 +1578,18 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     if body.collection_strategies is not None:
         # None list = reset to defaults; empty list = no strategies (disabled all)
         row.strategies = body.collection_strategies if body.collection_strategies else None
+    if body.opencode_workspace_id is not None and provider_id == "opencode":
+        row.opencode_workspace_id = body.opencode_workspace_id.strip() or None
     if body.clear_api_key is True:
         # Explicit-clear flag wins over any same-field write in the body
         # (the UI sends one or the other, not both). Wipe the stored encrypted
         # blob and invalidate the token-cache entry so stale creds don't linger
         # in collectors that hot-path from cache (PR #287).
         row.api_key = None
-        await token_cache.remove(provider_id, account_id)
+        if provider_id in ("opencode", "ollama"):
+            await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
+        else:
+            await token_cache.remove(provider_id, account_id)
     if body.api_key is not None and body.clear_api_key is not True:
         # Empty string = clear the stored key; non-empty = encrypt and store
         val = body.api_key
@@ -1628,7 +1641,20 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # and the oai-sc companion (ChatGPT-only) and invalidate cache.
         row.session_cookie = None
         row.oai_sc_cookie = None
-        await token_cache.remove(provider_id, account_id)
+        if provider_id in ("opencode", "ollama"):
+            await token_cache.remove_tokens(
+                provider_id,
+                account_id,
+                {
+                    "session_cookie",
+                    "cookie_session",
+                    "cookie_sessionKey",
+                    "cookie___Secure-next-auth.session-token",
+                    "console_session",
+                },
+            )
+        else:
+            await token_cache.remove(provider_id, account_id)
     if body.session_cookie is not None and body.clear_session_cookie is not True:
         val = body.session_cookie
         if val and (";" in val or "=" in val):
@@ -1666,12 +1692,19 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
                 if chunk0:
                     found = chunk0 + (chunk1 or "")
             elif provider_id == "opencode":
-                # Extract auth cookie value if user pasted full "auth=<value>" string
-                for part in val.split(";"):
-                    part = part.strip()
-                    if part.startswith("auth="):
-                        found = part[5:].strip()
-                        break
+                # If the pasted string contains __Host-console_session,
+                # keep the FULL string in the DB column — the split below
+                # pulls both cookies out of it. Otherwise (bare auth value
+                # or only the auth cookie) collapse to the bare auth value
+                # for backwards compatibility.
+                if "__Host-console_session=" in val:
+                    found = val
+                else:
+                    for part in val.split(";"):
+                        part = part.strip()
+                        if part.startswith("auth="):
+                            found = part[5:].strip()
+                            break
 
             if found:
                 val = found
@@ -1685,7 +1718,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # Propagate to token_cache so collectors can find it immediately.
         # Stamp under the resolved account_id so dashboard-saved credentials
         # and the collector's resolved identity stay aligned in the cache.
-        if row.session_cookie:
+        if row.session_cookie and provider_id != "opencode":
             # Map generic session_cookie to all common provider-specific keys
             # to ensure the manual override works across various collector implementations.
             tokens = {
