@@ -150,7 +150,7 @@ class OllamaCollector(BaseCollector):
     async def is_configured(self) -> bool:
         """Ollama is configured when either an API key or a session cookie is cached."""
         acc = self.account_id or "default"
-        for token_type in ("api_key", "OPENCODE_API_KEY", "session_cookie", "cookie_session"):
+        for token_type in ("api_key", "session_cookie", "cookie_session"):
             if await token_cache.get_token("ollama", token_type, account_id=acc):
                 return True
         return self._is_valid_credential(await self._get_cookie_header())
@@ -175,12 +175,11 @@ class OllamaCollector(BaseCollector):
         return f"session={token}; __Secure-session={token}"
 
     async def _get_api_key(self) -> str | None:
-        """Pull the Ollama API key from the token cache (sidecar / UI / env)."""
+        """Pull the Ollama API key from the token cache (settings UI / sidecar push)."""
         acc = self.account_id or "default"
-        for token_type in ("api_key", "OPENCODE_API_KEY"):
-            key = await token_cache.get_token("ollama", token_type, account_id=acc)
-            if key:
-                return key.strip() if isinstance(key, str) else key
+        key = await token_cache.get_token("ollama", "api_key", account_id=acc)
+        if key:
+            return key.strip() if isinstance(key, str) else key
         return None
 
     async def _get_cookie_header(self) -> str | None:
@@ -283,13 +282,21 @@ class OllamaCollector(BaseCollector):
         if not isinstance(body, dict):
             self._last_error_reason = "missing_data"
             return []
-        # Best-effort input_source detection: sidecar (vs config) when the
-        # cache metadata has a source. Falls back to ``server`` when unknown.
+        # Input-source provenance: assign an unconditional default first so a
+        # prior cycle's label can never leak through (token_cache lookups can
+        # return None), then override from cache metadata using the same
+        # mapping as zai/minimax/kimi_api: only UI-stored creds are "config";
+        # a sidecar push sets source to its sidecar id, so anything else is
+        # "sidecar".
+        self._current_input_source = "config"
         meta = await token_cache.get_with_metadata(
             "ollama", account_id=self.account_id or "default"
         )
         if meta:
-            self._current_input_source = "sidecar" if meta[1].get("source") else "config"
+            source = meta[1].get("source") or "sidecar"
+            self._current_input_source = (
+                "config" if source in ("config", "manual_config") else "sidecar"
+            )
         return self._build_cards_from_api_usage(body)
 
     def _build_cards_from_api_usage(self, body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -354,7 +361,10 @@ class OllamaCollector(BaseCollector):
             ),
             "used_value": usage,
             "limit_value": 1.0 if is_fraction else None,
-            "pct_used": pct,
+            # pct_used only for the fraction branch: webapp cardPct() reads it
+            # before cardKind() checks unit_type, so a value here would force
+            # the absolute-count card into the percent gauge (PR #340 review).
+            "pct_used": pct if is_fraction else None,
             "is_unlimited": False,
             "unit_type": "token" if not is_fraction else "percent",
             "reset_at": ends_at.isoformat() if ends_at else None,

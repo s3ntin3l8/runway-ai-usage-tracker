@@ -508,27 +508,6 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
-        "xai": {
-            "name": "xAI (Grok)",
-            "icon": "\ud83e\udd16",
-            "rules": [
-                # Primary: opencode CLI stores the xai OAuth credential as
-                # {"type":"oauth","refresh":...,"access":...,"expires":...}
-                # in auth.json. xAI doesn't expose a programmatic quota API,
-                # so the token is exposed as `xai_access`/`xai_refresh`/
-                # `xai_expires` for the collector to surface an auth_status
-                # card when the access JWT expires (Runway can't refresh it
-                # — the opencode CLI is the source of truth).
-                {
-                    "type": "file",
-                    "paths": [
-                        "~/.local/share/opencode/auth.json",
-                        "~/.opencode/auth.json",
-                    ],
-                    "parser": "xai_oauth",
-                },
-            ],
-        },
         "ollama": {
             "name": "Ollama Cloud",
             "icon": "\ud83e\udd99",
@@ -2476,45 +2455,7 @@ class GenericCollector:
                 except Exception:
                     logging.debug("exec credential rule failed", exc_info=True)
 
-            # 7. Specialized: xAI OAuth block from opencode auth.json.
-            # The opencode CLI stores the credential as
-            # {"type":"oauth","refresh":"...","access":"...","expires":<epoch_ms>}
-            # under the provider key (e.g. "xai"). Runway's xai collector reads
-            # the access JWT and surfaces an auth_required card when it
-            # expires — xAI doesn't expose a programmatic refresh endpoint that
-            # a server-side collector can hit, so this is read-only.
-            elif rule_type == "xai_oauth":
-                provider_key = rule.get("provider_key") or provider_id
-                for path in expand_file_rule_paths(rule.get("paths", [])):
-                    try:
-                        with open(path) as f:
-                            data = json.load(f)
-                        block = data.get(provider_key) if isinstance(data, dict) else None
-                        if not isinstance(block, dict):
-                            continue
-                        access = block.get("access")
-                        refresh = block.get("refresh")
-                        expires = block.get("expires")
-                        candidate_tokens: dict[str, Any] = {}
-                        if access:
-                            candidate_tokens["xai_access"] = access
-                        if refresh:
-                            candidate_tokens["xai_refresh"] = refresh
-                        if expires is not None:
-                            candidate_tokens["xai_expires"] = str(expires)
-                        if candidate_tokens:
-                            token_candidates.append(
-                                (
-                                    candidate_tokens,
-                                    f"path:{Path(path).resolve()}",
-                                    "file",
-                                )
-                            )
-                            logging.info(f"  [{provider_id}] xai OAuth block matched: {path}")
-                    except Exception as exc:
-                        logging.debug("xai OAuth extraction failed for %s: %s", path, exc)
-
-            # 8. Specialized: SQLite (OpenCode)
+            # 7. Specialized: SQLite (OpenCode)
             elif rule_type == "sqlite":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)
@@ -2585,7 +2526,7 @@ class GenericCollector:
                         except Exception as e:
                             logging.debug(f"SQLite error for {provider_id}: {e}")
 
-            # 9. Specialized: Claude Statusline
+            # 8. Specialized: Claude Statusline
             elif rule_type == "file_json_statusline":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)

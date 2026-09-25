@@ -585,6 +585,9 @@ class TestOllamaApiCollector:
     @pytest.mark.asyncio
     async def test_api_strategy_emits_monthly_card(self):
         collector = OllamaCollector(account_id="acc_test")
+        # Stale label from a prior poll cycle must not survive when
+        # get_with_metadata returns None (PR #340 review, finding 4).
+        collector._current_input_source = "sidecar"
 
         async def fake_get_token(*args, **kwargs):
             return "test-key"
@@ -613,6 +616,50 @@ class TestOllamaApiCollector:
         assert cards[0]["window_type"] == "monthly"
         assert cards[0]["unit_type"] == "percent"
         assert cards[0]["data_source"] == OllamaCollector.DATA_SOURCE_API
+        assert cards[0]["input_source"] == "config"
+        assert collector._current_input_source == "config"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("cache_source", "expected"),
+        [
+            ("config", "config"),
+            ("manual_config", "config"),
+            ("some-hostname", "sidecar"),  # sidecar push: source = sidecar id
+            (None, "sidecar"),  # missing source → zai/minimax default
+        ],
+    )
+    async def test_api_strategy_input_source_from_cache_metadata(self, cache_source, expected):
+        """Cache metadata drives input_source with the sibling-collector
+        mapping: config only for UI-stored creds, sidecar otherwise."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        async def fake_get_token(*args, **kwargs):
+            return "test-key"
+
+        with (
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                # tokens dict unused by _get_ollama_api (metadata only)
+                return_value=({}, {"source": cache_source}),
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_token",
+                new_callable=AsyncMock,
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response(_usage_body(usage=0.002)),
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert len(cards) == 1
+        assert cards[0]["input_source"] == expected
+        assert collector._current_input_source == expected
 
     @pytest.mark.asyncio
     async def test_api_strategy_no_key_returns_empty_for_fallback(self):
@@ -690,16 +737,16 @@ class TestOllamaApiCollector:
 
     def test_build_cards_from_api_usage_absolute_count(self):
         """Usage as absolute number (e.g. paid tier with credit cap) →
-        token-count card. ``pct_used`` is clamped to [0, 100] but is NOT
-        forced to 100 — it's the numeric usage itself when usage > 1
-        (the dashboard renders ``<N> usage`` in that mode)."""
+        token-count card. ``pct_used`` must be None so webapp cardPct()
+        falls through to cardKind()'s unit_type check instead of forcing
+        the card into the percent gauge (review fix on PR #340)."""
         collector = OllamaCollector(account_id="acc_test")
         cards = collector._build_cards_from_api_usage(_usage_body(usage=42.5))
         assert len(cards) == 1
         card = cards[0]
         assert card["unit_type"] == "token"
         assert card["limit_value"] is None
-        assert card["pct_used"] == 42.5
+        assert card["pct_used"] is None
         assert card["used_value"] == 42.5
 
     def test_build_cards_from_api_usage_missing_monthly(self):

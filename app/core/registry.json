@@ -2,7 +2,7 @@
   "providers": {
     "anthropic": {
       "name": "Claude Pro",
-      "icon": "\ud83d\udfe0",
+      "icon": "🟠",
       "api_key_label": "API Token (api)",
       "api_key_help": "Official OAuth access token for Claude (sk-ant-...). Found in ~/.config/claude/oauth_creds.json",
       "session_cookie_label": "Web Session (web)",
@@ -11,9 +11,7 @@
         {
           "type": "env",
           "variable": "CLAUDE_CODE_OAUTH_TOKEN",
-          "mapping": {
-            "value": "oauth_token"
-          }
+          "mapping": { "value": "oauth_token" }
         },
         {
           "type": "file",
@@ -44,16 +42,9 @@
         },
         {
           "type": "cookie",
-          "domains": [
-            "anthropic.com",
-            ".anthropic.com",
-            "claude.ai",
-            ".claude.ai"
-          ],
+          "domains": ["anthropic.com", ".anthropic.com", "claude.ai", ".claude.ai"],
           "name": "sessionKey",
-          "mapping": {
-            "value": "cookie_sessionKey"
-          }
+          "mapping": { "value": "cookie_sessionKey" }
         },
         {
           "type": "file_json_statusline",
@@ -65,54 +56,46 @@
         {
           "type": "env",
           "variable": "CLAUDE_SESSION_TOKEN",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         }
       ]
     },
     "openrouter": {
       "name": "OpenRouter",
-      "icon": "\ud83d\ude80",
+      "icon": "🚀",
       "api_key_label": "API Key (api)",
       "api_key_help": "Your OpenRouter API key (sk-or-...)",
       "rules": [
         {
           "type": "env",
           "variable": "OPENROUTER_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         }
       ]
     },
     "minimax": {
       "name": "MiniMax",
-      "icon": "\ud83e\udd16",
+      "icon": "🤖",
       "api_key_label": "API Key (api)",
       "api_key_help": "MiniMax official API key",
       "rules": [
         {
           "type": "env",
           "variable": "MINIMAX_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         }
       ]
     },
     "github": {
       "name": "GitHub API",
-      "icon": "\ud83d\udc19",
+      "icon": "🐙",
       "api_key_label": "Personal Access Token (api)",
       "api_key_help": "A GitHub PAT with 'read:user' or Copilot permissions",
       "rules": [
         {
           "type": "env",
           "variable": "GITHUB_TOKEN",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         },
         {
           "type": "file",
@@ -120,9 +103,7 @@
             "{{CONFIG_DIR:runway}}/github_oauth.json"
           ],
           "format": "json",
-          "mapping": {
-            "access_token": "api_key"
-          }
+          "mapping": { "access_token": "api_key" }
         },
         {
           "type": "file",
@@ -139,15 +120,13 @@
         {
           "type": "windows_credential",
           "target": "github.com",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         }
       ]
     },
     "gemini": {
       "name": "Gemini API",
-      "icon": "\ud83d\udd35",
+      "icon": "🔵",
       "api_key_label": "OAuth Token (api)",
       "api_key_help": "The access_token string from ~/.gemini/oauth_creds.json",
       "rules": [
@@ -172,18 +151,16 @@
     },
     "chatgpt": {
       "name": "ChatGPT Codex",
-      "icon": "\ud83d\udcac",
+      "icon": "💬",
       "api_key_label": "Bearer Token (api)",
       "api_key_help": "The Bearer eyJ... string from ChatGPT DevTools Network tab",
       "session_cookie_label": "Web Session (web)",
-      "session_cookie_help": "Paste your full cookie string from DevTools \u2192 Application \u2192 Cookies \u2192 chatgpt.com. Include __Secure-next-auth.session-token.0, .1, and oai-sc if present (modern browsers split the session token into chunks).",
+      "session_cookie_help": "Paste your full cookie string from DevTools → Application → Cookies → chatgpt.com. Include __Secure-next-auth.session-token.0, .1, and oai-sc if present (modern browsers split the session token into chunks).",
       "rules": [
         {
           "type": "env",
           "variable": "CHATGPT_OAUTH_TOKEN",
-          "mapping": {
-            "value": "oauth_token"
-          }
+          "mapping": { "value": "oauth_token" }
         },
         {
           "type": "file",
@@ -201,80 +178,52 @@
         },
         {
           "type": "cookie",
-          "domains": [
-            "chatgpt.com"
-          ],
+          "domains": ["chatgpt.com"],
           "name": "__Secure-next-auth.session-token",
-          "mapping": {
-            "value": "cookie___Secure-next-auth.session-token"
-          }
+          "mapping": { "value": "cookie___Secure-next-auth.session-token" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "chatgpt.com"
-          ],
+          "domains": ["chatgpt.com"],
           "name": "__Secure-next-auth.session-token.0",
-          "mapping": {
-            "value": "cookie___Secure-next-auth.session-token.0"
-          }
+          "mapping": { "value": "cookie___Secure-next-auth.session-token.0" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "chatgpt.com"
-          ],
+          "domains": ["chatgpt.com"],
           "name": "__Secure-next-auth.session-token.1",
-          "mapping": {
-            "value": "cookie___Secure-next-auth.session-token.1"
-          }
+          "mapping": { "value": "cookie___Secure-next-auth.session-token.1" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "chatgpt.com"
-          ],
+          "domains": ["chatgpt.com"],
           "name": "oai-sc",
-          "mapping": {
-            "value": "cookie_oai-sc"
-          }
+          "mapping": { "value": "cookie_oai-sc" }
         },
         {
           "type": "env",
           "variable": "CHATGPT_SESSION_TOKEN",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         }
       ]
     },
     "kimi_coding": {
       "name": "Kimi Coding",
-      "icon": "\ud83c\udf19",
+      "icon": "🌙",
       "api_key_label": "API Key (Kimi Code Console)",
       "api_key_help": "Kimi For Coding API key from kimi.com/code/console",
       "session_cookie_label": "Auth Token (web)",
       "session_cookie_help": "Legacy fallback: kimi-auth JWT cookie from browser DevTools",
       "rules": [
-        {
-          "type": "env",
-          "variable": "KIMI_CODE_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
-        },
+        { "type": "env", "variable": "KIMI_CODE_API_KEY", "mapping": { "value": "api_key" } },
         {
           "type": "env",
           "variable": "KIMI_AUTH_TOKEN",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "file",
-          "paths": [
-            "~/.kimi-code/credentials/kimi-code*.json"
-          ],
+          "paths": ["~/.kimi-code/credentials/kimi-code*.json"],
           "format": "json",
           "mapping": {
             "access_token": "cli_access_token",
@@ -283,141 +232,104 @@
         },
         {
           "type": "cookie",
-          "domains": [
-            "kimi.moonshot.cn",
-            "kimi.com"
-          ],
+          "domains": ["kimi.moonshot.cn", "kimi.com"],
           "name": "kimi-auth",
-          "mapping": {
-            "value": "cookie_kimi-auth"
-          }
+          "mapping": { "value": "cookie_kimi-auth" }
         }
       ]
     },
     "kimi": {
       "name": "Kimi API",
-      "icon": "\ud83c\udf19",
+      "icon": "🌙",
       "api_key_label": "API Key (api)",
       "api_key_help": "Moonshot official API key (sk-...)",
       "rules": [
         {
           "type": "env",
           "variable": "KIMI_AUTH_TOKEN",
-          "mapping": {
-            "value": "cookie_kimi-auth"
-          }
+          "mapping": { "value": "cookie_kimi-auth" }
         },
         {
           "type": "env",
           "variable": "KIMI_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "kimi.moonshot.cn",
-            "kimi.com"
-          ],
+          "domains": ["kimi.moonshot.cn", "kimi.com"],
           "name": "kimi-auth",
-          "mapping": {
-            "value": "cookie_kimi-auth"
-          }
+          "mapping": { "value": "cookie_kimi-auth" }
         }
       ]
     },
     "zai": {
       "name": "zAI API",
-      "icon": "\ud83c\udf10",
+      "icon": "🌐",
       "api_key_label": "API Key (api)",
       "api_key_help": "zAI official API key",
       "rules": [
         {
           "type": "env",
           "variable": "ZAI_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         }
       ]
     },
     "kimi_api": {
       "name": "Kimi API",
-      "icon": "\ud83c\udf19",
+      "icon": "🌙",
       "api_key_label": "API Key (api)",
       "api_key_help": "Moonshot API key (sk-...)",
       "rules": [
         {
           "type": "env",
           "variable": "KIMI_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         }
       ]
     },
     "kimi_k2": {
       "name": "Kimi K2",
-      "icon": "\ud83c\udf19",
+      "icon": "🌙",
       "api_key_label": "API Key (api)",
       "api_key_help": "Kimi K2 official API key",
       "rules": [
         {
           "type": "env",
           "variable": "KIMI_K2_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         }
       ]
     },
     "opencode": {
       "name": "OpenCode",
-      "icon": "\u26a1",
+      "icon": "⚡",
       "api_key_label": "OpenCode API Key (api)",
-      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"opencode-go\"].key. Env: opencode_api_key=oc_sk_\u2026. Manual: paste an oc_sk_\u2026 key from the opencode console.",
+      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"opencode-go\"].key. Env: opencode_api_key=oc_sk_…. Manual: paste an oc_sk_… key from the opencode console.",
       "session_cookie_label": "Session Cookies (web, fallback)",
       "session_cookie_help": "Fallback: paste both 'auth' AND '__Host-console_session' cookie values from opencode.ai. Required only when no API key is configured.",
       "rules": [
         {
           "type": "file",
-          "paths": [
-            "~/.local/share/opencode/auth.json",
-            "~/.opencode/auth.json"
-          ],
-          "mapping": {
-            "opencode-go.key": "api_key"
-          }
+          "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
+          "mapping": { "opencode-go.key": "api_key" }
         },
         {
           "type": "env",
           "variable": "OPENCODE_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "opencode.ai",
-            ".opencode.ai"
-          ],
+          "domains": ["opencode.ai", ".opencode.ai"],
           "name": "auth",
-          "mapping": {
-            "value": "cookie_session"
-          }
+          "mapping": { "value": "cookie_session" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "opencode.ai",
-            ".opencode.ai"
-          ],
+          "domains": ["opencode.ai", ".opencode.ai"],
           "name": "__Host-console_session",
-          "mapping": {
-            "value": "console_session"
-          }
+          "mapping": { "value": "console_session" }
         },
         {
           "type": "sqlite",
@@ -447,7 +359,7 @@
     },
     "antigravity": {
       "name": "Antigravity",
-      "icon": "\ud83d\udef8",
+      "icon": "🛸",
       "rules": [
         {
           "type": "file_json_data",
@@ -460,103 +372,63 @@
     },
     "ollama": {
       "name": "Ollama Cloud",
-      "icon": "\ud83e\udd99",
+      "icon": "🦙",
       "description": "Monitor your Ollama Cloud usage. Bearer API key (preferred) or session cookie (web).",
       "api_key_label": "Ollama API Key (api)",
-      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"ollama-cloud\"].key. Env: ollama_api_key=\u2026. Manual: paste a key from ollama.com/settings/keys. Used against https://ollama.com/api/usage for monthly quota.",
+      "api_key_help": "Primary: sidecar auto-discovers from ~/.local/share/opencode/auth.json[\"ollama-cloud\"].key. Env: ollama_api_key=…. Manual: paste a key from ollama.com/settings/keys. Used against https://ollama.com/api/usage for monthly quota.",
       "session_cookie_label": "Web Session (web, fallback)",
       "session_cookie_help": "Fallback: paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings. Used to scrape /settings when no API key is configured.",
       "rules": [
         {
           "type": "file",
-          "paths": [
-            "~/.local/share/opencode/auth.json",
-            "~/.opencode/auth.json"
-          ],
-          "mapping": {
-            "ollama-cloud.key": "api_key"
-          }
+          "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
+          "mapping": { "ollama-cloud.key": "api_key" }
         },
         {
           "type": "env",
           "variable": "OLLAMA_API_KEY",
-          "mapping": {
-            "value": "api_key"
-          }
+          "mapping": { "value": "api_key" }
         },
         {
           "type": "env",
           "variable": "OLLAMA_SESSION_TOKEN",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "ollama.com",
-            ".ollama.com"
-          ],
+          "domains": ["ollama.com", ".ollama.com"],
           "name": "session",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "ollama.com",
-            ".ollama.com"
-          ],
+          "domains": ["ollama.com", ".ollama.com"],
           "name": "ollama_session",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "ollama.com",
-            ".ollama.com"
-          ],
+          "domains": ["ollama.com", ".ollama.com"],
           "name": "__Host-ollama_session",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "ollama.com",
-            ".ollama.com"
-          ],
+          "domains": ["ollama.com", ".ollama.com"],
           "name": "__Secure-next-auth.session-token",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "ollama.com",
-            ".ollama.com"
-          ],
+          "domains": ["ollama.com", ".ollama.com"],
           "name": "__Secure-session",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
-          "domains": [
-            "ollama.com",
-            ".ollama.com",
-            "signin.ollama.com"
-          ],
+          "domains": ["ollama.com", ".ollama.com", "signin.ollama.com"],
           "name": "access-token",
-          "mapping": {
-            "value": "session_cookie"
-          }
+          "mapping": { "value": "session_cookie" }
         }
       ]
     }
