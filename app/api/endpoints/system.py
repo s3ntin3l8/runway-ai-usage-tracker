@@ -1673,17 +1673,19 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
                 if chunk0:
                     found = chunk0 + (chunk1 or "")
             elif provider_id == "opencode":
-                # Extract auth (and optional __Host-console_session) cookie
-                # values from a pasted multi-cookie string. The DB column
-                # only stores one value; if both are present we store the
-                # full string and let the manual-config-to-cache bridge
-                # split it into tokens["cookie_session"] and
-                # tokens["console_session"].
-                for part in val.split(";"):
-                    part = part.strip()
-                    if part.startswith("auth="):
-                        found = part[5:].strip()
-                        break
+                # If the pasted string contains __Host-console_session,
+                # keep the FULL string in the DB column — the split below
+                # pulls both cookies out of it. Otherwise (bare auth value
+                # or only the auth cookie) collapse to the bare auth value
+                # for backwards compatibility.
+                if "__Host-console_session=" in val:
+                    found = val
+                else:
+                    for part in val.split(";"):
+                        part = part.strip()
+                        if part.startswith("auth="):
+                            found = part[5:].strip()
+                            break
 
             if found:
                 val = found
@@ -1711,14 +1713,18 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
             # Opencode's two-step console handshake needs both the legacy
             # `auth` cookie AND `__Host-console_session`. The DB column
-            # stores one blob; if a pasted string contains both we split
-            # them here so the collector's two lookups both succeed.
+            # may hold the full pasted multi-cookie string; split it here
+            # so the collector's two lookups both succeed with bare values.
             if provider_id == "opencode":
+                cookie_session = row.session_cookie
                 for part in row.session_cookie.split(";"):
                     part = part.strip()
                     if part.startswith("__Host-console_session="):
                         tokens["console_session"] = part[len("__Host-console_session=") :].strip()
-                        break
+                    elif part.startswith("auth="):
+                        cookie_session = part[5:].strip()
+                tokens["cookie_session"] = cookie_session
+                tokens["session_cookie"] = cookie_session
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
 

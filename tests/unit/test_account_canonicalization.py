@@ -141,6 +141,65 @@ def test_provider_config_put_stores_canonical_id(session: Session):
         app.dependency_overrides.clear()
 
 
+async def test_provider_config_put_splits_opencode_console_cookie(session: Session):
+    """PR #339 round-1 regression: pasting ``auth=X; __Host-console_session=Y``
+    must populate BOTH token-cache slots. The old code collapsed the pasted
+    string to the bare ``auth=`` value before the split loop ran, so
+    ``console_session`` was never stored."""
+    from fastapi.testclient import TestClient
+
+    from app.core.db import get_session
+    from app.main import app
+    from app.services.token_cache import token_cache
+
+    app.dependency_overrides[get_session] = lambda: session
+    try:
+        client = TestClient(app)
+        resp = client.put(
+            "/api/v1/system/provider-config/opencode/default",
+            json={"session_cookie": "auth=oc_x; __Host-console_session=st_y"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # DB keeps the full pasted blob so nothing is lost on round-trip.
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "opencode",
+                ProviderConfig.account_id == "default",
+            )
+        ).one()
+        assert row.session_cookie == "auth=oc_x; __Host-console_session=st_y"
+
+        # The cache gets the split bare values both collector lookups read.
+        assert (
+            await token_cache.get_token("opencode", "cookie_session", account_id="default")
+            == "oc_x"
+        )
+        assert (
+            await token_cache.get_token("opencode", "session_cookie", account_id="default")
+            == "oc_x"
+        )
+        assert (
+            await token_cache.get_token("opencode", "console_session", account_id="default")
+            == "st_y"
+        )
+
+        # A bare ``auth=`` paste (no console cookie) still collapses to the value.
+        resp = client.put(
+            "/api/v1/system/provider-config/opencode/default",
+            json={"session_cookie": "auth=oc_z"},
+        )
+        assert resp.status_code == 200, resp.text
+        session.refresh(row)
+        assert row.session_cookie == "oc_z"
+        assert (
+            await token_cache.get_token("opencode", "cookie_session", account_id="default")
+            == "oc_z"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ---------------------------------------------------------------------------
 # Startup repair of legacy rows
 # ---------------------------------------------------------------------------

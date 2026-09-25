@@ -6,10 +6,10 @@ Collection Strategy (priority order):
 1. ``api`` (PRIMARY): OpenCode Go usage API.
    - Auth: ``Authorization: Bearer <oc_sk_…>`` (or whatever the opencode CLI
      stores as ``opencode-go.key``).
-   - Endpoint: ``GET https://opencode.ai/zen/go/v1/usage`` returns rolling /
-     weekly / monthly percentages + reset timestamps.
-   - Falls back to ``GET https://opencode.ai/console/api/go/status`` for
-     richer micro-cent detail when the bearer-only key is rejected.
+   - Endpoint: ``GET https://opencode.ai/console/api/go/status`` first
+     (richer micro-cent detail).
+   - Falls back to ``GET https://opencode.ai/zen/go/v1/usage`` when the
+     console endpoint is rejected (401/403).
 
 2. ``web`` (FALLBACK): OpenCode Console session cookies.
    - Auth: ``auth`` + ``__Host-console_session`` cookies (browser-imported
@@ -87,11 +87,13 @@ class OpenCodeCollector(BaseCollector):
                 return True
         return False
 
+    # Both methods satisfy the abstract contract on BaseCollector. They are
+    # unused at runtime: STRATEGIES declares the api/web order, and base
+    # only invokes this legacy pair when STRATEGIES is empty.
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         return await self._get_opencode_api(client)
 
     def _fallback_strategies(self) -> list[Any]:
-        """Cookie path is the fallback when no API key is available."""
         return []
 
     async def _error_handler(self) -> list[dict[str, Any]]:
@@ -391,6 +393,10 @@ class OpenCodeCollector(BaseCollector):
 
     async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Cookie-authenticated console handshake (2 steps)."""
+        # Fresh diagnosis per strategy run — ``_last_error_reason`` persists
+        # on the instance across cycles (nothing calls ``reset()``), and a
+        # stale reason from a prior cycle must not leak into this one.
+        self._last_error_reason = "unknown"
         tokens, input_source = await self._get_credentials()
         cookie_session = tokens.get("cookie_session") or tokens.get("session_cookie")
         console_session = tokens.get("console_session")
@@ -400,7 +406,11 @@ class OpenCodeCollector(BaseCollector):
         headers = self._build_cookie_headers(cookie_session, console_session)
         workspace_id = await self._fetch_workspace_id(client, headers)
         if not workspace_id:
-            self._set_error("no_workspace")
+            # ``_fetch_workspace_id`` already diagnosed a 401/403 as
+            # ``session_invalid`` — an expired cookie must not be masked
+            # as the generic no_workspace (PR #339 round-1 review).
+            if self._last_error_reason == "unknown":
+                self._set_error("no_workspace")
             return []
         body = await self._fetch_go_status(client, headers, workspace_id)
         if body is None:

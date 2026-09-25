@@ -318,11 +318,43 @@ class TestGetOpencodeWeb:
             cards = await collector._get_opencode_web(MagicMock())
 
         assert cards == []
-        # Either session_invalid (orgs call failed) or no_workspace (orgs
-        # call returned empty) is acceptable; both map to an error card.
-        assert collector._last_error_reason in ("session_invalid", "no_workspace")
+        # The 401 from /console/api/orgs must stay diagnosed as
+        # session_invalid (auth_failed) — the generic no_workspace must
+        # not mask it (PR #339 round-1 review).
+        assert collector._last_error_reason == "session_invalid"
         err = await collector._error_handler()
-        assert err[0]["error_type"] in ("auth_failed", "parse_error")
+        assert err[0]["error_type"] == "auth_failed"
+
+    @pytest.mark.asyncio
+    async def test_empty_orgs_still_reports_no_workspace(self):
+        """The non-401 workspace failure (200 but empty org list) keeps
+        the generic no_workspace diagnosis — the session_invalid guard
+        only suppresses it when a specific reason was already set."""
+        collector = OpenCodeCollector(account_id="acc_test")
+        empty_resp = MagicMock(spec=httpx.Response)
+        empty_resp.status_code = 200
+        empty_resp.json.return_value = []
+
+        async def fake_get_with_metadata(provider, account_id=None):
+            return ({"cookie_session": "valid"}, {"source": "config"})
+
+        with (
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=fake_get_with_metadata,
+            ),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=empty_resp,
+            ),
+        ):
+            cards = await collector._get_opencode_web(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "no_workspace"
+        err = await collector._error_handler()
+        assert err[0]["error_type"] == "parse_error"
 
 
 class TestIsConfigured:
