@@ -298,6 +298,61 @@ class TestQueueRotate:
         assert entry["payload"] == {"provider": "test", "metrics": []}
 
 
+class TestQueueFlush:
+    def test_event_ingest_error_is_retained_and_retried(self, tmp_path, monkeypatch):
+        queue_file = tmp_path / "2026-01-01.jsonl"
+        failed_payload = {"events": [{"event_id": "retry-me"}]}
+        acknowledged_payload = {"events": [{"event_id": "stored"}]}
+        queue_file.write_text(
+            "".join(
+                json.dumps({"ts": idx, "payload": payload}) + "\n"
+                for idx, payload in enumerate([failed_payload, acknowledged_payload], start=1)
+            )
+        )
+        monkeypatch.setattr(sidecar, "get_queue_dir", lambda: tmp_path)
+        replies = iter(
+            [
+                (True, {"events_error": True}, 200),
+                (True, {"events_error": False}, 200),
+                (True, {"events_error": False}, 200),
+            ]
+        )
+        monkeypatch.setattr(
+            sidecar,
+            "http_post_signed_with_retry",
+            lambda *args, **kwargs: next(replies),
+        )
+
+        assert sidecar.queue_flush("http://localhost", "synthetic-key") == 1
+        retained = [json.loads(line)["payload"] for line in queue_file.read_text().splitlines()]
+        assert retained == [failed_payload]
+
+        assert sidecar.queue_flush("http://localhost", "synthetic-key") == 1
+        assert not queue_file.exists()
+
+    def test_stop_preserves_unprocessed_entries(self, tmp_path, monkeypatch):
+        queue_file = tmp_path / "2026-01-01.jsonl"
+        payloads = [{"metrics": [{"id": "sent"}]}, {"metrics": [{"id": "pending"}]}]
+        queue_file.write_text(
+            "".join(
+                json.dumps({"ts": idx, "payload": payload}) + "\n"
+                for idx, payload in enumerate(payloads)
+            )
+        )
+        monkeypatch.setattr(sidecar, "get_queue_dir", lambda: tmp_path)
+        stop_event = threading.Event()
+
+        def acknowledge_then_stop(*args, **kwargs):
+            stop_event.set()
+            return True, {}, 200
+
+        monkeypatch.setattr(sidecar, "http_post_signed_with_retry", acknowledge_then_stop)
+
+        assert sidecar.queue_flush("http://localhost", "synthetic-key", stop_event) == 1
+        retained = [json.loads(line)["payload"] for line in queue_file.read_text().splitlines()]
+        assert retained == [payloads[1]]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Unix queue permission semantics")
 class TestSecureQueueStorage:
     def _use_dirs(self, monkeypatch, root: Path) -> tuple[Path, Path]:
