@@ -137,6 +137,8 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # above); the server's tag-hint flow carries the operator's chosen
     # account_id back when no in-band identity is set.
     "openrouter": ("openrouter", None),
+    # xAI's CLI proxy quota collector uses the same provider identity.
+    "xai": ("xai", None),
 }
 
 

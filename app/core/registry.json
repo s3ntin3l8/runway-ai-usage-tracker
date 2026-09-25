@@ -431,6 +431,26 @@
           "mapping": { "value": "session_cookie" }
         }
       ]
+    },
+    "xai": {
+      "name": "xAI (Grok)",
+      "icon": "\ud83e\udd16",
+      "description": "Monitor xAI credits and subscription tier through the CLI chat proxy.",
+      "api_key_label": "xAI OAuth Access Token (api)",
+      "api_key_help": "Sidecar discovers the OAuth access and refresh tokens from ~/.local/share/opencode/auth.json. Manual: paste an xAI OAuth access bearer.",
+      "rules": [
+        {
+          "type": "file",
+          "paths": [
+            "~/.local/share/opencode/auth.json",
+            "~/.opencode/auth.json"
+          ],
+          "mapping": {
+            "xai.access": "xai_access",
+            "xai.refresh": "xai_refresh"
+          }
+        }
+      ]
     }
   }
 }

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -183,6 +183,29 @@ def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Se
         session.refresh(row)
         assert row.session_cookie == "oc_z"
         assert row.opencode_workspace_id == "workspace-123"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_provider_config_put_stores_xai_bearer_as_access_only(session: Session):
+    """A manually pasted xAI bearer is not a refresh token."""
+    from fastapi.testclient import TestClient
+
+    from app.api.endpoints.system import token_cache
+    from app.core.db import get_session
+    from app.main import app
+
+    app.dependency_overrides[get_session] = lambda: session
+    try:
+        with patch.object(token_cache, "store", new_callable=AsyncMock) as store:
+            resp = TestClient(app).put(
+                "/api/v1/system/provider-config/xai/default",
+                json={"api_key": "xai-test-access"},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert store.call_args.args[:2] == ("xai", {"xai_access": "xai-test-access"})
+        assert store.call_args.kwargs["source"] == "config"
     finally:
         app.dependency_overrides.clear()
 

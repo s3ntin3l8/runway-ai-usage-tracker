@@ -453,6 +453,24 @@ def test_map_opencode_canonical_ollama():
     assert map_opencode_canonical("OLLAMA-CLOUD") == ("ollama", None)  # case-insensitive
 
 
+def test_map_opencode_canonical_xai():
+    """xAI (xai backend in OpenCode) folds onto the canonical "xai" provider
+    so enrichment events land on the cli-chat-proxy quota card instead of
+    creating an "opencode-xai" ghost card. Account override is None —
+    OpenCode's resolved account (the OAuth identity) flows through, same
+    identity-pinning reasoning as kimi/ollama/openrouter."""
+    assert map_opencode_canonical("xai") == ("xai", None)
+    assert map_opencode_canonical("XAI") == ("xai", None)  # case-insensitive
+
+
+def test_map_opencode_provider_id_xai():
+    """xAI (xai backend) maps to "opencode-xai" runway provider_id via
+    _OC_PROVIDER_MAP. Without this, the events branch would emit an
+    unknown-provider event that EventIngestor rejects."""
+    assert map_opencode_provider_id("xai") == "opencode-xai"
+    assert map_opencode_provider_id("XAI") == "opencode-xai"  # case-insensitive
+
+
 def _minimax_message(msg_id: str) -> dict:
     return {
         "id": msg_id,
