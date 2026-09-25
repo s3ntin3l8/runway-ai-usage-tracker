@@ -798,6 +798,177 @@ def test_auto_hint_independent_per_provider(client: TestClient, session: Session
 
 
 # ---------------------------------------------------------------------------
+# Key-scoped hints (#347 T1) — the server recognises a key it has been
+# pasted and answers under ``provider:opencode#<fingerprint>``.
+#
+# The OpenCode CLI credential carries no identity of its own, so the
+# sidecar cannot derive an account for it (see
+# tests/unit/test_opencode_credential_identity.py for the sidecar half).
+# When the same key is also in ``provider_configs``, the server can match
+# it by fingerprint — never by receiving the key, and never by guessing.
+# ---------------------------------------------------------------------------
+
+OPENCODE_CLI_KEY = "oc_sk_pasted_by_operator"  # pragma: allowlist secret
+OTHER_CLI_KEY = "oc_sk_second_account_key"  # pragma: allowlist secret
+
+
+def _opencode_hint_key(key: str) -> str:
+    """The hint key both sides derive independently: the server never learns
+    the sidecar's path, the sidecar never learns which account row matched."""
+    from app.services.account_identity import credential_fingerprint, keyed_credential_origin
+
+    return keyed_credential_origin("provider:opencode", credential_fingerprint(key))
+
+
+def test_fingerprint_hint_ships_for_stored_opencode_key(
+    client: TestClient, session: Session
+) -> None:
+    """One stored key → one hint, under the fingerprint-keyed descriptor."""
+    _add_provider_config(
+        session,
+        provider_id="opencode",
+        account_id="alice@example.com",
+        api_key=OPENCODE_CLI_KEY,
+    )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    # Both tiers land here: the definitive fingerprint match (T1) and — this
+    # is a single-host deployment with one labelled account — the implicit
+    # single-account auto-hint (T3). The sidecar consults T1 first.
+    assert hints["opencode"] == {
+        _opencode_hint_key(OPENCODE_CLI_KEY): "alice@example.com",
+        "provider:opencode": "alice@example.com",
+    }
+
+
+def test_fingerprint_hint_maps_each_key_to_its_own_account(
+    client: TestClient, session: Session
+) -> None:
+    """Two accounts, two keys → two independent hints. Neither can inherit
+    the other's account: the scoping is the fingerprint match itself."""
+    _add_provider_config(
+        session,
+        provider_id="opencode",
+        account_id="alice@example.com",
+        api_key=OPENCODE_CLI_KEY,
+    )
+    _add_provider_config(
+        session,
+        provider_id="opencode",
+        account_id="bob@example.com",
+        api_key=OTHER_CLI_KEY,
+    )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"]["opencode"] == {
+        _opencode_hint_key(OPENCODE_CLI_KEY): "alice@example.com",
+        _opencode_hint_key(OTHER_CLI_KEY): "bob@example.com",
+    }
+
+
+def test_fingerprint_hint_skips_unusable_rows(client: TestClient, session: Session) -> None:
+    """No key and a disabled row produce no fingerprint hint — there is
+    nothing to match a sidecar's fingerprint against, and the collector
+    isn't running."""
+    _add_provider_config(session, provider_id="opencode", account_id="default")
+    _add_provider_config(
+        session,
+        provider_id="opencode",
+        account_id="bob@example.com",
+        enabled=False,
+        api_key=OTHER_CLI_KEY,
+    )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    # ``account_id="default"`` also keeps the single-account auto-hint out,
+    # so what's left is exactly "no fingerprint was derivable".
+    assert r.json()["account_tag_hints"] == {}
+
+
+def test_fingerprint_hint_only_fires_for_key_scoped_providers(
+    client: TestClient, session: Session
+) -> None:
+    """#347 scopes fingerprinting to opencode: other providers keep their
+    plain origins, so none of their rows gain a ``#<fingerprint>`` hint."""
+    _add_provider_config(
+        session,
+        provider_id="openrouter",
+        account_id="alice@example.com",
+        api_key="sk-or-v1-something",  # pragma: allowlist secret
+    )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert "opencode" not in hints
+    # openrouter's only hint is the pre-existing plain descriptor.
+    assert hints["openrouter"] == {"provider:openrouter": "alice@example.com"}
+
+
+def test_operator_tag_wins_over_fingerprint_hint(client: TestClient, session: Session) -> None:
+    """Merge order: an explicit per-origin tag is a deliberate choice and is
+    never overridden by a derived fingerprint match."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(
+        session,
+        provider_id="opencode",
+        account_id="alice@example.com",
+        api_key=OPENCODE_CLI_KEY,
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=_opencode_hint_key(OPENCODE_CLI_KEY),
+        account_id="override@example.com",
+    )
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"]["opencode"] == {
+        _opencode_hint_key(OPENCODE_CLI_KEY): "override@example.com",
+        # The implicit auto-hint still ships on its own descriptor; the
+        # sidecar consults the keyed origin first, so it never wins.
+        "provider:opencode": "alice@example.com",
+    }
+
+
+def test_fingerprint_hint_ships_while_auto_hint_is_withheld(
+    client: TestClient, session: Session
+) -> None:
+    """The fingerprint hint is not a guess, so unlike the single-account
+    auto-hint it ships even in a multi-sidecar deployment — a sidecar that
+    lacks the key cannot produce a matching fingerprint, so the match is the
+    scoping."""
+    _add_provider_config(
+        session,
+        provider_id="opencode",
+        account_id="alice@example.com",
+        api_key=OPENCODE_CLI_KEY,
+    )
+    _add_provider_config(
+        session,
+        provider_id="minimax",
+        account_id="s3ntin318@gmail.com",
+        enabled=True,
+    )
+    _add_live_sidecar(session, "alpha", "alpha-host")
+    _add_live_sidecar(session, "beta", "beta-host")
+
+    r = client.get("/api/v1/fleet/config?sidecar_id=alpha")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert hints["opencode"] == {_opencode_hint_key(OPENCODE_CLI_KEY): "alice@example.com"}
+    # …while the implicit heuristic still refuses to pick between hosts.
+    assert "minimax" not in hints
+
+
+# ---------------------------------------------------------------------------
 # Per-sidecar hint scoping (#319) — /fleet/config?sidecar_id= +
 # multi-host auto-hint delivery gate
 # ---------------------------------------------------------------------------

@@ -50,6 +50,57 @@ def test_opencode_pins_to_cookie_owner_over_workspace_scrape():
     assert collector.account_label == "work@example.com"
 
 
+async def test_opencode_api_key_never_crosses_accounts(monkeypatch):
+    """Two accounts side by side in the token cache keep their own CLI key.
+
+    #347's account-isolation half on the read path: the OpenCode credential
+    is a bare API key, so inheriting another account's entry would silently
+    report that account's quota under this one's card."""
+    cache = TokenCache()
+    await cache.store(
+        "opencode",
+        {"api_key": "oc_alices_key"},  # pragma: allowlist secret
+        account_id="alice@example.com",
+    )
+    await cache.store(
+        "opencode",
+        {"api_key": "oc_bobs_key"},  # pragma: allowlist secret
+        account_id="bob@example.com",
+    )
+    monkeypatch.setattr("app.services.collectors.opencode.token_cache", cache)
+
+    alice_tokens, _ = await OpenCodeCollector(account_id="alice@example.com")._get_credentials()
+    bob_tokens, _ = await OpenCodeCollector(account_id="bob@example.com")._get_credentials()
+
+    assert alice_tokens["api_key"] == "oc_alices_key"  # pragma: allowlist secret
+    assert bob_tokens["api_key"] == "oc_bobs_key"  # pragma: allowlist secret
+
+
+async def test_opencode_identity_stamped_from_the_credential_owner_label(monkeypatch):
+    """The label the sidecar attached to the credential is the collector's
+    identity, not whatever the API response scrapes (#315, kept green by the
+    #347 identity tagging): a fresh collector reads its credential, then pins
+    itself to the credential's owner."""
+    cache = TokenCache()
+    await cache.store(
+        "opencode",
+        {"api_key": "oc_alices_key"},  # pragma: allowlist secret
+        account_id="default",
+        account_label="work@example.com",
+    )
+    monkeypatch.setattr("app.services.collectors.opencode.token_cache", cache)
+    collector = OpenCodeCollector()  # fresh — no identity pinned yet
+
+    tokens, _ = await collector._get_credentials()
+    assert tokens["api_key"] == "oc_alices_key"  # pragma: allowlist secret
+    assert collector._cookie_owner == "work@example.com"
+
+    collector._pin_identity("scraped-personal@example.com")
+
+    assert collector.account_id == "work@example.com"
+    assert collector.account_label == "work@example.com"
+
+
 def test_opencode_falls_back_to_workspace_scrape_without_cookie_identity():
     collector = OpenCodeCollector()
     collector._pin_identity("Personal@Example.com")

@@ -21,7 +21,10 @@ The opencode CLI stores every configured provider's credential in
 this file on hosts where the sidecar runs. Since the file can contain
 keys for several provider accounts without reliable account identity,
 newly discovered keys appear under Untagged Credentials until assigned
-to a provider account.
+to a provider account — unless one of the identity sources below resolves
+them first. The sidecar reports the key under a **key-scoped origin**
+(`path:…/auth.json#<fingerprint>`, see *Account identity*), so two hosts —
+or one host after a key rotation — never share a tag.
 
 ```
 ~/.local/share/opencode/auth.json
@@ -52,6 +55,88 @@ paste accepts a multi-cookie string that gets split into the two
 tokens. Without both cookies, the console handshake returns 401 /
 `{"_tag":"Unauthorized"}` and the dashboard surfaces an auth_failed
 error card.
+
+## Account Identity
+
+### Why the CLI key has no identity of its own
+
+Runway needs to know *whose* `oc_sk_…` key it found. For the OpenCode CLI
+there is no such answer in the credential, and none online either. Every
+source was checked and comes back empty:
+
+| Source checked | What it returned |
+|---|---|
+| `opencode auth list` | Display names only — no email, no account id |
+| `opencode debug info` / `debug paths` | Paths and versions; nothing identity-shaped |
+| `opencode.db` `account(email, …)` table | Empty (0 rows) and not linked to the API key |
+| `anomalyco/opencode` `console/app/src/routes/zen/go/v1/*` | `{chat, messages, models, responses, systemone, usage}` — no identity route |
+| `GET https://opencode.ai/zen/go/v1/usage` | `{"usage": {rolling, weekly, monthly}}` only |
+| `GET https://opencode.ai/console/api/user` | Cookie-only; 401 with a bearer token |
+| `~/.local/state/opencode` | Nothing |
+
+So the sidecar cannot *derive* an account for a discovered key. It must
+also never *inherit* one: `path:/home/u/.local/share/opencode/auth.json`
+is identical on every host with the same username, and identical before
+and after a key rotation. If that were the origin, two different keys
+would share one operator tag and silently land on each other's account.
+
+### Key-scoped origins
+
+Origins for opencode are therefore suffixed with a 12-hex fingerprint of
+the *key* (`credential_fingerprint`, PBKDF2-HMAC-SHA256, salt
+`runway-credential-fp-v1`):
+
+```
+path:/home/alice/.local/share/opencode/auth.json#495fa9c614ce
+env:OPENCODE_API_KEY#495fa9c614ce
+```
+
+Only the fingerprint crosses the wire — never the key. The server builds
+the same value from a key pasted into `provider_configs`, under
+`provider:opencode#<fingerprint>` (it does not know the sidecar's paths;
+the sidecar does not know which account row matched).
+
+**Key rotation produces a new fingerprint, hence a new origin.** The old
+tag stays on the old credential and the rotated key lands in Untagged
+Credentials until it is tagged again or matched by a pasted key below.
+
+### Resolution cascade
+
+The sidecar resolves a token card's account most-specific-first; whatever
+remains unresolved is blocked and shown in **Fleet → Untagged
+Credentials**:
+
+| # | Tier | Source |
+|---|---|---|
+| 0 | `OPENCODE_ACCOUNT_LABEL` | Host-local, explicit. Local evidence outranks every server-side hint — the same precedence `_opencode_account_email` applies to events. |
+| 1 | Keyed origin tag | Operator tag written against this exact credential (`…#<fingerprint>`). |
+| 1b | Fingerprint hint | `provider:opencode#<fingerprint>` → account, when the same key is in `provider_configs`. Not a guess, so it ships even in multi-host deployments. |
+| 2 | Legacy plain tag | `path:…` tag written by an older sidecar, before origins were fingerprinted. |
+| 3 | Provider-wide auto-hint | `provider:opencode` → account, **gated** (below). |
+| — | Untagged | Nothing resolved; the credential is not shipped. |
+
+### The tier-3 gate
+
+`provider:opencode` is the last resort and can only mean one thing: "the
+server has exactly one account configured, so it is probably that one."
+Before honouring it, the sidecar compares the discovered key against
+`account.json`'s active `opencode-go` record — the only local evidence
+that can contradict the guess:
+
+| `account.json` state | Result |
+|---|---|
+| Absent, unreadable, no active record for `opencode-go` | `"unknown"` — no contradicting evidence, the hint applies (preserves behaviour for older CLI installs). |
+| Active record holds this exact key | `"single"` — one live account, the discovered key is it. Hint applies. |
+| Active record holds a *different* key | `"ambiguous"` — the credential on disk is not the account the CLI says is active. The hint is withheld, a warning is logged, the card stays Untagged until tagged against its key-scoped origin. |
+
+### Assigning a key
+
+- **Paste it** in Providers → opencode (source 3). The server then
+  recognises the key by fingerprint on the next sidecar cycle (tier 1b).
+- **Or tag its origin** in Fleet → Untagged Credentials. The origin line
+  shows the full `…#<fingerprint>` string.
+- **Or set `OPENCODE_ACCOUNT_LABEL=<email>`** on the sidecar host when
+  that machine's CLI key always belongs to one account (tier 0).
 
 ## Endpoints
 
@@ -159,6 +244,9 @@ rule now extracts both names.
 | `app/core/registry.json` (`providers.opencode`) | UI labels + sidecar rule mirror |
 | `app/services/collector_manager.py` (`_sync_manual_config_to_cache`) | DB → token-cache bridge for manual UI pastes |
 | `app/api/endpoints/system.py` (`upsert_provider_config_for_account`) | Opencode-specific cookie / API-key parsing |
+| `scripts/sidecar_pkg/identity.py`, `app/services/account_identity.py` | `credential_fingerprint` + keyed-origin helpers (mirrored on both sides) |
+| `app/api/endpoints/fleet.py` (`_fingerprinted_credential_hints`) | Server-side tier-1b hint |
+| `tests/unit/test_opencode_credential_identity.py`, `tests/integration/test_fleet_credentials.py` | Identity-source and isolation coverage |
 
 ## References
 

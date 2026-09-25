@@ -2238,6 +2238,85 @@ def _opencode_account_email(db_path: Path | None) -> str:
     return "default"
 
 
+def _opencode_account_json_paths() -> list[Path]:
+    """``account.json`` files sitting next to an ``auth.json`` we can read.
+
+    OpenCode writes both under the same data directory; ``~/.opencode/`` is
+    the alternate install location mirrored by the registry's file rules.
+    """
+    out: list[Path] = []
+    for auth_path in expand_file_rule_paths(
+        ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"]
+    ):
+        candidate = auth_path.parent / "account.json"
+        if candidate.exists() and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def _opencode_local_key_binding(discovered_key: str | None, service: str = "opencode-go") -> str:
+    """Classify how confidently the on-disk OpenCode CLI state backs a key (#347).
+
+    ``~/.local/share/opencode/auth.json`` holds exactly one key per service,
+    so *within* a host there is only ever one ``opencode-go`` credential to
+    find. What it cannot tell us on its own is whether that key is still the
+    account the CLI considers active — ``account.json`` can.
+
+    Returns one of:
+
+    ``"single"``
+        ``account.json``'s active record for ``service`` carries this exact
+        key: the CLI has one live account for the service and the discovered
+        key is it. Safe to fall back to the single-account auto-hint.
+    ``"unknown"``
+        No ``account.json``, no active record for ``service``, or nothing to
+        compare against. ``auth.json`` can only hold one key per service, so
+        this carries no contradicting evidence and the auto-hint stays
+        allowed (preserves behavior for older CLI installs).
+    ``"ambiguous"``
+        ``account.json`` is present and *disagrees* with ``auth.json``: the
+        discovered key is not the active record's key. Associating it with
+        whatever account the server has configured would be a guess, so the
+        auto-hint is suppressed and the credential stays Untagged.
+
+    Parsing is deliberately tolerant — a missing, truncated or
+    schema-revised ``account.json`` degrades to ``"unknown"``, never to a
+    wrong answer.
+    """
+    key = (discovered_key or "").strip()
+    if not key:
+        return "unknown"
+
+    for account_path in _opencode_account_json_paths():
+        try:
+            with open(account_path) as f:
+                data = json.load(f)
+        except Exception:
+            logging.debug("OpenCode account.json unreadable: %s", account_path, exc_info=True)
+            continue
+        if not isinstance(data, dict):
+            continue
+        active = data.get("active")
+        accounts = data.get("accounts")
+        if not isinstance(active, dict) or not isinstance(accounts, dict):
+            continue
+        active_id = active.get(service)
+        if not isinstance(active_id, str) or not active_id:
+            continue
+        record = accounts.get(active_id)
+        if not isinstance(record, dict):
+            continue
+        credential = record.get("credential")
+        active_key = ""
+        if isinstance(credential, dict):
+            active_key = str(credential.get("key") or "").strip()
+        if not active_key:
+            return "unknown"
+        return "single" if key == active_key else "ambiguous"
+
+    return "unknown"
+
+
 # --- Generic Collector Engine ---
 
 
@@ -2257,6 +2336,42 @@ def credential_origin_for_provider(provider_id: str) -> str:
     seam.
     """
     return f"provider:{provider_id}"
+
+
+# Providers whose credential is a bare API key with no per-account identity
+# of its own (#347). For these, the *file or variable* descriptor alone is
+# not enough to identify the credential: `path:/home/u/.local/share/
+# opencode/auth.json` is the same string on every host with the same
+# username, and the same string before and after a key rotation. Two hosts
+# (or two keys) sharing an origin would share the operator's tag and inherit
+# each other's account, so their origins are suffixed with a fingerprint of
+# the discovered value. Other providers keep the plain descriptor — they
+# either carry a real identity (anthropic, chatgpt) or are out of scope.
+_FINGERPRINTED_ORIGIN_PROVIDERS = frozenset({"opencode"})
+
+
+def fingerprinted_credential_origin(
+    base_origin: str, provider_id: str, candidate_tokens: dict[str, Any]
+) -> str:
+    """Return ``base_origin`` suffixed with the credential fingerprint where
+    the provider needs a key-scoped origin, else ``base_origin`` unchanged.
+
+    See ``_FINGERPRINTED_ORIGIN_PROVIDERS`` for why. Callers pass the
+    candidate token dict so the origin can be derived from the exact value
+    that will be shipped. A missing / blank ``api_key`` leaves the plain
+    origin in place — there is no credential to disambiguate.
+    """
+    if provider_id not in _FINGERPRINTED_ORIGIN_PROVIDERS:
+        return base_origin
+    from scripts.sidecar_pkg.identity import (
+        credential_fingerprint,
+        keyed_credential_origin,
+    )
+
+    fingerprint = credential_fingerprint(str(candidate_tokens.get("api_key") or ""))
+    if not fingerprint:
+        return base_origin
+    return keyed_credential_origin(base_origin, fingerprint)
 
 
 class GenericCollector:
@@ -2332,8 +2447,15 @@ class GenericCollector:
                 if val:
                     target = mapping.get("value")
                     if target:
+                        env_candidate = {target: val}
                         token_candidates.append(
-                            ({target: val}, f"env:{rule.get('variable')}", "env")
+                            (
+                                env_candidate,
+                                fingerprinted_credential_origin(
+                                    f"env:{rule.get('variable')}", provider_id, env_candidate
+                                ),
+                                "env",
+                            )
                         )
 
             # 2. Local Files (JSON/YAML)
@@ -2372,7 +2494,15 @@ class GenericCollector:
                                     candidate_tokens["account_id"] = email
                         if candidate_tokens:
                             token_candidates.append(
-                                (candidate_tokens, f"path:{Path(path).resolve()}", "file")
+                                (
+                                    candidate_tokens,
+                                    fingerprinted_credential_origin(
+                                        f"path:{Path(path).resolve()}",
+                                        provider_id,
+                                        candidate_tokens,
+                                    ),
+                                    "file",
+                                )
                             )
                             logging.info(f"  [{provider_id}] token file matched: {path}")
                     except Exception as e:
@@ -2709,6 +2839,16 @@ class GenericCollector:
                     cli_identity = _decode_id_token_email(tokens.get("id_token", "")) or ""
                 if cli_identity and cli_identity != "default":
                     tokens["account_id"] = cli_identity
+            # Explicit host-level identity for the OpenCode CLI credential
+            # (#347 T2). The operator sets OPENCODE_ACCOUNT_LABEL to say which
+            # Runway account this machine's CLI key belongs to; it is the
+            # same variable the events path (_opencode_account_email) and the
+            # sqlite quota cards already honor, so cards and events for one
+            # host land on the same account.
+            if provider_id == "opencode" and tokens and not tokens.get("account_id"):
+                opencode_env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
+                if opencode_env_label:
+                    tokens["account_id"] = opencode_env_label
             if tokens and tokens.get("account_id"):
                 from scripts.sidecar_pkg.identity import canonical_account_id
 
@@ -2724,15 +2864,65 @@ class GenericCollector:
                 else:
                     unit = "oauth"
                     data_source = "api"
+                from scripts.sidecar_pkg.identity import (
+                    keyed_credential_origin,
+                    split_keyed_origin,
+                )
+
                 local_account_id = tokens.get("account_id")
-                hint_account_id = provider_hints.get(origin)
                 accepts_legacy_provider_hint = provider_id not in {"chatgpt", "anthropic"} or (
                     candidate_kind in {"file", "keychain"}
                 )
-                if hint_account_id is None and accepts_legacy_provider_hint:
+                # Credential-identity cascade for the token card (#347),
+                # most specific first:
+                #   1. the origin this sidecar reported — key-scoped, so an
+                #      operator tag written against this exact credential,
+                #   2. the plain rule origin — tags written before origins
+                #      were fingerprinted keep working,
+                #   3. a fingerprint-keyed hint the server derived from a
+                #      key the operator pasted into provider_configs (the
+                #      server can build this key without knowing our paths),
+                #   4. the single-account auto-hint — gated on local state
+                #      not contradicting it, so a credential whose CLI state
+                #      disagrees never inherits another account's identity.
+                # Anything still unresolved blocks and surfaces as Untagged.
+                base_origin, fingerprint = split_keyed_origin(origin)
+                hint_account_id = provider_hints.get(origin)
+                if hint_account_id is None and fingerprint is not None:
+                    hint_account_id = provider_hints.get(base_origin)
+                if hint_account_id is None and fingerprint is not None:
                     hint_account_id = provider_hints.get(
-                        credential_origin_for_provider(provider_id)
+                        keyed_credential_origin(
+                            credential_origin_for_provider(provider_id), fingerprint
+                        )
                     )
+                if hint_account_id is None and accepts_legacy_provider_hint:
+                    provider_hint = provider_hints.get(credential_origin_for_provider(provider_id))
+                    if provider_hint is not None:
+                        fallback_allowed = True
+                        if provider_id == "opencode":
+                            # Ambiguity is an instruction to be explicit, not a
+                            # licence to fall back on the provider-wide hint: the
+                            # key on disk is not the account the CLI says is
+                            # active, so associating it with whatever single
+                            # account the server has configured would be the
+                            # guess #347 exists to prevent. The key-scoped origin
+                            # (step 1 above) still resolves it once tagged, and
+                            # events keep consulting the provider-wide origin
+                            # independently of this gate. Only paid for when a
+                            # hint is actually on offer — the common case has
+                            # none, and the warning would be noise.
+                            binding = _opencode_local_key_binding(tokens.get("api_key"))
+                            fallback_allowed = binding != "ambiguous"
+                            if not fallback_allowed:
+                                logging.warning(
+                                    f"  [{provider_id}] provider-wide account hint withheld "
+                                    f"(origin={origin}) — account.json's active record does not "
+                                    "hold this key; tag this key-scoped origin explicitly in "
+                                    "Untagged Credentials instead."
+                                )
+                        if fallback_allowed:
+                            hint_account_id = provider_hint
                 if local_account_id == "default" and hint_account_id is not None:
                     local_account_id = None
                 if local_account_id is not None:
