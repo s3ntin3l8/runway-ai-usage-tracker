@@ -305,7 +305,7 @@
       "name": "OpenCode",
       "icon": "⚡",
       "session_cookie_label": "Auth Cookie (web)",
-      "session_cookie_help": "Paste the 'auth' cookie value from opencode.ai",
+      "session_cookie_help": "Paste both the 'auth' and '__Host-console_session' cookies from opencode.ai",
       "rules": [
         {
           "type": "file",

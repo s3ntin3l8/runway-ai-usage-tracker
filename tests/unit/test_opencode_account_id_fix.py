@@ -122,12 +122,25 @@ class TestBuildCardsFromGoStatus:
         assert week["pct_used"] == pytest.approx(18.36, rel=1e-2)
         assert week["currency"] == "USD"
         assert week["tier"] == "Go"
+        assert week["data_source"] == collector.DATA_SOURCE_WEB
         assert week["reset_at"].startswith("2026-09-28T")
 
         # month: used == limit → pct = 100
         month = by_window["monthly"]
         assert month["pct_used"] == pytest.approx(100.0, rel=1e-6)
         assert month["health"] == "critical"
+        assert all(card["data_source"] == collector.DATA_SOURCE_WEB for card in cards)
+
+    def test_missing_used_amount_skips_only_incomplete_meter(self):
+        body = _go_status_body()
+        del body["access"]["meters"]["week"]["usedMicroCents"]
+
+        cards = OpenCodeCollector(account_id="acc_test")._build_cards_from_go_status(
+            body, input_source="config"
+        )
+
+        assert len(cards) == 2
+        assert {card["window_type"] for card in cards} == {"session", "monthly"}
 
     def test_missing_limit_falls_back_to_default(self):
         """When limitMicroCents is absent, use the documented default."""
@@ -166,6 +179,7 @@ class TestBuildCardsFromZenUsage:
         # monthly: rate-limited even though pct == 100 → critical anyway.
         assert by_window["monthly"]["pct_used"] == 100.0
         assert by_window["monthly"]["health"] == "critical"
+        assert all(card["data_source"] == collector.DATA_SOURCE_API for card in cards)
 
 
 class TestGetOpencodeApi:
@@ -333,6 +347,40 @@ class TestGetOpencodeWeb:
     """Console-cookie 2-step handshake against mocked endpoints."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tokens",
+        [
+            {"cookie_session": "auth"},
+            {"console_session": "console"},
+        ],
+    )
+    async def test_requires_both_console_cookies(self, tokens):
+        collector = OpenCodeCollector(account_id="acc_test")
+
+        async def fake_get_with_metadata(provider, account_id=None):
+            return tokens, {"source": "sidecar"}
+
+        with (
+            patch(
+                "app.services.collectors.opencode.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.token_cache.get_with_metadata",
+                side_effect=fake_get_with_metadata,
+            ),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+            ) as request,
+        ):
+            cards = await collector._get_opencode_web(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "missing_cookies"
+        request.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_successful_handshake_returns_cards(self):
         collector = OpenCodeCollector(account_id="acc_test")
         orgs_body = [{"id": "wrk_test_workspace", "name": "Default"}]
@@ -477,7 +525,10 @@ class TestGetOpencodeWeb:
         bad_resp.text = '{"_tag":"Unauthorized"}'
 
         async def fake_get_with_metadata(provider, account_id=None):
-            return ({"cookie_session": "expired"}, {"source": "config"})
+            return (
+                {"cookie_session": "expired", "console_session": "expired-console"},
+                {"source": "config"},
+            )
 
         with (
             patch(
@@ -515,7 +566,10 @@ class TestGetOpencodeWeb:
         empty_resp.json.return_value = []
 
         async def fake_get_with_metadata(provider, account_id=None):
-            return ({"cookie_session": "valid"}, {"source": "config"})
+            return (
+                {"cookie_session": "valid", "console_session": "console"},
+                {"source": "config"},
+            )
 
         with (
             patch(

@@ -344,6 +344,10 @@ class OpenCodeCollector(BaseCollector):
             if not isinstance(meter, dict):
                 continue
             used = self._microcents_to_usd(meter.get("usedMicroCents"))
+            # A meter without usage is incomplete; do not report a fabricated
+            # zero or let one malformed meter discard the other valid meters.
+            if used is None:
+                continue
             limit = self._microcents_to_usd(meter.get("limitMicroCents"))
             if limit is None or limit <= 0:
                 limit = _DEFAULT_LIMIT_USD.get(meter_key, 0.0)
@@ -359,6 +363,7 @@ class OpenCodeCollector(BaseCollector):
                     window_type=window_type,
                     input_source=input_source,
                     now_iso=now_iso,
+                    data_source=self.DATA_SOURCE_WEB,
                 )
             )
         return cards
@@ -394,6 +399,7 @@ class OpenCodeCollector(BaseCollector):
                     input_source=input_source,
                     now_iso=now_iso,
                     status=status,
+                    data_source=self.DATA_SOURCE_API,
                 )
             )
         return cards
@@ -408,6 +414,7 @@ class OpenCodeCollector(BaseCollector):
         window_type: str,
         input_source: str,
         now_iso: str,
+        data_source: str,
         status: str | None = None,
     ) -> dict[str, Any]:
         remaining = max(0.0, limit - used)
@@ -440,7 +447,7 @@ class OpenCodeCollector(BaseCollector):
             "window_type": window_type,
             "provider_id": "opencode",
             "tier": "Go",
-            "data_source": self.DATA_SOURCE_API,
+            "data_source": data_source,
             "input_source": input_source,
             "usage_url": "https://opencode.ai/console/usage",
             "updated_at": now_iso,
@@ -466,7 +473,7 @@ class OpenCodeCollector(BaseCollector):
                     console_session = part[len("__Host-console_session=") :].strip()
                 elif part.startswith("auth="):
                     cookie_session = part[5:].strip()
-        if not cookie_session and not console_session:
+        if not cookie_session or not console_session:
             self._set_error("missing_cookies")
             return []
         headers = self._build_cookie_headers(cookie_session, console_session)
