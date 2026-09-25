@@ -73,6 +73,42 @@ function renderPreScopedWizard() {
 describe('AddProviderWizard', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('saves the selected OpenCode workspace ID', async () => {
+    const opencode: ProviderConfig = {
+      ...anthropicProvider,
+      provider_id: 'opencode',
+      name: 'OpenCode',
+      supports_api_key: true,
+    };
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      suggested_account_id: 'open@example.com',
+      suggested_label: 'open@example.com',
+      label_source: 'email',
+      already_exists: false,
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+
+    renderWithProviders(
+      <AddProviderWizard
+        preScopedProvider={opencode}
+        providers={[opencode]}
+        existingAccountIdsByProvider={new Map()}
+        onClose={() => {}}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText(/API key/i), 'oc_sk_test'); // pragma: allowlist secret
+    await waitFor(() => expect(screen.getByText(/open@example\.com/)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    await userEvent.type(screen.getByLabelText(/OpenCode workspace ID/i), ' workspace-42 ');
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'opencode',
+      'open@example.com',
+      expect.objectContaining({ opencode_workspace_id: 'workspace-42' }),
+    );
+  });
+
   it('debounces the preview call and passes the typed credential', async () => {
     vi.mocked(api.previewAccount).mockResolvedValue({
       suggested_account_id: 'bob@example.com',

@@ -58,6 +58,38 @@ function renderDialog() {
 describe('ProviderAccountDialog — form fields and save (#286)', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('loads and saves the OpenCode workspace ID', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const opencode: ProviderConfig = {
+      ...anthropic,
+      provider_id: 'opencode',
+      name: 'OpenCode',
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          opencode_workspace_id: 'workspace-old',
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog provider={opencode} accountId="alice@example.com" onClose={() => {}} />,
+    );
+    const dialog = await screen.findByRole('dialog');
+    const workspaceInput = within(dialog).getByLabelText(/OpenCode workspace ID/i);
+    expect(workspaceInput).toHaveValue('workspace-old');
+    await userEvent.clear(workspaceInput);
+    await userEvent.type(workspaceInput, 'workspace-new');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith(
+        'opencode',
+        'alice@example.com',
+        expect.objectContaining({ opencode_workspace_id: 'workspace-new' }),
+      ),
+    );
+  });
+
   it('pre-fills the form fields from the existing account', async () => {
     renderDialog();
     const dialog = await screen.findByRole('dialog');
