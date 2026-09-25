@@ -17,11 +17,28 @@ def manager():
 class TestCollectorManagerInitialization:
     def test_init_registry_count(self, manager):
         """Test that default registry contains expected providers."""
-        # 13 providers (antigravity now has a server-side API collector)
-        assert len(manager.collector_registry) == 13
+        # 14 providers, including xAI.
+        assert len(manager.collector_registry) == 14
         assert "anthropic" in manager.collector_registry
         assert "antigravity" in manager.collector_registry
+        assert "xai" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
+
+    @pytest.mark.asyncio
+    async def test_manual_xai_bearer_is_stored_only_as_access_token(self, manager):
+        row = MagicMock(
+            provider_id="xai",
+            api_key="xai-test-access",
+            session_cookie=None,
+            oai_sc_cookie=None,
+            account_id="alice@example.com",
+        )
+        with patch(
+            "app.services.collector_manager.token_cache.store", new_callable=AsyncMock
+        ) as store:
+            await manager._sync_manual_config_to_cache(row)
+
+        assert store.call_args.args[1] == {"xai_access": "xai-test-access"}
 
     @pytest.mark.asyncio
     async def test_sync_collectors_default(self, manager):

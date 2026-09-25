@@ -1639,6 +1639,14 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
                 tokens["api_key"] = row.api_key
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
+        elif row.api_key and provider_id == "xai":
+            # A dashboard paste is an access bearer, not a refresh token.
+            await token_cache.store(
+                provider_id,
+                {"xai_access": row.api_key},
+                account_id=account_id,
+                source="config",
+            )
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
     if body.clear_session_cookie is True:
         # Mirror of the clear_api_key path above — wipe both session_cookie

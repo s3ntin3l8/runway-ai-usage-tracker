@@ -25,6 +25,7 @@ from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.ollama import OllamaCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
+from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
@@ -59,6 +60,7 @@ class CollectorManager:
             "openrouter": (OpenRouterCollector, "OpenRouter", 900),
             "minimax": (MiniMaxCollector, "MiniMax", 900),
             "ollama": (OllamaCollector, "Ollama Cloud", 900),
+            "xai": (XaiCollector, "xAI (Grok)", 900),
         }
 
         # Active collectors keyed by "provider_id:account_id"
@@ -298,9 +300,14 @@ class CollectorManager:
             if token_val.lower().startswith("bearer "):
                 token_val = token_val[7:].strip()
 
-            all_tokens["oauth_token"] = token_val
-            if r.provider_id in ("opencode", "ollama"):
-                all_tokens["api_key"] = token_val
+            if r.provider_id == "xai":
+                # A manually saved xAI token is the access bearer only.
+                all_tokens["xai_access"] = token_val
+            else:
+                all_tokens["oauth_token"] = token_val
+                # These collectors read the credential from the api_key slot.
+                if r.provider_id in ("opencode", "ollama"):
+                    all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)
                 if acc_id:

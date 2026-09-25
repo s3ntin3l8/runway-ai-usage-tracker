@@ -551,6 +551,23 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
+        "xai": {
+            "name": "xAI (Grok)",
+            "icon": "\ud83e\udd16",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {
+                        "xai.access": "xai_access",
+                        "xai.refresh": "xai_refresh",
+                    },
+                }
+            ],
+        },
     }
 }
 # -------------------------

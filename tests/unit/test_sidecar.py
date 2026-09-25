@@ -101,6 +101,43 @@ class TestOpenCodeCredentialRules:
         assert cookie_slots == {"auth", "__Host-console_session"}
 
 
+class TestXaiCredentialRules:
+    def test_baked_and_canonical_registries_map_actual_auth_fields(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
+            file_rule = next(
+                rule for rule in provider["xai"]["rules"] if rule.get("type") == "file"
+            )
+            assert file_rule["mapping"] == {
+                "xai.access": "xai_access",
+                "xai.refresh": "xai_refresh",
+            }
+
+    def test_file_rule_dispatch_extracts_access_and_true_refresh_token(self, tmp_path, monkeypatch):
+        auth_path = tmp_path / "auth.json"
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "xai": {
+                        "access": "access-bearer",
+                        "refresh": "real-refresh-token",
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [auth_path])
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "xai",
+            sidecar.__REGISTRY__["providers"]["xai"],
+            account_label_hints={"xai": {f"path:{auth_path.resolve()}": "alice@example.com"}},
+        )
+
+        assert blocked == []
+        assert cards[0]["account_id"] == "alice@example.com"
+        assert cards[0]["metadata"]["xai_access"] == "access-bearer"
+        assert cards[0]["metadata"]["xai_refresh"] == "real-refresh-token"
+
+
 class TestAntigravityTokenStamp:
     """The agy token file carries no email, so the token card must be stamped with
     the resolved account identity (else the server hashes the refresh_token into a
