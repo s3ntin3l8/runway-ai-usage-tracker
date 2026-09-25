@@ -88,3 +88,44 @@ async def test_chatgpt_fallback_bootstraps_single_account(monkeypatch):
     found = await ChatGPTCollector(account_id=None)._find_cross_account_oauth_token()
     assert found is not None
     assert found[0]["oauth_token"] == "alices-token"
+
+
+async def test_same_account_cli_and_browser_credentials_coexist():
+    cache = TokenCache()
+    await cache.store("chatgpt", {"oauth_token": "cli-token"}, account_id="a@example.com")
+    await cache.store("chatgpt", {"cookie_session": "browser-cookie"}, account_id="a@example.com")
+    stored = await cache.get("chatgpt", "a@example.com")
+    assert stored == {"oauth_token": "cli-token", "cookie_session": "browser-cookie"}
+
+
+async def test_different_account_cli_and_browser_credentials_stay_scoped():
+    cache = TokenCache()
+    await cache.store("chatgpt", {"oauth_token": "cli-a"}, account_id="a@example.com")
+    await cache.store("chatgpt", {"cookie_session": "browser-b"}, account_id="b@example.com")
+    assert await cache.get("chatgpt", "a@example.com") == {"oauth_token": "cli-a"}
+    assert await cache.get("chatgpt", "b@example.com") == {"cookie_session": "browser-b"}
+
+
+async def test_same_account_stale_oauth_push_keeps_fresh_oauth_and_browser_cookie():
+    cache = TokenCache()
+    await cache.store(
+        "chatgpt",
+        {
+            "oauth_token": "fresh",
+            "expiry_date": "9999999999999",
+            "cookie_session": "fresh-cookie",
+        },
+        account_id="a@example.com",
+    )
+    await cache.store(
+        "chatgpt",
+        {
+            "oauth_token": "expired",
+            "expiry_date": "1",
+            "cookie_session": "stale-cookie",
+        },
+        account_id="a@example.com",
+    )
+    stored = await cache.get("chatgpt", "a@example.com")
+    assert stored["oauth_token"] == "fresh"
+    assert stored["cookie_session"] == "fresh-cookie"
