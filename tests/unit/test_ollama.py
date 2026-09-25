@@ -611,6 +611,49 @@ class TestOllamaApiCollector:
         assert collector._current_input_source == "server"
 
     @pytest.mark.asyncio
+    async def test_api_key_cache_uses_credential_scope_after_identity_promotion(self):
+        collector = OllamaCollector(account_id="alice@example.com", credential_account_id="default")
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"api_key": "sidecar-key"},
+                    {"source": "sidecar-host"},
+                ),  # pragma: allowlist secret
+            ) as get_cached,
+            patch("app.services.collectors.ollama.settings.OLLAMA_API_KEY", ""),
+        ):
+            assert await collector._get_api_key() == "sidecar-key"
+
+        get_cached.assert_awaited_once_with("ollama", account_id="default")
+
+    @pytest.mark.asyncio
+    async def test_cookie_cache_uses_credential_scope_after_identity_promotion(self):
+        collector = OllamaCollector(account_id="alice@example.com", credential_account_id="default")
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"cookie_session": "sidecar-cookie"}, {"source": "host"}),
+            ) as get_cached,
+            patch("app.services.collectors.ollama.settings.OLLAMA_SESSION_TOKEN", ""),
+        ):
+            assert await collector._get_cookie_header() == (
+                "session=sidecar-cookie; __Secure-session=sidecar-cookie"
+            )
+
+        get_cached.assert_awaited_once_with("ollama", account_id="default")
+
+    @pytest.mark.asyncio
     async def test_saved_api_key_precedes_sidecar_key(self):
         collector = OllamaCollector(account_id="acc_test")
         with (
@@ -756,6 +799,17 @@ class TestOllamaApiCollector:
             cards = await collector._get_ollama_api(MagicMock())
 
         assert cards == []
+        assert collector._last_error_reason == "invalid_api_key"
+        card = (await collector._error_handler())[0]
+        assert card["error_type"] == "auth_failed"
+        assert "API key was rejected" in card["detail"]
+
+    @pytest.mark.asyncio
+    async def test_api_key_error_survives_less_specific_web_auth_failure(self):
+        collector = OllamaCollector()
+        collector._set_error_reason("invalid_api_key")
+        collector._set_error_reason("not_logged_in")
+
         assert collector._last_error_reason == "invalid_api_key"
 
     @pytest.mark.asyncio

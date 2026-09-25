@@ -109,11 +109,13 @@ class OllamaCollector(BaseCollector):
 
     # Error handling
     ERROR_TYPE_MAP = {
+        "invalid_api_key": "auth_failed",  # pragma: allowlist secret
         "not_logged_in": "auth_required",
         "missing_data": "parse_error",
         "invalid_credential_type": "invalid_config",
     }
     ERROR_MESSAGES = {
+        "invalid_api_key": "Ollama API key was rejected. Check or replace the key in provider settings.",  # pragma: allowlist secret
         "not_logged_in": "Not logged in. Please log in at ollama.com",
         "missing_data": "Could not parse usage data",
         "invalid_credential_type": "API Key detected. Quota tracking requires a Session Cookie (ollama_session).",
@@ -156,14 +158,13 @@ class OllamaCollector(BaseCollector):
 
     async def is_configured(self) -> bool:
         """Ollama is configured when either an API key or a session cookie is cached."""
-        acc = self.account_id or "default"
         if credential_provider.get_provider_api_key(
             "ollama", account_id=self.credential_account_id
         ):
             return True
         if self.credential_account_id == "default" and settings.OLLAMA_API_KEY:
             return True
-        tokens = await token_cache.get("ollama", account_id=acc)
+        tokens = await token_cache.get("ollama", account_id=self.credential_account_id)
         if tokens and tokens.get("api_key"):
             return True
         return self._is_valid_credential(await self._get_cookie_header())
@@ -171,6 +172,18 @@ class OllamaCollector(BaseCollector):
     async def reset(self):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
+
+    def _set_error_reason(self, reason: str) -> None:
+        """Keep the most specific auth diagnosis across API and web fallback."""
+        priority = {
+            "unknown": 0,
+            "missing_data": 1,
+            "not_logged_in": 2,
+            "invalid_credential_type": 3,
+            "invalid_api_key": 4,
+        }
+        if priority.get(reason, 0) >= priority.get(self._last_error_reason, 0):
+            self._last_error_reason = reason
 
     def _wrap_cookie(self, token: str) -> str:
         """Turn a bare cookie value into a usable Cookie header.
@@ -189,7 +202,6 @@ class OllamaCollector(BaseCollector):
 
     async def _get_api_key(self) -> str | None:
         """Resolve config, sidecar, then server environment credentials."""
-        acc = self.account_id or "default"
         self._current_input_source = "unknown"
         key = credential_provider.get_provider_api_key(
             "ollama", account_id=self.credential_account_id
@@ -197,7 +209,9 @@ class OllamaCollector(BaseCollector):
         if key:
             self._current_input_source = "config"
             return key.strip()
-        cached = await token_cache.get_with_metadata("ollama", account_id=acc)
+        cached = await token_cache.get_with_metadata(
+            "ollama", account_id=self.credential_account_id
+        )
         if cached and cached[0].get("api_key"):
             self._current_input_source = (
                 "config" if cached[1].get("source") in ("config", "manual_config") else "sidecar"
@@ -222,7 +236,7 @@ class OllamaCollector(BaseCollector):
         # 2. Sidecar-pushed cookie via token cache (browser scraping moved to sidecar)
         # Sidecar rules store under `cookie_session`; settings UI uses `session_cookie`.
         cached = await token_cache.get_with_metadata(
-            "ollama", account_id=self.account_id or "default"
+            "ollama", account_id=self.credential_account_id
         )
         tokens = cached[0] if cached else None
         cookie = (tokens.get("session_cookie") or tokens.get("cookie_session")) if tokens else None
@@ -265,7 +279,7 @@ class OllamaCollector(BaseCollector):
             candidate = value or name
             if self.RE_API_KEY_PATTERN.match(candidate):
                 logger.debug("Ollama: API key format detected instead of session cookie")
-                self._last_error_reason = "invalid_credential_type"
+                self._set_error_reason("invalid_credential_type")
                 return False
 
         return self.RE_COOKIE_PATTERN.search(header) is not None
@@ -305,17 +319,17 @@ class OllamaCollector(BaseCollector):
             logger.warning("Ollama API fetch failed: %s", scrub_log(str(exc)))
             return []
         if resp.status_code in (401, 403):
-            self._last_error_reason = "invalid_api_key"
+            self._set_error_reason("invalid_api_key")
             return []
         if resp.status_code != 200:
             return []
         try:
             body = resp.json()
         except Exception:
-            self._last_error_reason = "missing_data"
+            self._set_error_reason("missing_data")
             return []
         if not isinstance(body, dict):
-            self._last_error_reason = "missing_data"
+            self._set_error_reason("missing_data")
             return []
         return self._build_cards_from_api_usage(body)
 
@@ -337,11 +351,10 @@ class OllamaCollector(BaseCollector):
                                                   "request_count": 1}]}},
             }
 
-        ``limits.monthly.usage`` is a numeric magnitude — the documented unit
-        is dollar-credits but Ollama doesn't expose a separate currency, so
-        we surface it as ``unit_type="token"`` (count) and let the dashboard
-        label it as ``<N> usage`` rather than fabricate a currency. Plans
-        without a monthly cap (free tier) report no ``limits.monthly``;
+        ``limits.monthly.usage`` is a fraction from 0 to 1. The API does not
+        provide a reset time, so the card reports percent used without
+        inventing reset or pace information. Plans without a monthly cap
+        (free tier) report no ``limits.monthly``;
         that case degrades gracefully into an empty card list rather than
         a parse error.
         """
@@ -349,15 +362,15 @@ class OllamaCollector(BaseCollector):
         monthly = limits.get("monthly") or {}
         usage_raw = monthly.get("usage") if isinstance(monthly, dict) else None
         if usage_raw is None:
-            self._last_error_reason = "missing_data"
+            self._set_error_reason("missing_data")
             return []
         try:
             usage = float(usage_raw)
         except (TypeError, ValueError):
-            self._last_error_reason = "missing_data"
+            self._set_error_reason("missing_data")
             return []
         if not math.isfinite(usage) or not 0 <= usage <= 1:
-            self._last_error_reason = "missing_data"
+            self._set_error_reason("missing_data")
             return []
         now = datetime.now(UTC)
         now_iso = now.isoformat()
@@ -424,7 +437,7 @@ class OllamaCollector(BaseCollector):
             if resp.status_code == 200:
                 return self._parse_html(resp.text)
             if resp.status_code in (401, 403):
-                self._last_error_reason = "not_logged_in"
+                self._set_error_reason("not_logged_in")
                 logger.debug("Ollama auth failed (401/403)")
             else:
                 logger.debug(f"Ollama fetch failed with status {resp.status_code} at {resp.url}")
@@ -443,7 +456,7 @@ class OllamaCollector(BaseCollector):
         # Check if user is logged out
         if self._looks_signed_out(html):
             logger.debug("Ollama: user is not logged in")
-            self._last_error_reason = "not_logged_in"
+            self._set_error_reason("not_logged_in")
             return []  # Empty list signals "not logged in" to error handler
 
         now = datetime.now(UTC)
@@ -451,7 +464,7 @@ class OllamaCollector(BaseCollector):
         blocks = self._get_usage_blocks(html, now)
         if not blocks:
             logger.debug("Ollama: no usage data found in response")
-            self._last_error_reason = "missing_data"
+            self._set_error_reason("missing_data")
             return []
 
         # If we get here, we have data - parse normally
@@ -483,7 +496,9 @@ class OllamaCollector(BaseCollector):
         # Identity Promotion: sync discovered email/name back to the token cache metadata
         if email and self.account_id:
             asyncio.create_task(
-                token_cache.update_account_metadata("ollama", self.account_id, name=email)
+                token_cache.update_account_metadata(
+                    "ollama", self.credential_account_id, name=email
+                )
             )
             self.account_label = email
 
