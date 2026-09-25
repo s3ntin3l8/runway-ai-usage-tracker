@@ -108,7 +108,11 @@ def _usage_row(
     input_tokens = input_full if headless_input else max(input_full - cache_read - cache_create, 0)
     output_tokens = max(output_full - reasoning, 0)
 
-    ticks = raw.get("costUsdTicks", raw.get("cost_usd_ticks"))
+    ticks = raw.get("costUsdTicks")
+    if ticks is None:
+        ticks = raw.get("cost_usd_ticks")
+    if ticks is None:
+        ticks = raw.get("total_cost_usd_ticks")
     cost_partial = raw.get("costIsPartial", raw.get("cost_is_partial", False)) is True
     cost_usd = None
     if (
@@ -120,7 +124,11 @@ def _usage_row(
         cost_usd = float(ticks) / 10_000_000_000
     # Headless projection uses a complete floating-point per-model cost.
     if cost_usd is None and not usage_incomplete and not cost_partial:
-        candidate = raw.get("costUSD", raw.get("cost_usd"))
+        candidate = raw.get("costUSD")
+        if candidate is None:
+            candidate = raw.get("cost_usd")
+        if candidate is None:
+            candidate = raw.get("total_cost_usd")
         if _nonnegative_number(candidate):
             cost_usd = float(candidate)
 
@@ -172,7 +180,9 @@ def parse_xai_events(
             cwd = unquote(encoded_cwd) if encoded_cwd else None
             path_session_id = path.parent.name
             with path.open(encoding="utf-8") as stream:
-                lines = list(stream)
+                # Tool-result updates can be very large. Only turn/model
+                # notifications need JSON decoding for usage extraction.
+                lines = [line for line in stream if '"sessionUpdate"' in line]
         except (OSError, ValueError):
             continue
 

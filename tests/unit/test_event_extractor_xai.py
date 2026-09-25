@@ -1,6 +1,7 @@
 """Tests for Grok CLI completed-turn usage extraction from updates.jsonl."""
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 from scripts.sidecar_pkg.event_extractors.xai import parse_xai_events
@@ -239,6 +240,99 @@ def test_headless_usage_keeps_uncached_input_and_cache_buckets_disjoint(tmp_path
     assert events[0].tokens_cache_create == 10
     assert events[0].tokens_output == 25
     assert events[0].tokens_reasoning == 5
+
+
+def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_path):
+    path = _write_updates(
+        tmp_path,
+        [
+            _envelope("2026-09-25T12:00:00Z", _turn("float-cost", {"costUSD": 1.25})),
+            _envelope(
+                "2026-09-25T12:00:01Z",
+                _turn("headless-ticks", {"total_cost_usd_ticks": 20_000_000_000}),
+            ),
+            _envelope(
+                "2026-09-25T12:00:02Z",
+                _turn("headless-float", {"total_cost_usd": 3.5}),
+            ),
+            _envelope(
+                "2026-09-25T12:00:03Z",
+                _turn(
+                    "incomplete-headless",
+                    {
+                        "input_tokens": 1,
+                        "total_cost_usd_ticks": 90_000_000_000,
+                        "usage_is_incomplete": True,
+                    },
+                ),
+            ),
+            _envelope(
+                "2026-09-25T12:00:04Z",
+                _turn(
+                    "partial-headless",
+                    {"input_tokens": 1, "total_cost_usd": 90.0, "cost_is_partial": True},
+                ),
+            ),
+        ],
+    )
+
+    events = parse_xai_events([path], account_id="a", since=_since(7))
+
+    assert [(event.event_id, event.cost_usd) for event in events] == [
+        ("xai|grok|session-1|float-cost|unknown", 1.25),
+        ("xai|grok|session-1|headless-ticks|unknown", 2.0),
+        ("xai|grok|session-1|headless-float|unknown", 3.5),
+        ("xai|grok|session-1|incomplete-headless|unknown", None),
+        ("xai|grok|session-1|partial-headless|unknown", None),
+    ]
+
+
+def test_legacy_direct_notification_uses_file_mtime_fallback(tmp_path):
+    fallback_ts = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
+    path = _write_updates(
+        tmp_path,
+        [
+            {
+                "sessionId": "legacy-session",
+                "update": _turn("legacy-prompt", {"inputTokens": 12}),
+            }
+        ],
+    )
+    path_timestamp = fallback_ts.timestamp()
+    os.utime(path, (path_timestamp, path_timestamp))
+
+    events = parse_xai_events([path], account_id="a", since=fallback_ts - timedelta(seconds=2))
+
+    assert len(events) == 1
+    assert events[0].event_id == "xai|grok|legacy-session|legacy-prompt|unknown"
+    assert events[0].ts == fallback_ts.isoformat()
+
+
+def test_numeric_epoch_timestamp_seconds_and_milliseconds(tmp_path):
+    base = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
+    epoch_seconds = base.timestamp()
+    timestamps = [
+        int(epoch_seconds),
+        int(epoch_seconds * 1000),
+        epoch_seconds + 0.25,
+        epoch_seconds * 1000 + 250,
+    ]
+    path = _write_updates(
+        tmp_path,
+        [
+            _envelope(timestamp, _turn(f"p{index}", {"inputTokens": 1}))
+            for index, timestamp in enumerate(timestamps)
+        ],
+    )
+
+    events = parse_xai_events([path], account_id="a", since=base - timedelta(days=1))
+
+    assert [event.ts for event in events] == [
+        base.isoformat(),
+        base.isoformat(),
+        (base + timedelta(milliseconds=250)).isoformat(),
+        (base + timedelta(milliseconds=250)).isoformat(),
+    ]
 
 
 def test_same_second_turns_survive_watermark_overlap_and_replay_with_stable_ids(tmp_path):
