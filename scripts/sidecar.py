@@ -3293,6 +3293,11 @@ class DaemonRunner:
             success = True
             events_failed = False
             result: Any = None
+            latest_successful_result: Any = None
+            requested_poll_providers: list[str] = []
+            has_poll_instruction = False
+            trigger_requested = False
+            update_requested = False
             code: int = 0
             ingest_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
             for batch_idx, event_batch in enumerate(event_batches):
@@ -3321,6 +3326,16 @@ class DaemonRunner:
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
+                latest_successful_result = result
+                if isinstance(result, dict):
+                    trigger_requested = trigger_requested or bool(result.get("trigger"))
+                    update_requested = update_requested or bool(result.get("update_now"))
+                    poll_providers = result.get("poll_providers")
+                    if poll_providers is not None:
+                        has_poll_instruction = True
+                        for provider in poll_providers:
+                            if provider not in requested_poll_providers:
+                                requested_poll_providers.append(provider)
                 if isinstance(result, dict) and result.get("events_reattributed"):
                     # A retag / hint change moved already-stored events onto
                     # the account this cycle stamped — surfaced for diagnosis.
@@ -3390,76 +3405,13 @@ class DaemonRunner:
                     self._status_reason = "success"
                 self._fire_status_change()
 
-                if isinstance(result, dict):
-                    # Store server-provided identity hints (for anonymous collectors)
-                    # Replace, don't merge: the server withdraws an identity
-                    # (e.g. a second sidecar or account appeared) by omitting
-                    # it, and a stale entry would keep stamping this host's
-                    # data with another host's account.
-                    if "identities" in result:
-                        global _ACCOUNT_IDENTITIES
-                        _ACCOUNT_IDENTITIES = dict(result.get("identities") or {})
-                        logging.debug(f"Server provided identities: {_ACCOUNT_IDENTITIES}")
-
-                    # Log reset_anchors for visibility (Phase 6)
-                    reset_anchors = result.get("reset_anchors")
-                    if reset_anchors:
-                        global _GLOBAL_RESET_ANCHORS
-                        _GLOBAL_RESET_ANCHORS.update(reset_anchors)
-                        logging.debug(f"Server reset_anchors: {reset_anchors}")
-
-                    # Update channel the dashboard wants this sidecar to track
-                    # for the (notify-only) update check.
-                    update_channel = result.get("sidecar_update_channel")
-                    if update_channel:
-                        global _UPDATE_CHANNEL
-                        if update_channel != _UPDATE_CHANNEL:
-                            logging.debug(f"Server update channel: {update_channel}")
-                        _UPDATE_CHANNEL = update_channel
-
-                    # Fleet-wide auto-update flag from the dashboard. A sidecar's
-                    # explicit local `auto_update` config still wins (see
-                    # _auto_update_enabled); this only sets the server side.
-                    global _AUTO_UPDATE_SERVER
-                    server_auto = bool(result.get("sidecar_auto_update", False))
-                    if server_auto != _AUTO_UPDATE_SERVER:
-                        logging.debug(f"Server auto-update flag: {server_auto}")
-                    _AUTO_UPDATE_SERVER = server_auto
-
-                    # One-shot admin "Update now" push: self-install immediately,
-                    # regardless of the auto-update toggle. self_update's own
-                    # frozen/Docker/single-flight guards make this safe and a
-                    # no-op where it doesn't apply.
-                    if result.get("update_now"):
-                        logging.info("Server pushed an update; installing now")
-                        try:
-                            from scripts.sidecar_pkg.self_update import self_update
-
-                            self_update(
-                                _SIDECAR_VERSION,
-                                os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL,
-                            )
-                        except Exception:
-                            logging.warning("Pushed self-update failed", exc_info=True)
-
-                    # The server is the cadence authority. Each ingest response
-                    # tells the sidecar exactly which providers to collect on
-                    # the *next* heartbeat tick:
-                    #   - trigger=true       → collect everything (refresh button)
-                    #   - poll_providers=[…] → collect just those (per-provider due)
-                    #   - poll_providers=[]  → pure heartbeat, no collection
-                    if result.get("trigger"):
-                        logging.info(
-                            "Remote trigger received — collecting everything on next heartbeat"
-                        )
-                        self._next_poll_providers = None  # None = full collection
-                        self._trigger_event.set()
-                    else:
-                        poll_providers = result.get("poll_providers")
-                        if poll_providers is not None:
-                            self._next_poll_providers = poll_providers
-                            if poll_providers:
-                                logging.info(f"Server requested targeted poll: {poll_providers}")
+                self._apply_ingest_instructions(
+                    latest_successful_result,
+                    requested_poll_providers,
+                    has_poll_instruction,
+                    trigger_requested,
+                    update_requested,
+                )
 
                 return True
 
@@ -3505,6 +3457,13 @@ class DaemonRunner:
                 # network-level failures (no connectivity, code 0)
                 self._status_reason = "error" if code > 0 else "queued"
             self._fire_status_change()
+            self._apply_ingest_instructions(
+                latest_successful_result,
+                requested_poll_providers,
+                has_poll_instruction,
+                trigger_requested,
+                update_requested,
+            )
             return False
 
         except Exception as e:
@@ -3559,6 +3518,62 @@ class DaemonRunner:
         """Invoke on_status_change callback if provided."""
         if self.on_status_change is not None:
             self.on_status_change(self.status)
+
+    def _apply_ingest_instructions(
+        self,
+        result: Any,
+        poll_providers: list[str],
+        has_poll_instruction: bool,
+        trigger_requested: bool,
+        update_requested: bool,
+    ) -> None:
+        """Apply settings from the latest successful response and merged instructions."""
+        if isinstance(result, dict):
+            # Replace identities because the server withdraws hints by omission.
+            if "identities" in result:
+                global _ACCOUNT_IDENTITIES
+                _ACCOUNT_IDENTITIES = dict(result.get("identities") or {})
+                logging.debug(f"Server provided identities: {_ACCOUNT_IDENTITIES}")
+
+            reset_anchors = result.get("reset_anchors")
+            if reset_anchors:
+                global _GLOBAL_RESET_ANCHORS
+                _GLOBAL_RESET_ANCHORS.update(reset_anchors)
+                logging.debug(f"Server reset_anchors: {reset_anchors}")
+
+            update_channel = result.get("sidecar_update_channel")
+            if update_channel:
+                global _UPDATE_CHANNEL
+                if update_channel != _UPDATE_CHANNEL:
+                    logging.debug(f"Server update channel: {update_channel}")
+                _UPDATE_CHANNEL = update_channel
+
+            global _AUTO_UPDATE_SERVER
+            server_auto = bool(result.get("sidecar_auto_update", False))
+            if server_auto != _AUTO_UPDATE_SERVER:
+                logging.debug(f"Server auto-update flag: {server_auto}")
+            _AUTO_UPDATE_SERVER = server_auto
+
+        if update_requested:
+            logging.info("Server pushed an update; installing now")
+            try:
+                from scripts.sidecar_pkg.self_update import self_update
+
+                self_update(
+                    _SIDECAR_VERSION,
+                    os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL,
+                )
+            except Exception:
+                logging.warning("Pushed self-update failed", exc_info=True)
+
+        if trigger_requested:
+            logging.info("Remote trigger received — collecting everything on next heartbeat")
+            self._next_poll_providers = None
+            self._trigger_event.set()
+        elif has_poll_instruction:
+            self._next_poll_providers = poll_providers
+            if poll_providers:
+                logging.info(f"Server requested targeted poll: {poll_providers}")
 
     def _interruptible_sleep(self, seconds: float) -> None:
         """Sleep for up to *seconds*, but wake immediately on stop or trigger."""

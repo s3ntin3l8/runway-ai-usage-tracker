@@ -578,6 +578,99 @@ class TestDaemonRunnerRunOnceSuccess:
         assert runner.last_error is None
         assert runner.last_cycle_at is not None
 
+    def test_batch_instructions_survive_later_empty_response(self, monkeypatch):
+        runner = _make_runner()
+        events = [{"ts": "2026-01-01T00:00:00Z"} for _ in range(1001)]
+        responses = [
+            (True, {"trigger": True, "poll_providers": ["anthropic"], "update_now": True}, 200),
+            (True, {}, 200),
+        ]
+        posts = MagicMock(side_effect=responses)
+        refresh = MagicMock()
+        monkeypatch.setattr(runner._trigger_event, "set", refresh)
+        with (
+            patch.object(sidecar, "run_collection", return_value=([], events, 0)),
+            patch.object(sidecar, "http_post_signed_with_retry", posts),
+            patch.object(sidecar, "queue_flush"),
+            patch("scripts.sidecar_pkg.self_update.self_update") as self_update,
+        ):
+            assert runner.run_once() is True
+
+        assert [len(call.args[1]["events"]) for call in posts.call_args_list] == [1000, 1]
+        refresh.assert_called_once()
+        self_update.assert_called_once()
+        assert runner._next_poll_providers is None
+
+    def test_batch_poll_lists_are_merged_in_first_seen_order(self):
+        runner = _make_runner()
+        events = [{"event_id": str(i)} for i in range(1001)]
+        with (
+            patch.object(sidecar, "run_collection", return_value=([], events, 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                side_effect=[
+                    (True, {"poll_providers": ["anthropic", "openai"]}, 200),
+                    (True, {"poll_providers": ["openai", "gemini"]}, 200),
+                ],
+            ),
+            patch.object(sidecar, "queue_flush"),
+        ):
+            assert runner.run_once() is True
+
+        assert runner._next_poll_providers == ["anthropic", "openai", "gemini"]
+
+    def test_successful_batch_instructions_apply_when_later_batch_fails(self):
+        runner = _make_runner()
+        events = [{"event_id": str(i)} for i in range(1001)]
+        with (
+            patch.object(sidecar, "run_collection", return_value=([], events, 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                side_effect=[
+                    (True, {"poll_providers": ["anthropic"], "trigger": True}, 200),
+                    (False, "server unavailable", 503),
+                ],
+            ),
+            patch.object(sidecar, "queue_flush"),
+            patch.object(sidecar, "queue_push"),
+            patch.object(runner._trigger_event, "set") as refresh,
+        ):
+            assert runner.run_once() is False
+
+        assert runner.status == "err"
+        assert runner.last_http_code == 503
+        assert runner.last_error == "server unavailable"
+        refresh.assert_called_once()
+        assert runner._next_poll_providers is None
+
+    def test_events_error_response_keeps_instructions_and_watermark(self, monkeypatch):
+        runner = _make_runner()
+        event = {
+            "ts": "2026-01-01T00:00:00Z",
+            "provider_id": "anthropic",
+            "account_id": "acct",
+        }
+        watermark = MagicMock()
+        monkeypatch.setattr(
+            "scripts.sidecar_pkg.event_watermark.EventWatermark",
+            lambda _path: watermark,
+        )
+        with (
+            patch.object(sidecar, "run_collection", return_value=([], [event], 0)),
+            patch.object(
+                sidecar,
+                "http_post_signed_with_retry",
+                return_value=(True, {"events_error": True, "poll_providers": ["anthropic"]}, 200),
+            ),
+            patch.object(sidecar, "queue_flush"),
+        ):
+            assert runner.run_once() is True
+
+        assert runner._next_poll_providers == ["anthropic"]
+        watermark.advance.assert_not_called()
+
     def test_run_once_empty_metrics_still_ok(self):
         """No metrics collected → still 'ok', heartbeat HTTP call made."""
         runner = _make_runner()
