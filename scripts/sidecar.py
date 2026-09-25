@@ -454,11 +454,8 @@ __REGISTRY__: dict[str, Any] = {
                     "variable": "OPENCODE_API_KEY",
                     "mapping": {"value": "api_key"},
                 },
-                # Cookie fallback for legacy / non-migrated workspaces. Both
-                # cookies are needed for the documented 2-step console handshake
-                # (`/console/api/orgs` -> workspace id -> `/console/api/go/status`
-                # with `x-org-id` header); the collector prefers the API-key
-                # path and only falls back to these when no key is configured.
+                # Legacy auth-cookie fallback used by the current OpenCode
+                # collector. Console-cookie discovery belongs with its consumer.
                 {
                     "type": "file",
                     "paths": [
@@ -477,12 +474,6 @@ __REGISTRY__: dict[str, Any] = {
                     "domains": ["opencode.ai", ".opencode.ai"],
                     "name": "auth",
                     "mapping": {"value": "cookie_session"},
-                },
-                {
-                    "type": "cookie",
-                    "domains": ["opencode.ai", ".opencode.ai"],
-                    "name": "__Host-console_session",
-                    "mapping": {"value": "console_session"},
                 },
             ],
         },

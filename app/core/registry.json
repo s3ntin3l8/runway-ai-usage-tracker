@@ -326,12 +326,6 @@
           "mapping": { "value": "cookie_session" }
         },
         {
-          "type": "cookie",
-          "domains": ["opencode.ai", ".opencode.ai"],
-          "name": "__Host-console_session",
-          "mapping": { "value": "console_session" }
-        },
-        {
           "type": "sqlite",
           "paths": [
             "~/.local/share/opencode/opencode.db",

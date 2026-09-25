@@ -862,11 +862,52 @@ class TestOllamaApiCollector:
         assert collector._last_error_reason == "missing_data"
 
     def test_build_cards_from_api_usage_missing_monthly(self):
-        """Free-tier / no-cap response — limits.monthly missing → empty
-        list with _last_error_reason='missing_data'."""
+        """Free-tier / no-cap response → empty list without a parse error."""
         collector = OllamaCollector(account_id="acc_test")
         cards = collector._build_cards_from_api_usage({"limits": {}, "activity": {}})
         assert cards == []
+        assert collector._last_error_reason == "unknown"
+
+    def test_build_cards_from_api_usage_missing_monthly_cap_is_successful(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({"limits": {"monthly": None}, "activity": {}})
+        assert cards == []
+        assert collector._last_error_reason == "unknown"
+
+    def test_build_cards_from_api_usage_monthly_object_without_usage_is_invalid(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({"limits": {"monthly": {}}, "activity": {}})
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    @pytest.mark.asyncio
+    async def test_collect_no_cap_response_returns_no_parse_error_card(self):
+        collector = OllamaCollector(account_id="acc_test")
+        no_cap_response = _make_response({"limits": {}, "activity": {}})
+        malformed_response = _make_response(
+            {"limits": {"monthly": {"usage": "not-a-number"}}, "activity": {}}
+        )
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value="test-key",
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[no_cap_response, malformed_response],
+            ),
+        ):
+            cards = await collector.collect(MagicMock())
+            assert cards == []
+            assert collector._last_error_reason == "unknown"
+
+            # A later malformed response in the same collector instance must
+            # not inherit the previous cycle's no-cap success marker.
+            cards = await collector.collect(MagicMock())
+
+        assert cards and cards[0]["remaining"] == "ERR"
         assert collector._last_error_reason == "missing_data"
 
     def test_build_cards_from_api_usage_invalid_usage(self):

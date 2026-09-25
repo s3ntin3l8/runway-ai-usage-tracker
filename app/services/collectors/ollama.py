@@ -155,6 +155,18 @@ class OllamaCollector(BaseCollector):
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
         self._last_error_reason: str = "unknown"
         self._current_input_source: str = "server"
+        self._no_monthly_cap = False
+
+    def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
+        """Treat an API-confirmed no-cap response as a successful empty result."""
+        if self._no_monthly_cap and not results:
+            return False
+        return super()._is_error_result(results)
+
+    async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Clear per-collection state before trying the configured strategies."""
+        self._no_monthly_cap = False
+        return await super().collect(client)
 
     async def is_configured(self) -> bool:
         """Ollama is configured when either an API key or a session cookie is cached."""
@@ -172,6 +184,7 @@ class OllamaCollector(BaseCollector):
     async def reset(self):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
+        self._no_monthly_cap = False
 
     def _set_error_reason(self, reason: str) -> None:
         """Keep the most specific auth diagnosis across API and web fallback."""
@@ -358,9 +371,21 @@ class OllamaCollector(BaseCollector):
         that case degrades gracefully into an empty card list rather than
         a parse error.
         """
+        self._no_monthly_cap = False
         limits = body.get("limits") or {}
-        monthly = limits.get("monthly") or {}
-        usage_raw = monthly.get("usage") if isinstance(monthly, dict) else None
+        if not isinstance(limits, dict):
+            self._set_error_reason("missing_data")
+            return []
+        # No monthly entry is a valid no-cap plan (for example, free tier).
+        # It is a successful empty result, not malformed quota data.
+        if "monthly" not in limits or limits["monthly"] is None:
+            self._no_monthly_cap = True
+            return []
+        monthly = limits["monthly"]
+        if not isinstance(monthly, dict):
+            self._set_error_reason("missing_data")
+            return []
+        usage_raw = monthly.get("usage")
         if usage_raw is None:
             self._set_error_reason("missing_data")
             return []
@@ -400,15 +425,6 @@ class OllamaCollector(BaseCollector):
             "updated_at": now_iso,
         }
         return [card]
-
-    @staticmethod
-    def _parse_iso(s: str | None):
-        if not s:
-            return None
-        try:
-            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(UTC)
-        except Exception:
-            return None
 
     async def _get_ollama_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Cookie-scrape fallback — WorkOS /settings page parse."""
