@@ -2045,3 +2045,189 @@ class _StubCache:
 
     def provider_tag_hints(self):
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Grok CLI auth identity and completed-turn history
+# ---------------------------------------------------------------------------
+
+
+def _seed_grok_auth_json(home: Path, *, block: dict | None = None) -> Path:
+    grok_home = home / ".grok"
+    grok_home.mkdir(parents=True, exist_ok=True)
+    auth_path = grok_home / "auth.json"
+    default_block = {
+        "key": "grok-bearer-jwt",
+        "refresh_token": "refresh-xyz",
+        "expires_at": 9999999999,
+        "email": "user@example.com",
+        "team_id": "team-42",
+        "user_id": "user-42",
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+    }
+    auth_path.write_text(
+        json.dumps({"https://auth.x.ai::abc123": block if block is not None else default_block})
+    )
+    return auth_path
+
+
+def test_xai_grok_auth_card_and_events_share_email_first_identity(monkeypatch, tmp_path):
+    auth_path = _seed_grok_auth_json(tmp_path)
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+    monkeypatch.delenv("GROK_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [auth_path])
+
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "xai", sidecar.__REGISTRY__["providers"]["xai"]
+    )
+
+    assert blocked == []
+    card = next(card for card in cards if card["unit"] == "oauth")
+    assert card["account_id"] == sidecar._grok_account_identity() == "user@example.com"
+    assert sidecar._LEGACY_EVENT_ACCOUNT_DISCOVERY["xai"]() == card["account_id"]
+    assert card["account_id"] != "team-42"
+    assert card["metadata"]["xai_access"] == "grok-bearer-jwt"
+    assert card["metadata"]["xai_refresh"] == "refresh-xyz"
+    assert card["account_label"] == "Ada Lovelace"
+
+
+def test_xai_grok_uses_user_id_then_operator_tag_when_email_missing(monkeypatch, tmp_path):
+    user_auth = _seed_grok_auth_json(tmp_path, block={"key": "token", "user_id": "user-42"})
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
+    monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [user_auth])
+
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "xai", sidecar.__REGISTRY__["providers"]["xai"]
+    )
+    assert blocked == []
+    assert next(card for card in cards if card["unit"] == "oauth")["account_id"] == "user-42"
+    assert sidecar._grok_account_identity() == "user-42"
+
+    untagged_auth = _seed_grok_auth_json(tmp_path, block={"key": "token", "team_id": "team-99"})
+    monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [untagged_auth])
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "xai", sidecar.__REGISTRY__["providers"]["xai"]
+    )
+    assert cards == []
+    assert blocked == [
+        {"provider_id": "xai", "credential_origin": f"path:{untagged_auth.resolve()}"}
+    ]
+
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "xai",
+        sidecar.__REGISTRY__["providers"]["xai"],
+        account_label_hints={"xai": {f"path:{untagged_auth.resolve()}": "operator-account"}},
+    )
+    assert blocked == []
+    assert (
+        next(card for card in cards if card["unit"] == "oauth")["account_id"] == "operator-account"
+    )
+    assert sidecar._grok_account_identity() is None
+
+
+def test_grok_identity_prefers_email_across_multiple_scope_entries():
+    data = {
+        "https://auth.x.ai::user-scope": {"key": "user-token", "user_id": "user-42"},
+        "https://auth.x.ai::email-scope": {"key": "email-token", "email": "ada@example.com"},
+    }
+
+    assert sidecar._grok_auth_scope_entry(data)["key"] == "email-token"
+    assert sidecar._grok_account_identity(data) == "ada@example.com"
+
+
+def test_grok_env_bearer_is_collected_through_dispatcher(monkeypatch):
+    monkeypatch.setenv("GROK_OAUTH_TOKEN", "manually-configured-bearer")
+    monkeypatch.delenv("GROK_HOME", raising=False)
+    monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [])
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "xai",
+        sidecar.__REGISTRY__["providers"]["xai"],
+        account_label_hints={"xai": {"env:GROK_OAUTH_TOKEN": "tagged-account"}},
+    )
+    assert blocked == []
+    card = next(card for card in cards if card["unit"] == "oauth")
+    assert card["metadata"]["xai_access"] == "manually-configured-bearer"
+    assert "xai_refresh" not in card["metadata"]
+    assert card["account_id"] == "tagged-account"
+
+
+def test_grok_registries_register_auth_sources_and_no_unused_oauth_parser():
+    registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+    for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
+        rules = provider["xai"]["rules"]
+        file_rule = next(rule for rule in rules if rule.get("type") == "file")
+        assert file_rule["mapping"] == {"xai.access": "xai_access", "xai.refresh": "xai_refresh"}
+        assert any(rule.get("type") == "xai_grok_cli_auth" for rule in rules)
+        env_rule = next(rule for rule in rules if rule.get("type") == "env")
+        assert env_rule["variable"] == "GROK_OAUTH_TOKEN"
+        assert env_rule["mapping"]["value"] == "xai_access"
+        assert all(rule.get("parser") != "xai_oauth" for rule in rules)
+
+
+def test_grok_updates_discovery_includes_updates_jsonl_not_signals(monkeypatch, tmp_path):
+    grok_home = tmp_path / ".grok"
+    session = grok_home / "sessions" / "%2Fhome%2Fuser%2Fproj" / "sess1"
+    session.mkdir(parents=True)
+    (session / "updates.jsonl").write_text("{}\n")
+    (session / "signals.json").write_text('{"totalTokensBeforeCompaction": 999}')
+    monkeypatch.setenv("GROK_HOME", str(grok_home))
+
+    assert sidecar._discover_grok_updates_paths() == [session / "updates.jsonl"]
+
+
+def test_grok_account_extractor_uses_xai_watermark_and_bootstrap_window(tmp_path):
+    import datetime as dt
+
+    from scripts.sidecar_pkg.event_extractors.xai import parse_xai_events
+
+    updates = tmp_path / "%2Fhome%2Fuser%2Fproj" / "sess1" / "updates.jsonl"
+    updates.parent.mkdir(parents=True)
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+    old_turn = now - dt.timedelta(days=60)
+    recent_turn = now - dt.timedelta(seconds=1)
+
+    def envelope(timestamp: dt.datetime, prompt_id: str) -> dict:
+        return {
+            "timestamp": timestamp.isoformat(),
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess1",
+                "update": {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": prompt_id,
+                    "usage": {"inputTokens": 10},
+                },
+            },
+        }
+
+    updates.write_text(
+        "\n".join(
+            json.dumps(row) for row in [envelope(old_turn, "old"), envelope(recent_turn, "recent")]
+        )
+    )
+    extractor = sidecar._make_account_extractor(parse_xai_events, lambda: [updates])
+
+    class BootstrapWatermark:
+        def last_pushed(self, provider_id, account_id):
+            assert provider_id == "xai"
+            assert account_id == "alice@example.com"
+            return
+
+    assert [
+        event.event_id for event in extractor("alice@example.com", BootstrapWatermark(), 90)
+    ] == [
+        "xai|grok|sess1|old|unknown",
+        "xai|grok|sess1|recent|unknown",
+    ]
+    assert [
+        event.event_id for event in extractor("alice@example.com", BootstrapWatermark(), 30)
+    ] == ["xai|grok|sess1|recent|unknown"]
+
+    class ReplayingWatermark:
+        def last_pushed(self, provider_id, account_id):
+            assert provider_id == "xai"
+            return recent_turn
+
+    replay = extractor("alice@example.com", ReplayingWatermark(), 0)
+    assert [event.event_id for event in replay] == ["xai|grok|sess1|recent|unknown"]

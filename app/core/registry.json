@@ -437,7 +437,7 @@
       "icon": "\ud83e\udd16",
       "description": "Monitor xAI credits and subscription tier through the CLI chat proxy.",
       "api_key_label": "xAI OAuth Access Token (api)",
-      "api_key_help": "Sidecar discovers the OAuth access and refresh tokens from ~/.local/share/opencode/auth.json. Manual: paste an xAI OAuth access bearer.",
+      "api_key_help": "Sidecar discovers OAuth access and refresh tokens from OpenCode auth.json or ~/.grok/auth.json (honors GROK_HOME). Set GROK_OAUTH_TOKEN or paste an xAI access bearer when needed.",
       "rules": [
         {
           "type": "file",
@@ -449,6 +449,15 @@
             "xai.access": "xai_access",
             "xai.refresh": "xai_refresh"
           }
+        },
+        {
+          "type": "xai_grok_cli_auth",
+          "paths": ["~/.grok/auth.json"]
+        },
+        {
+          "type": "env",
+          "variable": "GROK_OAUTH_TOKEN",
+          "mapping": { "value": "xai_access" }
         }
       ]
     }

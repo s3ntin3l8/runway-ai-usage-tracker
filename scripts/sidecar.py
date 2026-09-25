@@ -565,7 +565,13 @@ __REGISTRY__: dict[str, Any] = {
                         "xai.access": "xai_access",
                         "xai.refresh": "xai_refresh",
                     },
-                }
+                },
+                {"type": "xai_grok_cli_auth", "paths": ["~/.grok/auth.json"]},
+                {
+                    "type": "env",
+                    "variable": "GROK_OAUTH_TOKEN",
+                    "mapping": {"value": "xai_access"},
+                },
             ],
         },
     }
@@ -1956,7 +1962,7 @@ _IDENTITY_REPORT: dict[str, dict[str, str]] = {}
 # Provider IDs that have event extractors. Per-account iteration loops over
 # each of these and stamps events with the resolved ``account_id``.
 _EVENT_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "chatgpt", "gemini", "opencode", "antigravity"}
+    {"anthropic", "chatgpt", "gemini", "opencode", "antigravity", "xai"}
 )
 
 # Legacy single-account identity discovery, used when the server has no
@@ -1971,6 +1977,8 @@ _LEGACY_EVENT_ACCOUNT_DISCOVERY: dict[str, Any] = {
         lambda: globals()["_opencode_account_email"](globals()["_discover_opencode_db_path"]())
     ),
     "antigravity": lambda: globals()["_ag_account_email"]() or "default",
+    # Grok cards and usage events share email-first, user-ID-second identity.
+    "xai": lambda: globals()["_grok_account_identity"]() or "default",
 }
 
 
@@ -2009,6 +2017,7 @@ def _extract_events_for_provider(
     from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
     from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
     from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
+    from scripts.sidecar_pkg.event_extractors.xai import parse_xai_events
 
     dispatch: dict[str, Any] = {
         "anthropic": _make_account_extractor(parse_anthropic_events, _discover_anthropic_log_paths),
@@ -2016,6 +2025,8 @@ def _extract_events_for_provider(
         "gemini": _make_account_extractor(parse_gemini_events, _discover_gemini_log_paths),
         "opencode": _make_account_extractor_opencode(parse_opencode_events),
         "antigravity": _make_account_extractor_antigravity(parse_antigravity_events),
+        # Completed Grok CLI turns in updates.jsonl carry per-turn usage.
+        "xai": _make_account_extractor(parse_xai_events, _discover_grok_updates_paths),
     }
 
     extractor = dispatch.get(provider_id)
@@ -2184,6 +2195,8 @@ def __extract_provider_id(parser: Any) -> str:
         return "chatgpt"
     if "gemini" in name:
         return "gemini"
+    if "xai" in name:
+        return "xai"
     return "unknown"
 
 
@@ -2451,7 +2464,49 @@ class GenericCollector:
                 except Exception:
                     logging.debug("exec credential rule failed", exc_info=True)
 
-            # 7. Specialized: SQLite (OpenCode)
+            # 7a. Specialized: grok CLI ~/.grok/auth.json uses OIDC-scope URL keys.
+            elif rule_type == "xai_grok_cli_auth":
+                grok_home = os.environ.get("GROK_HOME") or "~/.grok"
+                candidate_paths = []
+                for p in rule.get("paths", []):
+                    candidate_paths.append(
+                        os.path.join(grok_home, "auth.json")
+                        if p == "~/.grok/auth.json" and grok_home != "~/.grok"
+                        else p
+                    )
+                for path in expand_file_rule_paths(candidate_paths):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            data = json.load(f)
+                        oidc_block = _grok_auth_scope_entry(data)
+                        if oidc_block is None:
+                            continue
+                        candidate_tokens: dict[str, Any] = {}
+                        key = oidc_block.get("key")
+                        refresh_token = oidc_block.get("refresh_token")
+                        if key:
+                            candidate_tokens["xai_access"] = key
+                        if refresh_token:
+                            candidate_tokens["xai_refresh"] = refresh_token
+                        identity = _grok_account_identity(data)
+                        if identity:
+                            candidate_tokens["account_id"] = identity
+                        first = oidc_block.get("first_name") or ""
+                        last = oidc_block.get("last_name") or ""
+                        label = f"{first} {last}".strip()
+                        if label:
+                            candidate_tokens["account_label"] = label
+                        if candidate_tokens:
+                            token_candidates.append(
+                                (candidate_tokens, f"path:{Path(path).resolve()}", "file")
+                            )
+                            logging.info(f"  [{provider_id}] grok CLI auth.json matched: {path}")
+                    except Exception as exc:
+                        logging.debug(
+                            "xai grok CLI auth.json extraction failed for %s: %s", path, exc
+                        )
+
+            # 8. Specialized: SQLite (OpenCode)
             elif rule_type == "sqlite":
                 for path_str in rule.get("paths", []):
                     path = resolve_path(path_str)
@@ -2804,6 +2859,57 @@ def _discover_opencode_db_path() -> Path | None:
         if path.exists():
             return path
     return None
+
+
+def _grok_auth_scope_entry(data: Any) -> dict[str, Any] | None:
+    """Select the Grok OAuth scope entry used by both cards and events."""
+    if not isinstance(data, dict):
+        return None
+    entries = [
+        value
+        for key, value in data.items()
+        if isinstance(key, str)
+        and (key.startswith("https://auth.x.ai::") or key == "https://accounts.x.ai/sign-in")
+        and isinstance(value, dict)
+    ]
+    usable_entries = [entry for entry in entries if entry.get("key")]
+    if usable_entries:
+        entries = usable_entries
+    # Prefer email across scopes, then user ID, so the credential card and
+    # usage events agree even if auth.json contains multiple OAuth clients.
+    return (
+        next((entry for entry in entries if entry.get("email")), None)
+        or next((entry for entry in entries if entry.get("user_id")), None)
+        or (entries[0] if entries else None)
+    )
+
+
+def _grok_account_identity(data: Any | None = None) -> str | None:
+    """Return email, then user ID, from Grok CLI's selected OAuth scope."""
+    try:
+        if data is None:
+            grok_home = os.environ.get("GROK_HOME") or "~/.grok"
+            auth_path = Path(os.path.expanduser(os.path.join(grok_home, "auth.json")))
+            if not auth_path.exists():
+                return None
+            with auth_path.open(encoding="utf-8") as f:
+                data = json.load(f)
+        entry = _grok_auth_scope_entry(data)
+        if entry is None:
+            return None
+        identity = entry.get("email") or entry.get("user_id")
+        return str(identity).strip() if identity else None
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _discover_grok_updates_paths() -> list[Path]:
+    """Return Grok CLI ``updates.jsonl`` files under the configured home."""
+    grok_home = os.environ.get("GROK_HOME") or "~/.grok"
+    sessions_dir = Path(os.path.expanduser(os.path.join(grok_home, "sessions")))
+    if not sessions_dir.is_dir():
+        return []
+    return list(sessions_dir.rglob("updates.jsonl"))
 
 
 def _post_credential_manifest(
