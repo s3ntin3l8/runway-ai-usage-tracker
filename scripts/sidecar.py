@@ -438,24 +438,6 @@ __REGISTRY__: dict[str, Any] = {
             "name": "OpenCode",
             "icon": "\u26a1",
             "rules": [
-                # Primary: CLI auto-discovery of the opencode-go API key from
-                # the local opencode CLI auth file (same shape as Claude's
-                # .credentials.json). Falls through to env / cookies below.
-                {
-                    "type": "file",
-                    "paths": [
-                        "~/.local/share/opencode/auth.json",
-                        "~/.opencode/auth.json",
-                    ],
-                    "mapping": {"opencode-go.key": "api_key"},
-                },
-                {
-                    "type": "env",
-                    "variable": "OPENCODE_API_KEY",
-                    "mapping": {"value": "api_key"},
-                },
-                # Legacy auth-cookie fallback used by the current OpenCode
-                # collector. Console-cookie discovery belongs with its consumer.
                 {
                     "type": "file",
                     "paths": [
@@ -474,6 +456,12 @@ __REGISTRY__: dict[str, Any] = {
                     "domains": ["opencode.ai", ".opencode.ai"],
                     "name": "auth",
                     "mapping": {"value": "cookie_session"},
+                },
+                {
+                    "type": "cookie",
+                    "domains": ["opencode.ai", ".opencode.ai"],
+                    "name": "__Host-console_session",
+                    "mapping": {"value": "console_session"},
                 },
             ],
         },

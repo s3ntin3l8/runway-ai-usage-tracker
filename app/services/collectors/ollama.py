@@ -163,6 +163,11 @@ class OllamaCollector(BaseCollector):
             return False
         return super()._is_error_result(results)
 
+    @property
+    def successful_empty_result(self) -> bool:
+        """The API can confirm an account has no monthly cap and no usage cards."""
+        return self._no_monthly_cap
+
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Clear per-collection state before trying the configured strategies."""
         self._no_monthly_cap = False

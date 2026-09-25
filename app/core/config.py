@@ -84,7 +84,6 @@ class Settings(BaseSettings):
     CHATGPT_OAUTH_TOKEN: str = ""
     CLAUDE_CODE_OAUTH_TOKEN: str = ""
     OLLAMA_SESSION_TOKEN: str = ""
-    OLLAMA_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_HTTP_REFERER: str = ""
     OPENROUTER_X_TITLE: str = "Runway"

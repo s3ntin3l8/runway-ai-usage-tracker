@@ -30,7 +30,7 @@ def _gemini_file_mapping(rules: list) -> dict:
 class TestOpenCodeCookieRules:
     """Console-cookie discovery ships with the collector that consumes it."""
 
-    def test_unconsumed_console_cookie_is_absent_from_both_registries(self):
+    def test_console_cookie_is_present_in_both_registries(self):
         sidecar_rules = sidecar.__REGISTRY__["providers"]["opencode"]["rules"]
         registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
         config_rules = registry["providers"]["opencode"]["rules"]
@@ -38,7 +38,7 @@ class TestOpenCodeCookieRules:
         for rules in (sidecar_rules, config_rules):
             cookie_names = {rule["name"] for rule in rules if rule.get("type") == "cookie"}
             assert "auth" in cookie_names
-            assert "__Host-console_session" not in cookie_names
+            assert "__Host-console_session" in cookie_names
 
 
 class TestGeminiCredentialMapping:

@@ -296,6 +296,16 @@ class SmartCollector:
                     self._mark_success(result, now)
                     return copy.deepcopy(result)
 
+                # Some providers can confirm that an empty result is a valid
+                # state (for example, an account with no monthly cap).
+                if (
+                    isinstance(self.collector, BaseCollector)
+                    and self.collector.successful_empty_result
+                ):
+                    self._clear_429()
+                    self._mark_success(result, now)
+                    return []
+
                 # Empty result without error
                 self._mark_failure(Exception("Empty result from collector"), now)
                 if self.last_result:

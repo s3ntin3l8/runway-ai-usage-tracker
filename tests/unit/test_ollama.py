@@ -6,6 +6,7 @@ import pytest
 
 from app.core.config import settings
 from app.services.collectors.ollama import OllamaCollector
+from app.services.smart_collector import SmartCollector
 
 
 @pytest.fixture
@@ -883,6 +884,7 @@ class TestOllamaApiCollector:
     @pytest.mark.asyncio
     async def test_collect_no_cap_response_returns_no_parse_error_card(self):
         collector = OllamaCollector(account_id="acc_test")
+        smart = SmartCollector(collector, "Ollama", ttl=0, error_retry_delay=0)
         no_cap_response = _make_response({"limits": {}, "activity": {}})
         malformed_response = _make_response(
             {"limits": {"monthly": {"usage": "not-a-number"}}, "activity": {}}
@@ -899,13 +901,15 @@ class TestOllamaApiCollector:
                 side_effect=[no_cap_response, malformed_response],
             ),
         ):
-            cards = await collector.collect(MagicMock())
+            cards = await smart.collect(MagicMock())
             assert cards == []
             assert collector._last_error_reason == "unknown"
+            assert smart.last_result == []
+            assert smart.consecutive_errors == 0
 
             # A later malformed response in the same collector instance must
             # not inherit the previous cycle's no-cap success marker.
-            cards = await collector.collect(MagicMock())
+            cards = await smart.collect(MagicMock())
 
         assert cards and cards[0]["remaining"] == "ERR"
         assert collector._last_error_reason == "missing_data"
