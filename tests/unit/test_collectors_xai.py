@@ -238,6 +238,30 @@ class TestGetXaiApi:
         assert cards[0]["usage_url"] == "https://grok.com"
 
     @pytest.mark.asyncio
+    async def test_expired_jwt_from_real_token_cache_never_makes_http_request(self):
+        from app.services.token_cache import token_cache
+
+        account_id = "xai-expiry-real-cache-test"
+        await token_cache.store(
+            "xai",
+            {"xai_access": _make_jwt(int(time.time()) - 3600)},
+            account_id=account_id,
+            source="config",
+        )
+        try:
+            collector = XaiCollector(account_id=account_id)
+            with patch(
+                "app.services.collectors.xai.http_request_with_retry", new_callable=AsyncMock
+            ) as request:
+                cards = await collector.collect(MagicMock())
+
+            assert len(cards) == 1
+            assert cards[0]["error_type"] == "auth_failed"
+            request.assert_not_awaited()
+        finally:
+            await token_cache.remove_tokens("xai", account_id, {"xai_access"})
+
+    @pytest.mark.asyncio
     async def test_settings_failure_does_not_block_quota(self):
         """Best-effort enrichment: settings 500 must not stop the quota card."""
         c = XaiCollector(account_id="acc_test")
@@ -551,6 +575,15 @@ class TestGetXaiApi:
 
 
 class TestIsConfigured:
+    @pytest.mark.asyncio
+    async def test_parse_error_uses_parse_error_card_type(self):
+        collector = XaiCollector(account_id="acc_test")
+        collector._last_error_reason = "parse_error"
+
+        cards = await collector._error_handler()
+
+        assert cards[0]["error_type"] == "parse_error"
+
     @pytest.mark.asyncio
     async def test_true_when_xai_access_present(self):
         c = XaiCollector(account_id="acc_test")

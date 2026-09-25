@@ -89,7 +89,7 @@ xAI doesn't publish a 5-hour rolling window — weekly and monthly are the only 
 | Reason | Error type | Card message |
 |---|---|---|
 | `invalid_api_key` | `auth_failed` | "xAI session expired — re-login with the Grok or OpenCode CLI" |
-| `parse_error` | `parse_error` | "xAI quota collection failed." (default message — `_error_handler` only specializes `invalid_api_key`) |
+| `parse_error` | `parse_error` | "xAI quota response could not be parsed." |
 | (timeout/network) | (silent — base collector retries) | — |
 
 ## Migration from the Stub

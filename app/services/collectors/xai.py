@@ -271,7 +271,7 @@ class XaiCollector(BaseCollector):
             return None
         if cap <= 0:
             return None  # plan has no on-demand; skip the card entirely
-        pct = min(100.0, used / cap * 100.0) if cap else 0.0
+        pct = min(100.0, used / cap * 100.0)
         limit_usd = cap / 100_000_000
         used_usd = used / 100_000_000
         return self._build_currency_card(
@@ -381,6 +381,9 @@ class XaiCollector(BaseCollector):
         if reason == "invalid_api_key":
             message = "xAI session expired — re-login with the Grok or OpenCode CLI"
             error_type = "auth_failed"
+        elif reason == "parse_error":
+            message = "xAI quota response could not be parsed."
+            error_type = "parse_error"
         else:
             message = "xAI quota collection failed."
             error_type = "unknown"
