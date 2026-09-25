@@ -130,6 +130,13 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # lands on the same grain. Forcing "default" would split enrichment from
     # the quota card because the card account is the email, not "default".
     "ollama-cloud": ("ollama", None),
+    # OpenRouter — events proxied through opencode's "openrouter" backend
+    # already land on the openrouter provider's quota card via the
+    # `api_key` extraction in sidecar.py + openrouter collector. Pass the
+    # account through (same identity-pinning reasoning as kimi/ollama
+    # above); the server's tag-hint flow carries the operator's chosen
+    # account_id back when no in-band identity is set.
+    "openrouter": ("openrouter", None),
 }
 
 

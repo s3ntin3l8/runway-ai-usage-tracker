@@ -130,6 +130,15 @@ cards rather than showing up as a separate `opencode-minimax-coding-plan` entry.
 API-key-only and has no account email) at ingest, with their logged $0 cost dropped so the
 server prices them from the table above instead.
 
+### OpenCode CLI auto-discovery
+
+If you have the opencode CLI installed and you've configured a MiniMax Coding Plan provider
+there, Runway auto-discovers the key from
+`~/.local/share/opencode/auth.json["minimax-coding-plan"].key` (or
+`~/.opencode/auth.json`) on every host that runs a sidecar. No
+`MINIMAX_API_KEY` env var or UI paste needed — the same key opencode uses for
+its own `minimax-coding-plan` backend lights up this collector's quota card.
+
 Already-ingested events under the old `opencode-minimax-coding-plan` id need a one-time
 migration, with the server **stopped** (SQLite is single-writer) and `APP_HOST=127.0.0.1`:
 

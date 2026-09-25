@@ -169,10 +169,12 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         assert by_id["msg_byok"].kind == "message"
         assert by_id["msg_byok"].tokens_input == 999
 
-        # The failed OpenRouter request moves to its sub-provider AND becomes
-        # kind="error" with usage zeroed out — it never actually happened.
+        # The failed OpenRouter request retags onto the canonical 'openrouter'
+        # provider (so its events land on the OpenRouter quota card fed by the
+        # sidecar-extracted API key) AND becomes kind="error" with usage
+        # zeroed out — it never actually happened.
         err = by_id["msg_openrouter_err"]
-        assert err.provider_id == "opencode-openrouter"
+        assert err.provider_id == "openrouter"
         assert err.kind == "error"
         assert err.stop_reason == "auth_failed"
         assert err.tokens_input == 0
@@ -183,13 +185,15 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         assert by_id["msg_free"].provider_id == "opencode-free"
 
         # Rollups rebuilt for every touched provider; the reclassified error
-        # row must NOT contribute (rollups only cover kind="message").
+        # row must NOT contribute (rollups only cover kind="message"), so the
+        # canonical openrouter provider has no rollup row here (its only
+        # retagged row is the auth_failed error event).
         rollup_providers = {
             r.provider_id for r in s.exec(select(UsagePeriodRollup)).all() if r.msgs > 0
         }
         assert "opencode-byok" in rollup_providers
         assert "opencode" in rollup_providers
-        assert "opencode-openrouter" not in rollup_providers
+        assert "openrouter" not in rollup_providers
 
 
 def test_migration_retags_minimax_coding_plan_preserves_account_id(engine):
@@ -455,12 +459,14 @@ def test_migration_survives_and_restores_a_genuine_collision(engine):
     finally:
         db_path.unlink(missing_ok=True)
 
-    # Exactly one row can win the (opencode-openrouter, default, msg_dup) slot.
+    # Exactly one row can win the (openrouter, default, msg_dup) slot —
+    # the openrouter providerID is now in the canonical map (PR with the
+    # ollama API integration), so retagged errors land there.
     assert changed == 1
 
     with Session(engine) as s:
         rows = {r.provider_id: r for r in s.exec(select(UsageEvent)).all()}
-        winner = rows["opencode-openrouter"]
+        winner = rows["openrouter"]
         assert winner.kind == "error"
         assert winner.stop_reason == "auth_failed"
         assert winner.tokens_input == 0  # zeroed — this is the corrected error row

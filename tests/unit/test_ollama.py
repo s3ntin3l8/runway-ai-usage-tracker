@@ -6,6 +6,7 @@ import pytest
 
 from app.core.config import settings
 from app.services.collectors.ollama import OllamaCollector
+from app.services.smart_collector import SmartCollector
 
 
 @pytest.fixture
@@ -398,10 +399,15 @@ async def test_get_cookie_header_sidecar_key_fallback():
         "app.services.collectors.ollama.credential_provider.get_provider_session_cookie",
         return_value=None,
     ):
-        with patch.object(settings, "OLLAMA_SESSION_TOKEN", ""):
+        with patch.object(settings, "OLLAMA_SESSION_TOKEN", "env-value"):
             with patch(
-                "app.services.collectors.ollama.token_cache.get",
-                AsyncMock(return_value={"cookie_session": "sidecar-value"}),
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                AsyncMock(
+                    return_value=(
+                        {"cookie_session": "sidecar-value"},
+                        {"source": "sidecar-host"},
+                    )
+                ),
             ):
                 header = await collector._get_cookie_header()
 
@@ -414,8 +420,13 @@ async def test_get_cookie_header_sidecar_key_fallback():
     ):
         with patch.object(settings, "OLLAMA_SESSION_TOKEN", ""):
             with patch(
-                "app.services.collectors.ollama.token_cache.get",
-                AsyncMock(return_value={"session_cookie": "ui-value", "cookie_session": "other"}),
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                AsyncMock(
+                    return_value=(
+                        {"session_cookie": "ui-value", "cookie_session": "other"},
+                        {"source": "config"},
+                    )
+                ),
             ):
                 header = await collector._get_cookie_header()
 
@@ -546,3 +557,368 @@ def test_window_type_for(label, days_out, expected):
     resets_at = now + timedelta(days=days_out) if days_out is not None else None
 
     assert collector._window_type_for(label, resets_at, now) == expected
+
+
+# ---------------------------------------------------------------------------
+# Bearer /api/usage path (primary strategy when an API key is configured).
+# Mirrors the TestOllamaApiCollector coverage that lives in test_collectors.py
+# in some branches; kept here on PR #340 so the new code path has tests on
+# its own branch (no dependency on a later merge).
+# ---------------------------------------------------------------------------
+
+
+def _usage_body(usage: float = 0.002) -> dict:
+    return {
+        "activity": {
+            "cost": "0.00000",
+            "period": {
+                "type": "last_4_weeks",
+                "starting_at": "2026-08-31T00:00:00Z",
+                "ending_at": "2026-09-24T22:29:17Z",
+            },
+            "models": [],
+        },
+        "limits": {"monthly": {"usage": usage, "models": []}},
+    }
+
+
+def _make_response(body, status=200):
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status
+    resp.json = MagicMock(return_value=body)
+    resp.text = str(body)
+    return resp
+
+
+class TestOllamaApiCollector:
+    """Bearer `GET /api/usage` path (primary when an API key is present)."""
+
+    @pytest.mark.asyncio
+    async def test_api_key_resolution_uses_server_env_for_default_account(self):
+        collector = OllamaCollector()
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("app.services.collectors.ollama.settings.OLLAMA_API_KEY", "server-key"),
+        ):
+            assert await collector._get_api_key() == "server-key"
+        assert collector._current_input_source == "server"
+
+    @pytest.mark.asyncio
+    async def test_api_key_cache_uses_credential_scope_after_identity_promotion(self):
+        collector = OllamaCollector(account_id="alice@example.com", credential_account_id="default")
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"api_key": "sidecar-key"},
+                    {"source": "sidecar-host"},
+                ),  # pragma: allowlist secret
+            ) as get_cached,
+            patch("app.services.collectors.ollama.settings.OLLAMA_API_KEY", ""),
+        ):
+            assert await collector._get_api_key() == "sidecar-key"
+
+        get_cached.assert_awaited_once_with("ollama", account_id="default")
+
+    @pytest.mark.asyncio
+    async def test_cookie_cache_uses_credential_scope_after_identity_promotion(self):
+        collector = OllamaCollector(account_id="alice@example.com", credential_account_id="default")
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"cookie_session": "sidecar-cookie"}, {"source": "host"}),
+            ) as get_cached,
+            patch("app.services.collectors.ollama.settings.OLLAMA_SESSION_TOKEN", ""),
+        ):
+            assert await collector._get_cookie_header() == (
+                "session=sidecar-cookie; __Secure-session=sidecar-cookie"
+            )
+
+        get_cached.assert_awaited_once_with("ollama", account_id="default")
+
+    @pytest.mark.asyncio
+    async def test_saved_api_key_precedes_sidecar_key(self):
+        collector = OllamaCollector(account_id="acc_test")
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value="saved-key",
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"api_key": "sidecar-key"},
+                    {"source": "sidecar-host"},
+                ),  # pragma: allowlist secret
+            ),
+        ):
+            assert await collector._get_api_key() == "saved-key"
+        assert collector._current_input_source == "config"
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_emits_monthly_card(self):
+        collector = OllamaCollector(account_id="acc_test")
+        # Stale label from a prior poll cycle must not survive when
+        # get_with_metadata returns None (PR #340 review, finding 4).
+        collector._current_input_source = "sidecar"
+
+        async def fake_get_token(*args, **kwargs):
+            return ({"api_key": "test-key"}, {"source": "sidecar-host"})  # pragma: allowlist secret
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                side_effect=fake_get_token,
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response(_usage_body(usage=0.002)),
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert len(cards) == 1
+        assert cards[0]["provider_id"] == "ollama"
+        assert cards[0]["window_type"] == "monthly"
+        assert cards[0]["unit_type"] == "percent"
+        assert cards[0]["data_source"] == OllamaCollector.DATA_SOURCE_API
+        assert cards[0]["input_source"] == "sidecar"
+        assert cards[0]["used_value"] == pytest.approx(0.2)
+        assert cards[0]["limit_value"] == 100
+        assert cards[0]["reset_at"] is None
+        assert cards[0]["reset"] == "—"
+        assert collector._current_input_source == "sidecar"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("cache_source", "expected"),
+        [
+            ("config", "config"),
+            ("manual_config", "config"),
+            ("some-hostname", "sidecar"),  # sidecar push: source = sidecar id
+            (None, "sidecar"),  # missing source → zai/minimax default
+        ],
+    )
+    async def test_api_strategy_input_source_from_cache_metadata(self, cache_source, expected):
+        """Cache metadata drives input_source with the sibling-collector
+        mapping: config only for UI-stored creds, sidecar otherwise."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"api_key": "test-key"}, {"source": cache_source}),
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response(_usage_body(usage=0.002)),
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert len(cards) == 1
+        assert cards[0]["input_source"] == expected
+        assert collector._current_input_source == expected
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_no_key_returns_empty_for_fallback(self):
+        """No API key configured → return [] so the base collector falls
+        through to the cookie-scrape fallback. The collector does not
+        emit an error card itself; that's the base collector's job."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("app.services.collectors.ollama.settings.OLLAMA_API_KEY", ""),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == []
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_401_sets_invalid_api_key(self):
+        collector = OllamaCollector(account_id="acc_test")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"api_key": "bad-key"},
+                    {"source": "sidecar"},
+                ),  # pragma: allowlist secret
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response({"error": "unauthenticated"}, status=401),
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == []
+        assert collector._last_error_reason == "invalid_api_key"
+        card = (await collector._error_handler())[0]
+        assert card["error_type"] == "auth_failed"
+        assert "API key was rejected" in card["detail"]
+
+    @pytest.mark.asyncio
+    async def test_api_key_error_survives_less_specific_web_auth_failure(self):
+        collector = OllamaCollector()
+        collector._set_error_reason("invalid_api_key")
+        collector._set_error_reason("not_logged_in")
+
+        assert collector._last_error_reason == "invalid_api_key"
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_timeout_returns_empty(self):
+        """httpx.TimeoutException → empty list, no _last_error_reason set
+        (base default treats empty as error → _error_handler runs)."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        async def fake_http(*args, **kwargs):
+            raise httpx.TimeoutException("boom")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.ollama.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"api_key": "test-key"}, {"source": "sidecar"}),
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                side_effect=fake_http,
+            ),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == []
+
+    @pytest.mark.parametrize(("usage", "expected_pct"), [(0, 0), (0.5, 50), (1, 100)])
+    def test_build_cards_from_api_usage_fraction(self, usage, expected_pct):
+        """Usage at each supported boundary is shown as a percentage."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(_usage_body(usage=usage))
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["unit_type"] == "percent"
+        assert card["pct_used"] == pytest.approx(expected_pct)
+        assert card["used_value"] == pytest.approx(expected_pct)
+        assert card["limit_value"] == 100.0
+        assert card["reset_at"] is None
+
+    @pytest.mark.parametrize("usage", [1.01, 42.5, -0.01, float("nan"), float("inf")])
+    def test_build_cards_from_api_usage_outside_fraction_falls_back(self, usage):
+        """Only a finite 0..1 fraction is supported by the API strategy."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(_usage_body(usage=usage))
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    def test_build_cards_from_api_usage_missing_monthly(self):
+        """Free-tier / no-cap response → empty list without a parse error."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({"limits": {}, "activity": {}})
+        assert cards == []
+        assert collector._last_error_reason == "unknown"
+
+    def test_build_cards_from_api_usage_missing_monthly_cap_is_successful(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({"limits": {"monthly": None}, "activity": {}})
+        assert cards == []
+        assert collector._last_error_reason == "unknown"
+
+    def test_build_cards_from_api_usage_monthly_object_without_usage_is_invalid(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({"limits": {"monthly": {}}, "activity": {}})
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    @pytest.mark.asyncio
+    async def test_collect_no_cap_response_returns_no_parse_error_card(self):
+        collector = OllamaCollector(account_id="acc_test")
+        smart = SmartCollector(collector, "Ollama", ttl=0, error_retry_delay=0)
+        no_cap_response = _make_response({"limits": {}, "activity": {}})
+        malformed_response = _make_response(
+            {"limits": {"monthly": {"usage": "not-a-number"}}, "activity": {}}
+        )
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value="test-key",
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[no_cap_response, malformed_response],
+            ),
+        ):
+            cards = await smart.collect(MagicMock())
+            assert cards == []
+            assert collector._last_error_reason == "unknown"
+            assert smart.last_result == []
+            assert smart.consecutive_errors == 0
+
+            # A later malformed response in the same collector instance must
+            # not inherit the previous cycle's no-cap success marker.
+            cards = await smart.collect(MagicMock())
+
+        assert cards and cards[0]["remaining"] == "ERR"
+        assert collector._last_error_reason == "missing_data"
+
+    def test_build_cards_from_api_usage_invalid_usage(self):
+        """Non-numeric usage value → empty list with missing_data."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(
+            {"limits": {"monthly": {"usage": "not-a-number"}}, "activity": {}}
+        )
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"

@@ -27,6 +27,20 @@ def _gemini_file_mapping(rules: list) -> dict:
     return {}
 
 
+class TestOpenCodeCookieRules:
+    """Console-cookie discovery ships with the collector that consumes it."""
+
+    def test_console_cookie_is_present_in_both_registries(self):
+        sidecar_rules = sidecar.__REGISTRY__["providers"]["opencode"]["rules"]
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        config_rules = registry["providers"]["opencode"]["rules"]
+
+        for rules in (sidecar_rules, config_rules):
+            cookie_names = {rule["name"] for rule in rules if rule.get("type") == "cookie"}
+            assert "auth" in cookie_names
+            assert "__Host-console_session" in cookie_names
+
+
 class TestGeminiCredentialMapping:
     """Regression: the Gemini account email lives inside the OAuth id_token JWT.
 
@@ -499,9 +513,9 @@ class TestKimiCliCredentialGlob:
 
     def _kimi_file_rule(self) -> dict:
         for rule in sidecar.__REGISTRY__["providers"]["kimi_coding"]["rules"]:
-            if rule.get("type") == "file":
+            if rule.get("type") == "file" and "kimi-code*" in (rule.get("paths") or [""])[0]:
                 return rule
-        raise AssertionError("kimi_coding has no file rule")
+        raise AssertionError("kimi_coding has no kimi-code glob rule")
 
     def test_registry_rule_globs_credentials_dir(self):
         rule = self._kimi_file_rule()

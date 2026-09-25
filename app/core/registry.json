@@ -304,7 +304,9 @@
     "opencode": {
       "name": "OpenCode",
       "icon": "⚡",
-      "session_cookie_label": "Auth Cookie (web)",
+      "api_key_label": "OpenCode Go API Key (api)",
+      "api_key_help": "Sidecar discovers opencode-go keys from auth.json; keys without a known account identity must be tagged in Settings.",
+      "session_cookie_label": "Session Cookies (web fallback)",
       "session_cookie_help": "Paste both the 'auth' and '__Host-console_session' cookies from opencode.ai",
       "rules": [
         {
@@ -371,10 +373,22 @@
     "ollama": {
       "name": "Ollama Cloud",
       "icon": "🦙",
-      "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (__Secure-session, or a bare value from the Cookie header) from ollama.com, not an API key.",
+      "description": "Monitor Ollama Cloud quota with an API key or session cookie.",
+      "api_key_label": "Ollama Cloud API Key (api)",
+      "api_key_help": "Used with https://ollama.com/api/usage; monthly.usage must be a fraction from 0 to 1.",
       "session_cookie_label": "Web Session (web)",
       "session_cookie_help": "Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings",
       "rules": [
+        {
+          "type": "file",
+          "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
+          "mapping": { "ollama-cloud.key": "api_key" }
+        },
+        {
+          "type": "env",
+          "variable": "OLLAMA_API_KEY",
+          "mapping": { "value": "api_key" }
+        },
         {
           "type": "env",
           "variable": "OLLAMA_SESSION_TOKEN",

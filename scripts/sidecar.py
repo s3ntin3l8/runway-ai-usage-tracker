@@ -204,6 +204,19 @@ __REGISTRY__: dict[str, Any] = {
             "rules": [
                 {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}},
                 {
+                    # The opencode CLI stores a per-provider key in its
+                    # `~/.local/share/opencode/auth.json` under the
+                    # `openrouter.key` field. Pulling from there means a
+                    # host with the opencode CLI installed lights up
+                    # automatically — no env-var setup needed.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"openrouter.key": "api_key"},
+                },
+                {
                     "type": "env",
                     "variable": "OPENROUTER_HTTP_REFERER",
                     "mapping": {"value": "http_referer"},
@@ -215,7 +228,18 @@ __REGISTRY__: dict[str, Any] = {
             "name": "MiniMax",
             "icon": "\ud83e\udd16",
             "rules": [
-                {"type": "env", "variable": "MINIMAX_API_KEY", "mapping": {"value": "api_key"}}
+                {"type": "env", "variable": "MINIMAX_API_KEY", "mapping": {"value": "api_key"}},
+                {
+                    # opencode CLI keeps its kimi-style plan keys under
+                    # provider-specific names; the opencode "coding plan"
+                    # variant is exposed as `minimax-coding-plan.key` here.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"minimax-coding-plan.key": "api_key"},
+                },
             ],
         },
         "github": {
@@ -368,6 +392,18 @@ __REGISTRY__: dict[str, Any] = {
             "rules": [
                 {"type": "env", "variable": "KIMI_CODE_API_KEY", "mapping": {"value": "api_key"}},
                 {
+                    # opencode CLI also stores a Kimi Coding API key in
+                    # auth.json under `kimi-code-plan-global.key`. Pick it
+                    # up alongside the env-var rule so hosts with the
+                    # opencode CLI don't need extra setup.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"kimi-code-plan-global.key": "api_key"},
+                },
+                {
                     "type": "env",
                     "variable": "KIMI_AUTH_TOKEN",
                     "mapping": {"value": "session_cookie"},
@@ -455,6 +491,23 @@ __REGISTRY__: dict[str, Any] = {
             "name": "Ollama Cloud",
             "icon": "\ud83e\udd99",
             "rules": [
+                # Primary: opencode CLI stores the ollama-cloud API key in
+                # `~/.local/share/opencode/auth.json["ollama-cloud"].key`.
+                # The collector uses it as `Authorization: Bearer …` against
+                # `https://ollama.com/api/usage` for monthly quota.
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"ollama-cloud.key": "api_key"},
+                },
+                {
+                    "type": "env",
+                    "variable": "OLLAMA_API_KEY",
+                    "mapping": {"value": "api_key"},
+                },
                 {
                     "type": "env",
                     "variable": "OLLAMA_SESSION_TOKEN",
@@ -1710,7 +1763,12 @@ class BrowserCookieExtractor:
                             if row:
                                 return row[0]
             except Exception:
-                logging.debug("Cookie extraction failed for browser target", exc_info=True)
+                logging.warning(
+                    "Cookie extraction failed for browser target (%s, name=%s)",
+                    target.get("browser"),
+                    name,
+                    exc_info=True,
+                )
                 continue
         return None
 

@@ -90,6 +90,11 @@ class BaseCollector(ABC):
     PROVIDER_ID: str = "unknown"
     DEFAULT_WINDOW_TYPE: str = "unknown"
 
+    @property
+    def successful_empty_result(self) -> bool:
+        """Whether the most recent empty result represents a valid no-data state."""
+        return False
+
     # Subclasses may declare their available strategies as an ordered dict:
     # { "strategy_id": ("Human-Readable Label", "_method_name") }
     # Or with options: { "strategy_id": ("Label", "_method", {"enrich": True}) }

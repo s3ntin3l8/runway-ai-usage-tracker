@@ -18,6 +18,21 @@ The OpenRouter collector uses a single API key for authentication:
     *   **Method**: Obtain your API key from the OpenRouter dashboard and set it as an environment variable or via the Runway UI settings.
     *   **Details**: Refer to the [Configuration section](#configuration) for `OPENROUTER_API_KEY` and [Troubleshooting: "Missing OPENROUTER_API_KEY" error](#missing-openrouter_api_key-error).
 
+## OpenCode CLI auto-discovery
+
+If you have the [opencode CLI](opencode.md) installed and you've configured an
+OpenRouter provider there, Runway auto-discovers the key from
+`~/.local/share/opencode/auth.json["openrouter"].key` (or
+`~/.opencode/auth.json`) on every host that runs a sidecar. No
+`OPENROUTER_API_KEY` env var needed.
+
+Token usage from opencode CLI routed through the OpenRouter backend is
+retagged from `providerID="openrouter"` to the canonical `provider_id="openrouter"`
+(see `_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py`),
+so it lands on the same `openrouter` quota card as the API-key quota. The
+server's `account_tag_hints` carries the operator-chosen `account_id` back
+when no in-band identity is present.
+
 ## Data Sources
 
 ### Tier 1: api (Credits API)
