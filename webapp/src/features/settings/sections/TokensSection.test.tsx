@@ -10,8 +10,9 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // Render in table mode (md+ breakpoint) so existing row-based assertions hold.
 // Card-layout behaviour is a separate visual concern tested at the CSS/snapshot level.
+const media = vi.hoisted(() => ({ isMd: true }));
 vi.mock('@/hooks/useMediaQuery', () => ({
-  useMediaQuery: () => true,
+  useMediaQuery: () => media.isMd,
   useIsDesktop: () => false,
 }));
 
@@ -28,7 +29,10 @@ const token = (o: Partial<TokenHealthEntry> = {}): TokenHealthEntry => ({
 });
 
 describe('TokensSection', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    media.isMd = true;
+  });
 
   it('shows skeletons while loading', () => {
     vi.mocked(api.fetchTokenHealth).mockReturnValue(new Promise(() => {}));
@@ -305,5 +309,75 @@ describe('TokensSection', () => {
     expect(screen.getByText('Default account')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /remove from cache/i })).not.toBeInTheDocument();
     expect(screen.getAllByText('managed')).toHaveLength(2);
+  });
+  describe('mobile card layout (<md)', () => {
+    beforeEach(() => {
+      media.isMd = false;
+    });
+
+    it('renders a card with status, friendly identifier and sidecar origin', async () => {
+      vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+        tokens: [
+          token({
+            account_id: 'config:default',
+            account_label: null,
+            source_name: 'laptop',
+            ttl_remaining_seconds: 600,
+          }),
+        ],
+      });
+      renderWithProviders(<TokensSection />);
+
+      expect(await screen.findByText('Default account')).toBeInTheDocument();
+      expect(screen.getByText('valid')).toBeInTheDocument();
+      expect(screen.getByText('laptop')).toBeInTheDocument();
+      expect(screen.getByText(/TTL:/)).toBeInTheDocument();
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    });
+
+    it('shows "managed" instead of the remove button for config/server credentials', async () => {
+      vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+        tokens: [
+          token({
+            provider: 'zai',
+            account_id: 'server',
+            account_label: null,
+            source_name: 'server',
+            removable: false,
+            can_refresh: false,
+          }),
+        ],
+      });
+      renderWithProviders(<TokensSection />);
+
+      expect(await screen.findByText('Server environment')).toBeInTheDocument();
+      expect(screen.getByText('managed')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /remove from cache/i })).not.toBeInTheDocument();
+    });
+
+    it('lets a sidecar credential be refreshed and removed from its card', async () => {
+      vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+        tokens: [token({ status: 'invalid', removable: true })],
+      });
+      vi.mocked(api.postTokenRefresh).mockResolvedValue(undefined as never);
+      vi.mocked(api.deleteTokenHealth).mockResolvedValue(undefined as never);
+      renderWithProviders(<TokensSection />);
+
+      expect(await screen.findByText('invalid')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /refresh token/i }));
+      expect(api.postTokenRefresh).toHaveBeenCalledWith('claude', 'acc-1');
+      await userEvent.click(screen.getByRole('button', { name: /remove from cache/i }));
+      expect(api.deleteTokenHealth).toHaveBeenCalledWith('claude', 'acc-1');
+    });
+
+    it('marks redundant credentials and prints an expiry line', async () => {
+      vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+        tokens: [token({ status: 'expired', redundant: true, can_refresh: false })],
+      });
+      renderWithProviders(<TokensSection />);
+
+      expect(await screen.findByText('redundant')).toBeInTheDocument();
+      expect(screen.getByText(/expires/i)).toBeInTheDocument();
+    });
   });
 });
