@@ -78,3 +78,74 @@ def resolve_account_id(
         ).hex()
 
     return "default"
+
+
+# Length of a credential fingerprint's hex encoding. 12 hex chars = 48 bits,
+# far more than enough to tell two credentials apart while staying short
+# enough to read in the Untagged Credentials dialog's mono origin line.
+FINGERPRINT_LEN = 12
+_FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
+
+
+def credential_fingerprint(value: str | None) -> str | None:
+    """Stable, non-reversible 12-hex fingerprint of a credential.
+
+    Used to make a ``credential_origin`` identify the *credential* rather
+    than the file or variable it was found in, so two hosts (or one host
+    after a key rotation) can never share an origin and inherit each
+    other's operator tag.
+
+    PBKDF2-HMAC-SHA256 with a fixed domain-separation salt and a single
+    iteration rather than a bare ``hashlib.sha256``: the input is a
+    password-tainted secret, and CodeQL's ``py/weak-sensitive-data-hashing``
+    rule only exempts explicit key-derivation functions (same reasoning as
+    :func:`resolve_account_id`'s ``credential_hint`` branch). One iteration
+    is enough — the output is an opaque 48-bit row key, not a password
+    hash, and the inputs are high-entropy API keys.
+
+    Blank / missing input → ``None`` (no fingerprint is derivable).
+
+    Mirrored in ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
+    """
+    s = (value or "").strip()
+    if not s:
+        return None
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        s.encode("utf-8"),
+        b"runway-credential-fp-v1",
+        1,
+    ).hex()[:FINGERPRINT_LEN]
+
+
+def keyed_credential_origin(base_origin: str, fingerprint: str) -> str:
+    """``<base_origin>#<fingerprint>`` — a key-scoped credential origin.
+
+    ``base_origin`` is the rule-derived descriptor (``path:…``,
+    ``env:…``, ``provider:<pid>``) and ``fingerprint`` comes from
+    :func:`credential_fingerprint`.
+
+    The same helper builds both halves of the pairing: the sidecar
+    reports ``path:/home/u/…/auth.json#<fp>`` as its origin, and the
+    server ships its account hint under ``provider:opencode#<fp>`` —
+    a key the server can construct on its own because it never learns
+    the sidecar's filesystem layout.
+
+    Mirrored in ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
+    """
+    return f"{base_origin}#{fingerprint}"
+
+
+def split_keyed_origin(origin: str) -> tuple[str, str | None]:
+    """Inverse of :func:`keyed_credential_origin`.
+
+    Returns ``(base_origin, fingerprint)``; an origin that carries no
+    well-formed fingerprint suffix returns ``(origin, None)`` so callers
+    can keep consulting pre-keyed-origin tags written by older sidecars.
+
+    Mirrored in ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
+    """
+    base, sep, suffix = origin.rpartition("#")
+    if sep and _FINGERPRINT_RE.match(suffix):
+        return base, suffix
+    return origin, None
