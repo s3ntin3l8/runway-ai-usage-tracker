@@ -26,6 +26,14 @@ OpenRouter provider there, Runway auto-discovers the key from
 `~/.opencode/auth.json`) on every host that runs a sidecar. No
 `OPENROUTER_API_KEY` env var needed.
 
+The discovered key's origin is key-scoped exactly like opencode's own
+(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
+[opencode.md](opencode.md)), so two hosts — or a rotated key — can never
+share one operator tag. Paste the same key into Providers → openrouter and
+the server answers `provider:openrouter#<fingerprint>` on the next sidecar
+cycle. Cookie and `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE`
+candidates are not credentials and keep their plain origins.
+
 Token usage from opencode CLI routed through the OpenRouter backend is
 retagged from `providerID="openrouter"` to the canonical `provider_id="openrouter"`
 (see `_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py`),

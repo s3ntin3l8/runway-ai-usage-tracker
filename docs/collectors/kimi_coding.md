@@ -45,6 +45,14 @@ browser cookie.
 | OpenCode CLI | auto-discovered from `~/.local/share/opencode/auth.json["kimi-code-plan-global"].key` | If you also use [opencode](opencode.md), the Kimi Coding Plan key it stores in its auth file feeds this collector automatically — no `KIMI_CODE_API_KEY` env or UI paste needed on hosts with the opencode CLI. The key is the same one opencode uses for its own `kimi-code-plan-global` backend. |
 | Cookie (legacy) | `KIMI_AUTH_TOKEN` env or browser `kimi-auth` cookie | Web JWT; expires. Only source that can see the weekly window + plan title on plans where the Code API omits them. |
 
+**Key-scoped origins (#349):** the two *key* sources — `KIMI_CODE_API_KEY`
+and the OpenCode `auth.json` entry — get key-scoped origins
+(`env:…` / `path:…#<fingerprint>`, see *Key-scoped origins* in
+[opencode.md](opencode.md)), so a rotated key never inherits a tag. The CLI
+access token and the `kimi-auth` cookie carry an identity upstream, not a
+bare key, and keep their plain origins. (The `kimi` provider is outside
+#349's scope entirely.)
+
 > **Note:** OpenCode events served by its `kimi-code-plan-global` backend are
 > retagged onto this provider (`_OC_CANONICAL_MAP` in
 > `scripts/sidecar_pkg/event_extractors/opencode.py`) with their own account

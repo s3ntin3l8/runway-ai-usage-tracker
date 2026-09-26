@@ -86,6 +86,32 @@ def resolve_account_id(
 FINGERPRINT_LEN = 12
 _FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
 
+# Providers whose credential is a bare key with no per-account identity of
+# its own (#347, #349): exactly the providers whose sidecar rules read
+# OpenCode's ``auth.json`` — one file, one key per backend, no email or
+# account id anywhere in it. ``path:/home/u/.local/share/opencode/
+# auth.json`` is the same string on every host with the same username and
+# the same string before and after a rotation, so two keys sharing that
+# origin would share one operator tag and inherit each other's account;
+# suffixing a fingerprint of the value identifies the credential instead of
+# the file it was found in.
+#
+# Everything else keeps the plain descriptor: its credential carries a real
+# identity (anthropic, chatgpt), or key-scoping was scoped out of #349
+# (``kimi``). Cookie / CLI-OAuth candidates *of* the providers listed here
+# stay plain as well — they carry no key field, so the sidecar's
+# fingerprinting finds nothing to fingerprint.
+#
+# Both halves need this set: the sidecar to suffix origins
+# (``fingerprinted_credential_origin`` in ``scripts/sidecar.py``), and the
+# server (``_fingerprinted_credential_hints`` in
+# ``app/api/endpoints/fleet.py``) to know which rows it may answer a
+# ``provider:<pid>#<fp>`` hint for. Mirrored in
+# ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
+FINGERPRINTED_ORIGIN_PROVIDERS: frozenset[str] = frozenset(
+    {"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai"}
+)
+
 
 def credential_fingerprint(value: str | None) -> str | None:
     """Stable, non-reversible 12-hex fingerprint of a credential.
