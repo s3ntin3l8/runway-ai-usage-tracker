@@ -67,6 +67,9 @@ describe('PendingUsageEventsCard', () => {
     renderWithProviders(<PendingUsageEventsCard />);
 
     expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(
+      screen.getByText(/maps future default-identity events from that provider on this machine/i),
+    ).toBeInTheDocument();
     const account = screen.getByRole('combobox', { name: /account for xai event turn-12/i });
     expect(screen.getByRole('option', { name: 'Alice' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'discovered@example.com' })).not.toBeInTheDocument();

@@ -515,7 +515,9 @@ def _deepseek_byok_message(msg_id: str) -> dict:
 def test_deepseek_byok_retagged_onto_canonical_provider():
     """providerID "deepseek" must land on provider_id "deepseek" — never on
     the derived "opencode-deepseek" ghost — with its logged cost dropped so
-    the server reprices it from the DeepSeek seed rows."""
+    the server reprices it from the DeepSeek seed rows. Without an explicit
+    DeepSeek account mapping, the event stays on the pending default account
+    instead of inheriting the unrelated OpenCode account identity."""
     db_path = _build_db([_deepseek_byok_message("msg_ds_001")])
     try:
         evts = parse_opencode_events(
@@ -523,7 +525,8 @@ def test_deepseek_byok_retagged_onto_canonical_provider():
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "deepseek"
-        assert evts[0].account_id == "user@opencode.test"
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
         assert evts[0].model_id == "deepseek-v4-flash"
         assert evts[0].cost_usd is None
         assert evts[0].tokens_input == 1200
@@ -687,7 +690,7 @@ def test_parse_opencode_events_applies_canonical_hint_after_retag():
         db_path.unlink(missing_ok=True)
 
 
-def test_parse_opencode_events_uses_one_unambiguous_credential_origin_hint():
+def test_parse_opencode_events_does_not_use_a_credential_origin_hint_without_event_identity():
     db_path = _build_db([_minimax_message("msg_minimax_fingerprint_hint")])
     try:
         evts = parse_opencode_events(
@@ -695,17 +698,16 @@ def test_parse_opencode_events_uses_one_unambiguous_credential_origin_hint():
             account_id="default",
             since=datetime(2020, 1, 1, tzinfo=UTC),
             canonical_hints={"minimax": {"provider:minimax#fingerprint-1": "alice@example.com"}},
-            canonical_accounts={"minimax": ["alice@example.com"]},
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "minimax"
-        assert evts[0].account_id == "alice@example.com"
-        assert evts[0].account_source == "tag"
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
     finally:
         db_path.unlink(missing_ok=True)
 
 
-def test_parse_opencode_events_does_not_treat_one_tag_as_all_sibling_origins():
+def test_parse_opencode_events_keeps_fingerprinted_origin_pending_without_event_identity():
     db_path = _build_db([_minimax_message("msg_minimax_untagged_sibling")])
     try:
         evts = parse_opencode_events(
@@ -713,7 +715,6 @@ def test_parse_opencode_events_does_not_treat_one_tag_as_all_sibling_origins():
             account_id="default",
             since=datetime(2020, 1, 1, tzinfo=UTC),
             canonical_hints={"minimax": {"provider:minimax#fingerprint-1": "alice@example.com"}},
-            canonical_accounts={"minimax": ["alice@example.com", "bob@example.com"]},
         )
         assert len(evts) == 1
         assert evts[0].account_id == "default"

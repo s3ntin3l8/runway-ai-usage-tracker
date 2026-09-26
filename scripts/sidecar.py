@@ -2057,16 +2057,11 @@ def _extract_events_for_provider(
     if extractor is None:
         return 0
     canonical_hints = _build_canonical_hints_for_provider(provider_id, server_account_tag_hints)
-    canonical_accounts = _build_canonical_accounts_for_provider(
-        provider_id, server_accounts_by_provider
-    )
 
     failures = 0
     for account_id in account_ids:
         try:
             extractor_options: dict[str, Any] = {"canonical_hints": canonical_hints}
-            if provider_id == "opencode":
-                extractor_options["canonical_accounts"] = canonical_accounts
             evts = extractor(account_id, watermark, bootstrap_days, **extractor_options)
         except Exception as e:
             # Keep the traceback: a bare ``str(e)`` is what hid #320's
@@ -2133,23 +2128,6 @@ def _build_canonical_hints_for_provider(
     return canonical_hints or None
 
 
-def _build_canonical_accounts_for_provider(
-    provider_id: str,
-    server_accounts_by_provider: dict[str, list[str]] | None,
-) -> dict[str, list[str]] | None:
-    """Forward configured canonical account ids for safe OpenCode tag use."""
-    if provider_id != "opencode":
-        return None
-    from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP
-
-    accounts: dict[str, list[str]] = {}
-    for canonical_provider_id, _ in _OC_CANONICAL_MAP.values():
-        configured = (server_accounts_by_provider or {}).get(canonical_provider_id, [])
-        if configured:
-            accounts[canonical_provider_id] = list(configured)
-    return accounts or None
-
-
 def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
     """Bind a parser to a path-discovery callable so we can pass ``account_id``."""
 
@@ -2159,7 +2137,6 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
-        canonical_accounts: dict[str, list[str]] | None = None,  # noqa: ARG001 — signature parity
     ) -> list:
         paths = paths_finder()
         if not paths:
@@ -2195,7 +2172,6 @@ def _make_account_extractor_opencode(parser: Any) -> Any:
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,
-        canonical_accounts: dict[str, list[str]] | None = None,
     ) -> list:
         db_path = _discover_opencode_db_path()
         if db_path is None:
@@ -2208,7 +2184,6 @@ def _make_account_extractor_opencode(parser: Any) -> Any:
             account_id=account_id,
             since=since,
             canonical_hints=canonical_hints,
-            canonical_accounts=canonical_accounts,
         )
 
     return _extract
@@ -2221,7 +2196,6 @@ def _make_account_extractor_antigravity(parser: Any) -> Any:
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
-        canonical_accounts: dict[str, list[str]] | None = None,  # noqa: ARG001 — signature parity
     ) -> list:
         db_paths = _discover_antigravity_db_paths()
         if not db_paths:
@@ -3404,6 +3378,7 @@ def run_collection(
         if "all" not in enabled_providers and provider_id not in enabled_providers:
             continue
         provider_cycle_complete = False
+        provider_manifest_complete = True
         try:
             logging.info(f"  [{provider_id}] collecting...")
             metrics, blocked = GenericCollector.collect_provider(
@@ -3601,13 +3576,20 @@ def run_collection(
                         "Credentials panel and can tag it to land events on the "
                         "labeled quota card."
                     )
+                elif untagged:
+                    # No new event is not evidence that this unresolved
+                    # origin disappeared; the watermark may simply have
+                    # no new messages. Keep the provider out of the
+                    # completed manifest so an earlier pending origin is
+                    # preserved instead of pruned.
+                    provider_manifest_complete = False
 
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")
             error_count += 1
             provider_cycle_complete = False
 
-        if provider_cycle_complete:
+        if provider_cycle_complete and provider_manifest_complete:
             completed_providers_this_cycle.append(provider_id)
 
     # Silent-listener manifest (PR #288): report every credential the

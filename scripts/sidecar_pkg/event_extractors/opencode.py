@@ -130,9 +130,9 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # models (providerID "opencode-go", modelIDs "deepseek-v4-flash" /
     # "deepseek-v4-pro") are deliberately NOT here — they stay on
     # "opencode" because the subscription, not the DeepSeek balance, pays
-    # for them. Pass the account through (kimi-style): OpenCode resolves
-    # the real account identity and the server's account_tag_hints flow
-    # retargets it onto the operator-labeled balance-card account.
+    # for them. OpenCode's account identity does not identify the BYOK
+    # DeepSeek credential, so use an explicit provider-level mapping or
+    # leave the event pending for manual assignment.
     "deepseek": ("deepseek", None),
 }
 
@@ -173,7 +173,6 @@ def parse_opencode_events(
     account_id: str,
     since: datetime,
     canonical_hints: dict[str, dict[str, str]] | None = None,
-    canonical_accounts: dict[str, list[str]] | None = None,
 ) -> list[UsageEventPush]:
     """Extract UsageEventPush records from an OpenCode SQLite database.
 
@@ -315,23 +314,10 @@ def parse_opencode_events(
             elif canonical_hints:
                 provider_hints = canonical_hints.get(canonical_provider_id, {})
                 # OpenCode only tells us which upstream provider served a
-                # message, not which credential origin it used. Match a
-                # provider-level tag directly. An origin tag can stand in
-                # for OpenCode's missing per-message credential only when it
-                # matches the sole configured account; untagged siblings are
-                # represented in canonical_accounts and keep the event pending.
+                # message, not which credential origin it used. A fingerprint
+                # or path tag describes one credential and cannot prove it
+                # handled this message; only a provider-level mapping can.
                 canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
-                if canonical_hint is None:
-                    hinted_accounts = set(provider_hints.values())
-                    configured_accounts = set(
-                        (canonical_accounts or {}).get(canonical_provider_id, [])
-                    )
-                    if (
-                        len(hinted_accounts) == 1
-                        and len(configured_accounts) == 1
-                        and hinted_accounts == configured_accounts
-                    ):
-                        canonical_hint = next(iter(hinted_accounts))
                 if canonical_hint:
                     event_account_id = canonical_hint
                     event_account_source = "tag"

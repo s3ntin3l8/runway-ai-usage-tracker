@@ -45,6 +45,9 @@ export function PendingUsageEventsCard() {
       <p className="mt-1 text-xs text-fg-muted">
         These events are stored safely and excluded from account totals until assigned.
       </p>
+      <p className="mt-1 text-xs text-fg-muted">
+        Assigning also maps future default-identity events from that provider on this machine to the selected account.
+      </p>
       <div className="mt-3 flex max-h-[32rem] flex-col gap-2 overflow-y-auto">
         {pending.data.items.map((event) => {
           const providerId = event.provider_id;

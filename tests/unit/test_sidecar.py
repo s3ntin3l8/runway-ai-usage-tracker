@@ -1696,16 +1696,6 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
     assert posted["completed_providers"] == ["chatgpt"]
 
 
-def test_build_canonical_accounts_for_opencode():
-    assert sidecar._build_canonical_accounts_for_provider(
-        "opencode",
-        {"minimax": ["alice@example.com", "bob@example.com"], "xai": ["x@example.com"]},
-    ) == {
-        "minimax": ["alice@example.com", "bob@example.com"],
-        "xai": ["x@example.com"],
-    }
-
-
 def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, tmp_path):
     """End-to-end: the manifest POST's ``resolved`` payload is merged
     into the persistent cache. The next ``run_collection`` cycle
@@ -2043,6 +2033,7 @@ def test_run_collection_events_untagged_only_when_events_extracted(
 
     def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
         posted["entries"] = entries
+        posted["completed_providers"] = kw.get("completed_providers")
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
@@ -2051,10 +2042,13 @@ def test_run_collection_events_untagged_only_when_events_extracted(
         providers=["opencode"],
     )
 
-    # PR #318 W3: when no events were extracted, the manifest entry
-    # must NOT be added — the operator has nothing to resolve because
-    # no local credential backs the origin.
+    # PR #318 W3: when no new events were extracted, do not create a new
+    # pending origin without evidence. Also withhold completion so an
+    # earlier pending origin is not removed during a quiet cycle.
     assert posted.get("entries") == []
+    # An empty event delta does not prove an earlier unresolved origin
+    # disappeared, so this provider must not be marked complete for prune.
+    assert "opencode" not in posted.get("completed_providers", [])
 
 
 def test_run_collection_events_no_untagged_when_identity_resolved(
