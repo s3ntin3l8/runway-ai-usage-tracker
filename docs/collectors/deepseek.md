@@ -24,10 +24,15 @@ event extractor, not through this collector.
 ## OpenCode CLI auto-discovery
 
 If you have the [opencode CLI](opencode.md) installed with a BYOK DeepSeek
-provider, Runway auto-discovers the key from
+provider, the sidecar reads the key from
 `~/.local/share/opencode/auth.json["deepseek"].key` (or
 `~/.opencode/auth.json`) on every host that runs a sidecar, or from the
-`DEEPSEEK_API_KEY` env var. No dashboard setup needed.
+`DEEPSEEK_API_KEY` env var. That skips pasting the key, but it does not
+attach the balance card by itself: the origin is key-scoped
+(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
+[opencode.md](opencode.md)), and the token stays blocked in **Fleet →
+Untagged Credentials** until an account hint resolves. Only then does the
+balance collector see the key.
 
 ### DeepSeek-direct vs. DeepSeek through the OpenCode Go subscription
 
@@ -113,21 +118,22 @@ detail gains `— balance unavailable for API calls`.
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Yes* | DeepSeek API key (`sk-...`) |
 
-\* Or auto-discovered from opencode's `auth.json` / a key saved in the
-Runway dashboard (Settings → Providers).
+\* Or a key saved in the Runway dashboard (Settings → Providers), or read
+from opencode's `auth.json` once an account hint resolves (Fleet →
+Untagged Credentials).
 
 ## Sidecar Support
 
-Sidecar discovers the key (env var / opencode `auth.json`) and pushes it via
-the token cache; the balance itself is fetched server-side. See
-[sidecar documentation](../sidecar.md).
+Sidecar discovers the key (env var / opencode `auth.json`) and, once an
+account hint resolves, pushes it via the token cache; the balance itself
+is fetched server-side. See [sidecar documentation](../sidecar.md).
 
 ## Troubleshooting
 
 ### "Missing DEEPSEEK_API_KEY" error
 **Fix:**
 1. Get a key from https://platform.deepseek.com (API keys)
-2. `export DEEPSEEK_API_KEY="sk-..."` — or let the sidecar pick it up from opencode's `auth.json`
+2. `export DEEPSEEK_API_KEY="sk-..."` — or let the sidecar pick it up from opencode's `auth.json`, then label the account in Fleet → Untagged Credentials so the key is shipped
 
 ### API connection failed
 **Cause:** Network error or invalid API key.
