@@ -57,11 +57,13 @@ through its own API key and through OpenCode). Those events are retagged onto
 the canonical provider_id. The map value is (canonical provider_id,
 account_id override): a concrete account_id forces every event onto that
 account (e.g. MiniMax's API-key-only collector only ever emits
-account_id="default"); None keeps the event's own account_id — what OpenCode
-already resolved (usually the user's email) — which matches the account a
-user-labeled collector card resolves to. Their logged `cost` is dropped
-(cost_usd=None) so the server prices them from provider_pricing instead of
-trusting a subscription's $0 — see cost_calculator.compute_event_cost_breakdown.
+account_id="default"); None means OpenCode does not identify which upstream
+credential handled the message. An exact provider-level mapping can assign it;
+otherwise it stays on the `default` account for manual assignment. Fingerprint
+and path hints identify one credential but cannot be joined to an OpenCode
+message. Their logged `cost` is dropped (cost_usd=None) so the server prices
+them from provider_pricing instead of trusting a subscription's $0 — see
+cost_calculator.compute_event_cost_breakdown.
 
 Messages whose `error` field is set are pushed with kind="error" (no tokens/
 cost were actually incurred) so they don't inflate usage totals on whichever
@@ -108,9 +110,10 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 
 # OpenCode providerIDs that front a provider Runway already collects directly
 # -> (canonical provider_id, explicit account override or None). With no
-# override, a canonical provider's unambiguous credential tag must identify
-# the account; OpenCode's user identity is not evidence about which upstream
-# account handled the request. Unmatched events stay pending for assignment.
+# override, only an exact provider-level mapping can identify the account.
+# Fingerprint and path tags identify a particular credential, but OpenCode
+# does not report which credential handled a message. Unmatched events stay
+# pending for assignment.
 # Keep this in sync with scripts/reclassify_opencode_providers.py.
 _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     # MiniMax coding plan exposes no provider account identity in OpenCode.
@@ -188,9 +191,10 @@ def parse_opencode_events(
         since: Only return events strictly after this timestamp.
         canonical_hints: Optional ``{canonical_provider_id: {origin:
             account_id, ...}}`` map sourced from the server's
-            ``account_tag_hints`` payload. Used to stamp events with
-            the operator's chosen account_id *after* the
-            ``_OC_CANONICAL_MAP`` retag decision is known — the events
+            ``account_tag_hints`` payload. An exact provider-level mapping
+            can assign events to an account; fingerprint and path origins
+            cannot be joined to a specific message. This lookup happens after
+            the ``_OC_CANONICAL_MAP`` retag decision is known — the events
             branch's iterating-provider hint lookup
             (``run_collection``) can't see canonical-provider hints
             because it keys on the iterating provider (e.g.

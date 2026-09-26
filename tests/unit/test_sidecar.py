@@ -1855,10 +1855,11 @@ def test_run_collection_events_use_server_hint_when_local_default(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    sidecar.run_collection(
+    _, _, error_count = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
+    assert error_count == 0
 
     # PR #318 round-2 review (W1): events branch keeps iterating under
     # "default" — the canonical-provider hint is NOT applied to the
@@ -2017,6 +2018,7 @@ def test_run_collection_events_untagged_only_when_events_extracted(
         out_events: list[dict[str, Any]],
         account_source=None,
         server_account_tag_hints=None,
+        server_accounts_by_provider=None,
     ) -> None:
         return  # emits nothing
 
@@ -2037,10 +2039,11 @@ def test_run_collection_events_untagged_only_when_events_extracted(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    sidecar.run_collection(
+    _, _, error_count = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
+    assert error_count == 0
 
     # PR #318 W3: when no new events were extracted, do not create a new
     # pending origin without evidence. Also withhold completion so an
@@ -2048,7 +2051,7 @@ def test_run_collection_events_untagged_only_when_events_extracted(
     assert posted.get("entries") == []
     # An empty event delta does not prove an earlier unresolved origin
     # disappeared, so this provider must not be marked complete for prune.
-    assert "opencode" not in posted.get("completed_providers", [])
+    assert posted.get("completed_providers") == []
 
 
 def test_run_collection_events_no_untagged_when_identity_resolved(
