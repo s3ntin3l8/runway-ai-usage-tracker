@@ -53,9 +53,9 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/system/status` | Collector cache states and error counts |
 | `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration |
 | `GET` | `/api/v1/system/audit-log` | Append-only admin-mutation trail |
-| `GET` | `/api/v1/system/token-health` | OAuth/cookie expiry status for all credentials |
+| `GET` | `/api/v1/system/token-health` | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`unknown`; `removable` is false for config/server-managed rows. Values are never returned — only types and origin |
 | `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh (admin) |
-| `DELETE` | `/api/v1/system/token-health/{provider}/{account_id}` | Evict token from cache (admin) |
+| `DELETE` | `/api/v1/system/token-health/{provider}/{account_id}` | Evict token from cache (admin); `409` for dashboard-saved / server-env credentials — change those in Settings → Providers or the environment |
 | `POST` | `/api/v1/system/force-collect` | Trigger immediate collection cycle, fan out to sidecars |
 | `POST` | `/api/v1/system/cleanup` | Prune stale records and inactive sidecars (admin) |
 | `POST` | `/api/v1/system/wake` | Reset dormancy, restore normal polling |

@@ -1,6 +1,6 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { FleetEntry, LimitCard } from '@/api/types';
+import type { FleetEntry, LimitCard, TokenHealthEntry } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { Banners } from './Banners';
 
@@ -112,5 +112,51 @@ describe('Banners collection failure', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /dismiss/i }));
     expect(screen.queryByText(/collection failing/i)).not.toBeInTheDocument();
+  });
+});
+
+const tokenEntry = (o: Partial<TokenHealthEntry> = {}): TokenHealthEntry => ({
+  provider: 'zai',
+  account_id: 'server',
+  account_label: null,
+  status: 'invalid',
+  token_types: ['api_key'],
+  ...o,
+});
+
+describe('Banners credential health', () => {
+  it('raises a critical banner for a provider-rejected (invalid) credential', () => {
+    renderWithProviders(<Banners tokens={[tokenEntry()]} anomalies={[]} />);
+    expect(
+      screen.getByText(/credential for zai \(server environment\) was rejected by the provider/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /review tokens/i })).toBeInTheDocument();
+  });
+
+  it('keeps the expired copy for a timed-out token', () => {
+    renderWithProviders(
+      <Banners
+        tokens={[tokenEntry({ status: 'expired', account_id: 'a@x.com' })]}
+        anomalies={[]}
+      />,
+    );
+    expect(screen.getByText(/credential for zai \(a@x\.com\) is expired/i)).toBeInTheDocument();
+  });
+
+  it('does not raise a banner for a redundant credential', () => {
+    renderWithProviders(
+      <Banners tokens={[tokenEntry({ status: 'expired', redundant: true })]} anomalies={[]} />,
+    );
+    expect(screen.queryByText(/credential/i)).not.toBeInTheDocument();
+  });
+
+  it('summarises several unhealthy credentials', () => {
+    renderWithProviders(
+      <Banners
+        tokens={[tokenEntry(), tokenEntry({ provider: 'openrouter', status: 'expiring' })]}
+        anomalies={[]}
+      />,
+    );
+    expect(screen.getByText(/2 credentials need attention/i)).toBeInTheDocument();
   });
 });

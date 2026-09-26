@@ -26,7 +26,7 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTokenHealth } from '@/features/home/queries';
 import { cn } from '@/lib/cn';
-import { maskAccountId } from '@/lib/accountDisplay';
+import { credentialAccountName } from '@/lib/accountDisplay';
 import { formatDuration } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 
@@ -38,16 +38,25 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   valid: 'ok',
   expiring: 'warning',
   expired: 'critical',
+  invalid: 'critical',
   unknown: 'neutral',
 };
 
 // Lower = more severe; used for ascending-severity sort.
 const STATUS_SEVERITY: Record<string, number> = {
+  invalid: 0,
   expired: 0,
   expiring: 1,
   unknown: 2,
   valid: 3,
 };
+
+// Origin bucket for a row: a sidecar's name, or `server` / `config` for
+// credentials the server itself holds (env/files vs dashboard-saved).
+function originLabel(t: TokenHealthEntry): string {
+  if (t.source_name === 'server') return 'server';
+  return t.source_name && t.source_name !== 'config' ? t.source_name : 'config';
+}
 
 // ─── Sort types ─────────────────────────────────────────────────────────────
 
@@ -126,11 +135,19 @@ function useTokenActions(token: TokenHealthEntry) {
     token.ttl_remaining_seconds && token.ttl_remaining_seconds > 0
       ? `TTL: ${formatDuration(token.ttl_remaining_seconds * 1000)}`
       : null;
-  const sourceName =
-    token.source_name && token.source_name !== 'config' ? token.source_name : null;
+  const origin = originLabel(token);
+  const sourceName = origin === 'config' || origin === 'server' ? null : origin;
+  // Config / env credentials are re-seeded every cycle; removing the cache row
+  // would not stick, so they are changed at their source instead.
+  const managedHint =
+    token.removable === false
+      ? origin === 'server'
+        ? 'Set via the server environment — change it there'
+        : 'Managed in Settings → Providers'
+      : null;
   const typesLabel = (token.token_types ?? []).join(', ') || '—';
 
-  return { refresh, remove, ttlLabel, sourceName, typesLabel };
+  return { refresh, remove, ttlLabel, sourceName, origin, managedHint, typesLabel };
 }
 
 // ─── Main section ────────────────────────────────────────────────────────────
@@ -197,9 +214,7 @@ export function TokensSection() {
   // Unique origin labels: sidecar names + 'config' bucket for server-local.
   const origins = [
     ...new Set(
-      tokens.map((t) =>
-        t.source_name && t.source_name !== 'config' ? t.source_name : 'config',
-      ),
+      tokens.map(originLabel),
     ),
   ].sort();
 
@@ -262,9 +277,7 @@ function FilteredTable({
       if (filterProvider !== ALL && t.provider !== filterProvider) return false;
       if (filterStatus !== ALL && t.status !== filterStatus) return false;
       if (filterOrigin !== ALL) {
-        const originLabel =
-          t.source_name && t.source_name !== 'config' ? t.source_name : 'config';
-        if (originLabel !== filterOrigin) return false;
+        if (originLabel(t) !== filterOrigin) return false;
       }
       return true;
     });
@@ -275,13 +288,13 @@ function FilteredTable({
         case 'provider':
           return mul * a.provider.localeCompare(b.provider);
         case 'identifier': {
-          const la = (a.account_label || a.account_id).toLowerCase();
-          const lb = (b.account_label || b.account_id).toLowerCase();
+          const la = credentialAccountName(a.account_id, a.account_label).toLowerCase();
+          const lb = credentialAccountName(b.account_id, b.account_label).toLowerCase();
           return mul * la.localeCompare(lb);
         }
         case 'origin': {
-          const oa = a.source_name && a.source_name !== 'config' ? a.source_name : '';
-          const ob = b.source_name && b.source_name !== 'config' ? b.source_name : '';
+          const oa = ['config', 'server'].includes(originLabel(a)) ? '' : originLabel(a);
+          const ob = ['config', 'server'].includes(originLabel(b)) ? '' : originLabel(b);
           return mul * oa.localeCompare(ob);
         }
         case 'validity': {
@@ -400,7 +413,8 @@ function FilteredTable({
 // ─── TokenRow ────────────────────────────────────────────────────────────────
 
 function TokenRow({ token }: { token: TokenHealthEntry }) {
-  const { refresh, remove, ttlLabel, sourceName, typesLabel } = useTokenActions(token);
+  const { refresh, remove, ttlLabel, sourceName, origin, managedHint, typesLabel } =
+    useTokenActions(token);
 
   return (
     <TR className={token.redundant ? 'opacity-60' : undefined}>
@@ -409,7 +423,7 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
 
       {/* Identifier */}
       <TD className="text-fg-subtle">
-        {token.account_label || maskAccountId(token.account_id)}
+        {credentialAccountName(token.account_id, token.account_label)}
       </TD>
 
       {/* Detail */}
@@ -426,7 +440,7 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
             {sourceName}
           </Badge>
         ) : (
-          <span className="text-xs text-fg-subtle">config</span>
+          <span className="text-xs text-fg-subtle">{origin}</span>
         )}
       </TD>
 
@@ -474,6 +488,11 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
               <RefreshCw className="size-3.5" />
             </Button>
           ) : null}
+          {managedHint ? (
+            <Tooltip content={managedHint}>
+              <span className="cursor-default px-1 text-[11px] text-fg-subtle">managed</span>
+            </Tooltip>
+          ) : (
           <Button
             size="icon-sm"
             variant="ghost"
@@ -485,6 +504,7 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
           >
             <Trash2 className="size-3.5" />
           </Button>
+          )}
         </div>
       </TD>
     </TR>
@@ -496,7 +516,8 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
 // displayed vertically for narrow screens.
 
 function TokenCard({ token }: { token: TokenHealthEntry }) {
-  const { refresh, remove, ttlLabel, sourceName, typesLabel } = useTokenActions(token);
+  const { refresh, remove, ttlLabel, sourceName, managedHint, typesLabel } =
+    useTokenActions(token);
 
   // Build a compact expiry / TTL summary line.
   const expiryLine = [
@@ -542,6 +563,11 @@ function TokenCard({ token }: { token: TokenHealthEntry }) {
               <RefreshCw className="size-3.5" />
             </Button>
           ) : null}
+          {managedHint ? (
+            <Tooltip content={managedHint}>
+              <span className="cursor-default px-1 text-[11px] text-fg-subtle">managed</span>
+            </Tooltip>
+          ) : (
           <Button
             size="icon-sm"
             variant="ghost"
@@ -553,12 +579,13 @@ function TokenCard({ token }: { token: TokenHealthEntry }) {
           >
             <Trash2 className="size-3.5" />
           </Button>
+          )}
         </div>
       </div>
 
       {/* Identifier */}
       <p className="mt-1 text-[13px] text-fg-subtle">
-        {token.account_label || maskAccountId(token.account_id)}
+        {credentialAccountName(token.account_id, token.account_label)}
       </p>
 
       {/* Credential types · origin */}

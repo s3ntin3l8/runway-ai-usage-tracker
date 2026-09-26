@@ -653,6 +653,15 @@ class BaseCollector(ABC):
             if reason is None:
                 return  # non-actionable error; don't flood the table
 
+            if reason == "auth_failed":
+                from app.services import auth_failures
+
+                auth_failures.mark(
+                    self.PROVIDER_ID,
+                    getattr(self, "credential_account_id", None)
+                    or getattr(self, "account_id", None),
+                )
+
             from sqlmodel import Session
 
             from app.core.db import engine

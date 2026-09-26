@@ -1,6 +1,6 @@
 """Token health inspection — expiry parsing, status classification."""
 
-import json
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -11,9 +11,14 @@ from sqlmodel import select as sqlselect
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.registry import registry
 from app.core.utils import IdentityExtractor, scrub_log
 from app.models.db import ProviderConfig, SidecarRegistry
-from app.services.token_cache import token_cache
+from app.services import auth_failures
+from app.services.account_identity import canonical_account_id
+from app.services.credential_provider import CredentialProvider
+from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, token_cache
+from app.services.token_refresher import _REFRESH_ENDPOINTS
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +53,153 @@ def _classify_status(
     return "valid"
 
 
+# Origins the dashboard/server manages itself. Their rows are re-seeded every
+# collection cycle, so evicting them from the cache would not stick — they are
+# changed in Settings → Providers or the server environment instead.
+_NON_REMOVABLE_SOURCES = frozenset({"config", "manual_config", "server"})
+# Credential fields that share one expiry (the OAuth token family).
+_OAUTH_FAMILY_KEYS = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
+
+
+class CredentialNotRemovableError(Exception):
+    """The credential is managed outside the cache (Settings → Providers / env)."""
+
+
+def _underlying_account(account_id: str) -> str:
+    """Map a synthetic Token Health row id back to the account it stands for."""
+    if account_id == "server":
+        return "default"
+    for prefix in ("config-cookie:", "config:"):
+        if account_id.startswith(prefix):
+            return account_id[len(prefix) :]
+    return account_id
+
+
+def _is_synthetic(account_id: str) -> bool:
+    """Rows Token Health builds itself (server env/file, dashboard config)."""
+    return account_id == "server" or account_id.startswith(("config:", "config-cookie:"))
+
+
+def _apply_invalid(rows: list[dict[str, Any]]) -> None:
+    """Flip healthy-looking rows to ``invalid`` when a collector's credential was rejected.
+
+    Matching is by *identity*, not by the borrowing rule: two different
+    opaque/fingerprint-keyed accounts of one provider must not flag each
+    other. A row matches when its canonical account id equals a flagged id. A
+    flagged ``default`` (the unscoped credential — a dashboard-pasted or env
+    key, which collectors pin via ``credential_account_id``) matches the
+    ``default``/server/config rows, and a non-default row only when that row is
+    the provider's sole account (a lone opaque key pushed without identity).
+    A ``default`` row is never matched by another identity's rejection, and a
+    hash-keyed row is never linked to a flagged email: under-flag rather than
+    show a healthy credential as rejected.
+
+    Runs after every row exists so statuses are final before redundancy is
+    computed.
+    """
+    accounts_by_provider: dict[str, set[str]] = {}
+    for r in rows:
+        accounts_by_provider.setdefault(r["provider"], set()).add(
+            canonical_account_id(_underlying_account(r["account_id"]))
+        )
+    for r in rows:
+        if r["status"] not in ("valid", "unknown"):
+            continue
+        flagged = auth_failures.flagged_accounts(r["provider"])
+        if not flagged:
+            continue
+        row_id = canonical_account_id(_underlying_account(r["account_id"]))
+        sole_account = accounts_by_provider[r["provider"]] == {row_id}
+        if row_id in flagged or ("default" in flagged and (row_id == "default" or sole_account)):
+            r["status"] = "invalid"
+
+
+def _redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
+    """True when *healthy* is a credential that could stand in for the expired *row*.
+
+    Same canonical account, or an identity-less **cache** entry standing in for an
+    identified (email) account — the borrowing direction collectors actually use.
+    Two different opaque hashes are different accounts, and server/config rows
+    never count as a sibling of another account.
+    """
+    h_id = canonical_account_id(_underlying_account(healthy["account_id"]))
+    r_id = canonical_account_id(_underlying_account(row["account_id"]))
+    if h_id == r_id:
+        return True
+    return "@" in r_id and "@" not in h_id and not _is_synthetic(healthy["account_id"])
+
+
+def _collect_server_credentials() -> dict[str, dict[str, Any]]:
+    """Seam for :func:`_scan_server_credentials` (tests isolate the host through it)."""
+    return _scan_server_credentials()
+
+
+def _scan_server_credentials() -> dict[str, dict[str, Any]]:
+    """Credentials the *server itself* discovered (env vars / local files) per provider.
+
+    Blocking (file + DB reads); call through ``asyncio.to_thread``.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    for provider_id in registry.get_all_providers():
+        try:
+            creds = CredentialProvider.get_credentials(provider_id)
+        except Exception as e:
+            logger.debug(f"Server credential scan failed for {scrub_log(provider_id)}: {e}")
+            continue
+        # "config" also covers files inside Runway's own config dir (e.g.
+        # github_oauth.json); values that are really a dashboard-saved
+        # ProviderConfig key are dropped by the caller's dedup.
+        server_tokens = {
+            k: v for k, v in creds.items() if v and creds.sources.get(k) in ("server", "config")
+        }
+        if server_tokens:
+            found[provider_id] = server_tokens
+    return found
+
+
+def _row(
+    provider: str,
+    account_id: str,
+    *,
+    label: str | None,
+    source: str | None,
+    source_name: str | None,
+    token_types: list[str],
+    exp: float | None,
+    can_refresh: bool,
+    ttl_remaining: int = 0,
+    rollable: bool = False,
+) -> dict[str, Any]:
+    """Assemble one health record (internal ``_``-prefixed keys are stripped later)."""
+    status = _classify_status(
+        exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
+    )
+    return {
+        "provider": provider,
+        "account_id": account_id,
+        "account_label": label,
+        "source": source,
+        "source_name": source_name,
+        "token_types": token_types,
+        "status": status,
+        "expires_at": (
+            datetime.fromtimestamp(exp, tz=UTC).isoformat() if exp is not None else None
+        ),
+        "ttl_remaining_seconds": ttl_remaining,
+        "can_refresh": can_refresh,
+        "removable": source not in _NON_REMOVABLE_SOURCES,
+        # Synthetic rows (config / env) with no expiry are only *assumed* valid.
+        "_assumed": source in _NON_REMOVABLE_SOURCES and exp is None,
+        "_rollable": rollable,
+    }
+
+
 class TokenHealthService:
     async def get_health(self) -> list[dict[str, Any]]:
-        """Return a health record for each cached credential."""
+        """Return a health record for each known credential."""
         stats = await token_cache.get_all_stats()
-        result = []
-        seen_token_values = set()
+        result: list[dict[str, Any]] = []
+        seen_token_values: set[str] = set()
 
         sidecar_names = {}
         try:
@@ -68,49 +214,36 @@ class TokenHealthService:
                 tokens = await token_cache.get(provider, acc_id) or {}
                 logger.debug(f"Token health check for {provider}/{acc_id}: {list(tokens.keys())}")
 
-                # Metadata lookup: Fallback to history if cache is missing account_label
-                label = info.get("account_label")
-                # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
-                # Will be replaced with LatestUsage / UsageEvent lookup in a later phase.
-
-                exp = IdentityExtractor.exp_from_tokens(tokens)
-
-                # If we have any tokens, track their hashes to deduplicate later
+                # If we have any tokens, track their values to deduplicate later
                 for val in tokens.values():
                     if val:
                         seen_token_values.add(f"{provider}:{val}")
 
-                # If no JWT expiry found, but we have ANY token, it's opaque/ready
-                is_opaque = (exp is None) and (len(tokens) > 0)
-                can_refresh = "refresh_token" in tokens
-
                 source_val = info.get("source")
-                source_name = sidecar_names.get(source_val, source_val) if source_val else None
-
+                has_refresh_token = "refresh_token" in tokens
                 result.append(
-                    {
-                        "provider": provider,
-                        "account_id": acc_id,
-                        "account_label": label,
-                        "source": source_val,
-                        "source_name": source_name,
-                        "token_types": list(tokens.keys()),
-                        "status": _classify_status(
-                            exp, is_opaque=is_opaque, can_refresh=can_refresh
+                    _row(
+                        provider,
+                        acc_id,
+                        label=info.get("account_label"),
+                        source=source_val,
+                        source_name=(
+                            sidecar_names.get(source_val, source_val) if source_val else None
                         ),
-                        "expires_at": (
-                            datetime.fromtimestamp(exp, tz=UTC).isoformat()
-                            if exp is not None
-                            else None
-                        ),
-                        "ttl_remaining_seconds": info.get("ttl_remaining", 0),
-                        "can_refresh": can_refresh,
-                    }
+                        token_types=list(tokens.keys()),
+                        exp=IdentityExtractor.exp_from_tokens(tokens),
+                        # The manual Refresh button only works where an endpoint exists;
+                        # classification still treats any refresh_token as rollable
+                        # (a local agent re-pushes e.g. antigravity's short-lived token).
+                        can_refresh=has_refresh_token and provider in _REFRESH_ENDPOINTS,
+                        ttl_remaining=info.get("ttl_remaining", 0),
+                        rollable=has_refresh_token,
+                    )
                 )
 
         # Also surface API keys / session cookies configured in Settings → Providers.
-        # These are stored encrypted in ProviderConfig but never flow through token_cache,
-        # so they would otherwise be invisible to the Token Health panel.
+        # These are stored encrypted in ProviderConfig but never flow through token_cache
+        # under their own row, so they would otherwise be invisible to the panel.
         try:
             with Session(engine) as _s:
                 configs = _s.exec(
@@ -118,148 +251,116 @@ class TokenHealthService:
                 ).all()
 
             for cfg in configs:
-                # 1. API Keys
-                if cfg.api_key:
-                    # Skip if this exact token is already in the live session cache
-                    if f"{cfg.provider_id}:{cfg.api_key}" in seen_token_values:
+                account = cfg.account_id or "default"
+                for value, prefix, token_type in (
+                    (cfg.api_key, "config", "api_key"),
+                    (cfg.session_cookie, "config-cookie", "session_cookie"),
+                ):
+                    # Skip if this exact value is already in the live session cache
+                    # (and remember it, so the server-file scan below doesn't
+                    # re-list a dashboard-saved key as a file credential).
+                    if not value:
                         continue
-
-                    # Fallback label lookup
-                    label = cfg.account_label
-                    # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
-
-                    result.append(
-                        {
-                            "provider": cfg.provider_id,
-                            "account_id": "config",
-                            "account_label": label,
-                            "source": "config",
-                            "source_name": "config",
-                            "token_types": ["api_key"],
-                            "status": "valid",  # Static keys are assumed ready
-                            "expires_at": None,
-                            "ttl_remaining_seconds": 0,
-                            "can_refresh": False,
-                        }
-                    )
-
-                # 2. Session Cookies
-                if cfg.session_cookie:
-                    # Skip if already in cache
-                    if f"{cfg.provider_id}:{cfg.session_cookie}" in seen_token_values:
+                    seen_key = f"{cfg.provider_id}:{value}"
+                    already_listed = seen_key in seen_token_values
+                    seen_token_values.add(seen_key)
+                    if already_listed:
                         continue
-
-                    label = cfg.account_label
-                    # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
-
                     result.append(
-                        {
-                            "provider": cfg.provider_id,
-                            "account_id": "config-cookie",
-                            "account_label": label,
-                            "source": "config",
-                            "source_name": "config",
-                            "token_types": ["session_cookie"],
-                            "status": "valid",
-                            "expires_at": None,
-                            "ttl_remaining_seconds": 0,
-                            "can_refresh": False,
-                        }
+                        _row(
+                            cfg.provider_id,
+                            f"{prefix}:{account}",
+                            label=cfg.account_label,
+                            source="config",
+                            source_name="config",
+                            token_types=[token_type],
+                            exp=None,
+                            can_refresh=False,
+                        )
                     )
         except Exception as e:
             logger.warning(f"Could not load ProviderConfig credentials for token health: {e}")
 
-        # 3. Local File Discovery (GitHub OAuth)
+        # Credentials the server discovered itself (env vars, local files).
+        # They never enter token_cache, so this is the only place they show up.
         try:
-            import os
-
-            from app.core.config import settings
-
-            if os.path.exists(settings.GITHUB_OAUTH_PATH):
-                # Try to find a custom label for GitHub in the DB configs first
-                label = None
-                for cfg in configs:
-                    if cfg.provider_id == "github" and cfg.account_label:
-                        label = cfg.account_label
-                        break
-
-                with open(settings.GITHUB_OAUTH_PATH) as f:
-                    data = json.load(f)
-                    token = data.get("access_token")
-
-                    if not label:
-                        user = data.get("user") or {}
-                        label = user.get("email") or user.get("login")
-
-                    # Last fallback: Phase 1 schema reset: UsageSnapshot removed; use static default.
-                    if not label:
-                        label = "GitHub"
-
-                    if token and f"github:{token}" not in seen_token_values:
-                        result.append(
-                            {
-                                "provider": "github",
-                                "account_id": "local-file",
-                                "account_label": label,
-                                "source": "config",
-                                "source_name": "config",
-                                "token_types": ["oauth_token"],
-                                "status": "valid",
-                                "expires_at": None,
-                                "ttl_remaining_seconds": 0,
-                                "can_refresh": False,
-                            }
+            server_creds = await asyncio.to_thread(_collect_server_credentials)
+            for provider, creds in server_creds.items():
+                fresh = {
+                    k: v for k, v in creds.items() if f"{provider}:{v}" not in seen_token_values
+                }
+                # One row per credential family: a dead OAuth JWT must not mark an
+                # independent API key beside it expired.
+                oauth = {k: v for k, v in fresh.items() if k in _OAUTH_FAMILY_KEYS}
+                other = {k: v for k, v in fresh.items() if k not in _OAUTH_FAMILY_KEYS}
+                for family in (oauth, other):
+                    if not family:
+                        continue
+                    result.append(
+                        _row(
+                            provider,
+                            "server",
+                            label=None,
+                            source="server",
+                            source_name="server",
+                            token_types=list(family.keys()),
+                            exp=IdentityExtractor.exp_from_tokens(family),
+                            can_refresh=False,
+                            rollable="refresh_token" in family,
                         )
+                    )
         except Exception as e:
-            logger.debug(f"GitHub file health scan failed: {e}")
+            logger.debug(f"Server credential scan for token health failed: {e}")
 
-        # Mark expired, unrefreshable entries as "redundant" when another
-        # credential for the same provider is still healthy. Such an entry can't
-        # be auto-rolled (no refresh_token) and isn't blocking collection — so
-        # the dashboard banner should not raise a hard alarm on it alone. When
-        # *every* credential for a provider is dead, none are redundant and the
-        # alarm still fires.
-        healthy_providers = {r["provider"] for r in result if r["status"] in ("valid", "expiring")}
+        _apply_invalid(result)
+
+        # Mark expired, unrefreshable entries as "redundant" when another credential
+        # for that account is still healthy. Such an entry can't be auto-rolled and
+        # isn't blocking collection — so the dashboard banner should not raise a hard
+        # alarm on it alone. See `_redundancy_sibling` for what counts as a sibling;
+        # rows that are merely assumed valid (config / env, no expiry) never do.
+        healthy = [r for r in result if r["status"] in ("valid", "expiring") and not r["_assumed"]]
         for r in result:
             r["redundant"] = (
                 r["status"] == "expired"
-                and not r["can_refresh"]
-                and r["provider"] in healthy_providers
+                and not r["_rollable"]
+                and any(
+                    h is not r and h["provider"] == r["provider"] and _redundancy_sibling(h, r)
+                    for h in healthy
+                )
             )
+        for r in result:
+            r.pop("_assumed", None)
+            r.pop("_rollable", None)
 
         return result
 
     async def delete_credential(self, provider: str, account_id: str) -> bool:
         """
-        Manually remove a credential from the in-memory cache OR database.
+        Manually remove a credential from the in-memory cache.
+
+        Credentials managed outside the cache — dashboard-saved keys/cookies and
+        server env/file discoveries — are re-seeded on the next collection, so
+        removing them here would only *look* like it worked. Those raise
+        :class:`CredentialNotRemovableError`; change them in Settings → Providers or
+        the server environment.
+
         Returns true if removed.
         """
-        # If it's a static config entry, delete it from the database
-        if account_id in ("config", "config-cookie"):
-            try:
-                with Session(engine) as session:
-                    stmt = sqlselect(ProviderConfig).where(
-                        ProviderConfig.provider_id == provider,
-                        ProviderConfig.enabled == True,  # noqa: E712
-                    )
-                    cfg = session.exec(stmt).first()
-                    if cfg:
-                        if account_id == "config":
-                            cfg.api_key_encrypted = None
-                        else:
-                            cfg.session_cookie_encrypted = None
+        if account_id == "server" or account_id.startswith(("config:", "config-cookie:")):
+            raise CredentialNotRemovableError(account_id)
 
-                        # If both are now empty, we could delete the row, but let's just clear the fields
-                        session.add(cfg)
-                        session.commit()
-                        logger.info(f"Cleared DB credential for {scrub_log(provider)}")
-                        return True
-            except Exception as e:
-                logger.error(f"Failed to delete DB credential: {e}")
-                return False
+        for entry in await token_cache.get_accounts(provider):
+            if (
+                entry["account_id"] == canonical_account_id(account_id)
+                and entry.get("source") in _NON_REMOVABLE_SOURCES
+            ):
+                raise CredentialNotRemovableError(account_id)
 
-        # Otherwise, purge from memory cache
-        return await token_cache.remove(provider, account_id)
+        removed = await token_cache.remove(provider, account_id)
+        if removed:
+            auth_failures.clear(provider, account_id)
+        return removed
 
 
 token_health_service = TokenHealthService()

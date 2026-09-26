@@ -686,3 +686,77 @@ class TestSmartCollectorIntegration:
         r5 = await smart.collect(mock_client)
         assert "Provider" in r5[0].get("service_name", "")
         assert smart.consecutive_errors == 0
+
+
+class TestSmartCollectorAuthFailureFlag:
+    """A provider rejecting the credential flags the account for Token Health."""
+
+    @pytest.mark.asyncio
+    async def test_auth_failed_card_flags_then_success_clears(self, mock_collector, mock_client):
+        from app.services import auth_failures
+
+        mock_collector.account_id = "default"
+        mock_collector.collect.side_effect = [
+            [
+                {
+                    "service_name": "Test",
+                    "data_source": "error",
+                    "remaining": "ERR",
+                    "error_type": "auth_failed",
+                    "detail": "401",
+                }
+            ],
+            [{"service_name": "Test", "remaining": "100%", "detail": "ok"}],
+        ]
+        smart = SmartCollector(mock_collector, "T", ttl=0, error_threshold=3, error_retry_delay=0)
+
+        await smart.collect(mock_client)
+        assert auth_failures.flagged_accounts("test_provider") == {"default"}
+
+        await smart.collect(mock_client)
+        assert auth_failures.flagged_accounts("test_provider") == set()
+
+    @pytest.mark.asyncio
+    async def test_http_401_exception_flags_account(self, mock_collector, mock_client):
+        from app.services import auth_failures
+
+        mock_collector.account_id = "Alice@X.com"
+        request = httpx.Request("GET", "https://example.test")
+        mock_collector.collect.side_effect = httpx.HTTPStatusError(
+            "unauthorized", request=request, response=httpx.Response(401, request=request)
+        )
+        smart = SmartCollector(mock_collector, "T", ttl=0, error_threshold=3, error_retry_delay=0)
+
+        await smart.collect(mock_client)
+
+        assert auth_failures.flagged_accounts("test_provider") == {"alice@x.com"}
+
+    @pytest.mark.asyncio
+    async def test_other_errors_do_not_flag(self, mock_collector, mock_client):
+        from app.services import auth_failures
+
+        mock_collector.account_id = "default"
+        mock_collector.collect.side_effect = Exception("boom")
+        smart = SmartCollector(mock_collector, "T", ttl=0, error_threshold=3, error_retry_delay=0)
+
+        await smart.collect(mock_client)
+
+        assert auth_failures.flagged_accounts("test_provider") == set()
+
+    @pytest.mark.asyncio
+    async def test_flag_follows_credential_account_id_over_resolved_identity(
+        self, mock_collector, mock_client
+    ):
+        from app.services import auth_failures
+
+        mock_collector.account_id = "me@x.com"  # resolved identity
+        mock_collector.credential_account_id = "default"  # the credential row it uses
+        request = httpx.Request("GET", "https://example.test")
+        mock_collector.collect.side_effect = httpx.HTTPStatusError(
+            "forbidden", request=request, response=httpx.Response(403, request=request)
+        )
+        smart = SmartCollector(mock_collector, "T", ttl=0, error_threshold=3, error_retry_delay=0)
+
+        await smart.collect(mock_client)
+
+        assert auth_failures.flagged_accounts("test_provider") == {"default"}

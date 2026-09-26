@@ -168,11 +168,14 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     collector_instance = cls(account_id=durable_aid, account_label=db_label)
-                    if isinstance(collector_instance, (OpenCodeCollector, OllamaCollector)):
-                        # The default collector can carry a durable resolved
-                        # identity for its cards while its saved credentials
-                        # remain scoped to the default ProviderConfig row.
-                        collector_instance.credential_account_id = "default"
+                    # The default collector can carry a durable (or runtime-resolved)
+                    # identity for its cards while its credentials remain scoped to
+                    # the default ProviderConfig / server row. Pin that for every
+                    # default collector — OpenCode/Ollama read it for credential
+                    # lookup; auth-failure flagging uses it for the rest so a
+                    # rejected default key is attributed to `default`, not to the
+                    # identity the collector resolved.
+                    collector_instance.credential_account_id = "default"
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)

@@ -753,7 +753,9 @@ export interface Webhook {
   last_fired_at?: string | null;
 }
 
-export type TokenHealthStatus = 'valid' | 'expiring' | 'expired' | 'unknown' | string;
+/** `invalid` = the provider rejected the credential (401/403) — opaque keys and
+ * cookies carry no expiry, so this is the only way they ever go bad. */
+export type TokenHealthStatus = 'valid' | 'expiring' | 'expired' | 'invalid' | 'unknown' | string;
 
 export interface TokenHealthEntry {
   provider: string;
@@ -767,9 +769,14 @@ export interface TokenHealthEntry {
   ttl_remaining_seconds?: number;
   can_refresh?: boolean;
   /** True when this credential is expired+unrefreshable but another healthy
-   * credential exists for the same provider — not blocking collection, should
-   * not raise a hard dashboard alert. */
+   * credential this account can fall back on exists (same account, or one that
+   * carries no identity of its own) — not blocking collection, should not raise
+   * a hard dashboard alert. */
   redundant?: boolean;
+  /** False for credentials managed outside the cache (dashboard-saved keys,
+   * server env/file discoveries): they are re-seeded every cycle, so they are
+   * changed in Settings → Providers / the environment, not removed here. */
+  removable?: boolean;
 }
 
 export interface AuditEntry {

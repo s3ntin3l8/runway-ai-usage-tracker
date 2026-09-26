@@ -50,3 +50,17 @@ export function accountSubtitle(account: AccountLike): string | null {
   }
   return maskAccountId(account.account_id);
 }
+
+/**
+ * Display name for a Token Health row. Synthetic ids (`server`,
+ * `config:<account>`, `config-cookie:<account>`) map back to the account they
+ * stand for; opaque hashes are masked like everywhere else.
+ */
+export function credentialAccountName(accountId: string, label?: string | null): string {
+  const trimmed = (label ?? '').trim();
+  if (trimmed !== '') return trimmed;
+  if (accountId === 'server') return 'Server environment';
+  const m = /^config(?:-cookie)?:(.+)$/.exec(accountId);
+  if (m) return m[1] === 'default' ? 'Default account' : maskAccountId(m[1]);
+  return maskAccountId(accountId);
+}

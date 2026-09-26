@@ -9,7 +9,7 @@ import type { AnomalyEntry, FleetEntry, TokenHealthEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
 import { cardStale } from '@/lib/quota';
 import { cn } from '@/lib/cn';
-import { maskAccountId } from '@/lib/accountDisplay';
+import { credentialAccountName } from '@/lib/accountDisplay';
 
 interface BannersProps {
   tokens: TokenHealthEntry[] | undefined;
@@ -19,7 +19,9 @@ interface BannersProps {
 
 export function Banners({ tokens, anomalies, fleet }: BannersProps) {
   const unhealthy = (tokens ?? []).filter(
-    (t) => (t.status === 'expired' || t.status === 'expiring') && !t.redundant,
+    (t) =>
+      (t.status === 'expired' || t.status === 'expiring' || t.status === 'invalid') &&
+      !t.redundant,
   );
   const spikes = anomalies ?? [];
   const failing = (fleet ?? []).filter((e) => {
@@ -55,8 +57,12 @@ export function Banners({ tokens, anomalies, fleet }: BannersProps) {
         <Banner tone="critical" icon={<KeyRound className="size-4 shrink-0" aria-hidden />}>
           <span>
             {unhealthy.length === 1
-              ? `Credential for ${unhealthy[0].provider} (${unhealthy[0].account_label || maskAccountId(unhealthy[0].account_id)}) is ${unhealthy[0].status}.`
-              : `${unhealthy.length} credentials are expiring or expired.`}{' '}
+              ? `Credential for ${unhealthy[0].provider} (${credentialAccountName(unhealthy[0].account_id, unhealthy[0].account_label)}) ${
+                  unhealthy[0].status === 'invalid'
+                    ? 'was rejected by the provider'
+                    : `is ${unhealthy[0].status}`
+                }.`
+              : `${unhealthy.length} credentials need attention (expiring, expired or rejected).`}{' '}
             <Link to="/settings/tokens" className="font-medium underline underline-offset-2">
               Review tokens
             </Link>

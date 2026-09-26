@@ -370,33 +370,53 @@ class TokenCache:
                 self._token_timestamps.pop(provider, None)
 
     async def purge_expired_unrefreshable(self) -> int:
-        """Evict entries already past their JWT `exp` that carry no refresh_token.
+        """Strip the dead OAuth family from entries past their JWT `exp` with no refresh_token.
 
         Such tokens can never be auto-rolled (the auto-refresher skips anything
-        without a refresh_token), so they only linger as stale "expired" noise in
-        Token Health — e.g. a session-cookie-derived bearer or a pre-fix codex
-        token pushed without its refresh_token. Refreshable, still-valid, and
-        opaque (no-exp) entries are left untouched.
+        without a refresh_token), so they only linger as stale credentials —
+        e.g. a session-cookie-derived bearer or a pre-fix codex token pushed
+        without its refresh_token. Only the expired OAuth fields are removed:
+        an independent credential family stored beside them (a browser cookie,
+        an API key) stays. An entry whose *only* credentials are the expired
+        token is retained, so Token Health still reports the account as dead
+        instead of silently forgetting it (it ages out via the TTL if the
+        sidecar stops pushing it).
 
-        Returns the number of entries removed.
+        Returns the number of entries whose expired OAuth fields were removed.
         """
         async with self._lock:
             now = time.time()
             removed = 0
             for provider in list(self._cache.keys()):
                 for acc_id in list(self._cache[provider].keys()):
-                    tokens, _, _ = self._cache[provider][acc_id]
+                    tokens, metadata, ts = self._cache[provider][acc_id]
                     if "refresh_token" in tokens:
                         continue
                     exp = IdentityExtractor.exp_from_tokens(tokens)
-                    if exp is not None and exp < now:
-                        del self._cache[provider][acc_id]
-                        self._token_timestamps.get(provider, {}).pop(acc_id, None)
-                        removed += 1
-                        logger.info(f"Purged expired unrefreshable token for {provider}/{acc_id}")
-                if not self._cache[provider]:
-                    del self._cache[provider]
-                    self._token_timestamps.pop(provider, None)
+                    if exp is None or exp >= now:
+                        continue
+                    dead = (_OAUTH_CREDENTIAL_KEYS | {"access_token"}) & tokens.keys()
+                    if not dead or dead == tokens.keys():
+                        # Nothing else to keep: retain the sole expired entry
+                        # as evidence for Token Health.
+                        continue
+                    timestamps = self._token_timestamps.setdefault(provider, {}).setdefault(
+                        acc_id, {}
+                    )
+                    for key in dead:
+                        tokens.pop(key, None)
+                        timestamps.pop(key, None)
+                    self._cache[provider][acc_id] = (
+                        tokens,
+                        metadata,
+                        max(timestamps.values(), default=ts),
+                    )
+                    removed += 1
+                    logger.info(
+                        "Purged expired unrefreshable OAuth fields for %s/%s",
+                        scrub_log(provider),
+                        scrub_log(acc_id),
+                    )
             return removed
 
     def seed_sync(

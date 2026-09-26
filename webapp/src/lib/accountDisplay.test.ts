@@ -1,4 +1,9 @@
-import { accountSubtitle, displayAccountName, maskAccountId } from './accountDisplay';
+import {
+  accountSubtitle,
+  credentialAccountName,
+  displayAccountName,
+  maskAccountId,
+} from './accountDisplay';
 
 describe('maskAccountId', () => {
   it('masks a 64-hex credential hash to the 8+4 form', () => {
@@ -112,5 +117,25 @@ describe('accountSubtitle', () => {
     expect(
       accountSubtitle({ account_id: 'bob@example.com', account_label: '   ' }),
     ).toBeNull();
+  });
+});
+
+describe('credentialAccountName', () => {
+  const hash = 'a'.repeat(64);
+
+  it('prefers a label', () => {
+    expect(credentialAccountName('server', ' Work ')).toBe('Work');
+  });
+
+  it('names synthetic server / config rows', () => {
+    expect(credentialAccountName('server')).toBe('Server environment');
+    expect(credentialAccountName('config:default')).toBe('Default account');
+    expect(credentialAccountName('config-cookie:default')).toBe('Default account');
+    expect(credentialAccountName('config:alice@x.com')).toBe('alice@x.com');
+  });
+
+  it('masks hash-like ids, including inside a config: prefix', () => {
+    expect(credentialAccountName(hash)).toBe(`${hash.slice(0, 8)}…${hash.slice(-4)}`);
+    expect(credentialAccountName(`config:${hash}`)).toBe(`${hash.slice(0, 8)}…${hash.slice(-4)}`);
   });
 });

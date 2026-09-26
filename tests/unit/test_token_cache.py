@@ -140,8 +140,31 @@ def _jwt_exp(exp: float) -> str:
 
 
 @pytest.mark.asyncio
-async def test_purge_removes_expired_unrefreshable(cache):
-    """A past-exp oauth_token with no refresh_token can never recover — evict it."""
+async def test_purge_strips_only_dead_oauth_fields(cache):
+    """An expired, unrefreshable OAuth token can never recover — but a cookie
+    stored beside it is an independent credential and must survive."""
+    await cache.store(
+        "chatgpt",
+        {
+            "oauth_token": _jwt_exp(time.time() - 60),
+            "cookie___Secure-next-auth.session-token": "valid-cookie",
+        },
+        account_id="alice@x.com",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 1
+    assert await cache.get("chatgpt", "alice@x.com") == {
+        "cookie___Secure-next-auth.session-token": "valid-cookie"
+    }
+    assert "oauth_token" not in cache._token_timestamps["chatgpt"]["alice@x.com"]
+
+
+@pytest.mark.asyncio
+async def test_purge_retains_sole_expired_entry(cache):
+    """When the expired token is the account's only credential, keep it: Token
+    Health must still report the account as dead rather than forget it."""
     await cache.store(
         "chatgpt",
         {"oauth_token": _jwt_exp(time.time() - 60)},
@@ -150,9 +173,8 @@ async def test_purge_removes_expired_unrefreshable(cache):
 
     removed = await cache.purge_expired_unrefreshable()
 
-    assert removed == 1
-    assert await cache.get("chatgpt", "dead-orphan") is None
-    assert "chatgpt" not in cache._token_timestamps
+    assert removed == 0
+    assert await cache.get("chatgpt", "dead-orphan") is not None
 
 
 @pytest.mark.asyncio

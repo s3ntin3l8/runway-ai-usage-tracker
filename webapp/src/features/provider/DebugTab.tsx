@@ -98,10 +98,17 @@ function nextPollLabel(iso: string | null | undefined): string {
   return until === 'now' ? 'now' : `in ${until}`;
 }
 
-// Generic account_id values used by UI-configured or local-file credentials.
-// These will never equal a user's real account_id, so we always include them
-// when the provider matches — they are this provider's credentials too.
-const GENERIC_ACCOUNT_IDS = new Set(['config', 'config-cookie', 'local-file']);
+// Generic account_id values used by server-discovered (`server`) and legacy
+// credentials. These will never equal a user's real account_id, so we always
+// include them when the provider matches — they are this provider's credentials too.
+const GENERIC_ACCOUNT_IDS = new Set(['server', 'config', 'config-cookie', 'local-file']);
+// `config:<account>` / `config-cookie:<account>` are per-account: only show the
+// one belonging to this pane's account (or the unscoped `default` config row).
+const matchesAccount = (id: string, accountId: string) => {
+  if (GENERIC_ACCOUNT_IDS.has(id) || id === accountId) return true;
+  const m = /^config(?:-cookie)?:(.+)$/.exec(id);
+  return m !== null && (m[1] === accountId || m[1] === 'default');
+};
 
 // "Token health": OAuth / API-key expiry for this account. Admin-gated — the
 // query is retry:false and may 403 on a locked-down remote, in which case we
@@ -111,7 +118,7 @@ function TokenHealthPane({ providerId, accountId }: { providerId: string; accoun
   const entries = (health.data?.tokens ?? []).filter(
     (t) =>
       t.provider === providerId &&
-      (t.account_id === accountId || GENERIC_ACCOUNT_IDS.has(t.account_id)),
+      matchesAccount(t.account_id, accountId),
   );
 
   if (health.isError || entries.length === 0) return null;
@@ -134,7 +141,9 @@ function TokenHealthRow({ token }: { token: TokenHealthEntry }) {
   const expiry =
     token.status === 'expired'
       ? 'expired'
-      : token.expires_at
+      : token.status === 'invalid'
+        ? 'rejected by provider'
+        : token.expires_at
         ? `expires in ${timeUntil(token.expires_at) ?? '—'}`
         : 'no expiry';
 
@@ -164,7 +173,7 @@ function TokenHealthRow({ token }: { token: TokenHealthEntry }) {
 function tokenStatus(status: TokenHealthStatus): QuotaStatus {
   if (status === 'valid') return 'ok';
   if (status === 'expiring') return 'warning';
-  if (status === 'expired') return 'critical';
+  if (status === 'expired' || status === 'invalid') return 'critical';
   return 'unknown';
 }
 

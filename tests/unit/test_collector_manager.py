@@ -118,6 +118,18 @@ class TestCollectorManagerInitialization:
         assert "gemini:default" in manager.smart_collectors
 
     @pytest.mark.asyncio
+    async def test_default_collectors_pin_credential_account_id(self, manager):
+        """Auth-failure flagging attributes a rejected default key to `default`,
+        not to whatever identity the collector resolved for its cards."""
+        manager.smart_collectors = {}
+
+        await manager._sync_collectors()
+
+        for key in ("anthropic:default", "gemini:default", "github:default"):
+            if key in manager.smart_collectors:
+                assert manager.smart_collectors[key].collector.credential_account_id == "default"
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_prunes_stale_dynamic_collectors(self, manager):
         """Test that collectors for missing accounts are removed."""
         # Add a fake dynamic collector

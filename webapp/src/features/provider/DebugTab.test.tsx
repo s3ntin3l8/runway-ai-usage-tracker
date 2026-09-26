@@ -89,6 +89,44 @@ describe('DebugTab', () => {
     expect(screen.getByText('api_key')).toBeInTheDocument();
   });
 
+  it('shows only this account\'s config credential, not other accounts\'', async () => {
+    const mine: TokenHealthEntry = {
+      provider: 'anthropic',
+      account_id: 'config:me@example.com',
+      status: 'valid',
+      token_types: ['api_key'],
+    };
+    const unscoped: TokenHealthEntry = {
+      provider: 'anthropic',
+      account_id: 'config:default',
+      status: 'valid',
+      token_types: ['session_cookie'],
+    };
+    const other: TokenHealthEntry = {
+      provider: 'anthropic',
+      account_id: 'config:someone-else@example.com',
+      status: 'invalid',
+      token_types: ['other_account_key'],
+    };
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [mine, unscoped, other] });
+    renderTab();
+    expect(await screen.findByText('api_key')).toBeInTheDocument();
+    expect(screen.getByText('session_cookie')).toBeInTheDocument();
+    expect(screen.queryByText('other_account_key')).not.toBeInTheDocument();
+  });
+
+  it('labels a provider-rejected credential', async () => {
+    const rejected: TokenHealthEntry = {
+      provider: 'anthropic',
+      account_id: 'server',
+      status: 'invalid',
+      token_types: ['api_key'],
+    };
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [rejected] });
+    renderTab();
+    expect(await screen.findByText('rejected by provider')).toBeInTheDocument();
+  });
+
   it('shows token health for local-file credentials (local-file account_id)', async () => {
     const localToken: TokenHealthEntry = {
       provider: 'anthropic',
