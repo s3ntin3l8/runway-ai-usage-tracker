@@ -10,6 +10,12 @@ import pytest
 from app.services.token_health import TokenHealthService, _classify_status
 
 _REVOKED_KEY = "zk-revoked"  # pragma: allowlist secret
+_FAKE_1 = "opaque-value-1"
+_FAKE_2 = "opaque-value-2"
+_FILE_TOKEN = "gho_file"
+_FILE_VALUE = "from-db"
+_CONFIG = "config"
+_SOURCES = {"oauth_token": _CONFIG, "api_key": _CONFIG, "other": "sidecar"}
 
 
 def _mock_no_db_configs():
@@ -389,8 +395,8 @@ class TestPerAccountAndInvalid:
 
         cache = self._cache(
             [
-                ("openrouter", "hashaaaaaaaa", {"api_key": "k1"}, {}),
-                ("openrouter", "hashbbbbbbbb", {"api_key": "k2"}, {}),
+                ("openrouter", "hashaaaaaaaa", {"api_key": _FAKE_1}, {}),
+                ("openrouter", "hashbbbbbbbb", {"api_key": _FAKE_2}, {}),
             ]
         )
         auth_failures.mark("openrouter", "hashaaaaaaaa")
@@ -523,8 +529,8 @@ class TestServerCredentialScan:
         def fake(provider_id: str, **_: object) -> CredentialMap:
             if provider_id == "github":
                 return CredentialMap(
-                    {"oauth_token": "gho_file", "api_key": "from-db", "other": "x"},
-                    sources={"oauth_token": "config", "api_key": "config", "other": "sidecar"},
+                    {"oauth_token": _FILE_TOKEN, "api_key": _FILE_VALUE, "other": "x"},
+                    sources=_SOURCES,
                 )
             return CredentialMap({})
 
@@ -532,4 +538,4 @@ class TestServerCredentialScan:
             "app.services.token_health.CredentialProvider.get_credentials", side_effect=fake
         ):
             found = _scan_server_credentials()
-        assert found["github"] == {"oauth_token": "gho_file", "api_key": "from-db"}
+        assert found["github"] == {"oauth_token": _FILE_TOKEN, "api_key": _FILE_VALUE}
