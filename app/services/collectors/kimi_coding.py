@@ -242,11 +242,12 @@ class KimiCodingCollector(BaseCollector):
         Kimi Code CLI access token (local file or sidecar-pushed), which must
         be fresh (expires_at > now + 60s). Returns (token, input_source, is_cli).
         """
-        key = credential_provider.get_provider_api_key("kimi_coding")
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        key = credential_provider.get_provider_api_key("kimi_coding", account_id=account_id)
         if self._is_valid_credential(key):
             return key, self.INPUT_SOURCE_CONFIG, False  # type: ignore[return-value]
 
-        if self._is_valid_credential(settings.KIMI_CODE_API_KEY):
+        if account_id == "default" and self._is_valid_credential(settings.KIMI_CODE_API_KEY):
             return settings.KIMI_CODE_API_KEY, self.INPUT_SOURCE_SERVER, False
 
         # Dashboard paste (mirrored by the provider PUT and by
@@ -257,9 +258,7 @@ class KimiCodingCollector(BaseCollector):
         # ``or "default"`` mirrors the cookie/CLI readers: config creds live
         # under "default" regardless of the collector's resolved identity,
         # and passing None would fall back to the newest cached account.
-        cache_data = await token_cache.get_with_metadata(
-            "kimi_coding", account_id=self.account_id or "default"
-        )
+        cache_data = await token_cache.get_with_metadata("kimi_coding", account_id=account_id)
         if cache_data:
             tokens, metadata = cache_data
             cached_key = tokens.get("api_key")
@@ -340,16 +339,17 @@ class KimiCodingCollector(BaseCollector):
         Priority: DB-stored session cookie (manual override) > KIMI_AUTH_TOKEN env
         > sidecar-pushed browser cookie.
         """
-        db_token = credential_provider.get_provider_session_cookie("kimi_coding")
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        db_token = credential_provider.get_provider_session_cookie(
+            "kimi_coding", account_id=account_id
+        )
         if self._is_valid_credential(db_token):
             return db_token, self.INPUT_SOURCE_CONFIG  # type: ignore[return-value]
 
-        if self._is_valid_credential(settings.KIMI_AUTH_TOKEN):
+        if account_id == "default" and self._is_valid_credential(settings.KIMI_AUTH_TOKEN):
             return settings.KIMI_AUTH_TOKEN, self.INPUT_SOURCE_SERVER
 
-        cache_data = await token_cache.get_with_metadata(
-            "kimi_coding", account_id=self.account_id or "default"
-        )
+        cache_data = await token_cache.get_with_metadata("kimi_coding", account_id=account_id)
         if cache_data:
             value, _meta = cache_data
             token = (value or {}).get("cookie_kimi-auth") or (value or {}).get("session_cookie")

@@ -6,6 +6,8 @@
 
 **Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, clean dashboard with persistent history and fleet management.
 
+Upgrading from the previous major version? See the [v3 migration notes](docs/migration-v3.md).
+
 ![Runway Dashboard](assets/screenshots/dashboard.png)
 
 <p align="center"><sub>Dark theme shown. Light theme follows your OS preference or Settings → Display.</sub></p>

@@ -1,10 +1,7 @@
 """Multi-account hardening tests for the provider config endpoints.
 
-The webapp and dashboard continue to use the existing
-``PUT /api/v1/system/provider-config/{provider_id}`` route; the new
-``PUT /api/v1/system/provider-config/{provider_id}/{account_id}`` is the
-multi-account canonical. These tests pin the contract of both routes plus
-the GET response's new ``accounts`` field.
+Provider updates require an explicit account id in the URL. These tests pin
+the canonical per-account route and the GET response's ``accounts`` field.
 """
 
 from __future__ import annotations
@@ -101,70 +98,13 @@ def test_get_provider_configs_merges_cache_seeded_accounts(client: TestClient):
         token_cache._cache.clear()
 
 
-def test_legacy_put_creates_default_row(client: TestClient):
-    """Legacy PUT with no existing rows creates a row at account_id='default'."""
+def test_provider_update_requires_explicit_account_id(client: TestClient):
     r = client.put(
         "/api/v1/system/provider-config/openrouter",
-        json={"account_label": "default test"},
+        json={"account_label": "ambiguous"},
         headers=_admin_headers(),
     )
-    assert r.status_code == 200, r.text
-
-    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
-    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
-    assert openrouter["account_count"] == 1
-    assert openrouter["accounts"][0]["account_id"] == "default"
-    assert openrouter["accounts"][0]["account_label"] == "default test"
-
-
-def test_legacy_put_updates_only_row(client: TestClient):
-    """Single existing row → legacy PUT updates it in place."""
-    r = client.put(
-        "/api/v1/system/provider-config/openrouter",
-        json={"account_label": "v1"},
-        headers=_admin_headers(),
-    )
-    assert r.status_code == 200
-
-    r = client.put(
-        "/api/v1/system/provider-config/openrouter",
-        json={"account_label": "v2"},
-        headers=_admin_headers(),
-    )
-    assert r.status_code == 200
-
-    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
-    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
-    assert openrouter["account_count"] == 1
-    assert openrouter["accounts"][0]["account_label"] == "v2"
-
-
-def test_legacy_put_returns_409_when_multi_account(client: TestClient):
-    """Two existing rows → legacy PUT returns 409 pointing at the per-account route."""
-    # Create two distinct accounts via the new explicit endpoint.
-    a = client.put(
-        "/api/v1/system/provider-config/openrouter/default",
-        json={"account_label": "default"},
-        headers=_admin_headers(),
-    )
-    assert a.status_code == 200
-    b = client.put(
-        "/api/v1/system/provider-config/openrouter/alice@example.com",
-        json={"account_label": "alice"},
-        headers=_admin_headers(),
-    )
-    assert b.status_code == 200
-
-    # Legacy shortcut now refuses to guess.
-    r = client.put(
-        "/api/v1/system/provider-config/openrouter",
-        json={"account_label": "v3"},
-        headers=_admin_headers(),
-    )
-    assert r.status_code == 409
-    body = r.json()
-    assert "openrouter" in body["detail"]
-    assert "account_id" in body["detail"]
+    assert r.status_code in (404, 405)
 
 
 def test_explicit_put_creates_account_id(client: TestClient):
@@ -244,18 +184,9 @@ def test_explicit_put_unknown_provider_returns_404(client: TestClient):
     assert "no-such-provider" in r.json()["detail"]
 
 
-def test_legacy_put_unknown_provider_returns_404(client: TestClient):
-    r = client.put(
-        "/api/v1/system/provider-config/no-such-provider",
-        json={"account_label": "x"},
-        headers=_admin_headers(),
-    )
-    assert r.status_code == 404
-
-
-def test_explicit_put_with_default_account_id_matches_legacy_first_save(client: TestClient):
+def test_explicit_put_with_default_account_id_creates_default_row(client: TestClient):
     """Saving via PUT /provider-config/{pid}/default produces the same row
-    that the legacy shortcut would have created on first save."""
+    that single-account installations use for default credentials."""
     r = client.put(
         "/api/v1/system/provider-config/openrouter/default",
         json={"account_label": "via explicit"},
@@ -400,13 +331,13 @@ def _cache_tokens(provider: str, account_id: str) -> dict:
     return entry[0] if entry else {}
 
 
-def test_kimi_api_key_legacy_put_mirrors_to_token_cache(client: TestClient):
+def test_kimi_api_key_explicit_put_mirrors_to_token_cache(client: TestClient):
     """Issue #343: a dashboard-pasted kimi_coding key must reach the token
     cache under the ``api_key`` slot — the collector resolves it from there
-    (an account-keyed row never reaches the unscoped legacy DB read), and the
+    (an account-keyed row never reaches an unscoped DB read), and the
     cache is what drives dynamic-collector discovery."""
     r = client.put(
-        "/api/v1/system/provider-config/kimi_coding",
+        "/api/v1/system/provider-config/kimi_coding/default",
         json={"api_key": "sk-kimi-test-123"},  # pragma: allowlist secret
         headers=_admin_headers(),
     )
@@ -436,7 +367,7 @@ def test_kimi_clear_api_key_drops_cache_mirror(client: TestClient):
     """clear_api_key must invalidate the mirrored slot too — a stale copy
     would keep feeding collectors a key the user just removed."""
     r = client.put(
-        "/api/v1/system/provider-config/kimi_coding",
+        "/api/v1/system/provider-config/kimi_coding/default",
         json={"api_key": "sk-kimi-test-123"},  # pragma: allowlist secret
         headers=_admin_headers(),
     )
@@ -444,7 +375,7 @@ def test_kimi_clear_api_key_drops_cache_mirror(client: TestClient):
     assert _cache_tokens("kimi_coding", "default")
 
     r = client.put(
-        "/api/v1/system/provider-config/kimi_coding",
+        "/api/v1/system/provider-config/kimi_coding/default",
         json={"clear_api_key": True},
         headers=_admin_headers(),
     )
@@ -457,7 +388,7 @@ def test_kimi_empty_string_api_key_clear_drops_cache_mirror(client: TestClient):
     path; the UI sends clear_api_key) must invalidate the mirror too, or
     collectors keep the removed key until its cache TTL expires."""
     r = client.put(
-        "/api/v1/system/provider-config/kimi_coding",
+        "/api/v1/system/provider-config/kimi_coding/default",
         json={"api_key": "sk-kimi-test-123"},  # pragma: allowlist secret
         headers=_admin_headers(),
     )
@@ -465,7 +396,7 @@ def test_kimi_empty_string_api_key_clear_drops_cache_mirror(client: TestClient):
     assert _cache_tokens("kimi_coding", "default")
 
     r = client.put(
-        "/api/v1/system/provider-config/kimi_coding",
+        "/api/v1/system/provider-config/kimi_coding/default",
         json={"api_key": ""},
         headers=_admin_headers(),
     )
@@ -482,7 +413,7 @@ def test_empty_string_api_key_clear_preserves_other_cache_slots(client: TestClie
     from app.services.token_cache import token_cache
 
     r = client.put(
-        "/api/v1/system/provider-config/ollama",
+        "/api/v1/system/provider-config/ollama/default",
         json={"api_key": "sk-ollama-123"},  # pragma: allowlist secret
         headers=_admin_headers(),
     )
@@ -501,7 +432,7 @@ def test_empty_string_api_key_clear_preserves_other_cache_slots(client: TestClie
     )
 
     r = client.put(
-        "/api/v1/system/provider-config/ollama",
+        "/api/v1/system/provider-config/ollama/default",
         json={"api_key": ""},
         headers=_admin_headers(),
     )
@@ -525,7 +456,7 @@ def test_kimi_cache_mirror_resolves_through_real_collector(client: TestClient):
     from app.services.collectors.kimi_coding import KimiCodingCollector
 
     r = client.put(
-        "/api/v1/system/provider-config/kimi_coding",
+        "/api/v1/system/provider-config/kimi_coding/default",
         json={"api_key": "sk-kimi-e2e-123"},  # pragma: allowlist secret
         headers=_admin_headers(),
     )

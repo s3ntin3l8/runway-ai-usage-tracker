@@ -1474,52 +1474,6 @@ def _row_exists(session: Session, provider_id: str, account_id: str) -> bool:
     return session.exec(stmt).one() > 0
 
 
-@router.put("/provider-config/{provider_id}")
-@limiter.limit("20/minute")
-async def upsert_provider_config(
-    request: Request,
-    provider_id: str,
-    body: _ProviderConfigUpdate,
-    session: Session = Depends(get_session),
-    _auth: None = Depends(require_admin_key),
-) -> dict:
-    """Create or update provider configuration (single-account shortcut).
-
-    Kept permanently as a guarded shortcut for non-webapp callers (operator
-    scripts, the legacy ``make sidecar`` helper, third-party integrations).
-    Behavior:
-
-    - **0 rows** for this provider: creates a new row with ``account_id="default"``
-      — preserves the original "create via this route" behavior so a single-account
-      user never has to learn the new path.
-    - **1 row**: updates that row in place; ``account_id`` is preserved.
-    - **2+ rows**: returns **409 Conflict** with a body pointing at the
-      per-account endpoint ``PUT /api/v1/system/provider-config/{provider_id}/{account_id}``
-      so the caller can disambiguate.
-
-    For multi-account workflows, call the per-account endpoint directly.
-    """
-    if provider_id not in manager.collector_registry:
-        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
-
-    rows = session.exec(
-        select(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
-    ).all()
-    if len(rows) > 1:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Provider '{provider_id}' has {len(rows)} configured accounts; "
-                "use PUT /api/v1/system/provider-config/"
-                f"{provider_id}/{{account_id}} to disambiguate."
-            ),
-        )
-    target_account_id = rows[0].account_id if rows else "default"
-
-    await _apply_provider_config_update(session, provider_id, target_account_id, body)
-    return {"status": "saved"}
-
-
 async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
     session: Session,
     provider_id: str,

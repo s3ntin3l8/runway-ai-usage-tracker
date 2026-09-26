@@ -45,28 +45,28 @@ class MiniMaxCollector(BaseCollector):
 
     async def _get_current_creds(self) -> str | None:
         """Async credential retrieval with metadata support."""
-        key = (
-            credential_provider.get_provider_api_key("minimax") or settings.MINIMAX_API_KEY or None
-        )
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        db_key = credential_provider.get_provider_api_key("minimax", account_id=account_id)
+        if db_key:
+            self._current_input_source = "config"
+            return db_key
 
-        if key:
+        from app.services.token_cache import token_cache
+
+        cache_data = await token_cache.get_with_metadata("minimax", account_id=account_id)
+        if cache_data:
+            tokens, metadata = cache_data
+            source = metadata.get("source") or "sidecar"
             self._current_input_source = (
-                "config" if credential_provider.get_provider_api_key("minimax") else "server"
+                "config" if source in ("config", "manual_config") else "sidecar"
             )
-            return key
-
-        if self.account_id:
-            from app.services.token_cache import token_cache
-
-            cache_data = await token_cache.get_with_metadata("minimax", account_id=self.account_id)
-            if cache_data:
-                tokens, metadata = cache_data
-                source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "config" if source in ("config", "manual_config") else "sidecar"
-                )
-                return tokens.get("api_key")
-        return None
+            cached_key = tokens.get("api_key") or tokens.get("oauth_token")
+            if cached_key:
+                return cached_key
+        key = (settings.MINIMAX_API_KEY or None) if account_id == "default" else None
+        if key:
+            self._current_input_source = "server"
+        return key
 
     async def is_configured(self) -> bool:
         """Check if a MiniMax API key is present."""

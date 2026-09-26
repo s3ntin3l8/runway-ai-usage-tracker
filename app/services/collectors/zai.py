@@ -47,24 +47,27 @@ class ZaiCollector(BaseCollector):
 
     async def _get_api_key(self) -> str | None:
         """DB (UI-set via provider_id='zai') → env var."""
-        key = credential_provider.get_provider_api_key("zai") or settings.ZAI_API_KEY or None
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        db_key = credential_provider.get_provider_api_key("zai", account_id=account_id)
+        if db_key:
+            self._current_input_source = "config"
+            return db_key
+        from app.services.token_cache import token_cache
+
+        cache_data = await token_cache.get_with_metadata("zai", account_id=account_id)
+        if cache_data:
+            tokens, metadata = cache_data
+            source = metadata.get("source") or "sidecar"
+            self._current_input_source = (
+                "config" if source in ("config", "manual_config") else "sidecar"
+            )
+            cached_key = tokens.get("api_key") or tokens.get("oauth_token")
+            if cached_key:
+                return cached_key
+        key = (settings.ZAI_API_KEY or None) if account_id == "default" else None
         if key:
             self._current_input_source = "server"
-            return key
-
-        if self.account_id:
-            # Check account-specific token cache
-            from app.services.token_cache import token_cache
-
-            cache_data = await token_cache.get_with_metadata("zai", account_id=self.account_id)
-            if cache_data:
-                tokens, metadata = cache_data
-                source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "config" if source in ("config", "manual_config") else "sidecar"
-                )
-                return tokens.get("api_key")
-        return None
+        return key
 
     async def _get_current_key(self) -> str | None:
         """Async version of _get_api_key that handles cache metadata."""
