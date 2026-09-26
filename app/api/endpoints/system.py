@@ -28,14 +28,14 @@ from app.models.db import (
     WebhookConfig,
 )
 from app.models.schemas import LimitCard, SidecarDownloadsResponse
-from app.services import audit_log
+from app.services import audit_log, auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.collector_manager import manager
 from app.services.credential_provider import CredentialProvider
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import token_cache
-from app.services.token_health import token_health_service
+from app.services.token_health import CredentialNotRemovableError, token_health_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -636,7 +636,16 @@ async def delete_token_health_entry(
     request: Request, provider: str, account_id: str, _: None = Depends(require_admin_key)
 ) -> dict[str, Any]:
     """Manually remove a token from the cache."""
-    ok = await token_health_service.delete_credential(provider, account_id)
+    try:
+        ok = await token_health_service.delete_credential(provider, account_id)
+    except CredentialNotRemovableError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This credential is managed outside the cache (Settings → Providers "
+                "or the server environment); change it there."
+            ),
+        )
     if not ok:
         raise HTTPException(status_code=404, detail="Token not found in cache or database")
     return {"ok": True}
@@ -1315,6 +1324,7 @@ async def delete_provider_config_for_account(
     # ``remove()``; safe to call from an async endpoint because FastAPI runs
     # the handler on a loop and the cache uses asyncio.Lock.
     await token_cache.remove(provider_id, account_id)
+    auth_failures.clear(provider_id, account_id)
 
     audit_log.record(
         session,
@@ -1771,6 +1781,9 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
 
     session.commit()
+    # A replaced/removed credential deserves a fresh verdict: drop any stale
+    # "provider rejected it" flag so the next collection re-evaluates.
+    auth_failures.clear(provider_id, account_id)
     # Invalidate server-side fleet/limits caches so archived/restored
     # providers appear or disappear immediately on the next dashboard poll.
     from app.core.cache import cache_clear

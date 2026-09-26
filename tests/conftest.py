@@ -68,6 +68,23 @@ async def clear_token_cache():
 
 
 @pytest.fixture(autouse=True)
+def isolate_token_health_state():
+    """Keep Token Health tests independent of the host machine.
+
+    ``get_health`` scans the server's own env vars / credential files and reads
+    the process-wide auth-failure registry; without this, whatever the dev box
+    exports (``GITHUB_TOKEN`` ...) or a previous test flagged would leak in.
+    Tests exercising either path override the patch or mark the registry.
+    """
+    from app.services import auth_failures
+
+    auth_failures.reset()
+    with patch("app.services.token_health._collect_server_credentials", return_value={}):
+        yield
+    auth_failures.reset()
+
+
+@pytest.fixture(autouse=True)
 def clear_response_cache():
     """Clear the process-wide TTL response cache before each test.
 

@@ -253,4 +253,57 @@ describe('TokensSection', () => {
 
     expect(screen.getByText(/no credentials match/i)).toBeInTheDocument();
   });
+  it('renders an "invalid" status for a credential the provider rejected', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [token({ status: 'invalid', can_refresh: false, expires_at: null })],
+    });
+    renderWithProviders(<TokensSection />);
+    expect(await screen.findByText('invalid')).toBeInTheDocument();
+  });
+
+  it('sorts invalid credentials ahead of valid ones', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [
+        token({ provider: 'aaa', account_id: 'v', status: 'valid' }),
+        token({ provider: 'zzz', account_id: 'i', status: 'invalid', can_refresh: false }),
+      ],
+    });
+    renderWithProviders(<TokensSection />);
+    await screen.findByText('aaa');
+    const rows = screen.getAllByRole('row').slice(1);
+    expect(within(rows[0]).getByText('zzz')).toBeInTheDocument();
+  });
+
+  it('hides the remove button for managed (config/server) credentials', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [
+        token({
+          provider: 'zai',
+          account_id: 'server',
+          account_label: null,
+          source: 'server',
+          source_name: 'server',
+          removable: false,
+          can_refresh: false,
+          token_types: ['api_key'],
+        }),
+        token({
+          provider: 'openrouter',
+          account_id: 'config:default',
+          account_label: null,
+          source: 'config',
+          source_name: 'config',
+          removable: false,
+          can_refresh: false,
+          token_types: ['api_key'],
+        }),
+      ],
+    });
+    renderWithProviders(<TokensSection />);
+
+    expect(await screen.findByText('Server environment')).toBeInTheDocument();
+    expect(screen.getByText('Default account')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove from cache/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText('managed')).toHaveLength(2);
+  });
 });

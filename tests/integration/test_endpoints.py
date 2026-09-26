@@ -441,3 +441,14 @@ class TestErrorHandling:
 
         # This test needs revision to properly patch the manager's collectors
         pass
+
+
+class TestTokenHealthDelete:
+    def test_delete_managed_credential_is_refused(self):
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+        for account_id in ("server", "config:default"):
+            resp = client.delete(f"/api/v1/system/token-health/zai/{account_id}")
+            assert resp.status_code == 409
+            assert "Settings" in resp.json()["detail"]

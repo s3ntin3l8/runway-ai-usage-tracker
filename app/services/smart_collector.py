@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from app.core.utils import HealthCalculator, error_card
+from app.services import auth_failures
 from app.services.collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -153,8 +154,18 @@ class SmartCollector:
         time_since_last_fetch = now - self.last_fetch_time
         return time_since_last_fetch >= self.error_retry_delay
 
+    def _auth_identity(self) -> tuple[str | None, str | None]:
+        """(provider_id, account_id) the auth-failure registry keys this collector by."""
+        return (
+            getattr(self.collector, "PROVIDER_ID", None),
+            getattr(self.collector, "account_id", None),
+        )
+
     def _mark_success(self, result: list[dict[str, Any]], now: float) -> None:
         """Record successful fetch."""
+        provider_id, account_id = self._auth_identity()
+        if provider_id:
+            auth_failures.clear(provider_id, account_id or "default")
         self.last_result = result
         self.last_success_time = now
         self.last_fetch_time = now
@@ -283,6 +294,11 @@ class SmartCollector:
                     # stale Antigravity quota card sit indefinitely, logged as
                     # healthy, while the token was actually expired.
                     if _is_error_result(result):
+                        provider_id, account_id = self._auth_identity()
+                        if provider_id and any(
+                            r.get("error_type") == "auth_failed" for r in result
+                        ):
+                            auth_failures.mark(provider_id, account_id)
                         self._mark_failure(
                             Exception(result[0].get("detail") or "collector returned an error"),
                             now,
@@ -321,6 +337,10 @@ class SmartCollector:
                 ]
 
             except Exception as e:
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+                    provider_id, account_id = self._auth_identity()
+                    if provider_id:
+                        auth_failures.mark(provider_id, account_id)
                 self._mark_failure(e, now)
 
                 # Graceful degradation: Use stale data if available
