@@ -409,7 +409,7 @@ def test_seed_xai_grok43_rates():
     assert row.input_per_mtok == 1.25
     assert row.output_per_mtok == 2.50
     assert row.cache_read_per_mtok == 0.20
-    assert row.cache_create_per_mtok == 0.0
+    assert row.cache_create_per_mtok == 1.25  # no write premium: bills as input
     assert row.effective_from.isoformat() == "2025-07-01"
 
 
@@ -427,7 +427,7 @@ def test_seed_xai_grok_build_rates():
     assert row.input_per_mtok == 1.00
     assert row.output_per_mtok == 2.00
     assert row.cache_read_per_mtok == 0.20
-    assert row.cache_create_per_mtok == 0.0
+    assert row.cache_create_per_mtok == 1.00
 
 
 def test_seed_xai_unpriced_ids_have_no_row():

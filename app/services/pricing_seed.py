@@ -726,8 +726,13 @@ PRICING_SEED: list[dict] = [
     # ── xAI (Grok) ─────────────────────────────────────────────────────────────
     # Rates per https://docs.x.ai/developers/pricing (identical table at
     # /developers/models), checked 2026-09-26. USD per 1M tokens.
-    # - cache_create_per_mtok = 0.0: xAI publishes no cache-write fee; cached
-    #   prompt tokens bill at the cached-input rate.
+    # - cache_create_per_mtok = input rate: xAI publishes no cache-write
+    #   column, and there is no write premium — a cache write is an ordinary
+    #   prompt token billed at the input rate (unlike Anthropic's 1.25x
+    #   writes). The xai extractor subtracts cache-create tokens from
+    #   billable input (event_extractors/xai.py), so leaving this at 0.0
+    #   would make those tokens free outright (review note on #350).
+    #   Cached *reads* still bill at the cheaper cache_read rate below.
     # - effective_from is backdated to 2025-07-01 (grok-4 launch era) so every
     #   historical xai event finds a row — cost_calculator only applies rows
     #   with effective_from <= ts.date(), and no historical price series exists
@@ -748,7 +753,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 2.00,
         "output_per_mtok": 6.00,
         "cache_read_per_mtok": 0.50,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 2.00,
         "notes": "Grok 4.7, <200k prompt tier (>=200k bills 2x, not modeled)",
     },
     {
@@ -758,7 +763,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 2.00,
         "output_per_mtok": 6.00,
         "cache_read_per_mtok": 0.50,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 2.00,
         "notes": "Grok 4.6, <200k prompt tier (>=200k bills 2x, not modeled)",
     },
     {
@@ -768,7 +773,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 2.00,
         "output_per_mtok": 6.00,
         "cache_read_per_mtok": 0.30,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 2.00,
         "notes": "Grok 4.5, <200k prompt tier (>=200k bills 2x, not modeled)",
     },
     {
@@ -778,7 +783,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.25,
         "output_per_mtok": 2.50,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 1.25,
         "notes": "Grok 4.3, <200k prompt tier (>=200k bills 2x, not modeled)",
     },
     {
@@ -788,7 +793,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.25,
         "output_per_mtok": 2.50,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 1.25,
         "notes": "Grok 4.20 0309 reasoning, <200k prompt tier (not modeled)",
     },
     {
@@ -798,7 +803,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.25,
         "output_per_mtok": 2.50,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 1.25,
         "notes": "Grok 4.20 0309 non-reasoning, <200k prompt tier (not modeled)",
     },
     {
@@ -808,7 +813,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.25,
         "output_per_mtok": 2.50,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 1.25,
         "notes": "Grok 4.20 multi-agent 0309, <200k prompt tier (not modeled)",
     },
     {
@@ -818,7 +823,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.00,
         "output_per_mtok": 2.00,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 1.00,
         "notes": "Grok Build 0.1, <200k prompt tier (256k ctx, not modeled)",
     },
     # Observed ids not on the current pricing page.
@@ -829,7 +834,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 1.00,
         "output_per_mtok": 2.00,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 1.00,
         "notes": "Grok CLI signals.json primaryModelId; rates inherited from "
         "grok-build-0.1 — not separately published",
     },
@@ -840,7 +845,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 3.00,
         "output_per_mtok": 15.00,
         "cache_read_per_mtok": 0.75,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 3.00,
         "notes": "Grok 4 (docs.x.ai/docs/models/grok-4-0709, delisted from the "
         "current pricing page)",
     },
@@ -851,7 +856,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 0.20,
         "output_per_mtok": 0.50,
         "cache_read_per_mtok": 0.05,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 0.20,
         "notes": "Grok 4 Fast (official model page, delisted from the current pricing page)",
     },
     {
@@ -861,7 +866,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 0.20,
         "output_per_mtok": 1.50,
         "cache_read_per_mtok": 0.02,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 0.20,
         "notes": "grok-code-fast-1 — medium confidence, multi-source "
         "(metronome.com/pricing-index/xai-api, aicomp.prygn.com); not on the "
         "current pricing page",

@@ -875,7 +875,7 @@ def test_xai_grok43_event_prices_from_seed():
 
 
 def test_xai_grok43_cost_includes_cache_read():
-    """cache_read at $0.20/MT; cache_create has no published xAI fee."""
+    """cache_read bills at the discounted $0.20/MT rate."""
     s = _seeded_session()
     cost = compute_event_cost(
         s,
@@ -885,10 +885,30 @@ def test_xai_grok43_cost_includes_cache_read():
         tokens_input=1_000_000,
         tokens_output=1_000_000,
         tokens_cache_read=1_000_000,
-        tokens_cache_create=1_000_000,
+        tokens_cache_create=0,
         tokens_reasoning=0,
     )
     assert cost == 3.75 + 0.20
+
+
+def test_xai_grok43_cache_create_bills_at_input_rate():
+    """cache-create tokens are subtracted from billable input by the xai
+    extractor, so they must bill at the input rate — not 0.0 (review note
+    on #350: xAI has no cache-write column, but neither is it free).
+    """
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.75 + 1.25
 
 
 def test_xai_unseeded_grok41_stays_zero():
