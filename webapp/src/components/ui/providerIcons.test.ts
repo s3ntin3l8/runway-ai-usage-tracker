@@ -25,6 +25,7 @@ describe('providerIconUrl', () => {
   it('maps opencode sub-providers to their real upstream brand mark', () => {
     expect(providerIconUrl('opencode-openrouter')).toBe(providerIconUrl('openrouter'));
     expect(providerIconUrl('opencode-ollama')).toBe(providerIconUrl('ollama'));
+    expect(providerIconUrl('opencode-deepseek')).toBe(providerIconUrl('deepseek'));
   });
 
   it('falls back to the opencode mark for an unrecognized opencode-* sub-provider', () => {

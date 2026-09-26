@@ -876,7 +876,9 @@ def test_fingerprint_hint_maps_each_key_to_its_own_account(
     }
 
 
-@pytest.mark.parametrize("provider_id", ["openrouter", "minimax", "kimi_coding", "ollama"])
+@pytest.mark.parametrize(
+    "provider_id", ["openrouter", "minimax", "kimi_coding", "ollama", "deepseek"]
+)
 def test_fingerprint_hint_ships_for_stored_sibling_key(
     client: TestClient, session: Session, provider_id: str
 ) -> None:

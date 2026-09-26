@@ -43,7 +43,7 @@ never share a card:
 BYOK events are retagged by `_OC_CANONICAL_MAP`
 (`scripts/sidecar_pkg/event_extractors/opencode.py`) onto the canonical
 `deepseek` provider so they land on the same account grain as the balance
-card, with their logged `$0` cost dropped so the server prices them from
+card, with whatever cost OpenCode logged dropped so the server prices them from
 `provider_pricing` (off-peak DeepSeek rates — see `app/services/pricing_seed.py`).
 The Go tier is deliberately absent from that map: those tokens are already
 paid for by the subscription and must never count against the DeepSeek

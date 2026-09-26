@@ -308,7 +308,7 @@ class CollectorManager:
             else:
                 all_tokens["oauth_token"] = token_val
                 # These collectors read the credential from the api_key slot.
-                if r.provider_id in ("opencode", "ollama", "minimax", "kimi_coding"):
+                if r.provider_id in ("opencode", "ollama", "minimax", "kimi_coding", "deepseek"):
                     all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)

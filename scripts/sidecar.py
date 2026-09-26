@@ -232,9 +232,10 @@ __REGISTRY__: dict[str, Any] = {
                 {
                     # The opencode CLI stores the BYOK DeepSeek key in
                     # `~/.local/share/opencode/auth.json` under
-                    # `deepseek.key`. Pulling from there means a host with
-                    # the opencode CLI + a BYOK DeepSeek account lights up
-                    # automatically — no env-var setup needed.
+                    # `deepseek.key`. Reading it means no env-var setup —
+                    # the origin is fingerprinted like the other siblings,
+                    # and the card still needs an account hint (Untagged
+                    # Credentials) before it attaches to a labeled account.
                     "type": "file",
                     "paths": [
                         "~/.local/share/opencode/auth.json",

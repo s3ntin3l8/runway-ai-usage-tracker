@@ -2,9 +2,9 @@
 
 OpenCode's ``auth.json`` holds one bare key per backend and nothing that
 says whose key it is (see ``tests/unit/test_opencode_credential_identity.py``
-for the #347 problem statement). Five siblings read the same file —
-``openrouter``, ``minimax``, ``kimi_coding``, ``ollama`` and ``xai`` — so
-they inherit it verbatim: ``path:/home/u/.local/share/opencode/auth.json``
+for the #347 problem statement). The siblings that read the same file —
+``openrouter``, ``minimax``, ``kimi_coding``, ``ollama``, ``xai`` and
+``deepseek`` — inherit it verbatim: ``path:/home/u/.local/share/opencode/auth.json``
 is the same string on every host with the same username, and the same
 string before and after a rotation.
 
@@ -39,7 +39,7 @@ from scripts.sidecar_pkg.identity import (
     credential_fingerprint,
 )
 
-SIBLINGS = ("openrouter", "minimax", "kimi_coding", "ollama", "xai")
+SIBLINGS = ("openrouter", "minimax", "kimi_coding", "ollama", "xai", "deepseek")
 
 # (provider, env variable, credential value) — the env half of each sibling's
 # key discovery. xai's bearer arrives under ``xai_access``; the rest under
@@ -50,6 +50,7 @@ ENV_CASES = [
     ("kimi_coding", "KIMI_CODE_API_KEY", "kc-sibling-key"),  # pragma: allowlist secret
     ("ollama", "OLLAMA_API_KEY", "ol-sibling-key"),  # pragma: allowlist secret
     ("xai", "GROK_OAUTH_TOKEN", "xai-sibling-bearer"),  # pragma: allowlist secret
+    ("deepseek", "DEEPSEEK_API_KEY", "sk-ds-sibling-key"),  # pragma: allowlist secret
 ]
 
 # (provider, JSON payload, credential value) — what each sibling's OpenCode
@@ -84,6 +85,11 @@ FILE_CASES = [
         {"xai": {"access": "xai-file-bearer", "refresh": "xai-file-refresh"}},
         "xai-file-refresh",
     ),  # pragma: allowlist secret
+    (
+        "deepseek",
+        {"deepseek": {"key": "sk-ds-file-key"}},
+        "sk-ds-file-key",
+    ),  # pragma: allowlist secret
 ]
 FILE_CASE_IDS = [
     "openrouter",
@@ -92,6 +98,7 @@ FILE_CASE_IDS = [
     "ollama",
     "xai-access-only",
     "xai-with-refresh",
+    "deepseek",
 ]
 
 
@@ -130,7 +137,9 @@ class TestSharedProviderSet:
         """The sidecar needs the set to suffix origins, the server needs it
         to answer ``provider:<pid>#<fp>`` hints. Two copies that disagree
         would silently drop tier-1b hints for half the fleet."""
-        expected = frozenset({"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai"})
+        expected = frozenset(
+            {"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai", "deepseek"}
+        )
         assert SERVER_SET == expected
         assert SIDECAR_SET == expected
 
@@ -159,7 +168,7 @@ class TestSharedProviderSet:
         the bearer to ``xai_access`` — never ``api_key``, which would
         fingerprint nothing — and additionally map the refresh token the
         origin prefers over that rotating bearer."""
-        for pid in ("openrouter", "minimax", "kimi_coding", "ollama"):
+        for pid in ("openrouter", "minimax", "kimi_coding", "ollama", "deepseek"):
             assert set(_opencode_auth_rule(pid)["mapping"].values()) == {"api_key"}
         assert _opencode_auth_rule("xai")["mapping"] == {
             "xai.access": "xai_access",

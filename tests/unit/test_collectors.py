@@ -3682,12 +3682,16 @@ class TestDeepSeekCollector:
             mock_settings.DEEPSEEK_API_KEY = ""
             collector = DeepSeekCollector()
 
-            response = MagicMock(spec=httpx.Response)
-            response.status_code = 500
-            response.text = "Internal Server Error"
-            mock_http_client.get.return_value = response
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 500
+            resp.text = "Internal Server Error"
 
-            result = await collector.collect(mock_http_client)
+            with patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ):
+                result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
@@ -3710,6 +3714,136 @@ class TestDeepSeekCollector:
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
         assert result[0].get("error_type") == "missing_config"
+
+    @pytest.mark.asyncio
+    async def test_scoped_db_read_finds_hashed_account_row(self, mock_http_client):
+        """A wizard-pasted key is stored under a hashed account_id, which the
+        legacy unscoped read hides — the collector must ask for its own row."""
+        seen: list[str | None] = []
+
+        def lookup(_pid: str, *, account_id: str | None = None) -> str | None:
+            seen.append(account_id)
+            return (
+                "sk-hashed" if account_id == "wizard-account" else None
+            )  # pragma: allowlist secret
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "1.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "1.00",
+                }
+            ],
+        }
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                side_effect=lookup,
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector(account_id="wizard-account")
+            result = await collector.collect(mock_http_client)
+
+        assert seen[0] == "wizard-account"
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$1.00"
+        assert result[0]["input_source"] == "config"
+
+    @pytest.mark.asyncio
+    async def test_cache_oauth_token_is_a_usable_key(self, mock_http_client):
+        """The DB→cache mirror writes the key into oauth_token; a row that
+        only has that slot must still configure the collector."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "2.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "2.00",
+                }
+            ],
+        }
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.deepseek.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"oauth_token": "sk-from-cache"}, {"source": "config"}),
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector(account_id="wizard-account")
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$2.00"
+        assert result[0]["input_source"] == "config"
+
+    @pytest.mark.asyncio
+    async def test_cache_row_without_key_falls_through_to_env(self, mock_http_client):
+        """A cache row missing both key fields is not terminal — the env
+        default still configures the default-account collector."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "3.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "3.00",
+                }
+            ],
+        }
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.deepseek.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"session_cookie": "not-a-key"}, {"source": "sidecar"}),
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = "sk-from-env"  # pragma: allowlist secret
+            collector = DeepSeekCollector(account_id="default")
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$3.00"
+        assert result[0]["input_source"] == "server"
 
 
 class TestMiniMaxCollector:

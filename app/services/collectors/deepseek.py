@@ -32,21 +32,42 @@ class DeepSeekCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
 
     async def _get_api_key(self) -> str | None:
-        """Discover API key: DB (UI-set) → token cache → env var."""
-        db_key = credential_provider.get_provider_api_key("deepseek")
-        if db_key:
-            self._current_input_source = "config"
-            return db_key
+        """Discover API key: DB (this account, then default) → token cache → env.
+
+        The dashboard's multi-account wizard stores a pasted ``sk-`` key under
+        a hashed ``credential_hint`` account_id, which the legacy unscoped read
+        deliberately hides (multi-account safety) — so scope the DB read by
+        this collector's account first and only then fall back to the default
+        row.
+        """
+        for acc in dict.fromkeys([self.account_id, "default"]):
+            if not acc:
+                continue
+            db_key = credential_provider.get_provider_api_key("deepseek", account_id=acc)
+            if db_key:
+                self._current_input_source = "config"
+                return db_key
 
         if self.account_id:
             cache_data = await token_cache.get_with_metadata("deepseek", account_id=self.account_id)
             if cache_data:
                 tokens, metadata = cache_data
-                source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "config" if source in ("config", "manual_config") else "sidecar"
-                )
-                return tokens.get("api_key")
+                # The DB→cache mirror writes every key into ``oauth_token``;
+                # only some collectors read the ``api_key`` slot. A cache row
+                # without a usable key field is NOT terminal — fall through so
+                # the env default below still gets its chance.
+                cached_key = tokens.get("api_key") or tokens.get("oauth_token")
+                if cached_key:
+                    source = metadata.get("source") or "sidecar"
+                    self._current_input_source = (
+                        "config" if source in ("config", "manual_config") else "sidecar"
+                    )
+                    return cached_key
+
+        if self.account_id not in (None, "default"):
+            # The env var belongs to the default account; a dynamic collector
+            # for another account must not claim it (duplicate card risk).
+            return None
 
         key = settings.DEEPSEEK_API_KEY or None
         if key:

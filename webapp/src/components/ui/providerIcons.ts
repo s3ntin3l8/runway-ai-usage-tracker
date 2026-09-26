@@ -34,6 +34,7 @@ const PROVIDER_ICONS: Record<string, string> = {
   'opencode-byok': opencode,
   'opencode-openrouter': openrouter,
   'opencode-ollama': ollama,
+  'opencode-deepseek': deepseek,
   zai,
   kimi,
   kimi_api: kimi,
