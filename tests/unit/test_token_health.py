@@ -181,7 +181,8 @@ class TestTokenHealthService:
     @pytest.mark.asyncio
     async def test_expired_unrefreshable_is_redundant_with_healthy_sibling(self):
         """An expired, unrefreshable token is flagged redundant when another
-        credential for the same provider is healthy — so the dashboard banner
+        credential that account can fall back on (an identity-less cache entry)
+        is healthy — so the dashboard banner
         can ignore it instead of crying wolf."""
         service = TokenHealthService()
         expired_jwt = _make_jwt(time.time() - 3600)
@@ -189,13 +190,17 @@ class TestTokenHealthService:
 
         mock_stats = {
             "chatgpt": {
-                "dead": {"tokens": ["oauth_token"], "account_label": None, "ttl_remaining": 600},
+                "dead@x.com": {
+                    "tokens": ["oauth_token"],
+                    "account_label": None,
+                    "ttl_remaining": 600,
+                },
                 "alive": {"tokens": ["oauth_token"], "account_label": None, "ttl_remaining": 600},
             }
         }
 
         async def fake_get(provider, acc_id):
-            return {"oauth_token": expired_jwt if acc_id == "dead" else valid_jwt}
+            return {"oauth_token": expired_jwt if acc_id == "dead@x.com" else valid_jwt}
 
         with (
             patch(
@@ -212,8 +217,8 @@ class TestTokenHealthService:
             result = await service.get_health()
 
         by_acc = {r["account_id"]: r for r in result}
-        assert by_acc["dead"]["status"] == "expired"
-        assert by_acc["dead"]["redundant"] is True
+        assert by_acc["dead@x.com"]["status"] == "expired"
+        assert by_acc["dead@x.com"]["redundant"] is True
         assert by_acc["alive"]["redundant"] is False
 
     @pytest.mark.asyncio
@@ -299,6 +304,22 @@ class TestPerAccountAndInvalid:
             cache.seed_sync(provider, acc_id, tokens, meta)
         return cache
 
+    async def _health_list(self, service, server_creds):
+        """`get_health` rows as a list (several rows can share the `server` id)."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.return_value = []
+        with (
+            patch("app.services.token_health.token_cache", self._cache([])),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value=server_creds,
+            ),
+        ):
+            return await service.get_health()
+
     @staticmethod
     async def _health(cache, *, configs=None, server_creds=None):
         service = TokenHealthService()
@@ -345,6 +366,81 @@ class TestPerAccountAndInvalid:
         )
         rows = await self._health(cache)
         assert rows["a@x.com"]["redundant"] is True
+
+    @pytest.mark.asyncio
+    async def test_other_hash_account_does_not_make_expired_hash_account_redundant(self):
+        cache = self._cache(
+            [
+                ("openrouter", "hashaaaaaaaa", {"oauth_token": _make_jwt(time.time() - 60)}, {}),
+                (
+                    "openrouter",
+                    "hashbbbbbbbb",
+                    {"oauth_token": _make_jwt(time.time() + 86400 * 9)},
+                    {},
+                ),
+            ]
+        )
+        rows = await self._health(cache)
+        assert rows["hashaaaaaaaa"]["status"] == "expired"
+        assert rows["hashaaaaaaaa"]["redundant"] is False
+
+    @pytest.mark.asyncio
+    async def test_healthy_server_row_does_not_mask_an_expired_identified_account(self):
+        cache = self._cache(
+            [("anthropic", "a@x.com", {"oauth_token": _make_jwt(time.time() - 60)}, {})]
+        )
+        healthy = {"anthropic": {"oauth_token": _make_jwt(time.time() + 86400 * 9)}}
+        rows = await self._health(cache, server_creds=healthy)
+        assert rows["server"]["status"] == "valid"
+        assert rows["a@x.com"]["redundant"] is False
+
+    @pytest.mark.asyncio
+    async def test_dead_server_oauth_does_not_mark_a_sibling_api_key_expired(self):
+        creds = {
+            "anthropic": {
+                "oauth_token": _make_jwt(time.time() - 60),
+                "api_key": _FAKE_1,
+            }
+        }
+        service = TokenHealthService()
+        rows = await self._health_list(service, creds)
+        by_types = {tuple(r["token_types"]): r["status"] for r in rows}
+        assert by_types[("oauth_token",)] == "expired"
+        assert by_types[("api_key",)] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_default_row_is_not_flagged_when_provider_has_several_accounts(self):
+        """A flag under one identified account is ambiguous for an unscoped
+        (`default`) config/server row once the provider has 2+ other accounts."""
+        from app.services import auth_failures
+
+        cache = self._cache(
+            [
+                ("zai", "a@x.com", {"api_key": _FAKE_1}, {}),
+                ("zai", "b@x.com", {"api_key": _FAKE_2}, {}),
+            ]
+        )
+        cfg = MagicMock(provider_id="zai", account_id="default", account_label=None)
+        cfg.api_key = "zk-default-cfg"  # pragma: allowlist secret
+        cfg.session_cookie = None
+        auth_failures.mark("zai", "a@x.com")
+        rows = await self._health(cache, configs=[cfg])
+        assert rows["a@x.com"]["status"] == "invalid"
+        assert rows["b@x.com"]["status"] == "valid"
+        assert rows["config:default"]["status"] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_default_row_is_flagged_in_a_single_account_deployment(self):
+        """The collector resolves an identity for a dashboard-pasted `default` key,
+        so the rejection is flagged under that identity — the default row is it."""
+        from app.services import auth_failures
+
+        cfg = MagicMock(provider_id="zai", account_id="default", account_label=None)
+        cfg.api_key = "zk-default-cfg"  # pragma: allowlist secret
+        cfg.session_cookie = None
+        auth_failures.mark("zai", "me@x.com")
+        rows = await self._health(self._cache([]), configs=[cfg])
+        assert rows["config:default"]["status"] == "invalid"
 
     @pytest.mark.asyncio
     async def test_assumed_valid_config_row_is_not_a_healthy_sibling(self):

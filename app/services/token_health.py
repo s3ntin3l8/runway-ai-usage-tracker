@@ -17,7 +17,7 @@ from app.models.db import ProviderConfig, SidecarRegistry
 from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
-from app.services.token_cache import is_foreign_account_entry, token_cache
+from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, token_cache
 from app.services.token_refresher import _REFRESH_ENDPOINTS
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,8 @@ def _classify_status(
 # collection cycle, so evicting them from the cache would not stick — they are
 # changed in Settings → Providers or the server environment instead.
 _NON_REMOVABLE_SOURCES = frozenset({"config", "manual_config", "server"})
+# Credential fields that share one expiry (the OAuth token family).
+_OAUTH_FAMILY_KEYS = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
 
 
 class CredentialNotRemovableError(Exception):
@@ -73,21 +75,57 @@ def _underlying_account(account_id: str) -> str:
     return account_id
 
 
-def _is_flagged_invalid(provider: str, account_id: str) -> bool:
-    """True when a collector recently got 401/403 for the account this row stands for.
+def _is_synthetic(account_id: str) -> bool:
+    """Rows Token Health builds itself (server env/file, dashboard config)."""
+    return account_id == "server" or account_id.startswith(("config:", "config-cookie:"))
+
+
+def _apply_invalid(rows: list[dict[str, Any]]) -> None:
+    """Flip healthy-looking rows to ``invalid`` when a collector's credential was rejected.
 
     Matching is by *identity*, not by the borrowing rule: two different
     opaque/fingerprint-keyed accounts of one provider must not flag each
-    other. A flagged ``default`` (an unscoped collector) matches every row of
-    the provider, and a ``default`` row (an unscoped server/config credential)
-    matches any flag — the collector may resolve an identity for a credential
-    the row can't name. Anything else needs equal canonical ids; a hash-keyed
-    row is deliberately *not* linked to a flagged email (under-flag rather than
-    show a healthy credential as rejected).
+    other. A row matches when its canonical account id equals a flagged id, or
+    when the flagged id is ``default`` (an unscoped collector — matches every
+    row of the provider). A ``default`` row (an unscoped server/config
+    credential) can't name the identity its collector resolved, so it matches a
+    flag only when the provider has at most one *other* account — with two or
+    more it is ambiguous and stays as is (under-flag rather than show a healthy
+    credential as rejected). A hash-keyed row is never linked to a flagged email.
+
+    Runs after every row exists because the ``default`` case needs to know the
+    provider's other accounts.
     """
-    row = canonical_account_id(_underlying_account(account_id))
-    flagged = auth_failures.flagged_accounts(provider)
-    return bool(flagged) and (row == "default" or "default" in flagged or row in flagged)
+    accounts_by_provider: dict[str, set[str]] = {}
+    for r in rows:
+        accounts_by_provider.setdefault(r["provider"], set()).add(
+            canonical_account_id(_underlying_account(r["account_id"]))
+        )
+    for r in rows:
+        if r["status"] not in ("valid", "unknown"):
+            continue
+        flagged = auth_failures.flagged_accounts(r["provider"])
+        if not flagged:
+            continue
+        row_id = canonical_account_id(_underlying_account(r["account_id"]))
+        others = accounts_by_provider[r["provider"]] - {"default"}
+        if "default" in flagged or row_id in flagged or (row_id == "default" and len(others) <= 1):
+            r["status"] = "invalid"
+
+
+def _redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
+    """True when *healthy* is a credential that could stand in for the expired *row*.
+
+    Same canonical account, or an identity-less **cache** entry standing in for an
+    identified (email) account — the borrowing direction collectors actually use.
+    Two different opaque hashes are different accounts, and server/config rows
+    never count as a sibling of another account.
+    """
+    h_id = canonical_account_id(_underlying_account(healthy["account_id"]))
+    r_id = canonical_account_id(_underlying_account(row["account_id"]))
+    if h_id == r_id:
+        return True
+    return "@" in r_id and "@" not in h_id and not _is_synthetic(healthy["account_id"])
 
 
 def _collect_server_credentials() -> dict[str, dict[str, Any]]:
@@ -135,8 +173,6 @@ def _row(
     status = _classify_status(
         exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
     )
-    if status in ("valid", "unknown") and _is_flagged_invalid(provider, account_id):
-        status = "invalid"
     return {
         "provider": provider,
         "account_id": account_id,
@@ -252,40 +288,43 @@ class TokenHealthService:
                 fresh = {
                     k: v for k, v in creds.items() if f"{provider}:{v}" not in seen_token_values
                 }
-                if not fresh:
-                    continue
-                result.append(
-                    _row(
-                        provider,
-                        "server",
-                        label=None,
-                        source="server",
-                        source_name="server",
-                        token_types=list(fresh.keys()),
-                        exp=IdentityExtractor.exp_from_tokens(fresh),
-                        can_refresh=False,
-                        rollable="refresh_token" in fresh,
+                # One row per credential family: a dead OAuth JWT must not mark an
+                # independent API key beside it expired.
+                oauth = {k: v for k, v in fresh.items() if k in _OAUTH_FAMILY_KEYS}
+                other = {k: v for k, v in fresh.items() if k not in _OAUTH_FAMILY_KEYS}
+                for family in (oauth, other):
+                    if not family:
+                        continue
+                    result.append(
+                        _row(
+                            provider,
+                            "server",
+                            label=None,
+                            source="server",
+                            source_name="server",
+                            token_types=list(family.keys()),
+                            exp=IdentityExtractor.exp_from_tokens(family),
+                            can_refresh=False,
+                            rollable="refresh_token" in family,
+                        )
                     )
-                )
         except Exception as e:
             logger.debug(f"Server credential scan for token health failed: {e}")
 
+        _apply_invalid(result)
+
         # Mark expired, unrefreshable entries as "redundant" when another credential
-        # this account could fall back on is still healthy. Such an entry can't be
-        # auto-rolled and isn't blocking collection — so the dashboard banner should
-        # not raise a hard alarm on it alone. Siblings must be for the *same* account
-        # (or carry no identity of their own — the borrowing rule collectors use), and
-        # rows that are merely assumed valid (config / env, no expiry) don't count.
+        # for that account is still healthy. Such an entry can't be auto-rolled and
+        # isn't blocking collection — so the dashboard banner should not raise a hard
+        # alarm on it alone. See `_redundancy_sibling` for what counts as a sibling;
+        # rows that are merely assumed valid (config / env, no expiry) never do.
         healthy = [r for r in result if r["status"] in ("valid", "expiring") and not r["_assumed"]]
         for r in result:
-            wanted = _underlying_account(r["account_id"])
             r["redundant"] = (
                 r["status"] == "expired"
                 and not r["_rollable"]
                 and any(
-                    h is not r
-                    and h["provider"] == r["provider"]
-                    and not is_foreign_account_entry(_underlying_account(h["account_id"]), wanted)
+                    h is not r and h["provider"] == r["provider"] and _redundancy_sibling(h, r)
                     for h in healthy
                 )
             )
