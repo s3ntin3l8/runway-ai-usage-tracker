@@ -101,6 +101,87 @@ class TestOpenCodeCredentialRules:
         assert cookie_slots == {"auth", "__Host-console_session"}
 
 
+class TestOpencodeAuthJsonRuleMirrors:
+    """Every sidecar rule reading opencode's auth.json must exist in registry.json.
+
+    #340 added sibling-provider rules (openrouter / minimax / kimi_coding) to the
+    sidecar's baked registry only, so the server's "single source of truth" drifted
+    (#351) — same file, same mapping shape, different outcome. Providers are
+    discovered from the sidecar side, so the next sibling added there cannot
+    desync silently; the pinned set below additionally catches a rule being
+    dropped from either registry.
+    """
+
+    _EXPECTED = {"openrouter", "minimax", "kimi_coding", "opencode", "ollama", "xai"}
+
+    @staticmethod
+    def _auth_json_file_rules(rules: list) -> list[dict]:
+        """File rules whose paths point at opencode's auth.json (either location)."""
+        return [
+            rule
+            for rule in rules
+            if rule.get("type") == "file"
+            and any("auth.json" in path and "opencode" in path for path in rule.get("paths", []))
+        ]
+
+    @classmethod
+    def _sidecar_rules(cls) -> dict[str, list[dict]]:
+        found: dict[str, list[dict]] = {}
+        for provider_id, provider in sidecar.__REGISTRY__["providers"].items():
+            rules = cls._auth_json_file_rules(provider.get("rules", []))
+            if rules:
+                found[provider_id] = rules
+        return found
+
+    def test_sidecar_auth_json_provider_set_is_pinned(self):
+        assert set(self._sidecar_rules()) == self._EXPECTED
+
+    def test_canonical_registry_mirrors_paths_and_mappings(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        for provider_id, sidecar_rules in self._sidecar_rules().items():
+            assert provider_id in registry["providers"], f"{provider_id} missing from registry.json"
+            canonical_rules = self._auth_json_file_rules(
+                registry["providers"][provider_id]["rules"]
+            )
+            assert canonical_rules, f"{provider_id}: no auth.json file rule in registry.json"
+            for rule in sidecar_rules:
+                match = next(
+                    (
+                        candidate
+                        for candidate in canonical_rules
+                        if set(candidate["paths"]) == set(rule["paths"])
+                    ),
+                    None,
+                )
+                assert match is not None, (
+                    f"{provider_id}: canonical auth.json paths drift ({sorted(rule['paths'])})"
+                )
+                assert match["mapping"] == rule["mapping"], (
+                    f"{provider_id}: canonical mapping drift ({rule['mapping']})"
+                )
+
+    @pytest.mark.parametrize(
+        ("provider_id", "mapping"),
+        [
+            ("openrouter", {"openrouter.key": "api_key"}),
+            ("minimax", {"minimax-coding-plan.key": "api_key"}),
+            ("kimi_coding", {"kimi-code-plan-global.key": "api_key"}),
+        ],
+    )
+    def test_sibling_providers_keep_their_auth_json_mappings(self, provider_id, mapping):
+        """#351: the three sibling keys added by #340 must stay in both registries."""
+        for providers in (
+            sidecar.__REGISTRY__["providers"],
+            json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())["providers"],
+        ):
+            rules = self._auth_json_file_rules(providers[provider_id]["rules"])
+            assert any(rule["mapping"] == mapping for rule in rules), provider_id
+            assert any(
+                set(rule["paths"]) == {"~/.local/share/opencode/auth.json", "~/.opencode/auth.json"}
+                for rule in rules
+            ), provider_id
+
+
 class TestXaiCredentialRules:
     def test_baked_and_canonical_registries_map_actual_auth_fields(self):
         registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
