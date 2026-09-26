@@ -798,8 +798,9 @@ def test_auto_hint_independent_per_provider(client: TestClient, session: Session
 
 
 # ---------------------------------------------------------------------------
-# Key-scoped hints (#347 T1) — the server recognises a key it has been
-# pasted and answers under ``provider:opencode#<fingerprint>``.
+# Key-scoped hints (#347 T1, widened to OpenCode's siblings in #349) — the
+# server recognises a key it has been pasted and answers under
+# ``provider:<pid>#<fingerprint>``.
 #
 # The OpenCode CLI credential carries no identity of its own, so the
 # sidecar cannot derive an account for it (see
@@ -810,14 +811,20 @@ def test_auto_hint_independent_per_provider(client: TestClient, session: Session
 
 OPENCODE_CLI_KEY = "oc_sk_pasted_by_operator"  # pragma: allowlist secret
 OTHER_CLI_KEY = "oc_sk_second_account_key"  # pragma: allowlist secret
+SIBLING_KEY = "sk-or-v1-pasted_by_operator"  # pragma: allowlist secret
+XAI_BEARER = "xai_pasted_by_operator"  # pragma: allowlist secret
 
 
 def _opencode_hint_key(key: str) -> str:
     """The hint key both sides derive independently: the server never learns
     the sidecar's path, the sidecar never learns which account row matched."""
+    return _hint_key("opencode", key)
+
+
+def _hint_key(provider_id: str, key: str) -> str:
     from app.services.account_identity import credential_fingerprint, keyed_credential_origin
 
-    return keyed_credential_origin("provider:opencode", credential_fingerprint(key))
+    return keyed_credential_origin(f"provider:{provider_id}", credential_fingerprint(key))
 
 
 def test_fingerprint_hint_ships_for_stored_opencode_key(
@@ -869,6 +876,66 @@ def test_fingerprint_hint_maps_each_key_to_its_own_account(
     }
 
 
+@pytest.mark.parametrize("provider_id", ["openrouter", "minimax", "kimi_coding", "ollama"])
+def test_fingerprint_hint_ships_for_stored_sibling_key(
+    client: TestClient, session: Session, provider_id: str
+) -> None:
+    """#349: the OpenCode-file siblings are keyed too, so a pasted sibling
+    key answers under ``provider:<pid>#<fp>`` exactly like opencode's does."""
+    _add_provider_config(
+        session,
+        provider_id=provider_id,
+        account_id="alice@example.com",
+        api_key=SIBLING_KEY,
+    )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"][provider_id][_hint_key(provider_id, SIBLING_KEY)] == (
+        "alice@example.com"
+    )
+
+
+def test_fingerprint_hint_ships_for_stored_xai_key(client: TestClient, session: Session) -> None:
+    """xai is the awkward sibling: every sidecar candidate carries the bearer
+    under ``xai_access``, never ``api_key``. What the operator pastes into
+    ``provider_configs`` is the same value, so the fingerprints still line up
+    — the asymmetry lives only in the candidate-dict field name."""
+    _add_provider_config(
+        session,
+        provider_id="xai",
+        account_id="grok@example.com",
+        api_key=XAI_BEARER,
+    )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    assert r.json()["account_tag_hints"]["xai"][_hint_key("xai", XAI_BEARER)] == (
+        "grok@example.com"
+    )
+
+
+def test_sibling_fingerprint_hints_land_in_separate_provider_buckets(
+    client: TestClient, session: Session
+) -> None:
+    """One response, several keyed buckets — a hint for one provider can
+    never be consumed as another's, because the descriptor carries the pid."""
+    for provider_id in ("openrouter", "ollama"):
+        _add_provider_config(
+            session,
+            provider_id=provider_id,
+            account_id=f"{provider_id}@example.com",
+            api_key=SIBLING_KEY,
+        )
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert hints["openrouter"][_hint_key("openrouter", SIBLING_KEY)] == ("openrouter@example.com")
+    assert hints["ollama"][_hint_key("ollama", SIBLING_KEY)] == "ollama@example.com"
+    assert _hint_key("openrouter", SIBLING_KEY) not in hints["ollama"]
+
+
 def test_fingerprint_hint_skips_unusable_rows(client: TestClient, session: Session) -> None:
     """No key and a disabled row produce no fingerprint hint — there is
     nothing to match a sidecar's fingerprint against, and the collector
@@ -889,24 +956,26 @@ def test_fingerprint_hint_skips_unusable_rows(client: TestClient, session: Sessi
     assert r.json()["account_tag_hints"] == {}
 
 
-def test_fingerprint_hint_only_fires_for_key_scoped_providers(
+def test_fingerprint_hint_only_fires_for_keyed_providers(
     client: TestClient, session: Session
 ) -> None:
-    """#347 scopes fingerprinting to opencode: other providers keep their
-    plain origins, so none of their rows gain a ``#<fingerprint>`` hint."""
+    """#349 widens fingerprinting to the OpenCode-file siblings (openrouter,
+    minimax, kimi_coding, ollama, xai) — `kimi` is deliberately outside that
+    set, so its row keeps the plain descriptor and gains no
+    ``#<fingerprint>`` hint."""
     _add_provider_config(
         session,
-        provider_id="openrouter",
+        provider_id="kimi",
         account_id="alice@example.com",
-        api_key="sk-or-v1-something",  # pragma: allowlist secret
+        api_key="sk-kimi-plain-origin",  # pragma: allowlist secret
     )
 
     r = client.get("/api/v1/fleet/config")
     assert r.status_code == 200
     hints = r.json()["account_tag_hints"]
     assert "opencode" not in hints
-    # openrouter's only hint is the pre-existing plain descriptor.
-    assert hints["openrouter"] == {"provider:openrouter": "alice@example.com"}
+    # kimi's only hint is the pre-existing plain descriptor.
+    assert hints["kimi"] == {"provider:kimi": "alice@example.com"}
 
 
 def test_operator_tag_wins_over_fingerprint_hint(client: TestClient, session: Session) -> None:

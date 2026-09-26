@@ -2109,9 +2109,17 @@ def test_xai_grok_uses_user_id_then_operator_tag_when_email_missing(monkeypatch,
     cards, blocked = sidecar.GenericCollector.collect_provider(
         "xai", sidecar.__REGISTRY__["providers"]["xai"]
     )
+    # xai is key-scoped (#349): the blocked origin names the credential,
+    # not just the file it was found in.
+    from scripts.sidecar_pkg.identity import credential_fingerprint
+
     assert cards == []
     assert blocked == [
-        {"provider_id": "xai", "credential_origin": f"path:{untagged_auth.resolve()}"}
+        {
+            "provider_id": "xai",
+            "credential_origin": f"path:{untagged_auth.resolve()}"
+            f"#{credential_fingerprint('token')}",
+        }
     ]
 
     cards, blocked = sidecar.GenericCollector.collect_provider(

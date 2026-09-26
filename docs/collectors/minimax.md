@@ -139,6 +139,12 @@ there, Runway auto-discovers the key from
 `MINIMAX_API_KEY` env var or UI paste needed — the same key opencode uses for
 its own `minimax-coding-plan` backend lights up this collector's quota card.
 
+The discovered key's origin is key-scoped exactly like opencode's own
+(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
+[opencode.md](opencode.md)), so two hosts — or a rotated key — can never
+share one operator tag. Paste the same key into Providers → minimax and the
+server answers `provider:minimax#<fingerprint>` on the next sidecar cycle.
+
 Already-ingested events under the old `opencode-minimax-coding-plan` id need a one-time
 migration, with the server **stopped** (SQLite is single-writer) and `APP_HOST=127.0.0.1`:
 

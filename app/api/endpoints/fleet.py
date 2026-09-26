@@ -26,6 +26,7 @@ from app.models.db import (
 from app.models.schemas import IngestRequest
 from app.services import audit_log, pairing
 from app.services.account_identity import (
+    FINGERPRINTED_ORIGIN_PROVIDERS,
     credential_fingerprint,
     keyed_credential_origin,
     normalize_sidecar_id,
@@ -368,7 +369,8 @@ def _fingerprinted_credential_hints(
     session: Session, providers: list[str]
 ) -> dict[str, dict[str, str]]:
     """``{provider_id: {provider:<pid>#<fingerprint>: account_id}}`` for
-    providers whose credential is a bare API key (#347).
+    providers whose credential is a bare key (#347; widened from opencode
+    to its OpenCode-file siblings in #349).
 
     The sidecar suffixes such a credential's origin with a fingerprint of
     the value it found on disk so two hosts (or one host after a key
@@ -386,37 +388,39 @@ def _fingerprinted_credential_hints(
     a guess. A sidecar that lacks the key cannot produce a matching
     fingerprint, so there is nothing to scope: the match is the scoping.
     """
-    if "opencode" not in providers:
+    keyed = FINGERPRINTED_ORIGIN_PROVIDERS.intersection(providers)
+    if not keyed:
         return {}
 
     rows = list(
         session.exec(
             select(ProviderConfig)
             .where(
-                ProviderConfig.provider_id == "opencode",
+                col(ProviderConfig.provider_id).in_(sorted(keyed)),
                 ProviderConfig.enabled == True,  # noqa: E712 — SQLModel needs the ==
             )
-            .order_by(col(ProviderConfig.account_id))
+            .order_by(col(ProviderConfig.provider_id), col(ProviderConfig.account_id))
         ).all()
     )
-    out: dict[str, str] = {}
+    out: dict[str, dict[str, str]] = {}
     for row in rows:
         try:
             api_key = row.api_key
         except Exception:  # pragma: no cover — undecryptable stored key
-            logger.debug("fingerprint hint: cannot decrypt opencode key", exc_info=True)
+            logger.debug("fingerprint hint: cannot decrypt %s key", row.provider_id, exc_info=True)
             continue
         fingerprint = credential_fingerprint(api_key)
         if not fingerprint:
             continue
-        hint_key = keyed_credential_origin("provider:opencode", fingerprint)
-        # Deterministic first-wins (rows ordered by account_id): the same
-        # key stored under two accounts is operator misconfiguration, not
-        # something to resolve silently in either direction.
-        out.setdefault(hint_key, row.account_id)
+        hint_key = keyed_credential_origin(f"provider:{row.provider_id}", fingerprint)
+        # Deterministic first-wins (rows ordered by provider_id, account_id):
+        # the same key stored under two accounts is operator
+        # misconfiguration, not something to resolve silently in either
+        # direction.
+        out.setdefault(row.provider_id, {}).setdefault(hint_key, row.account_id)
     if not out:
         return {}
-    return {"opencode": out}
+    return out
 
 
 def _account_tag_hints_for_providers(

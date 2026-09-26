@@ -13,6 +13,18 @@ The collector reads the access bearer from `xai_access`. The sidecar can obtain 
 - `GROK_OAUTH_TOKEN`, mapped to `xai_access`.
 - A bearer pasted into provider settings, stored as `xai_access` only.
 
+All three sidecar sources get key-scoped origins (#349): the bearer is
+fingerprinted under `xai_access` (never `api_key` — the field the registry
+maps every source to) and suffixed to the origin, e.g.
+`path:/home/u/.local/share/opencode/auth.json#495fa9c614ce` or
+`env:GROK_OAUTH_TOKEN#495fa9c614ce`. See *The sibling providers (#349)* in
+[opencode.md](opencode.md). Pasting the same bearer into provider settings
+stores it as `provider_configs.api_key` (mirrored into the token cache's
+`xai_access` slot), which is the same value the sidecar just fingerprinted —
+so the server answers `provider:xai#<fingerprint>` on the next sidecar
+cycle; a rotated bearer is a new origin and lands in Untagged Credentials
+until tagged.
+
 Runway does not refresh these tokens. For Grok CLI credentials, both the quota card and usage events use the selected scope entry's email as the account identity, then its user ID. If neither is available, the normal credential tagging flow lets the operator associate the credential with an account.
 
 The collector checks a readable JWT expiry before sending requests. An expired token or a rejected request produces an `auth_failed` card that points to the CLI re-login flow.

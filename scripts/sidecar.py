@@ -2353,16 +2353,18 @@ def credential_origin_for_provider(provider_id: str) -> str:
     return f"provider:{provider_id}"
 
 
-# Providers whose credential is a bare API key with no per-account identity
-# of its own (#347). For these, the *file or variable* descriptor alone is
-# not enough to identify the credential: `path:/home/u/.local/share/
-# opencode/auth.json` is the same string on every host with the same
-# username, and the same string before and after a key rotation. Two hosts
-# (or two keys) sharing an origin would share the operator's tag and inherit
-# each other's account, so their origins are suffixed with a fingerprint of
-# the discovered value. Other providers keep the plain descriptor — they
-# either carry a real identity (anthropic, chatgpt) or are out of scope.
-_FINGERPRINTED_ORIGIN_PROVIDERS = frozenset({"opencode"})
+# Which providers get key-scoped origins (and why) is documented on
+# ``FINGERPRINTED_ORIGIN_PROVIDERS`` in ``scripts/sidecar_pkg/identity.py`` —
+# the server mirrors that set so it can answer ``provider:<pid>#<fp>``
+# hints (#347, #349).
+#
+# Which candidate dict field carries that key. Every provider in the set
+# reports its credential under ``api_key`` except xai, whose OpenCode
+# ``auth.json`` / Grok CLI ``auth.json`` / ``GROK_OAUTH_TOKEN`` candidates
+# all arrive under the registry mapping target ``xai_access``. Fingerprint
+# anything else in the dict and the sidecar's origin would never match the
+# fingerprint the server builds from ``provider_configs.api_key``.
+_FINGERPRINT_KEY_FIELDS: dict[str, str] = {"xai": "xai_access"}
 
 
 def fingerprinted_credential_origin(
@@ -2371,19 +2373,25 @@ def fingerprinted_credential_origin(
     """Return ``base_origin`` suffixed with the credential fingerprint where
     the provider needs a key-scoped origin, else ``base_origin`` unchanged.
 
-    See ``_FINGERPRINTED_ORIGIN_PROVIDERS`` for why. Callers pass the
+    See ``FINGERPRINTED_ORIGIN_PROVIDERS`` for why. Callers pass the
     candidate token dict so the origin can be derived from the exact value
-    that will be shipped. A missing / blank ``api_key`` leaves the plain
-    origin in place — there is no credential to disambiguate.
+    that will be shipped. A missing / blank key field leaves the plain
+    origin in place — there is no credential to disambiguate, which is
+    also exactly what keeps non-key candidates (cookies, CLI-OAuth tokens,
+    ``openrouter``'s cosmetic env vars) plain without a per-candidate
+    opt-out.
     """
-    if provider_id not in _FINGERPRINTED_ORIGIN_PROVIDERS:
-        return base_origin
     from scripts.sidecar_pkg.identity import (
+        FINGERPRINTED_ORIGIN_PROVIDERS,
         credential_fingerprint,
         keyed_credential_origin,
     )
 
-    fingerprint = credential_fingerprint(str(candidate_tokens.get("api_key") or ""))
+    if provider_id not in FINGERPRINTED_ORIGIN_PROVIDERS:
+        return base_origin
+
+    key_field = _FINGERPRINT_KEY_FIELDS.get(provider_id, "api_key")
+    fingerprint = credential_fingerprint(str(candidate_tokens.get(key_field) or ""))
     if not fingerprint:
         return base_origin
     return keyed_credential_origin(base_origin, fingerprint)
@@ -2645,7 +2653,15 @@ class GenericCollector:
                         # refresh-only or identity-only entry is not usable.
                         if candidate_tokens.get("xai_access"):
                             token_candidates.append(
-                                (candidate_tokens, f"path:{Path(path).resolve()}", "file")
+                                (
+                                    candidate_tokens,
+                                    fingerprinted_credential_origin(
+                                        f"path:{Path(path).resolve()}",
+                                        provider_id,
+                                        candidate_tokens,
+                                    ),
+                                    "file",
+                                )
                             )
                             logging.info(f"  [{provider_id}] grok CLI auth.json matched: {path}")
                     except Exception as exc:

@@ -100,6 +100,32 @@ the sidecar does not know which account row matched).
 tag stays on the old credential and the rotated key lands in Untagged
 Credentials until it is tagged again or matched by a pasted key below.
 
+### The sibling providers (#349)
+
+Five providers read this same `auth.json` — `openrouter`, `minimax`,
+`kimi_coding`, `ollama` and `xai` — and inherit the identical problem, so
+their origins are keyed exactly the same way. The membership lives in one
+constant, `FINGERPRINTED_ORIGIN_PROVIDERS`, mirrored in
+`app/services/account_identity.py` (what the server answers hints for) and
+`scripts/sidecar_pkg/identity.py` (what the sidecar suffixes). Two details
+worth knowing:
+
+- **xai's field is `xai_access`, not `api_key`.** Every xai candidate —
+  OpenCode `auth.json`, Grok CLI `auth.json`, `GROK_OAUTH_TOKEN` — carries
+  the bearer under `xai_access`, so the sidecar fingerprints that field.
+  The server still fingerprints `provider_configs.api_key`, which holds the
+  same pasted value, so both halves agree.
+- **Non-key candidates stay plain.** A cookie (`cookie:ollama/session`),
+  `kimi_coding`'s own CLI credential file, and `openrouter`'s cosmetic
+  `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE` env vars carry no key
+  field and keep their existing origins — nothing an operator already
+  tagged moves. `kimi` itself is outside the set (#349's scope).
+
+The cascade below applies to them unchanged, including tier 1b's
+`provider:<pid>#<fingerprint>` hint and the tier-2 legacy fallback. Only the
+tier-3 `account.json` gate is opencode-specific: the siblings have no local
+state that can contradict the provider-wide hint, so they take it ungated.
+
 ### Resolution cascade
 
 The sidecar resolves a token card's account most-specific-first; whatever
@@ -258,9 +284,10 @@ rule now extracts both names.
 | `app/core/registry.json` (`providers.opencode`) | UI labels + sidecar rule mirror |
 | `app/services/collector_manager.py` (`_sync_manual_config_to_cache`) | DB → token-cache bridge for manual UI pastes |
 | `app/api/endpoints/system.py` (`upsert_provider_config_for_account`) | Opencode-specific cookie / API-key parsing |
-| `scripts/sidecar_pkg/identity.py`, `app/services/account_identity.py` | `credential_fingerprint` + keyed-origin helpers (mirrored on both sides) |
+| `scripts/sidecar_pkg/identity.py`, `app/services/account_identity.py` | `FINGERPRINTED_ORIGIN_PROVIDERS` + `credential_fingerprint` / keyed-origin helpers (mirrored on both sides) |
+| `scripts/sidecar.py` (`fingerprinted_credential_origin`, `_FINGERPRINT_KEY_FIELDS`) | Sidecar-side key-scoped origin suffixing, incl. xai's `xai_access` field |
 | `app/api/endpoints/fleet.py` (`_fingerprinted_credential_hints`) | Server-side tier-1b hint |
-| `tests/unit/test_opencode_credential_identity.py`, `tests/integration/test_fleet_credentials.py` | Identity-source and isolation coverage |
+| `tests/unit/test_opencode_credential_identity.py`, `tests/unit/test_sibling_keyed_origins.py`, `tests/integration/test_fleet_credentials.py` | Identity-source, sibling and isolation coverage |
 
 ## References
 
