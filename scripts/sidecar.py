@@ -2012,6 +2012,7 @@ def _extract_events_for_provider(
     bootstrap_days: int,
     out_events: list[dict[str, Any]],
     server_account_tag_hints: dict[str, dict[str, str]] | None = None,
+    server_accounts_by_provider: dict[str, list[str]] | None = None,
     account_source: str | None = None,
 ) -> int:
     """Run the event extractor for ``provider_id`` once per ``account_ids``,
@@ -2056,16 +2057,17 @@ def _extract_events_for_provider(
     if extractor is None:
         return 0
     canonical_hints = _build_canonical_hints_for_provider(provider_id, server_account_tag_hints)
+    canonical_accounts = _build_canonical_accounts_for_provider(
+        provider_id, server_accounts_by_provider
+    )
 
     failures = 0
     for account_id in account_ids:
         try:
-            evts = extractor(
-                account_id,
-                watermark,
-                bootstrap_days,
-                canonical_hints=canonical_hints,
-            )
+            extractor_options: dict[str, Any] = {"canonical_hints": canonical_hints}
+            if provider_id == "opencode":
+                extractor_options["canonical_accounts"] = canonical_accounts
+            evts = extractor(account_id, watermark, bootstrap_days, **extractor_options)
         except Exception as e:
             # Keep the traceback: a bare ``str(e)`` is what hid #320's
             # type mismatch for several releases.
@@ -2131,6 +2133,23 @@ def _build_canonical_hints_for_provider(
     return canonical_hints or None
 
 
+def _build_canonical_accounts_for_provider(
+    provider_id: str,
+    server_accounts_by_provider: dict[str, list[str]] | None,
+) -> dict[str, list[str]] | None:
+    """Forward configured canonical account ids for safe OpenCode tag use."""
+    if provider_id != "opencode":
+        return None
+    from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP
+
+    accounts: dict[str, list[str]] = {}
+    for canonical_provider_id, _ in _OC_CANONICAL_MAP.values():
+        configured = (server_accounts_by_provider or {}).get(canonical_provider_id, [])
+        if configured:
+            accounts[canonical_provider_id] = list(configured)
+    return accounts or None
+
+
 def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
     """Bind a parser to a path-discovery callable so we can pass ``account_id``."""
 
@@ -2140,6 +2159,7 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
+        canonical_accounts: dict[str, list[str]] | None = None,  # noqa: ARG001 — signature parity
     ) -> list:
         paths = paths_finder()
         if not paths:
@@ -2175,6 +2195,7 @@ def _make_account_extractor_opencode(parser: Any) -> Any:
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,
+        canonical_accounts: dict[str, list[str]] | None = None,
     ) -> list:
         db_path = _discover_opencode_db_path()
         if db_path is None:
@@ -2187,6 +2208,7 @@ def _make_account_extractor_opencode(parser: Any) -> Any:
             account_id=account_id,
             since=since,
             canonical_hints=canonical_hints,
+            canonical_accounts=canonical_accounts,
         )
 
     return _extract
@@ -2199,6 +2221,7 @@ def _make_account_extractor_antigravity(parser: Any) -> Any:
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
+        canonical_accounts: dict[str, list[str]] | None = None,  # noqa: ARG001 — signature parity
     ) -> list:
         db_paths = _discover_antigravity_db_paths()
         if not db_paths:
@@ -3188,6 +3211,7 @@ def _post_credential_manifest(
     api_key: str,
     sidecar_id: str,
     entries: list[dict[str, str]],
+    completed_providers: list[str] | None = None,
     on_resolved: Callable[[dict[str, dict[str, str]]], None] | None = None,
 ) -> None:
     """Send the silent-listener manifest POST (PR #288, PR #290 round-2 review).
@@ -3208,10 +3232,20 @@ def _post_credential_manifest(
     """
     if not api_url or not api_key:
         return
-    # Empty entries still ship: the server prunes any pending rows for our
-    # sidecar_id that aren't re-reported, keeping the fleet UI in sync with
-    # what the sidecar actually has on disk this cycle.
-    body = json.dumps({"sidecar_id": sidecar_id, "entries": entries}).encode("utf-8")
+    # Empty entries still ship with completed_providers: that means a clean
+    # provider scan found no unresolved origins and can clear stale rows. A
+    # provider omitted from completed_providers is left untouched.
+    body = json.dumps(
+        {
+            "sidecar_id": sidecar_id,
+            "entries": entries,
+            **(
+                {"completed_providers": completed_providers}
+                if completed_providers is not None
+                else {}
+            ),
+        }
+    ).encode("utf-8")
     ts = str(int(time.time()))
     sig = hmac.new(
         api_key.encode("utf-8"),
@@ -3345,6 +3379,7 @@ def run_collection(
     # call (PR #288). Reset at the start of each ``run_collection`` so
     # the counter reflects "this cycle's block queue" only.
     blocked_origins_this_cycle: list[dict[str, str]] = []
+    completed_providers_this_cycle: list[str] = []
 
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
@@ -3368,11 +3403,13 @@ def run_collection(
     for provider_id, provider_config in registry_providers.items():
         if "all" not in enabled_providers and provider_id not in enabled_providers:
             continue
+        provider_cycle_complete = False
         try:
             logging.info(f"  [{provider_id}] collecting...")
             metrics, blocked = GenericCollector.collect_provider(
                 provider_id, provider_config, account_label_hints=server_account_tag_hints
             )
+            provider_cycle_complete = True
             blocked_origins_this_cycle.extend(blocked)
             # Mirror the server's token-only predicate (fleet.py:118) so the
             # log lines line up with what the ingest endpoint actually does.
@@ -3537,9 +3574,12 @@ def run_collection(
                     bootstrap_days=bootstrap_days,
                     out_events=all_events,
                     server_account_tag_hints=server_account_tag_hints,
+                    server_accounts_by_provider=server_accounts_by_provider,
                     account_source=identity_source,
                 )
                 error_count += extraction_failures or 0
+                if extraction_failures:
+                    provider_cycle_complete = False
                 post_count = len(all_events)
                 # Evidence gate (PR #318 round-2 W3): only surface an
                 # Untagged origin when THIS provider contributed events.
@@ -3565,19 +3605,19 @@ def run_collection(
         except Exception as e:
             logging.error(f"  [{provider_id}] error: {e}")
             error_count += 1
+            provider_cycle_complete = False
+
+        if provider_cycle_complete:
+            completed_providers_this_cycle.append(provider_id)
 
     # Silent-listener manifest (PR #288): report every credential the
     # sidecar couldn't resolve this cycle, even if zero — silent cycles
     # let the server prune stale pending entries. The POST is gated on
     # the same INGEST_API_KEY HMAC scheme as /fleet/ingest.
     #
-    # Gate on completed cycle (PR #290 round-2 review): when
-    # ``error_count > 0`` a provider whose ``collect_provider`` raised
-    # contributed nothing to ``blocked_origins_this_cycle``, so the
-    # server's ``delete_stale`` would prune its pending row — the
-    # operator's "Untagged" entry would silently disappear while the
-    # credential is still unresolved. Skip the prune until the next
-    # clean cycle.
+    # Send provider completion explicitly. The server prunes only origins
+    # for providers listed here, so a raised scrape/extractor cannot turn
+    # an omitted provider into an empty snapshot.
     if blocked_origins_this_cycle:
         logging.info(
             f"  manifest: posting {len(blocked_origins_this_cycle)} blocked "
@@ -3629,25 +3669,19 @@ def run_collection(
         logging.debug(
             f"manifest: posting on a partial cycle (error_count={error_count}); "
             "blocked origins from healthy providers still ship, "
-            "providers that raised are absent from the manifest so their "
-            "pending rows are NOT pruned"
+            "providers that raised are absent from completed_providers so "
+            "their pending rows are NOT pruned"
         )
-    # PR #290 round-2 review (Hermes thread Vha0): the prune is scoped
-    # per-provider by what the manifest reports. The ``try/except``
-    # above already filters ``blocked_origins_this_cycle`` to providers
-    # whose ``collect_provider`` completed cleanly — so providers
-    # that raised contribute no entries, and the server's
-    # ``delete_stale`` never sees their keys. The ``if error_count > 0``
-    # gate from round-1 was over-broad: it dropped healthy providers'
-    # blocked origins while a single bad provider kept raising, leaving
-    # the operator's Untagged surface blind. Post unconditionally so
-    # the loop stays closed on every cycle.
+    # Post on partial cycles so healthy providers' blocked origins are
+    # updated. ``completed_providers_this_cycle`` lets the server prune
+    # those providers while retaining rows for any failed provider.
     try:
         _post_credential_manifest(
             api_url=(os.environ.get("RUNWAY_API_URL") or config.get("api_url")),
             api_key=(os.environ.get("RUNWAY_API_KEY") or config.get("api_key") or ""),
             sidecar_id=get_hostname(),
             entries=blocked_origins_this_cycle,
+            completed_providers=completed_providers_this_cycle,
             on_resolved=_consume_resolved_into_cache,
         )
     except Exception as _e:

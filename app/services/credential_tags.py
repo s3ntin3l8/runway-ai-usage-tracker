@@ -533,12 +533,11 @@ class PendingCredentialTagRepo:
         in the supplied ``keep_origins_by_provider`` map.
 
         Returns the number of rows removed. Called by the manifest endpoint
-        after upserting the cycle's entries: ``keep_origins_by_provider`` is
-        ``{provider_id: {credential_origin, ...}}`` derived from the
-        sidecar's manifest body. A pair absent from the sidecar's manifest
-        means the sidecar's local state has dropped that credential
-        (de-installed, re-configured, or the sidecar crashed mid-discovery)
-        — clearing it keeps the fleet UI's "Untagged" panel truthful.
+        only for providers the sidecar says completed cleanly:
+        ``keep_origins_by_provider`` is
+        ``{provider_id: {credential_origin, ...}}`` from those scans. A pair
+        absent from a completed provider scan means the sidecar no longer
+        found that credential; providers omitted after an error are untouched.
 
         NB: a transient discovery failure could delete a row that the
         sidecar re-reports next cycle, re-promoting the same origin back

@@ -498,9 +498,9 @@ def _account_tag_hints_for_providers(
 #
 # The sidecar reports the credential_origins it discovered locally. The server
 # upserts each into pending_credential_tags for UI surfacing, prunes entries
-# the sidecar didn't re-report, and returns the resolved hints the sidecar
-# will consume on its next /fleet/config. Closes the silent-listener loop
-# without touching the sidecar's identity-local discovery paths.
+# only for providers whose collection completed, and returns the resolved
+# hints the sidecar will consume on its next /fleet/config. Closes the
+# silent-listener loop without touching identity-local discovery paths.
 
 
 class CredentialManifestRequest(BaseModel):
@@ -508,6 +508,9 @@ class CredentialManifestRequest(BaseModel):
 
     sidecar_id: str
     entries: list[dict[str, str]] = []  # [{provider_id, credential_origin}, ...]
+    # A provider is listed only when its collection completed successfully.
+    # Older sidecars omit this field; their partial manifests are upsert-only.
+    completed_providers: list[str] | None = None
 
 
 @router.post("/credentials/manifest")
@@ -520,12 +523,13 @@ async def post_credential_manifest(
 ) -> dict[str, Any]:
     """Sidecar-issued manifest of credential origins it found locally.
 
-    The body lists every origin the sidecar currently has. The server
-    upserts each into ``pending_credential_tags`` (these power the
-    "Untagged credentials" surface in the fleet UI), prunes entries the
-    sidecar didn't re-report this cycle (a credential disappeared from
-    disk), and responds with the resolved hints — origin → account_id —
-    the sidecar will consume on its next ``/fleet/config`` round-trip.
+    The body lists origins from this cycle and names providers whose
+    collection completed. The server upserts each into
+    ``pending_credential_tags`` and prunes missing origins only for those
+    completed providers. That keeps partial failures from hiding unresolved
+    credentials while letting a completed empty scan clear stale entries.
+    The response includes resolved origin → account_id hints for the next
+    ``/fleet/config`` round-trip.
 
     Rate limit: 60/min — one call per sidecar per heartbeat (10-min default)
     is the steady state, so 60/min is ~6× headroom for retries.
@@ -572,13 +576,35 @@ async def post_credential_manifest(
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
     candidate_pids = sorted({r.provider_id for r in existing_rows} | set(keep_by_provider))
 
-    # A manifest is a complete snapshot for this sidecar. Prune credential
-    # origins that are no longer present; usage events are stored separately
-    # and are never removed by this credential-only operation.
-    removed = PendingCredentialTagRepo.delete_stale(
-        session,
-        sidecar_id=payload.sidecar_id,
-        keep_origins_by_provider=keep_by_provider,
+    # The sidecar reports which providers completed so a missing provider
+    # cannot make an incomplete collection cycle look like an empty snapshot.
+    # Older sidecars omit completed_providers and remain upsert-only.
+    # delete_stale considers every row under this sidecar, so seed its keep
+    # map with current origins for incomplete providers before replacing the
+    # entries for providers that completed this cycle.
+    prune_keep: dict[str, set[str]] = {}
+    for row in existing_rows:
+        if (
+            payload.completed_providers is None
+            or row.provider_id not in payload.completed_providers
+        ):
+            prune_keep.setdefault(row.provider_id, set()).add(row.credential_origin)
+    if payload.completed_providers is not None:
+        prune_keep.update(
+            {
+                provider_id: keep_by_provider.get(provider_id, set())
+                for provider_id in payload.completed_providers
+                if provider_id
+            }
+        )
+    removed = (
+        PendingCredentialTagRepo.delete_stale(
+            session,
+            sidecar_id=payload.sidecar_id,
+            keep_origins_by_provider=prune_keep,
+        )
+        if prune_keep
+        else 0
     )
     session.commit()
 
@@ -912,15 +938,14 @@ async def assign_pending_usage_events(
         # OpenCode doesn't identify which credential origin handled a
         # message. Persist an explicit provider-level tag scoped to the
         # source sidecar so later messages use the operator's resolution.
-        if row.provider_id in {"minimax", "kimi_coding", "ollama", "openrouter", "xai"}:
-            CredentialTagRepo.set_tag(
-                session,
-                provider_id=row.provider_id,
-                credential_origin=f"provider:{row.provider_id}",
-                account_id=account_id,
-                sidecar_id=row.sidecar_id,
-                set_by="operator",
-            )
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id=row.provider_id,
+            credential_origin=f"provider:{row.provider_id}",
+            account_id=account_id,
+            sidecar_id=row.sidecar_id,
+            set_by="operator",
+        )
         existing = session.exec(
             select(UsageEvent).where(
                 UsageEvent.provider_id == row.provider_id,

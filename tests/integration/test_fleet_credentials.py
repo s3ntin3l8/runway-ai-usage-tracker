@@ -325,6 +325,7 @@ def test_manifest_prunes_origins_missing_from_complete_snapshot(
 
     body_full = {
         "sidecar_id": "alpha-host",
+        "completed_providers": ["anthropic"],
         "entries": [
             {"provider_id": "anthropic", "credential_origin": "path:/a"},
             {"provider_id": "anthropic", "credential_origin": "path:/b"},
@@ -337,6 +338,7 @@ def test_manifest_prunes_origins_missing_from_complete_snapshot(
 
     body_partial = {
         "sidecar_id": "alpha-host",
+        "completed_providers": ["anthropic"],
         "entries": [
             {"provider_id": "anthropic", "credential_origin": "path:/a"},
             # /b dropped from disk since the last cycle.
@@ -362,13 +364,94 @@ def test_manifest_prunes_only_the_reporting_sidecar(client: TestClient, session:
         )
         session.commit()
 
-    r = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})  # alpha now empty
+    r = _post_manifest(
+        client,
+        {"sidecar_id": "alpha", "entries": [], "completed_providers": ["anthropic"]},
+    )  # alpha now empty
     assert r.status_code == 200
     assert r.json()["entries_pruned"] == 1
 
     assert [
         (r.sidecar_id, r.credential_origin) for r in PendingCredentialTagRepo.list_all(session)
     ] == [("beta", "path:/shared")]
+
+
+def test_manifest_does_not_prune_provider_omitted_from_partial_cycle(
+    client: TestClient, session: Session
+):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/keep-anthropic",
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="chatgpt",
+        credential_origin="path:/keep-chatgpt",
+    )
+    session.commit()
+
+    response = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha",
+            "entries": [],
+            "completed_providers": ["anthropic"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["entries_pruned"] == 1
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="anthropic",
+            credential_origin="path:/keep-anthropic",
+        )
+        is None
+    )
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="chatgpt",
+            credential_origin="path:/keep-chatgpt",
+        )
+        is not None
+    )
+
+
+def test_legacy_manifest_without_completion_list_does_not_prune(
+    client: TestClient, session: Session
+):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/keep",
+    )
+    session.commit()
+
+    response = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
+
+    assert response.status_code == 200
+    assert response.json()["entries_pruned"] == 0
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="anthropic",
+            credential_origin="path:/keep",
+        )
+        is not None
+    )
 
 
 def test_manifest_normalizes_fqdn_sidecar_id(client: TestClient, session: Session):
@@ -1196,6 +1279,7 @@ def test_manifest_prunes_stale_pending_credential_origin(
         {
             "sidecar_id": "alpha",
             "entries": [{"provider_id": "minimax", "credential_origin": "provider:minimax"}],
+            "completed_providers": ["minimax"],
         },
     )
     assert r1.status_code == 200, r1.text
@@ -1208,7 +1292,10 @@ def test_manifest_prunes_stale_pending_credential_origin(
     )
 
     # Cycle 2: the source disappears from a complete manifest.
-    r2 = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
+    r2 = _post_manifest(
+        client,
+        {"sidecar_id": "alpha", "entries": [], "completed_providers": ["minimax"]},
+    )
     assert r2.status_code == 200, r2.text
     assert r2.json()["entries_pruned"] == 1
     assert (

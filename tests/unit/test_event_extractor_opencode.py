@@ -695,11 +695,29 @@ def test_parse_opencode_events_uses_one_unambiguous_credential_origin_hint():
             account_id="default",
             since=datetime(2020, 1, 1, tzinfo=UTC),
             canonical_hints={"minimax": {"provider:minimax#fingerprint-1": "alice@example.com"}},
+            canonical_accounts={"minimax": ["alice@example.com"]},
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "minimax"
         assert evts[0].account_id == "alice@example.com"
         assert evts[0].account_source == "tag"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_parse_opencode_events_does_not_treat_one_tag_as_all_sibling_origins():
+    db_path = _build_db([_minimax_message("msg_minimax_untagged_sibling")])
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints={"minimax": {"provider:minimax#fingerprint-1": "alice@example.com"}},
+            canonical_accounts={"minimax": ["alice@example.com", "bob@example.com"]},
+        )
+        assert len(evts) == 1
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
     finally:
         db_path.unlink(missing_ok=True)
 

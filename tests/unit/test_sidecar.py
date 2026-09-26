@@ -1651,11 +1651,12 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
     The manifest POST must fire on a partial cycle so healthy
     providers' blocked origins still ship."""
 
-    posted = {"called": False, "entries": []}
+    posted = {"called": False, "entries": [], "completed_providers": []}
 
     def _capture(*args, **kwargs):
         posted["called"] = True
         posted["entries"] = kwargs.get("entries", [])
+        posted["completed_providers"] = kwargs.get("completed_providers", [])
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture)
 
@@ -1692,6 +1693,17 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
     assert posted["entries"] == [
         {"provider_id": "chatgpt", "credential_origin": "provider:chatgpt"}
     ]
+    assert posted["completed_providers"] == ["chatgpt"]
+
+
+def test_build_canonical_accounts_for_opencode():
+    assert sidecar._build_canonical_accounts_for_provider(
+        "opencode",
+        {"minimax": ["alice@example.com", "bob@example.com"], "xai": ["x@example.com"]},
+    ) == {
+        "minimax": ["alice@example.com", "bob@example.com"],
+        "xai": ["x@example.com"],
+    }
 
 
 def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, tmp_path):
@@ -1825,6 +1837,7 @@ def test_run_collection_events_use_server_hint_when_local_default(
         out_events: list[dict[str, Any]],
         account_source=None,
         server_account_tag_hints=None,
+        server_accounts_by_provider=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
         # Capture the canonical_hints the events branch forwards into
@@ -1927,6 +1940,7 @@ def test_run_collection_events_reported_untagged_when_no_hint(
         out_events: list[dict[str, Any]],
         account_source=None,
         server_account_tag_hints=None,
+        server_accounts_by_provider=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
         out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
@@ -2118,6 +2132,7 @@ def test_run_collection_events_no_untagged_when_identity_resolved(
             out_events: list[dict[str, Any]],
             account_source=None,
             server_account_tag_hints=None,
+            server_accounts_by_provider=None,
         ) -> None:
             captured_account_ids.clear()
             captured_account_ids.extend(account_ids)

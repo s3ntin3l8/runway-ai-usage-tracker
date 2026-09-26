@@ -173,6 +173,7 @@ def parse_opencode_events(
     account_id: str,
     since: datetime,
     canonical_hints: dict[str, dict[str, str]] | None = None,
+    canonical_accounts: dict[str, list[str]] | None = None,
 ) -> list[UsageEventPush]:
     """Extract UsageEventPush records from an OpenCode SQLite database.
 
@@ -315,12 +316,21 @@ def parse_opencode_events(
                 provider_hints = canonical_hints.get(canonical_provider_id, {})
                 # OpenCode only tells us which upstream provider served a
                 # message, not which credential origin it used. Match a
-                # provider-level tag directly, or use an origin tag only
-                # when every reported origin agrees on one account.
+                # provider-level tag directly. An origin tag can stand in
+                # for OpenCode's missing per-message credential only when it
+                # matches the sole configured account; untagged siblings are
+                # represented in canonical_accounts and keep the event pending.
                 canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
                 if canonical_hint is None:
                     hinted_accounts = set(provider_hints.values())
-                    if len(hinted_accounts) == 1:
+                    configured_accounts = set(
+                        (canonical_accounts or {}).get(canonical_provider_id, [])
+                    )
+                    if (
+                        len(hinted_accounts) == 1
+                        and len(configured_accounts) == 1
+                        and hinted_accounts == configured_accounts
+                    ):
                         canonical_hint = next(iter(hinted_accounts))
                 if canonical_hint:
                     event_account_id = canonical_hint
