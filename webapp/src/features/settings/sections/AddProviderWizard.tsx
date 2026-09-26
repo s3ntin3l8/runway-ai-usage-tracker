@@ -604,7 +604,7 @@ function Step3({
     mutationFn: () => {
       const body: ProviderConfigUpdate = {
         enabled: true,
-        // Empty string means "clear" server-side (mirrors the legacy form's
+        // Empty string means "clear" server-side (mirrors the provider account form's
         // behaviour); trimmed value otherwise.
         account_label: label.trim(),
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),

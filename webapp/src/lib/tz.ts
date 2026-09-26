@@ -32,6 +32,45 @@ export function getUserTz(): string {
   return cached;
 }
 
+/** Convert a YYYY-MM-DD calendar date to its UTC instant at local midnight. */
+export function localDateStartISO(date: string, timeZone = getUserTz()): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) throw new RangeError(`Invalid calendar date: ${date}`);
+  const [, year, month, day] = match.map(Number);
+  const target = Date.UTC(year, month - 1, day);
+  let guess = target;
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  for (let i = 0; i < 3; i += 1) {
+    const parts = formatter.formatToParts(new Date(guess));
+    const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    const wallClock = Date.UTC(
+      Number(values.year), Number(values.month) - 1, Number(values.day),
+      Number(values.hour), Number(values.minute), Number(values.second),
+    );
+    const next = target - (wallClock - guess);
+    if (next === guess) break;
+    guess = next;
+  }
+  return new Date(guess).toISOString();
+}
+
+/** Advance an ISO calendar date by one day without applying a 24-hour duration. */
+export function nextCalendarDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) throw new RangeError(`Invalid calendar date: ${date}`);
+  const [, year, month, day] = match.map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+}
+
 // Format helpers — always pass `timeZone` so the result is deterministic
 // regardless of how the browser parses the input string.
 

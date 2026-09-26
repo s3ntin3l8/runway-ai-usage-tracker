@@ -1,13 +1,4 @@
-// Provider configuration: per-account settings with multi-account rendering.
-// When the `?providers=v2` URL param is set, renders the new card-grid +
-// per-account dialog shell (Issues #286 / #287 wizard targets this). When
-// absent, falls back to the legacy flat-list single-account form (one
-// ProviderConfig row per provider, no per-account breakdown). Rollback =
-// drop the URL param.
-//
-// Backend already exposes `accounts: ProviderAccount[]` and `account_count`
-// on every row (PR #281 hardening + #286 follow-up), so the v2 UI consumes
-// the same response shape — the only diff is which shell renders.
+// Provider configuration with multi-account rendering.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -30,7 +21,6 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Search } from 'lucide-react';
-import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { putDashboardLayout } from '@/api/endpoints';
 import type { DashboardLayout, ProviderConfig } from '@/api/types';
@@ -46,7 +36,6 @@ import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { useProviderConfigs } from '@/features/home/queries';
 import { useDashboardLayout } from '@/features/home/queries';
 import { ProviderDetailDialog } from './ProviderDetailDialog';
-import { LegacyEditDialog } from './LegacyEditDialog';
 import { AddProviderWizard } from './AddProviderWizard';
 
 export function reorderItems<T>(
@@ -55,7 +44,7 @@ export function reorderItems<T>(
   overId: string,
   // Default reads `.id` (used by the strategy reorder — `StrategyEntry` has
   // an `id` field). Provider reorder passes `(p) => p.provider_id` so the
-  // v2 grid uses the right key.
+  // provider grid uses the right key.
   getId: (s: T) => string = (s) => (s as { id?: string }).id ?? '',
 ): T[] {
   const oldIndex = items.findIndex((s) => getId(s) === activeId);
@@ -64,17 +53,13 @@ export function reorderItems<T>(
   return arrayMove(items, oldIndex, newIndex);
 }
 
-interface UseV2ProvidersResult {
-  enabled: boolean;
+interface UseProvidersResult {
   configs: ReturnType<typeof useProviderConfigs>;
   layout: ReturnType<typeof useDashboardLayout>;
   saveOrder: ReturnType<typeof useMutation<{ status: string }, Error, string[]>>;
 }
 
-/** Hook that wraps `?providers=v2` gating + the providers/layout queries. */
-export function useV2Providers(): UseV2ProvidersResult {
-  const [searchParams] = useSearchParams();
-  const enabled = searchParams.get('providers') === 'v2';
+function useProviders(): UseProvidersResult {
   const configs = useProviderConfigs();
   const layout = useDashboardLayout();
   const queryClient = useQueryClient();
@@ -85,7 +70,6 @@ export function useV2Providers(): UseV2ProvidersResult {
         card_orders: layout.data?.card_orders ?? {},
       }),
     onMutate: async (orderedProviderIds) => {
-      // Optimistic update so the grid order reflects the drop immediately.
       await queryClient.cancelQueries({ queryKey: ['system', 'dashboard-layout'] });
       queryClient.setQueryData(['system', 'dashboard-layout'], (prev: DashboardLayout | undefined) => ({
         provider_order: orderedProviderIds,
@@ -97,86 +81,16 @@ export function useV2Providers(): UseV2ProvidersResult {
       queryClient.invalidateQueries({ queryKey: ['system', 'dashboard-layout'] });
     },
   });
-  return { enabled, configs, layout, saveOrder };
+  return { configs, layout, saveOrder };
 }
 
 export function ProvidersSection() {
-  const { enabled: v2, configs, layout, saveOrder } = useV2Providers();
-
-  if (v2) {
-    return <ProvidersSectionV2 configs={configs} layout={layout} saveOrder={saveOrder} />;
-  }
-  return <ProvidersSectionLegacy configs={configs} />;
+  const { configs, layout, saveOrder } = useProviders();
+  return <ProvidersSectionV2 configs={configs} layout={layout} saveOrder={saveOrder} />;
 }
 
 // ---------------------------------------------------------------------------
-// Legacy single-account form (unchanged behaviour, kept for the rollback path).
-// The dialog / form internals are isolated in `ProviderDetailDialog` and
-// `ProviderAccountDialog` for the v2 UI; this path keeps the original
-// `ProviderForm` rendering a single row keyed by `account_id="default"`.
-// ---------------------------------------------------------------------------
-
-function ProvidersSectionLegacy({
-  configs,
-}: {
-  configs: ReturnType<typeof useProviderConfigs>;
-}) {
-  const [editing, setEditing] = useState<ProviderConfig | null>(null);
-
-  if (configs.isPending) {
-    return (
-      <div className="flex flex-col gap-2">
-        {Array.from({ length: 5 }, (_, i) => (
-          <Skeleton key={i} className="h-16" />
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex max-w-2xl flex-col gap-2">
-      {(configs.data?.providers ?? []).map((p) => (
-        <Card
-          key={p.provider_id}
-          role="button"
-          tabIndex={0}
-          onClick={() => setEditing(p)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') setEditing(p);
-          }}
-          className="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors duration-150 hover:border-edge-strong"
-        >
-          <ProviderGlyph providerId={p.provider_id} name={p.name} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium">{p.name}</p>
-            <p className="truncate text-[11px] text-fg-subtle">
-              {p.account_label || p.provider_id} · poll{' '}
-              {p.effective_poll_interval ?? p.default_ttl_seconds ?? '—'}s
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {p.api_key_set ? <Badge variant="ok">key</Badge> : null}
-            {p.session_cookie_set ? <Badge variant="ok">cookie</Badge> : null}
-            <Badge variant={p.enabled ? 'accent' : 'neutral'}>
-              {p.enabled ? 'enabled' : 'disabled'}
-            </Badge>
-          </div>
-        </Card>
-      ))}
-
-      {/* Legacy edit dialog — kept verbatim so the rollback path is the
-          exact previous build. Wired through the multi-account PUT endpoint
-          with account_id="default" for single-account users. */}
-      <LegacyEditDialog
-        editing={editing}
-        onClose={() => setEditing(null)}
-      />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// v2: empty-canvas card grid + per-account dialog shell.
+// Card grid + per-account dialog shell.
 // ---------------------------------------------------------------------------
 
 function ProvidersSectionV2({
@@ -186,7 +100,7 @@ function ProvidersSectionV2({
 }: {
   configs: ReturnType<typeof useProviderConfigs>;
   layout: ReturnType<typeof useDashboardLayout>;
-  saveOrder: UseV2ProvidersResult['saveOrder'];
+  saveOrder: UseProvidersResult['saveOrder'];
 }) {
   const providers = configs.data?.providers ?? [];
   const isDesktop = useIsDesktop();
@@ -496,7 +410,3 @@ function SortableProviderCard({
     </Card>
   );
 }
-
-// Re-exported here so legacy tests that imported the old `reorderStrategies`
-// keep working without churning the test file along with the section rewrite.
-export { reorderItems as reorderStrategies } from './ProvidersSection';

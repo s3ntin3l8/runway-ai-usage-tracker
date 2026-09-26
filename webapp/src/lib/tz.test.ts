@@ -7,6 +7,8 @@ import {
   formatLocalFromEpoch,
   formatLocalTime,
   getUserTz,
+  localDateStartISO,
+  nextCalendarDate,
   setTzConfig,
   startOfCurrentMonthISO,
   startOfMonthISO,
@@ -121,5 +123,16 @@ describe('startOfMonthISO / endOfMonthISO', () => {
     setTzConfig({ user_timezone: 'America/New_York' });
     expect(currentYearMonth()).toEqual({ year: 2025, month: 12 });
     vi.useRealTimers();
+  });
+});
+
+describe('calendar date boundaries', () => {
+  it('uses local midnight and a calendar-day exclusive bound across DST', () => {
+    setTzConfig({ user_timezone: 'Europe/Berlin' });
+    expect(localDateStartISO('2026-03-29')).toBe('2026-03-28T23:00:00.000Z');
+    expect(nextCalendarDate('2026-03-29')).toBe('2026-03-30');
+    expect(localDateStartISO(nextCalendarDate('2026-03-29'))).toBe(
+      '2026-03-29T22:00:00.000Z',
+    );
   });
 });
