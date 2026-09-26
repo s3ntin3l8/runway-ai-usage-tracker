@@ -7,12 +7,13 @@ import { formatCost } from '@/lib/format';
 import { EChart } from './EChart';
 import { baseTooltip, useChartTokens } from './theme';
 
-// Cost for one bucket, optionally dropping the cache portion. Clamped at 0 — for
-// provider-supplied totals the pricing-derived cost_cache is a best-effort estimate
-// that could (rarely) exceed cost_usd. Mirrors ModelDonut's modelTokens.
+// Cost for one bucket. Excluding cache uses the token-priced non-cache
+// components; this remains meaningful when the displayed total is a source
+// reported amount with a separate best-effort token breakdown.
 export function modelCost(b: CumulativeModelBucket, excludeCache: boolean): number {
-  const total = b.cost_usd ?? 0;
-  return excludeCache ? Math.max(0, total - (b.cost_cache ?? 0)) : total;
+  return excludeCache
+    ? (b.cost_input ?? 0) + (b.cost_output ?? 0)
+    : b.cost_usd ?? 0;
 }
 
 export function CostDonut({

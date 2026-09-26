@@ -542,8 +542,8 @@ class TestSidecarIdentityPrecedence:
             sidecar._ACCOUNT_IDENTITIES, {"opencode": "other-host@example.com"}, clear=True
         ):
             assert sidecar._opencode_account_email(db) == "local@example.com"
-            # Server identity is only a fallback when nothing local exists.
-            assert sidecar._opencode_account_email(None) == "other-host@example.com"
+            # A server-side card cannot identify the account on this host.
+            assert sidecar._opencode_account_email(None) == "default"
 
 
 # ---------------------------------------------------------------------------
@@ -574,8 +574,8 @@ def test_identities_only_for_single_account_providers(session: Session):
     _card(session, "opencode", "b@example.com")
     session.commit()
 
-    # opencode has two real accounts — naming either would be a guess.
-    assert _get_active_identities(session) == {"antigravity": "me@example.com"}
+    # Server card identities are never used as sidecar attribution hints.
+    assert _get_active_identities(session) == {}
 
 
 def test_identities_withheld_in_multi_sidecar_deployments(session: Session):

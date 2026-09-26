@@ -9,12 +9,13 @@ duplicates don't poison the surrounding batch.
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.date_utils import parse_iso8601_utc
-from app.models.db import UsageEvent
+from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.account_identity import canonical_account_id
 from app.services.cost_calculator import compute_event_cost_breakdown
@@ -60,10 +61,57 @@ class EventIngestor:
                 # into an events-only twin of its quota card.
                 account_id = canonical_account_id(push.account_id)
 
+                if push.account_source == "default" or (
+                    push.account_source is None and account_id == "default"
+                ):
+                    existing = self.session.exec(
+                        select(UsageEvent.id).where(
+                            UsageEvent.provider_id == push.provider_id,
+                            UsageEvent.event_id == push.event_id,
+                        )
+                    ).first()
+                    if existing is not None:
+                        # A stale or replayed unresolved payload must not
+                        # create a second pending copy of an event that has
+                        # already been assigned to a real account.
+                        result.events_duplicate += 1
+                        continue
+                    # Keep unresolved usage out of account cards and rollups.
+                    # The provider/event/sidecar key makes retries safe.
+                    sidecar = sidecar_id or "local"
+                    row = self.session.exec(
+                        select(PendingUsageEvent).where(
+                            PendingUsageEvent.provider_id == push.provider_id,
+                            PendingUsageEvent.event_id == push.event_id,
+                            PendingUsageEvent.sidecar_id == sidecar,
+                        )
+                    ).first()
+                    payload = json.dumps(
+                        push.model_dump(mode="json"), separators=(",", ":"), sort_keys=True
+                    )
+                    if row is None:
+                        self.session.add(
+                            PendingUsageEvent(
+                                provider_id=push.provider_id,
+                                event_id=push.event_id,
+                                sidecar_id=sidecar,
+                                ts=ts,
+                                payload_json=payload,
+                            )
+                        )
+                        result.events_inserted += 1
+                    else:
+                        row.payload_json = payload
+                        row.last_seen = datetime.now(UTC)
+                        self.session.add(row)
+                        result.events_duplicate += 1
+                    continue
+
                 if push.kind == "error":
                     ev = UsageEvent(
                         provider_id=push.provider_id,
                         account_id=account_id,
+                        attribution_source=push.account_source or "unknown",
                         sidecar_id=sidecar_id or "local",
                         event_id=push.event_id,
                         ts=ts,
@@ -95,13 +143,26 @@ class EventIngestor:
                     tokens_cache_create_1h=push.tokens_cache_create_1h,
                     tokens_cache_create_5m=push.tokens_cache_create_5m,
                 )
-                # Provider-supplied cost (e.g. OpenCode logs it per message) is
-                # authoritative for the total; otherwise use the computed sum.
-                # The components stay pricing-derived (best-effort) either way.
-                cost = push.cost_usd if push.cost_usd is not None else breakdown.total
+                # PAYG accounts prefer a provider-reported amount (e.g. an
+                # OpenCode log value); subscription and unknown accounts use
+                # the computed estimate. Components stay pricing-derived.
+                config = self.session.exec(
+                    select(ProviderConfig).where(
+                        ProviderConfig.provider_id == push.provider_id,
+                        ProviderConfig.account_id == account_id,
+                    )
+                ).first()
+                billing_type = config.billing_type if config else "unknown"
+                reported_cost = push.cost_usd
+                cost = (
+                    reported_cost
+                    if billing_type == "pay_as_you_go" and reported_cost is not None
+                    else breakdown.total
+                )
                 ev = UsageEvent(
                     provider_id=push.provider_id,
                     account_id=account_id,
+                    attribution_source=push.account_source or "unknown",
                     sidecar_id=sidecar_id or "local",
                     event_id=push.event_id,
                     ts=ts,
@@ -126,6 +187,8 @@ class EventIngestor:
                     tokens_cache_create_5m=push.tokens_cache_create_5m,
                     tokens_reasoning=push.tokens_reasoning,
                     cost_usd=cost,
+                    cost_reported_usd=reported_cost,
+                    cost_estimated_usd=breakdown.total,
                     cost_input=breakdown.input,
                     cost_output=breakdown.output,
                     cost_cache_read=breakdown.cache_read,

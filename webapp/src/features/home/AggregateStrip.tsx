@@ -1,5 +1,6 @@
-// Aggregate strip: month-to-date spend, EOM projection, 7-day burn, and
-// this-month token/message volume — the "what is all this costing me" row.
+// Aggregate strip: month-to-date usage value, EOM projection, 7-day value, and
+// this-month token/message volume. Accounts may mix billing types, so the
+// aggregate label stays neutral.
 
 import type { CostForecastResponse, CumulativeBucket, CumulativeResponse } from '@/api/types';
 import { Card } from '@/components/ui/Card';
@@ -52,18 +53,18 @@ export function AggregateStrip({
 
   const stats: { label: string; value: string; hint?: string; loading: boolean }[] = [
     {
-      label: 'Spend (MTD)',
+      label: 'Usage value (MTD)',
       value: formatCost(cost?.current_month_to_date ?? null),
       loading: costLoading,
     },
     {
-      label: 'Projected EOM',
+      label: 'Projected usage value',
       value: formatCost(cost?.projected_eom ?? null),
       hint: cost ? `${cost.days_remaining}d left` : undefined,
       loading: costLoading,
     },
     {
-      label: 'Daily burn (7d)',
+      label: 'Daily usage value (7d)',
       value: formatCost(cost?.daily_burn_avg_7d ?? null),
       loading: costLoading,
     },

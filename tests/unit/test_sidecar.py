@@ -280,7 +280,7 @@ class TestAntigravityTokenStamp:
         )
         return tok
 
-    def test_token_card_stamped_with_resolved_email(self, tmp_path):
+    def test_token_card_does_not_inherit_server_account_hint(self, tmp_path):
         tok = self._write_token_file(tmp_path)
         config = self._ag_config(tok)
         with patch.dict(
@@ -289,7 +289,7 @@ class TestAntigravityTokenStamp:
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
-        assert token_cards[0]["account_id"] == "user@example.com"
+        assert token_cards[0]["account_id"] == "default"
 
     def test_token_card_defaults_when_email_unknown(self, tmp_path):
         tok = self._write_token_file(tmp_path)
@@ -483,6 +483,17 @@ class TestQueueRotate:
         assert len(files) == 1
         entry = json.loads(files[0].read_text().strip())
         assert entry["payload"] == {"provider": "test", "metrics": []}
+
+    def test_queue_push_retains_existing_entries_when_limit_is_reached(self, tmp_path):
+        existing = tmp_path / "2026-01-01.jsonl"
+        existing.write_bytes(b"x" * (10 * 1024 * 1024))
+
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
+            with patch.object(sidecar, "ensure_dirs"):
+                assert sidecar.queue_push({"events": [{"event_id": "retry-me"}]}) is False
+
+        assert existing.stat().st_size == 10 * 1024 * 1024
+        assert len(list(tmp_path.glob("*.jsonl"))) == 1
 
 
 class TestQueueFlush:
@@ -1071,7 +1082,7 @@ class TestDaemonRunnerQueuedStatus:
                 return_value=(False, "timeout", 0),
             ),
             patch.object(sidecar, "queue_flush"),
-            patch.object(sidecar, "queue_push", side_effect=lambda p: queued.append(p)),
+            patch.object(sidecar, "queue_push", side_effect=lambda p: (queued.append(p), True)[1]),
         ):
             runner.run_once()
 
@@ -1640,11 +1651,12 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
     The manifest POST must fire on a partial cycle so healthy
     providers' blocked origins still ship."""
 
-    posted = {"called": False, "entries": []}
+    posted = {"called": False, "entries": [], "completed_providers": []}
 
     def _capture(*args, **kwargs):
         posted["called"] = True
         posted["entries"] = kwargs.get("entries", [])
+        posted["completed_providers"] = kwargs.get("completed_providers", [])
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture)
 
@@ -1681,6 +1693,7 @@ def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monke
     assert posted["entries"] == [
         {"provider_id": "chatgpt", "credential_origin": "provider:chatgpt"}
     ]
+    assert posted["completed_providers"] == ["chatgpt"]
 
 
 def test_run_collection_manifest_post_consumes_resolved_into_cache(monkeypatch, tmp_path):
@@ -1812,7 +1825,9 @@ def test_run_collection_events_use_server_hint_when_local_default(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        account_source=None,
         server_account_tag_hints=None,
+        server_accounts_by_provider=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
         # Capture the canonical_hints the events branch forwards into
@@ -1840,10 +1855,11 @@ def test_run_collection_events_use_server_hint_when_local_default(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    sidecar.run_collection(
+    _, _, error_count = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
+    assert error_count == 0
 
     # PR #318 round-2 review (W1): events branch keeps iterating under
     # "default" — the canonical-provider hint is NOT applied to the
@@ -1913,7 +1929,9 @@ def test_run_collection_events_reported_untagged_when_no_hint(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        account_source=None,
         server_account_tag_hints=None,
+        server_accounts_by_provider=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
         out_events.append({"event_id": "msg_minimax_001", "kind": "message"})
@@ -1998,7 +2016,9 @@ def test_run_collection_events_untagged_only_when_events_extracted(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        account_source=None,
         server_account_tag_hints=None,
+        server_accounts_by_provider=None,
     ) -> None:
         return  # emits nothing
 
@@ -2015,18 +2035,23 @@ def test_run_collection_events_untagged_only_when_events_extracted(
 
     def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
         posted["entries"] = entries
+        posted["completed_providers"] = kw.get("completed_providers")
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    sidecar.run_collection(
+    _, _, error_count = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
+    assert error_count == 0
 
-    # PR #318 W3: when no events were extracted, the manifest entry
-    # must NOT be added — the operator has nothing to resolve because
-    # no local credential backs the origin.
+    # PR #318 W3: when no new events were extracted, do not create a new
+    # pending origin without evidence. Also withhold completion so an
+    # earlier pending origin is not removed during a quiet cycle.
     assert posted.get("entries") == []
+    # An empty event delta does not prove an earlier unresolved origin
+    # disappeared, so this provider must not be marked complete for prune.
+    assert posted.get("completed_providers") == []
 
 
 def test_run_collection_events_no_untagged_when_identity_resolved(
@@ -2102,7 +2127,9 @@ def test_run_collection_events_no_untagged_when_identity_resolved(
             watermark: Any,
             bootstrap_days: int,
             out_events: list[dict[str, Any]],
+            account_source=None,
             server_account_tag_hints=None,
+            server_accounts_by_provider=None,
         ) -> None:
             captured_account_ids.clear()
             captured_account_ids.extend(account_ids)

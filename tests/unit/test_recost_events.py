@@ -67,7 +67,7 @@ def test_phase_b_updates_zero_cost_event():
     assert zeroed == 0
 
 
-def test_phase_b_skips_opencode_events():
+def test_phase_b_preserves_unknown_opencode_total_and_reported_cost():
     s = _make_session()
     oc_ev = UsageEvent(
         provider_id="opencode",
@@ -86,7 +86,9 @@ def test_phase_b_skips_opencode_events():
     phase_b_recost(s, providers=None, since=None, dry_run=False)
 
     s.refresh(oc_ev)
-    assert oc_ev.cost_usd == 99.0  # untouched
+    assert oc_ev.cost_usd == 99.0
+    assert oc_ev.cost_reported_usd == 99.0
+    assert oc_ev.cost_estimated_usd == 0.0
 
 
 def test_phase_b_skips_error_events():
@@ -123,7 +125,10 @@ def test_phase_b_dry_run_does_not_write():
 
 def test_phase_b_unchanged_count_when_cost_already_correct():
     s = _make_session()
-    ev = _chatgpt_event(s, cost_usd=5.25)  # already the right value
+    ev = _chatgpt_event(s, cost_usd=5.25)
+    ev.cost_estimated_usd = 5.25
+    s.add(ev)
+    s.commit()
 
     updated, unchanged, zeroed = phase_b_recost(s, providers=["chatgpt"], since=None, dry_run=False)
     assert updated == 0

@@ -70,6 +70,7 @@ def phase_b_components(session: Session, providers: list[str] | None, dry_run: b
             or abs(b.output - ev.cost_output) > 1e-9
             or abs(b.cache_read - ev.cost_cache_read) > 1e-9
             or abs(b.cache_create - ev.cost_cache_create) > 1e-9
+            or abs(b.total - ev.cost_estimated_usd) > 1e-9
         ):
             changed += 1
             if not dry_run:
@@ -77,6 +78,7 @@ def phase_b_components(session: Session, providers: list[str] | None, dry_run: b
                 ev.cost_output = b.output
                 ev.cost_cache_read = b.cache_read
                 ev.cost_cache_create = b.cache_create
+                ev.cost_estimated_usd = b.total
                 session.add(ev)
         if i % 1000 == 0:
             if not dry_run:

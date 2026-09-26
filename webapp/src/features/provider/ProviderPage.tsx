@@ -257,7 +257,16 @@ export function ProviderPage() {
               <ForecastTab providerId={providerId} accountId={accountId} entry={entry} />
             </TabsContent>
             <TabsContent value="cost">
-              <CostTab providerId={providerId} accountId={accountId} scope={scope} />
+              <CostTab
+                providerId={providerId}
+                accountId={accountId}
+                scope={scope}
+                billingType={
+                  providerConfigs.data?.providers
+                    .find((p) => p.provider_id === providerId)
+                    ?.accounts?.find((a) => a.account_id === accountId)?.billing_type ?? 'unknown'
+                }
+              />
             </TabsContent>
             <TabsContent value="debug">
               <DebugTab

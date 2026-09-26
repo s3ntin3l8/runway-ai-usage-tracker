@@ -25,6 +25,7 @@ import type {
   HistoryWindowRow,
   LimitCard,
   PairingCode,
+  PendingUsageEvent,
   ProviderConfig,
   SessionEntry,
   SessionsPaginatedResponse,
@@ -136,6 +137,17 @@ export const fetchUntaggedCredentials = (sidecarId?: string) => {
   );
 };
 
+export const fetchPendingUsageEvents = (offset = 0) =>
+  api<{ items: PendingUsageEvent[]; total: number; offset: number; limit: number }>(
+    `/api/v1/fleet/events/pending${qs({ offset, limit: 100 })}`,
+  );
+
+export const assignPendingUsageEvents = (eventIds: number[], accountId: string) =>
+  api<{ assigned: number; provider_id: string }>('/api/v1/fleet/events/pending/assign', {
+    method: 'POST',
+    body: JSON.stringify({ event_ids: eventIds, account_id: accountId }),
+  });
+
 export const tagCredential = (body: CredentialTagRequest) =>
   api<{ status: string }>('/api/v1/fleet/credentials/tags', {
     method: 'POST',
@@ -245,6 +257,7 @@ export interface ProviderConfigUpdate {
   poll_interval_seconds?: number | null;
   collection_strategies?: { id: string; enabled: boolean }[];
   opencode_workspace_id?: string;
+  billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
 }
 
 // Multi-account canonical PUT (#281). accountId is required in the URL —

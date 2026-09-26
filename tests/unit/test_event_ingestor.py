@@ -2,7 +2,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
-from app.models.db import UsageEvent, UsagePeriodRollup
+from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent, UsagePeriodRollup
 from app.models.schemas import UsageEventPush
 from app.services.event_ingestor import EventIngestor
 from app.services.pricing_seed import seed_pricing_table
@@ -102,8 +102,14 @@ def test_ingest_without_cwd_leaves_project_null():
 
 
 def test_ingest_uses_provided_cost_when_set():
-    """When push.cost_usd is not None, the server uses it directly."""
+    """Pay-as-you-go accounts display a provider-reported cost when present."""
     s = _seeded_session()
+    s.add(
+        ProviderConfig(
+            provider_id="opencode", account_id="user@x.com", billing_type="pay_as_you_go"
+        )
+    )
+    s.commit()
     # Provide an explicit cost for an opencode event with no pricing row seeded
     push = _make_push(
         event_id="oc_001",
@@ -116,6 +122,8 @@ def test_ingest_uses_provided_cost_when_set():
     row = s.exec(select(UsageEvent).where(UsageEvent.event_id == "oc_001")).first()
     assert row is not None
     assert abs(row.cost_usd - 0.0088) < 1e-9
+    assert abs(row.cost_reported_usd - 0.0088) < 1e-9
+    assert row.cost_estimated_usd == 0
 
 
 def test_ingest_computes_cost_when_not_set():
@@ -161,11 +169,61 @@ def test_ingest_stores_components_even_with_authoritative_total():
     """A provider-supplied cost_usd stays authoritative, but pricing-derived
     components are still stored (best-effort) when a pricing row exists."""
     s = _seeded_session()
+    s.add(
+        ProviderConfig(
+            provider_id="anthropic", account_id="user@x.com", billing_type="pay_as_you_go"
+        )
+    )
+    s.commit()
     push = _make_push(event_id="auth_1", tokens_cache_read=1_000_000, cost_usd=99.0)
     EventIngestor(s).ingest([push], sidecar_id="dev-01")
     ev = s.exec(select(UsageEvent).where(UsageEvent.event_id == "auth_1")).first()
     assert ev.cost_usd == 99.0  # total untouched
+    assert ev.cost_reported_usd == 99.0
+    assert ev.cost_estimated_usd > 0
     assert ev.cost_cache_read == 0.30  # component still computed from pricing
+
+
+def test_subscription_uses_calculated_usage_value_and_keeps_reported_cost():
+    s = _seeded_session()
+    s.add(
+        ProviderConfig(
+            provider_id="anthropic", account_id="user@x.com", billing_type="subscription"
+        )
+    )
+    s.commit()
+    EventIngestor(s).ingest(
+        [_make_push(event_id="subscription", cost_usd=0.0)], sidecar_id="dev-01"
+    )
+    event = s.exec(select(UsageEvent).where(UsageEvent.event_id == "subscription")).first()
+    assert event.cost_usd == event.cost_estimated_usd
+    assert event.cost_usd > 0
+    assert event.cost_reported_usd == 0.0
+
+
+def test_unresolved_default_event_is_durable_and_excluded_from_usage_rollups():
+    s = _seeded_session()
+    push = _make_push(event_id="waiting", account_id="default", account_source="default")
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    assert s.exec(select(UsageEvent)).all() == []
+    pending = s.exec(select(PendingUsageEvent)).first()
+    assert pending is not None
+    assert pending.event_id == "waiting"
+    assert pending.sidecar_id == "dev-01"
+    assert s.exec(select(UsagePeriodRollup)).all() == []
+
+
+def test_unresolved_replay_does_not_requeue_an_already_assigned_event():
+    s = _seeded_session()
+    assigned = _make_push(event_id="already-assigned", account_id="alice@example.com")
+    EventIngestor(s).ingest([assigned], sidecar_id="dev-01")
+    unresolved = _make_push(
+        event_id="already-assigned", account_id="default", account_source="default"
+    )
+    result = EventIngestor(s).ingest([unresolved], sidecar_id="dev-01")
+    assert result.events_duplicate == 1
+    assert s.exec(select(PendingUsageEvent)).all() == []
+    assert s.exec(select(UsageEvent)).one().account_id == "alice@example.com"
 
 
 def test_ingest_persists_claude_code_dimensions_and_prices_cache_split():

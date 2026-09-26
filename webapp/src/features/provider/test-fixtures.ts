@@ -118,6 +118,8 @@ export const cumulativeResponse = (o: Partial<CumulativeResponse> = {}): Cumulat
             tokens_output: 500,
             msgs: 12,
             cost_usd: 12.5,
+            cost_input: 5,
+            cost_output: 2.5,
             cost_cache: 5,
           },
         },

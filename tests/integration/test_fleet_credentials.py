@@ -21,7 +21,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
@@ -317,13 +317,15 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     }
 
 
-def test_manifest_prunes_pending_entries_not_re_reported(client: TestClient, session: Session):
-    """Sidecar's manifest is authoritative — credentials it stops reporting
-    for get removed from the pending table."""
+def test_manifest_prunes_origins_missing_from_complete_snapshot(
+    client: TestClient, session: Session
+):
+    """A complete manifest removes credential origins that disappeared."""
     from app.services.credential_tags import PendingCredentialTagRepo
 
     body_full = {
         "sidecar_id": "alpha-host",
+        "completed_providers": ["anthropic"],
         "entries": [
             {"provider_id": "anthropic", "credential_origin": "path:/a"},
             {"provider_id": "anthropic", "credential_origin": "path:/b"},
@@ -336,6 +338,7 @@ def test_manifest_prunes_pending_entries_not_re_reported(client: TestClient, ses
 
     body_partial = {
         "sidecar_id": "alpha-host",
+        "completed_providers": ["anthropic"],
         "entries": [
             {"provider_id": "anthropic", "credential_origin": "path:/a"},
             # /b dropped from disk since the last cycle.
@@ -348,8 +351,8 @@ def test_manifest_prunes_pending_entries_not_re_reported(client: TestClient, ses
     assert {p.credential_origin for p in pending_a} == {"path:/a"}
 
 
-def test_manifest_does_not_prune_other_sidecar(client: TestClient, session: Session):
-    """Sidecar A's manifest only prunes A's pending rows, never B's."""
+def test_manifest_prunes_only_the_reporting_sidecar(client: TestClient, session: Session):
+    """A later empty snapshot prunes alpha without touching beta."""
     from app.services.credential_tags import PendingCredentialTagRepo
 
     for sidecar in ("alpha", "beta"):
@@ -361,13 +364,94 @@ def test_manifest_does_not_prune_other_sidecar(client: TestClient, session: Sess
         )
         session.commit()
 
-    r = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})  # alpha now empty
+    r = _post_manifest(
+        client,
+        {"sidecar_id": "alpha", "entries": [], "completed_providers": ["anthropic"]},
+    )  # alpha now empty
     assert r.status_code == 200
     assert r.json()["entries_pruned"] == 1
 
     assert [
         (r.sidecar_id, r.credential_origin) for r in PendingCredentialTagRepo.list_all(session)
     ] == [("beta", "path:/shared")]
+
+
+def test_manifest_does_not_prune_provider_omitted_from_partial_cycle(
+    client: TestClient, session: Session
+):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/keep-anthropic",
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="chatgpt",
+        credential_origin="path:/keep-chatgpt",
+    )
+    session.commit()
+
+    response = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha",
+            "entries": [],
+            "completed_providers": ["anthropic"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["entries_pruned"] == 1
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="anthropic",
+            credential_origin="path:/keep-anthropic",
+        )
+        is None
+    )
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="chatgpt",
+            credential_origin="path:/keep-chatgpt",
+        )
+        is not None
+    )
+
+
+def test_legacy_manifest_without_completion_list_does_not_prune(
+    client: TestClient, session: Session
+):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="path:/keep",
+    )
+    session.commit()
+
+    response = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
+
+    assert response.status_code == 200
+    assert response.json()["entries_pruned"] == 0
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="anthropic",
+            credential_origin="path:/keep",
+        )
+        is not None
+    )
 
 
 def test_manifest_normalizes_fqdn_sidecar_id(client: TestClient, session: Session):
@@ -669,9 +753,7 @@ def test_auto_hint_ships_when_provider_has_single_labeled_account(
     r = client.get("/api/v1/fleet/config")
     assert r.status_code == 200
     hints = r.json()["account_tag_hints"]
-    assert hints == {
-        "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
-    }
+    assert hints == {}
 
 
 def test_auto_hint_skips_provider_with_no_labeled_rows(
@@ -772,9 +854,9 @@ def test_explicit_operator_tag_wins_over_auto_hint(client: TestClient, session: 
     r = client.get("/api/v1/fleet/config")
     assert r.status_code == 200
     hints = r.json()["account_tag_hints"]
-    # Operator tag preserved + auto-hint on its own origin.
+    # The explicit mapping is returned; no provider-wide inference is added.
     assert hints["minimax"]["path:/home/runway/.minimax/credentials"] == ("work@example.com")
-    assert hints["minimax"]["provider:minimax"] == "s3ntin318@gmail.com"
+    assert "provider:minimax" not in hints["minimax"]
 
 
 def test_auto_hint_independent_per_provider(client: TestClient, session: Session) -> None:
@@ -792,7 +874,7 @@ def test_auto_hint_independent_per_provider(client: TestClient, session: Session
     r = client.get("/api/v1/fleet/config")
     assert r.status_code == 200
     hints = r.json()["account_tag_hints"]
-    assert "minimax" in hints
+    assert "minimax" not in hints
     assert "anthropic" not in hints
     assert "opencode" not in hints
 
@@ -841,12 +923,9 @@ def test_fingerprint_hint_ships_for_stored_opencode_key(
     r = client.get("/api/v1/fleet/config")
     assert r.status_code == 200
     hints = r.json()["account_tag_hints"]
-    # Both tiers land here: the definitive fingerprint match (T1) and — this
-    # is a single-host deployment with one labelled account — the implicit
-    # single-account auto-hint (T3). The sidecar consults T1 first.
+    # Only the definitive fingerprint match is evidence of credential ownership.
     assert hints["opencode"] == {
         _opencode_hint_key(OPENCODE_CLI_KEY): "alice@example.com",
-        "provider:opencode": "alice@example.com",
     }
 
 
@@ -981,8 +1060,8 @@ def test_fingerprint_hint_only_fires_for_keyed_providers(
     assert r.status_code == 200
     hints = r.json()["account_tag_hints"]
     assert "opencode" not in hints
-    # kimi's only hint is the pre-existing plain descriptor.
-    assert hints["kimi"] == {"provider:kimi": "alice@example.com"}
+    # A configured account without a credential-specific match is ambiguous.
+    assert "kimi" not in hints
 
 
 def test_operator_tag_wins_over_fingerprint_hint(client: TestClient, session: Session) -> None:
@@ -1008,9 +1087,6 @@ def test_operator_tag_wins_over_fingerprint_hint(client: TestClient, session: Se
     assert r.status_code == 200
     assert r.json()["account_tag_hints"]["opencode"] == {
         _opencode_hint_key(OPENCODE_CLI_KEY): "override@example.com",
-        # The implicit auto-hint still ships on its own descriptor; the
-        # sidecar consults the keyed origin first, so it never wins.
-        "provider:opencode": "alice@example.com",
     }
 
 
@@ -1154,9 +1230,7 @@ def test_auto_hint_ships_to_reporting_sidecar_in_multi_host(
 
     r_alpha = client.get("/api/v1/fleet/config?sidecar_id=alpha")
     assert r_alpha.status_code == 200
-    assert r_alpha.json()["account_tag_hints"] == {
-        "minimax": {"provider:minimax": "s3ntin318@gmail.com"},
-    }
+    assert r_alpha.json()["account_tag_hints"] == {}
 
     r_beta = client.get("/api/v1/fleet/config?sidecar_id=beta")
     assert r_beta.status_code == 200
@@ -1183,14 +1257,10 @@ def test_auto_hint_withheld_when_unidentified_in_multi_host(
     assert r.json()["account_tag_hints"] == {}
 
 
-def test_manifest_keeps_auto_hint_pending_row_when_sidecar_stops_reporting(
+def test_manifest_prunes_stale_pending_credential_origin(
     client: TestClient, session: Session
 ) -> None:
-    """Stickiness (#319): once the auto-hint resolves ``provider:minimax``,
-    the sidecar stops reporting it — but the pending row must survive so
-    multi-host auto-hint delivery keeps recognizing the reporter, without
-    the hint oscillating off. The row is hidden from the Untagged dialog
-    (effective-hint filter) while still sticky."""
+    """A complete empty manifest clears stale credential origins."""
     from app.services.credential_tags import PendingCredentialTagRepo
 
     session.add(
@@ -1209,10 +1279,11 @@ def test_manifest_keeps_auto_hint_pending_row_when_sidecar_stops_reporting(
         {
             "sidecar_id": "alpha",
             "entries": [{"provider_id": "minimax", "credential_origin": "provider:minimax"}],
+            "completed_providers": ["minimax"],
         },
     )
     assert r1.status_code == 200, r1.text
-    assert r1.json()["resolved"] == {"minimax": {"provider:minimax": "s3ntin318@gmail.com"}}
+    assert r1.json()["resolved"] == {}
     assert PendingCredentialTagRepo.get(
         session,
         sidecar_id="alpha",
@@ -1220,27 +1291,116 @@ def test_manifest_keeps_auto_hint_pending_row_when_sidecar_stops_reporting(
         credential_origin="provider:minimax",
     )
 
-    # Cycle 2: sidecar resolved via the hint and reports nothing for
-    # minimax — stickiness must keep the pending row.
-    r2 = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
+    # Cycle 2: the source disappears from a complete manifest.
+    r2 = _post_manifest(
+        client,
+        {"sidecar_id": "alpha", "entries": [], "completed_providers": ["minimax"]},
+    )
     assert r2.status_code == 200, r2.text
-    assert PendingCredentialTagRepo.get(
+    assert r2.json()["entries_pruned"] == 1
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="minimax",
+            credential_origin="provider:minimax",
+        )
+        is None
+    )
+
+
+def test_pending_usage_event_can_be_assigned_and_promoted(client: TestClient, session: Session):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(
         session,
+        provider_id="anthropic",
+        account_id="alice@example.com",
+    )
+    push = UsageEventPush(
+        provider_id="anthropic",
+        account_id="default",
+        account_source="default",
+        event_id="pending-manual-1",
+        ts="2026-09-01T10:00:00Z",
+        model_id="sonnet",
+        tokens_input=1000,
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="alpha",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+    listed = client.get("/api/v1/fleet/events/pending")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["total"] == 1
+    assert [item["id"] for item in listed.json()["items"]] == [pending.id]
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "alice@example.com"},
+    )
+    assert response.status_code == 200, response.text
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    stored = session.exec(select(UsageEvent)).first()
+    assert stored.account_id == "alice@example.com"
+    assert stored.attribution_source == "tag"
+    assert stored.tokens_input == 1000
+
+
+def test_assigning_opencode_pending_event_persists_provider_mapping(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(session, provider_id="xai", account_id="alice@example.com")
+    push = UsageEventPush(
+        provider_id="xai",
+        account_id="default",
+        account_source="default",
+        event_id="opencode-xai-pending",
+        ts="2026-09-01T10:00:00Z",
+        model_id="grok-4",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="alpha",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "alice@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    tag = CredentialTagRepo.get(
+        session,
+        provider_id="xai",
+        credential_origin="provider:xai",
         sidecar_id="alpha",
-        provider_id="minimax",
-        credential_origin="provider:minimax",
-    ), "sticky auto-hint pending row must survive a resolve-and-stop-reporting cycle"
-
-    # Sticky row is hidden from the Untagged dialog (already resolved).
-    r_pending = client.get("/api/v1/fleet/credentials/tags/pending")
-    assert r_pending.status_code == 200
-    assert r_pending.json()["items"] == []
-
-    # Auto-hint still ships to alpha on the next config fetch.
-    r_cfg = client.get("/api/v1/fleet/config?sidecar_id=alpha")
-    assert r_cfg.json()["account_tag_hints"] == {
-        "minimax": {"provider:minimax": "s3ntin318@gmail.com"}
-    }
+    )
+    assert tag is not None
+    assert tag.account_id == "alice@example.com"
 
 
 def test_pending_endpoint_hides_origin_with_effective_hint(

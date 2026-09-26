@@ -74,6 +74,7 @@ export interface WindowAggregation {
 export interface FleetEntry {
   provider_id: string;
   account_id: string;
+  billing_type?: 'unknown' | 'subscription' | 'pay_as_you_go';
   critical_gauge: LimitCard;
   secondary_limits: LimitCard[];
   sidecar_contributions?: Record<string, TokenUsage>;
@@ -573,6 +574,17 @@ export interface CredentialTagList {
   items: CredentialTag[];
 }
 
+export interface PendingUsageEvent {
+  id: number;
+  provider_id: string;
+  event_id: string;
+  sidecar_id: string;
+  ts: string;
+  reason: string;
+  model_id?: string | null;
+  session_id?: string | null;
+}
+
 export interface SystemSettings {
   project_name?: string;
   app_host?: string;
@@ -661,6 +673,7 @@ export interface ProviderAccount {
   poll_interval_seconds?: number | null;
   collection_strategies?: CollectionStrategy[] | null;
   opencode_workspace_id?: string | null;
+  billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
   // orphaned `account_id="default"` rows that have been shadowed by a real
   // sibling account on the same provider. Safe to remove. The flag only

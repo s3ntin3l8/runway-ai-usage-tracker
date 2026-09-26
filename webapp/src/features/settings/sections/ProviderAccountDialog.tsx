@@ -126,6 +126,7 @@ function ProviderAccountForm({
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
   const [workspaceId, setWorkspaceId] = useState(account.opencode_workspace_id ?? '');
+  const [billingType, setBillingType] = useState(account.billing_type ?? 'unknown');
   // PR #287 / #273 — explicit clear flags for the stored credentials. Set
   // by the "Clear" button next to each input. The flag wins over a
   // same-field write, so the user can't accidentally clear a credential
@@ -149,6 +150,7 @@ function ProviderAccountForm({
         account_label: label.trim(),
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),
         collection_strategies: strategies.map(({ id, enabled: on }) => ({ id, enabled: on })),
+        billing_type: billingType,
       };
       if (provider.provider_id === 'opencode') body.opencode_workspace_id = workspaceId.trim();
       if (apiKey !== '') body.api_key = apiKey;
@@ -200,6 +202,23 @@ function ProviderAccountForm({
       <div className="flex items-center justify-between">
         <Label htmlFor="acct-enabled">Collection enabled</Label>
         <Switch id="acct-enabled" checked={enabled} onCheckedChange={setEnabled} />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="acct-billing-type">Billing type</Label>
+        <select
+          id="acct-billing-type"
+          value={billingType}
+          onChange={(event) => setBillingType(event.target.value as typeof billingType)}
+          className="h-9 rounded-md border border-border bg-surface-1 px-3 text-sm text-fg"
+        >
+          <option value="unknown">Unknown · show usage value</option>
+          <option value="subscription">Subscription · show estimated usage value</option>
+          <option value="pay_as_you_go">Pay as you go · show reported cost when available</option>
+        </select>
+        <HelperText>
+          Estimated usage value uses configured API rates. Reported cost comes from the provider log.
+        </HelperText>
       </div>
 
       {provider.provider_id === 'github' && account.account_id === 'default' ? (
