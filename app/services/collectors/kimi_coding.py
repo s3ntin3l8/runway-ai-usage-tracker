@@ -236,9 +236,10 @@ class KimiCodingCollector(BaseCollector):
         """
         Resolve a Bearer token for the Code API, plus its input source.
 
-        Priority: DB API key (config) > KIMI_CODE_API_KEY env > Kimi Code CLI
-        access token (local file or sidecar-pushed), which must be fresh
-        (expires_at > now + 60s). Returns (token, input_source, is_cli).
+        Priority: DB API key (config) > KIMI_CODE_API_KEY env > token-cache
+        ``api_key`` slot (dashboard-paste mirror / opencode CLI discovery) >
+        Kimi Code CLI access token (local file or sidecar-pushed), which must
+        be fresh (expires_at > now + 60s). Returns (token, input_source, is_cli).
         """
         key = credential_provider.get_provider_api_key("kimi_coding")
         if self._is_valid_credential(key):
@@ -246,6 +247,29 @@ class KimiCodingCollector(BaseCollector):
 
         if self._is_valid_credential(settings.KIMI_CODE_API_KEY):
             return settings.KIMI_CODE_API_KEY, self.INPUT_SOURCE_SERVER, False
+
+        # Dashboard paste (mirrored by the provider PUT and by
+        # _sync_manual_config_to_cache) and the opencode CLI's
+        # kimi-code-plan-global key both land in the token cache under
+        # ``api_key``. An account-keyed row never reaches the legacy
+        # unscoped DB read above, so this is its only path (issue #343).
+        # ``or "default"`` mirrors the cookie/CLI readers: config creds live
+        # under "default" regardless of the collector's resolved identity,
+        # and passing None would fall back to the newest cached account.
+        cache_data = await token_cache.get_with_metadata(
+            "kimi_coding", account_id=self.account_id or "default"
+        )
+        if cache_data:
+            tokens, metadata = cache_data
+            cached_key = tokens.get("api_key")
+            if self._is_valid_credential(cached_key):
+                source = metadata.get("source") or "sidecar"
+                input_source = (
+                    self.INPUT_SOURCE_CONFIG
+                    if source in ("config", "manual_config")
+                    else self.INPUT_SOURCE_SIDECAR
+                )
+                return cached_key, input_source, False
 
         cli = await self._resolve_cli_token()
         if cli:

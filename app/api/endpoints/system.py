@@ -1616,7 +1616,13 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # Propagate to token_cache if this is also mapped as an OAuth token.
         # Stamp under the resolved account_id (no longer hard-coded "default")
         # so the new per-account endpoint keeps credentials and identity aligned.
-        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini", "ollama"):
+        if row.api_key and provider_id in (
+            "chatgpt",
+            "anthropic",
+            "gemini",
+            "ollama",
+            "kimi_coding",
+        ):
             tokens = {"oauth_token": row.api_key}
 
             # For ChatGPT, try to extract the account_id from the token if it's a JWT
@@ -1636,6 +1642,12 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
             # Ollama reads the API key under the "api_key" token-cache slot.
             if provider_id == "ollama":
+                tokens["api_key"] = row.api_key
+
+            # Kimi Coding is the same pattern: the collector resolves a
+            # dashboard paste from the api_key slot (issue #343) — without
+            # this mirror an account-keyed row never reaches the collector.
+            if provider_id == "kimi_coding":
                 tokens["api_key"] = row.api_key
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")

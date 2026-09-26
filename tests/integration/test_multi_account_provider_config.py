@@ -392,6 +392,66 @@ def test_clear_api_key_wipes_encrypted_blob(client: TestClient):
     assert default_row["api_key_set"] is False
 
 
+def _kimi_cache_tokens(account_id: str) -> dict:
+    """Tokens cached for a kimi_coding account (empty dict when absent)."""
+    from app.services.token_cache import token_cache
+
+    entry = token_cache._cache.get("kimi_coding", {}).get(account_id)
+    return entry[0] if entry else {}
+
+
+def test_kimi_api_key_legacy_put_mirrors_to_token_cache(client: TestClient):
+    """Issue #343: a dashboard-pasted kimi_coding key must reach the token
+    cache under the ``api_key`` slot — the collector resolves it from there
+    (an account-keyed row never reaches the unscoped legacy DB read), and the
+    cache is what drives dynamic-collector discovery."""
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding",
+        json={"api_key": "sk-kimi-test-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    tokens = _kimi_cache_tokens("default")
+    assert tokens["api_key"] == "sk-kimi-test-123"  # pragma: allowlist secret
+    assert tokens["oauth_token"] == "sk-kimi-test-123"  # pragma: allowlist secret
+
+
+def test_kimi_api_key_per_account_put_mirrors_to_token_cache(client: TestClient):
+    """Same mirror on the multi-account canonical endpoint, stamped under the
+    canonical (lowercased) account_id so the collector's identity-scoped cache
+    lookup lines up."""
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding/Alice@Example.com",
+        json={"api_key": "sk-kimi-alice-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    tokens = _kimi_cache_tokens("alice@example.com")
+    assert tokens["api_key"] == "sk-kimi-alice-123"  # pragma: allowlist secret
+
+
+def test_kimi_clear_api_key_drops_cache_mirror(client: TestClient):
+    """clear_api_key must invalidate the mirrored slot too — a stale copy
+    would keep feeding collectors a key the user just removed."""
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding",
+        json={"api_key": "sk-kimi-test-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert _kimi_cache_tokens("default")
+
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding",
+        json={"clear_api_key": True},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert not _kimi_cache_tokens("default")
+
+
 def test_is_orphaned_true_when_default_shadowed_by_live_sibling(
     client: TestClient, session: Session
 ) -> None:
