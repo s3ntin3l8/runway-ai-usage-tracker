@@ -132,7 +132,10 @@ account the legacy tag names.
 server has exactly one account configured, so it is probably that one."
 Before honouring it, the sidecar compares the discovered key against
 `account.json`'s active `opencode-go` record — the only local evidence
-that can contradict the guess:
+that can contradict the guess. Only the `account.json` *sitting next to
+the `auth.json` the key came from* is read: where both
+`~/.local/share/opencode/` and `~/.opencode/` exist, neither directory
+gets a vote over the other's credential:
 
 | `account.json` state | Result |
 |---|---|

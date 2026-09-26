@@ -2254,7 +2254,9 @@ def _opencode_account_json_paths() -> list[Path]:
     return out
 
 
-def _opencode_local_key_binding(discovered_key: str | None, service: str = "opencode-go") -> str:
+def _opencode_local_key_binding(
+    discovered_key: str | None, service: str = "opencode-go", auth_origin: str | None = None
+) -> str:
     """Classify how confidently the on-disk OpenCode CLI state backs a key (#347).
 
     ``~/.local/share/opencode/auth.json`` holds exactly one key per service,
@@ -2279,6 +2281,13 @@ def _opencode_local_key_binding(discovered_key: str | None, service: str = "open
         whatever account the server has configured would be a guess, so the
         auto-hint is suppressed and the credential stays Untagged.
 
+    Candidates are paired with the credential that was actually found. When
+    ``auth_origin`` names a specific ``auth.json`` (``path:…``), only *its*
+    sibling ``account.json`` is consulted — a second install directory can
+    neither outvote it nor be outvoted by it, because it describes a
+    different credential. Environments without a path (env / keychain) have
+    no sibling to pair with and fall back to every known location.
+
     Parsing is deliberately tolerant — a missing, truncated or
     schema-revised ``account.json`` degrades to ``"unknown"``, never to a
     wrong answer.
@@ -2287,7 +2296,13 @@ def _opencode_local_key_binding(discovered_key: str | None, service: str = "open
     if not key:
         return "unknown"
 
-    for account_path in _opencode_account_json_paths():
+    candidates = _opencode_account_json_paths()
+    if auth_origin and auth_origin.startswith("path:"):
+        sibling = Path(auth_origin[len("path:") :]).parent / "account.json"
+        if sibling.exists():
+            candidates = [sibling]
+
+    for account_path in candidates:
         try:
             with open(account_path) as f:
                 data = json.load(f)
@@ -2877,11 +2892,16 @@ class GenericCollector:
                 # most specific first:
                 #   1. the origin this sidecar reported — key-scoped, so an
                 #      operator tag written against this exact credential,
-                #   2. the plain rule origin — tags written before origins
-                #      were fingerprinted keep working,
-                #   3. a fingerprint-keyed hint the server derived from a
+                #   2. a fingerprint-keyed hint the server derived from a
                 #      key the operator pasted into provider_configs (the
-                #      server can build this key without knowing our paths),
+                #      server can build this key without knowing our paths).
+                #      Still keyed to this exact credential, so it outranks
+                #      the path-only tag below — evidence beats the inheritable
+                #      legacy origin,
+                #   3. the plain rule origin — tags written before origins
+                #      were fingerprinted keep working, but they are path-
+                #      scoped and therefore inheritable across hosts and
+                #      rotations (the debt the docs tell operators to clear),
                 #   4. the single-account auto-hint — gated on local state
                 #      not contradicting it, so a credential whose CLI state
                 #      disagrees never inherits another account's identity.
@@ -2889,13 +2909,13 @@ class GenericCollector:
                 base_origin, fingerprint = split_keyed_origin(origin)
                 hint_account_id = provider_hints.get(origin)
                 if hint_account_id is None and fingerprint is not None:
-                    hint_account_id = provider_hints.get(base_origin)
-                if hint_account_id is None and fingerprint is not None:
                     hint_account_id = provider_hints.get(
                         keyed_credential_origin(
                             credential_origin_for_provider(provider_id), fingerprint
                         )
                     )
+                if hint_account_id is None and fingerprint is not None:
+                    hint_account_id = provider_hints.get(base_origin)
                 if hint_account_id is None and accepts_legacy_provider_hint:
                     provider_hint = provider_hints.get(credential_origin_for_provider(provider_id))
                     if provider_hint is not None:
@@ -2912,7 +2932,9 @@ class GenericCollector:
                             # independently of this gate. Only paid for when a
                             # hint is actually on offer — the common case has
                             # none, and the warning would be noise.
-                            binding = _opencode_local_key_binding(tokens.get("api_key"))
+                            binding = _opencode_local_key_binding(
+                                tokens.get("api_key"), auth_origin=base_origin
+                            )
                             fallback_allowed = binding != "ambiguous"
                             if not fallback_allowed:
                                 logging.warning(

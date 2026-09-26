@@ -264,6 +264,26 @@ class TestTokenCardCascade:
         assert blocked == []
         assert [c["account_id"] for c in cards] == ["alice@example.com"]
 
+    def test_fingerprint_hint_beats_a_legacy_plain_tag(self, tmp_path: Path) -> None:
+        """Specificity decides the order, not chronology: a key-exact hint
+        outranks a path-only tag, because the path tag is the origin that
+        still inherits across hosts and rotations (the debt to clear)."""
+        auth = _write_auth(tmp_path, KEY_A)
+
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "opencode",
+            _file_config(auth),
+            account_label_hints={
+                "opencode": {
+                    f"path:{auth.resolve()}": "legacy@example.com",
+                    f"provider:opencode#{FP_A}": "alice@example.com",
+                }
+            },
+        )
+
+        assert blocked == []
+        assert [c["account_id"] for c in cards] == ["alice@example.com"]
+
     def test_env_label_stamps_locally_and_beats_hints(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -429,6 +449,26 @@ class TestLocalKeyBinding:
         self, _state_paths: list[Path], tmp_path: Path
     ) -> None:
         _state_paths.append(_write_account_json(tmp_path, KEY_ACTIVE))
+        assert sc._opencode_local_key_binding(KEY_A) == "ambiguous"
+
+    def test_state_is_paired_with_the_credentials_own_directory(
+        self, _state_paths: list[Path], tmp_path: Path
+    ) -> None:
+        """Two install directories can hold one ``account.json`` apiece and
+        disagree about which key is active. Only the one sitting next to the
+        ``auth.json`` we actually read speaks for this credential — the other
+        one neither outvotes it nor is outvoted by it."""
+        auth = _write_auth(tmp_path / "install-a", KEY_A)
+        own = _write_account_json(auth.resolve().parent, KEY_A)
+        elsewhere = _write_account_json(tmp_path / "install-b", KEY_ACTIVE)
+        _state_paths.extend([elsewhere, own])
+
+        # Paired: the credential's own state agrees → safe to use the hint.
+        assert (
+            sc._opencode_local_key_binding(KEY_A, auth_origin=f"path:{auth.resolve()}") == "single"
+        )
+        # Unpaired (an env / keychain credential has no directory to pair
+        # with): every known location is consulted, in the reader's order.
         assert sc._opencode_local_key_binding(KEY_A) == "ambiguous"
 
     def test_comparison_strips_surrounding_whitespace(
