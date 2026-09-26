@@ -224,6 +224,27 @@ __REGISTRY__: dict[str, Any] = {
                 {"type": "env", "variable": "OPENROUTER_X_TITLE", "mapping": {"value": "x_title"}},
             ],
         },
+        "deepseek": {
+            "name": "DeepSeek",
+            "icon": "\U0001f40b",
+            "rules": [
+                {"type": "env", "variable": "DEEPSEEK_API_KEY", "mapping": {"value": "api_key"}},
+                {
+                    # The opencode CLI stores the BYOK DeepSeek key in
+                    # `~/.local/share/opencode/auth.json` under
+                    # `deepseek.key`. Reading it means no env-var setup —
+                    # the origin is fingerprinted like the other siblings,
+                    # and the card still needs an account hint (Untagged
+                    # Credentials) before it attaches to a labeled account.
+                    "type": "file",
+                    "paths": [
+                        "~/.local/share/opencode/auth.json",
+                        "~/.opencode/auth.json",
+                    ],
+                    "mapping": {"deepseek.key": "api_key"},
+                },
+            ],
+        },
         "minimax": {
             "name": "MiniMax",
             "icon": "\ud83e\udd16",

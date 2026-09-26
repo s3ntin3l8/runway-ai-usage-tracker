@@ -109,7 +109,7 @@ _FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
 # ``provider:<pid>#<fp>`` hint for. Mirrored in
 # ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
 FINGERPRINTED_ORIGIN_PROVIDERS: frozenset[str] = frozenset(
-    {"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai"}
+    {"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai", "deepseek"}
 )
 
 

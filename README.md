@@ -41,7 +41,7 @@
 
 ## Key Features
 
-- **13 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
+- **14 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
 - **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
 - **Event-Sourced History**: One immutable row per assistant message in `usage_events` — rollups, windows, and cost are all derived views over the same authoritative log
 - **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 45 min of no quota change
@@ -150,7 +150,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 
 ## Supported Providers
 
-**13 providers** — 12 collected by the server, 1 sidecar-only.
+**14 providers** — 13 collected by the server, 1 sidecar-only.
 
 | Provider | Collection Method | Cards | Env Var | Docs |
 |----------|------------------|-------|---------|------|
@@ -159,6 +159,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 | **GitHub Copilot** | REST API | 2 | `GITHUB_TOKEN` | [📖](docs/collectors/github.md) |
 | **ChatGPT** | OAuth API → Chrome cookie → Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
 | **OpenRouter** | REST API (Credits) | 1 | `OPENROUTER_API_KEY` | [📖](docs/collectors/openrouter.md) |
+| **DeepSeek** | REST API (Balance) | 1 | `DEEPSEEK_API_KEY` | [📖](docs/collectors/deepseek.md) |
 | **MiniMax** | REST API (Coding Plan) | 2 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
 | **Ollama** | Web API (Cloud) + Session cookie | 2 | `OLLAMA_SESSION_TOKEN` (opt) | [📖](docs/collectors/ollama.md) |
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |

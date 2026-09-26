@@ -346,6 +346,7 @@ def test_error_push_has_no_effort():
         ("open-design-byok", "opencode-byok"),
         ("openrouter", "opencode-openrouter"),
         ("ollama-cloud", "opencode-ollama"),
+        ("deepseek", "opencode-deepseek"),  # folded onto "deepseek" by canonical map
         ("OPENCODE-GO", "opencode"),  # case-insensitive
         ("some-future-backend", "opencode-some-future-backend"),  # unknown -> derived, not Go
         ("", "opencode"),  # missing/empty -> historical default
@@ -469,6 +470,119 @@ def test_map_opencode_provider_id_xai():
     unknown-provider event that EventIngestor rejects."""
     assert map_opencode_provider_id("xai") == "opencode-xai"
     assert map_opencode_provider_id("XAI") == "opencode-xai"  # case-insensitive
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek: BYOK folds onto "deepseek", Go subscription stays on "opencode"
+# ---------------------------------------------------------------------------
+
+
+def test_map_opencode_canonical_deepseek():
+    """BYOK DeepSeek (providerID "deepseek" in OpenCode) folds onto the
+    canonical "deepseek" provider — the same provider the server-side
+    balance collector (GET api.deepseek.com/user/balance) emits its card
+    on. Account override is None: OpenCode's resolved account flows through
+    and the account_tag_hints flow retargets it onto the labeled
+    balance-card account (kimi/ollama/openrouter reasoning)."""
+    assert map_opencode_canonical("deepseek") == ("deepseek", None)
+    assert map_opencode_canonical("DEEPSEEK") == ("deepseek", None)  # case-insensitive
+
+
+def _deepseek_byok_message(msg_id: str) -> dict:
+    return {
+        "id": msg_id,
+        "session_id": "ses_ds",
+        "time_created": 1778248860000,
+        "data": {
+            "role": "assistant",
+            "path": {"cwd": "/home/user/project"},
+            # BYOK — OpenCode logs a computed cost; the canonical retag drops
+            # it so the server prices from provider_pricing (off-peak seed).
+            "cost": 0.0042,
+            "tokens": {
+                "input": 1200,
+                "output": 400,
+                "reasoning": 0,
+                "cache": {"read": 8000, "write": 0},
+            },
+            "modelID": "deepseek-v4-flash",
+            "providerID": "deepseek",
+            "time": {"created": 1746709260000, "completed": 1746709262000},
+        },
+    }
+
+
+def test_deepseek_byok_retagged_onto_canonical_provider():
+    """providerID "deepseek" must land on provider_id "deepseek" — never on
+    the derived "opencode-deepseek" ghost — with its logged cost dropped so
+    the server reprices it from the DeepSeek seed rows."""
+    db_path = _build_db([_deepseek_byok_message("msg_ds_001")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@opencode.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "deepseek"
+        assert evts[0].account_id == "user@opencode.test"
+        assert evts[0].model_id == "deepseek-v4-flash"
+        assert evts[0].cost_usd is None
+        assert evts[0].tokens_input == 1200
+        assert evts[0].tokens_cache_read == 8000
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_deepseek_byok_respects_canonical_hint():
+    """The canonical hint retargets BYOK events onto the operator-labeled
+    balance-card account (same flow as minimax/kimi/openrouter)."""
+    db_path = _build_db([_deepseek_byok_message("msg_ds_002")])
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="user@opencode.test",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints={"deepseek": {"provider:deepseek": "billing@example.com"}},
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "deepseek"
+        assert evts[0].account_id == "billing@example.com"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_go_subscription_deepseek_stays_on_opencode():
+    """DeepSeek models served by the opencode-go subscription (the user's
+    other DeepSeek path) are billed to the subscription, NOT the DeepSeek
+    balance — they must stay on provider_id "opencode" with their logged
+    cost intact, and never fold into "deepseek"."""
+    db_path = _build_db(
+        [
+            {
+                "id": "msg_go_ds_001",
+                "session_id": "ses_go",
+                "time_created": 1778248860000,
+                "data": {
+                    "role": "assistant",
+                    "path": {"cwd": "/home/user/project"},
+                    "cost": 0.001307,
+                    "tokens": {"input": 900, "output": 300, "reasoning": 0, "cache": {}},
+                    "modelID": "deepseek-v4-flash",
+                    "providerID": "opencode-go",
+                    "time": {"created": 1746709260000, "completed": 1746709262000},
+                },
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="user@opencode.test", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "opencode"
+        assert evts[0].cost_usd == 0.001307  # subscription cost kept
+        assert evts[0].model_id == "deepseek-v4-flash"
+    finally:
+        db_path.unlink(missing_ok=True)
 
 
 def _minimax_message(msg_id: str) -> dict:

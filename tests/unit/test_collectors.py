@@ -19,6 +19,7 @@ import pytest
 
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
+from app.services.collectors.deepseek import DeepSeekCollector
 from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
 from app.services.collectors.kimi_api import KimiApiCollector
@@ -3500,6 +3501,399 @@ class TestOpenRouterCollector:
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
         assert "API connection failed" in result[0]["detail"]
+
+
+class TestDeepSeekCollector:
+    """Test suite for the DeepSeek prepaid-balance collector."""
+
+    @pytest.mark.asyncio
+    async def test_collect_success(self, mock_http_client):
+        """Balance card with the paid/granted split in detail."""
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value="sk-deepseek",
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector()
+
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {
+                "is_available": True,
+                "balance_infos": [
+                    {
+                        "currency": "USD",
+                        "total_balance": "50.00",
+                        "granted_balance": "10.00",
+                        "topped_up_balance": "40.00",
+                    }
+                ],
+            }
+
+            with patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        card = result[0]
+        assert card["service_name"] == "DeepSeek"
+        assert card.get("variant") == "Balance"
+        assert card["remaining"] == "$50.00"
+        assert card["unit"] == "USD"
+        assert card["unit_type"] == "currency"
+        assert card["reset"] == "Prepaid"
+        assert card["health"] == "good"
+        assert "Paid: $40.00 / Granted: $10.00" in card["detail"]
+        assert card["data_source"] == "api"
+
+    @pytest.mark.asyncio
+    async def test_collect_prefers_usd_across_currencies(self, mock_http_client):
+        """When multiple currencies come back, the USD entry wins."""
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value="sk-deepseek",
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector()
+
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {
+                "is_available": True,
+                "balance_infos": [
+                    {
+                        "currency": "CNY",
+                        "total_balance": "100.00",
+                        "granted_balance": "0.00",
+                        "topped_up_balance": "100.00",
+                    },
+                    {
+                        "currency": "USD",
+                        "total_balance": "7.50",
+                        "granted_balance": "2.50",
+                        "topped_up_balance": "5.00",
+                    },
+                ],
+            }
+
+            with patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$7.50"
+        assert result[0]["unit"] == "USD"
+
+    @pytest.mark.asyncio
+    async def test_collect_unavailable_balance_degrades_health(self, mock_http_client):
+        """is_available=false keeps the card but flags it and explains why."""
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value="sk-deepseek",
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector()
+
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {
+                "is_available": False,
+                "balance_infos": [
+                    {
+                        "currency": "USD",
+                        "total_balance": "50.00",
+                        "granted_balance": "10.00",
+                        "topped_up_balance": "40.00",
+                    }
+                ],
+            }
+
+            with patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["health"] == "warning"
+        assert "balance unavailable for API calls" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_zero_balance_is_critical(self, mock_http_client):
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value="sk-deepseek",
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector()
+
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 200
+            resp.json.return_value = {
+                "is_available": True,
+                "balance_infos": [
+                    {
+                        "currency": "USD",
+                        "total_balance": "0.00",
+                        "granted_balance": "0.00",
+                        "topped_up_balance": "0.00",
+                    }
+                ],
+            }
+
+            with patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["health"] == "critical"
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error_returns_error_card(self, mock_http_client):
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value="sk-deepseek",
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector()
+
+            resp = MagicMock(spec=httpx.Response)
+            resp.status_code = 500
+            resp.text = "Internal Server Error"
+
+            with patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ):
+                result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert "API connection failed" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_returns_error_card(self, mock_http_client):
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector()
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0].get("error_type") == "missing_config"
+
+    @pytest.mark.asyncio
+    async def test_scoped_db_read_finds_hashed_account_row(self, mock_http_client):
+        """A wizard-pasted key is stored under a hashed account_id, which the
+        legacy unscoped read hides — the collector must ask for its own row."""
+        seen: list[str | None] = []
+
+        def lookup(_pid: str, *, account_id: str | None = None) -> str | None:
+            seen.append(account_id)
+            return (
+                "sk-hashed" if account_id == "wizard-account" else None
+            )  # pragma: allowlist secret
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "1.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "1.00",
+                }
+            ],
+        }
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                side_effect=lookup,
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector(account_id="wizard-account")
+            result = await collector.collect(mock_http_client)
+
+        assert seen[0] == "wizard-account"
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$1.00"
+        assert result[0]["input_source"] == "config"
+
+    @pytest.mark.asyncio
+    async def test_cache_oauth_token_is_a_usable_key(self, mock_http_client):
+        """The DB→cache mirror writes the key into oauth_token; a row that
+        only has that slot must still configure the collector."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "2.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "2.00",
+                }
+            ],
+        }
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.deepseek.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"oauth_token": "sk-from-cache"}, {"source": "config"}),
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = ""
+            collector = DeepSeekCollector(account_id="wizard-account")
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$2.00"
+        assert result[0]["input_source"] == "config"
+
+    @pytest.mark.asyncio
+    async def test_cache_row_without_key_falls_through_to_env(self, mock_http_client):
+        """A cache row missing both key fields is not terminal — the env
+        default still configures the default-account collector."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "3.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "3.00",
+                }
+            ],
+        }
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.deepseek.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"session_cookie": "not-a-key"}, {"source": "sidecar"}),
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = "sk-from-env"  # pragma: allowlist secret
+            collector = DeepSeekCollector(account_id="default")
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "$3.00"
+        assert result[0]["input_source"] == "server"
+
+    @pytest.mark.asyncio
+    async def test_sidecar_account_reads_own_cache_not_default_row(self, mock_http_client):
+        """A sidecar-spawned account with no ProviderConfig row must not adopt
+        the legacy default-row key — that skips its own cache entry."""
+        seen: list[str | None] = []
+
+        def lookup(_pid: str, *, account_id: str | None = None) -> str | None:
+            seen.append(account_id)
+            return "sk-default-row" if account_id == "default" else None  # pragma: allowlist secret
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "4.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "4.00",
+                }
+            ],
+        }
+        cache = AsyncMock(return_value=({"api_key": "sk-sidecar"}, {"source": "sidecar"}))
+        request = AsyncMock(return_value=resp)
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                side_effect=lookup,
+            ),
+            patch(
+                "app.services.collectors.deepseek.token_cache.get_with_metadata",
+                cache,
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                request,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = "sk-from-env"  # pragma: allowlist secret
+            collector = DeepSeekCollector(account_id="sidecar-host")
+            result = await collector.collect(mock_http_client)
+
+        cache.assert_awaited()
+        assert "default" not in seen
+        assert request.await_args.kwargs["headers"]["Authorization"] == "Bearer sk-sidecar"
+        assert len(result) == 1
+        assert result[0]["input_source"] == "sidecar"
 
 
 class TestMiniMaxCollector:

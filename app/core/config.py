@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_HTTP_REFERER: str = ""
     OPENROUTER_X_TITLE: str = "Runway"
+    DEEPSEEK_API_KEY: str = ""
     MINIMAX_API_KEY: str = ""
     MINIMAX_HOST: str = ""  # Bare domain override for China: "minimaxi.com"
     OPENCODE_GO_API_KEY: str = ""
