@@ -40,6 +40,7 @@ import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
 import { CredentialMappingsCard } from './CredentialMappingsCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
+import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
 // gated on stale_threshold_minutes) so there's one source of truth — a
@@ -167,6 +168,7 @@ export function FleetPage() {
         }
       />
       <div className="p-4 lg:p-8">
+        <PendingUsageEventsCard />
         {sidecars.isPending ? (
           <div className="grid gap-3 lg:grid-cols-2">
             <Skeleton className="h-40" />

@@ -69,8 +69,8 @@ def _lifetime(session: Session, account_id: str) -> tuple[int, int]:
 
 def test_same_sidecar_retag_moves_event_and_rollups(session: Session):
     ing = EventIngestor(session)
-    ing.ingest([_push("default")], sidecar_id="laptop")
-    assert _lifetime(session, "default") == (1, 100)
+    ing.ingest([_push("bob@example.com")], sidecar_id="laptop")
+    assert _lifetime(session, "bob@example.com") == (1, 100)
 
     # The operator tags the credential; the sidecar re-pushes under the tag.
     res = EventIngestor(session).ingest([_push("alice@example.com")], sidecar_id="laptop")
@@ -80,7 +80,7 @@ def test_same_sidecar_retag_moves_event_and_rollups(session: Session):
     assert [(r.account_id, r.event_id) for r in rows] == [("alice@example.com", "msg_1")]
     # Counted exactly once, on the new account.
     assert _lifetime(session, "alice@example.com") == (1, 100)
-    assert _lifetime(session, "default") == (0, 0)
+    assert _lifetime(session, "bob@example.com") == (0, 0)
 
 
 def test_other_sidecar_cannot_steal_an_event(session: Session):
@@ -103,7 +103,7 @@ def test_identical_repush_is_a_plain_duplicate(session: Session):
 
 
 def test_error_events_reattribute_without_rollups(session: Session):
-    EventIngestor(session).ingest([_push("default", kind="error")], sidecar_id="laptop")
+    EventIngestor(session).ingest([_push("bob@example.com", kind="error")], sidecar_id="laptop")
     res = EventIngestor(session).ingest(
         [_push("alice@example.com", kind="error")], sidecar_id="laptop"
     )
@@ -115,7 +115,7 @@ def test_error_events_reattribute_without_rollups(session: Session):
 def test_reattributed_row_takes_the_repushed_payload(session: Session):
     """The moved row is refreshed from the re-push, and rollups follow the
     refreshed values — no stale model / project / cost left behind."""
-    EventIngestor(session).ingest([_push("default")], sidecar_id="laptop")
+    EventIngestor(session).ingest([_push("bob@example.com")], sidecar_id="laptop")
 
     enriched = _push("alice@example.com")
     enriched.tokens_input = 250
@@ -129,15 +129,15 @@ def test_reattributed_row_takes_the_repushed_payload(session: Session):
         "runway",
     )
     assert _lifetime(session, "alice@example.com") == (1, 250)
-    assert _lifetime(session, "default") == (0, 0)
+    assert _lifetime(session, "bob@example.com") == (0, 0)
 
 
 def test_error_repush_over_a_message_removes_its_rollups(session: Session):
-    EventIngestor(session).ingest([_push("default")], sidecar_id="laptop")
+    EventIngestor(session).ingest([_push("bob@example.com")], sidecar_id="laptop")
     EventIngestor(session).ingest([_push("alice@example.com", kind="error")], sidecar_id="laptop")
     row = session.exec(select(UsageEvent)).one()
     assert (row.account_id, row.kind) == ("alice@example.com", "error")
-    assert _lifetime(session, "default") == (0, 0)
+    assert _lifetime(session, "bob@example.com") == (0, 0)
     assert _lifetime(session, "alice@example.com") == (0, 0)
 
 

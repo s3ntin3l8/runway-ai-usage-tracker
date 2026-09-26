@@ -625,8 +625,8 @@ def test_minimax_coding_plan_retagged_onto_canonical_card():
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "minimax"
-        # account_id flows through — tag-hint carries the operator's choice.
-        assert evts[0].account_id == "user@opencode.test"
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
         assert evts[0].model_id == "MiniMax-M3"
         assert evts[0].cost_usd is None
         assert evts[0].tokens_input == 90429
@@ -761,8 +761,8 @@ def test_minimax_coding_plan_error_also_retagged():
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "minimax"
-        # Pass-through: server-side tag-hints retarget this if available.
-        assert evts[0].account_id == "user@opencode.test"
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
         assert evts[0].kind == "error"
         assert evts[0].error_reason == "rate_limit"
     finally:
@@ -805,7 +805,8 @@ def test_kimi_code_plan_global_retagged_onto_canonical_card(model_id):
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "kimi_coding"
-        assert evts[0].account_id == "user@opencode.test"
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
         assert evts[0].model_id == model_id
         assert evts[0].cost_usd is None
         assert evts[0].tokens_input == 5000
@@ -863,7 +864,8 @@ def test_ollama_cloud_retagged_onto_canonical_card():
         )
         assert len(evts) == 1
         assert evts[0].provider_id == "ollama"
-        assert evts[0].account_id == "user@ollama.test"
+        assert evts[0].account_id == "default"
+        assert evts[0].account_source == "default"
         assert evts[0].model_id == "nemotron-3-ultra"
         assert evts[0].cost_usd is None
         assert evts[0].tokens_input == 90000

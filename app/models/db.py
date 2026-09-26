@@ -92,6 +92,8 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
     poll_interval_seconds: int | None = None  # None = use collector default TTL
     collection_strategies_json: str | None = Field(default=None)  # JSON list of {id, enabled}
     opencode_workspace_id: str | None = Field(default=None)
+    # How monetary values should be presented for this account.
+    billing_type: str = "unknown"  # subscription | pay_as_you_go | unknown
 
     @property
     def strategies(self) -> list[dict] | None:
@@ -245,6 +247,7 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     id: int | None = Field(default=None, primary_key=True)
     provider_id: str = Field(index=True)  # "anthropic", "chatgpt", ...
     account_id: str = Field(index=True)  # canonical (email or hash)
+    attribution_source: str = "unknown"  # local | tag | default | unknown
     sidecar_id: str = Field(default="local")  # hostname that pushed this
     event_id: str  # provider's msg_id / request_id
     ts: UTCDateTime = Field(index=True)  # actual log timestamp (UTC)
@@ -277,6 +280,8 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     tokens_cache_create_5m: int = Field(default=0)
     tokens_reasoning: int = Field(default=0)  # o1-style thinking tokens
     cost_usd: float = Field(default=0.0)  # provider-reported or computed (authoritative total)
+    cost_reported_usd: float | None = None  # raw provider/tool-reported cost, when present
+    cost_estimated_usd: float = Field(default=0.0)  # token value at configured API rates
     # USD cost components (sum ≈ cost_usd; reasoning billed at the output rate folds
     # into cost_output). Stored so any cost-composition view (e.g. exclude-cache) needs
     # no recompute; cost_usd stays authoritative when a provider supplies its own total.
@@ -604,6 +609,26 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     sidecar_id: str  # indexed via ``ix_pending_credential_tags_sidecar``
     provider_id: str
     credential_origin: str
+    first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PendingUsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
+    """A collected event awaiting evidence-backed or manual account assignment."""
+
+    __tablename__ = "pending_usage_events"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "event_id", "sidecar_id", name="uq_pending_usage_event"),
+        Index("ix_pending_usage_events_provider_ts", "provider_id", "ts"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str
+    event_id: str
+    sidecar_id: str
+    ts: UTCDateTime = Field(index=True)
+    reason: str = "account_unresolved"
+    payload_json: str
     first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 

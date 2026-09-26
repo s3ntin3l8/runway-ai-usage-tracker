@@ -189,8 +189,8 @@ describe('HomePage', () => {
   it('shows the aggregate spend strip', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Projected EOM')).toBeInTheDocument();
+    expect(await screen.findByText('Usage value (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Projected usage value')).toBeInTheDocument();
   });
 
   it('scopes the home cumulative query to the current month only', async () => {
@@ -208,8 +208,8 @@ describe('HomePage', () => {
       await screen.findByText(formatCost(costResponse.current_month_to_date)),
     ).toBeInTheDocument();
 
-    // Spend (MTD) resolved: no skeleton left in that card.
-    const spendCard = screen.getByText('Spend (MTD)').parentElement;
+    // Usage value resolved: no skeleton left in that card.
+    const spendCard = screen.getByText('Usage value (MTD)').parentElement;
     expect(spendCard?.querySelector('.animate-shimmer')).not.toBeInTheDocument();
 
     // Tokens this month stays in skeleton state since cumulative never resolves.

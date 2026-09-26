@@ -35,20 +35,29 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
+    );
+
+    expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Projected EOM')).toBeInTheDocument();
+    expect(screen.getByText('Cost (lifetime)')).toBeInTheDocument();
+    expect(await screen.findByText(/20d left/)).toBeInTheDocument();
+  });
+
+  it('labels unknown billing as estimated usage value', async () => {
+    renderWithProviders(
       <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
-    expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Projected EOM')).toBeInTheDocument();
-    expect(screen.getByText('Lifetime')).toBeInTheDocument();
-    expect(await screen.findByText(/20d left/)).toBeInTheDocument();
+    expect(await screen.findByText('Estimated usage value (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Projected usage value')).toBeInTheDocument();
   });
 
   it('renders the per-model split table with a row', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
 
     expect(await screen.findByText(/^Cost by model ·/)).toBeInTheDocument();
@@ -68,7 +77,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
 
     expect((await screen.findAllByText('Cache read')).length).toBeGreaterThan(0);
@@ -83,7 +92,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
 
     // Full cost up front (model $10, sidecar $12.50).
@@ -98,7 +107,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
 
     const row = (await screen.findByText('claude-opus')).closest('tr')!;
@@ -115,7 +124,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
 
     await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
@@ -152,7 +161,7 @@ describe('CostTab', () => {
       }),
     );
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
 
     // Reasoning column header appears once a row carries reasoning tokens.
@@ -171,7 +180,7 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
     );
     expect((await screen.findAllByText(/no cost data in/i)).length).toBeGreaterThan(0);
   });
@@ -180,11 +189,16 @@ describe('CostTab', () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={pastPeriod('2026-01')} />,
+      <CostTab
+        providerId="anthropic"
+        accountId="me@example.com"
+        scope={pastPeriod('2026-01')}
+        billingType="pay_as_you_go"
+      />,
     );
 
     // Spend tile is month-scoped; EOM/burn are not applicable.
-    expect(await screen.findByText(/^Spend ·/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Cost ·/)).toBeInTheDocument();
     expect((await screen.findAllByText('current month only')).length).toBeGreaterThan(0);
     // Past month reads the tz-correct month-scoped cumulative bucket.
     await waitFor(() =>

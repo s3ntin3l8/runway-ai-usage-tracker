@@ -141,6 +141,9 @@ class UsageEventPush(BaseModel):
     # cost_usd: set by providers that log it directly (e.g. OpenCode); None = server computes
     # sidecar_id intentionally NOT here — comes from IngestRequest.sidecar_id
     cost_usd: float | None = None
+    # Attribution decision made while reading the source logs. Missing legacy
+    # values are treated as unresolved when account_id is the default sentinel.
+    account_source: str | None = None  # local | tag | default
     kind: str = "message"  # "message" | "error"; reserved: "reset", "anomaly"
     error_reason: str | None = (
         None  # short tag: "rate_limit", "auth_failed", "quota_exceeded", "timeout"

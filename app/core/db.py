@@ -169,6 +169,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("audit_log", "actor_type", "VARCHAR"),
     ("audit_log", "actor_meta_json", "VARCHAR"),
     ("usage_events", "subagent_type", "VARCHAR"),
+    ("usage_events", "attribution_source", "VARCHAR NOT NULL DEFAULT 'unknown'"),
     # Working-directory / project context + tool names (universal project linking).
     ("usage_events", "cwd", "VARCHAR"),
     ("usage_events", "project", "VARCHAR"),
@@ -180,6 +181,8 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("usage_events", "cost_output", "FLOAT NOT NULL DEFAULT 0"),
     ("usage_events", "cost_cache_read", "FLOAT NOT NULL DEFAULT 0"),
     ("usage_events", "cost_cache_create", "FLOAT NOT NULL DEFAULT 0"),
+    ("usage_events", "cost_reported_usd", "FLOAT"),
+    ("usage_events", "cost_estimated_usd", "FLOAT NOT NULL DEFAULT 0"),
     ("usage_period_rollup", "cost_input", "FLOAT NOT NULL DEFAULT 0"),
     ("usage_period_rollup", "cost_output", "FLOAT NOT NULL DEFAULT 0"),
     ("usage_period_rollup", "cost_cache_read", "FLOAT NOT NULL DEFAULT 0"),
@@ -188,6 +191,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session
     ("provider_configs", "oai_sc_cookie_encrypted", "VARCHAR"),
     ("provider_configs", "opencode_workspace_id", "VARCHAR"),
+    ("provider_configs", "billing_type", "VARCHAR NOT NULL DEFAULT 'unknown'"),
     # Archive: hide discontinued providers from the dashboard while preserving data.
     ("provider_configs", "archived", "BOOLEAN NOT NULL DEFAULT 0"),
     # Claude Code per-message dimensions previously discarded by the JSONL

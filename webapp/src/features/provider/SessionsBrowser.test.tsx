@@ -86,9 +86,11 @@ describe('SessionsBrowser', () => {
         active
       />,
     );
+    const since = new Date(2026, 0, 1).toISOString();
+    const until = new Date(2026, 1, 1).toISOString();
     await waitFor(() =>
       expect(api.fetchSessionsPaginated).toHaveBeenCalledWith(
-        expect.objectContaining({ since: expect.stringContaining('2026-01'), until: expect.any(String) }),
+        expect.objectContaining({ since, until }),
       ),
     );
   });

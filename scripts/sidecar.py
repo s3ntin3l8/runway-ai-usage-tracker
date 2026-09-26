@@ -1057,7 +1057,7 @@ def queue_push(payload: dict[str, Any]) -> None:
 
 
 def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) -> None:
-    """Rotate queue files, removing oldest if total size exceeds limit."""
+    """Report queue growth without deleting unacknowledged payloads."""
     queue_dir = get_queue_dir()
     if os.name == "nt" and not queue_dir.exists():
         return
@@ -1070,16 +1070,10 @@ def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) ->
     if os.name == "nt":
         queue_files = sorted(queue_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
         total_size = sum(f.stat().st_size for f in queue_files)
-        while total_size > max_size_bytes and queue_files:
-            oldest = queue_files.pop(0)
-            try:
-                size = oldest.stat().st_size
-                oldest.unlink()
-                total_size -= size
-                logging.warning(f"Queue rotation: removed {oldest.name} ({size} bytes)")
-            except Exception as e:
-                logging.error(f"Failed to remove old queue file {oldest}: {e}")
-                break
+        if total_size > max_size_bytes:
+            logging.error(
+                "Offline queue is %d bytes; retaining all unacknowledged payloads", total_size
+            )
         return
 
     try:
@@ -1099,17 +1093,11 @@ def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) ->
                     os.close(fd)
             except Exception as e:
                 logging.error(f"Failed to secure queue file {name}: {e}")
-        entries.sort()
         total_size = sum(size for _, _, size in entries)
-        while total_size > max_size_bytes and entries:
-            _, name, size = entries.pop(0)
-            try:
-                _unlink_queue_file(dir_fd, name)
-                total_size -= size
-                logging.warning(f"Queue rotation: removed {name} ({size} bytes)")
-            except Exception as e:
-                logging.error(f"Failed to remove old queue file {name}: {e}")
-                break
+        if total_size > max_size_bytes:
+            logging.error(
+                "Offline queue is %d bytes; retaining all unacknowledged payloads", total_size
+            )
     finally:
         os.close(dir_fd)
 
@@ -1900,17 +1888,7 @@ def _gemini_account_email() -> str:
 
 
 def _ag_account_email() -> str:
-    """Read email from the agy OAuth token file; returns 'default' if unavailable.
-
-    The agy token file does not carry an id_token or email claim directly, so
-    we return 'default' (unresolved — the operator tag / auto-hint path then
-    applies). The server-propagated identity in _ACCOUNT_IDENTITIES is used
-    when present; the server only sends it when it is unambiguous (single
-    live sidecar, single real antigravity account).
-    """
-    cached = _ACCOUNT_IDENTITIES.get("antigravity")
-    if cached:
-        return cached
+    """Return the unresolved sentinel; this token file has no account claim."""
     return "default"
 
 
@@ -2011,6 +1989,7 @@ def _extract_events_for_provider(
     bootstrap_days: int,
     out_events: list[dict[str, Any]],
     server_account_tag_hints: dict[str, dict[str, str]] | None = None,
+    account_source: str | None = None,
 ) -> int:
     """Run the event extractor for ``provider_id`` once per ``account_ids``,
     stamping each event with the resolved identity. Errors on one account
@@ -2018,8 +1997,8 @@ def _extract_events_for_provider(
     failure: if one account's credentials fail to fetch / decrypt, others
     continue.").
 
-    ``server_account_tag_hints`` carries the operator's resolved /
-    auto-hints fetched from ``/fleet/config``'s ``account_tag_hints``
+    ``server_account_tag_hints`` carries explicit operator tag mappings
+    fetched from ``/fleet/config``'s ``account_tag_hints``
     payload. The opencode extractor needs them so events that
     ``_OC_CANONICAL_MAP`` retags to a canonical provider (e.g.
     ``minimax-coding-plan`` → ``minimax``) can land on the operator's
@@ -2074,7 +2053,11 @@ def _extract_events_for_provider(
             continue
         if evts:
             logging.info(f"  [{provider_id}/{account_id}] {len(evts)} new event(s)")
-            out_events.extend(e.model_dump(mode="json") for e in evts)
+            for event in evts:
+                payload = event.model_dump(mode="json")
+                if account_source and not payload.get("account_source"):
+                    payload["account_source"] = account_source
+                out_events.append(payload)
             for e in evts:
                 ev_provider = getattr(e, "provider_id", provider_id)
                 if ev_provider != provider_id or getattr(e, "account_id", account_id) != account_id:
@@ -2249,12 +2232,6 @@ def _opencode_account_email(db_path: Path | None) -> str:
                 conn.close()
         except Exception:
             logging.debug("Failed to read account email from OpenCode DB", exc_info=True)
-
-    # 3. Server-provided identity — only sent when unambiguous (single live
-    #    sidecar, single real account for the provider).
-    ident = _ACCOUNT_IDENTITIES.get("opencode")
-    if ident:
-        return ident
 
     return "default"
 
@@ -3485,8 +3462,7 @@ def run_collection(
                     # Local discovery returned the legacy "default"
                     # sentinel (no real identity on this host), but the
                     # operator has tagged this provider's events via
-                    # the Untagged Credentials dialog (or the server's
-                    # auto-hint fired for a single-account provider).
+                    # the Untagged Credentials dialog.
                     # Stamp with the operator's choice so the events
                     # land on the quota gauge instead of a standalone
                     # "default" card.
@@ -3538,6 +3514,7 @@ def run_collection(
                     bootstrap_days=bootstrap_days,
                     out_events=all_events,
                     server_account_tag_hints=server_account_tag_hints,
+                    account_source=identity_source,
                 )
                 error_count += extraction_failures or 0
                 post_count = len(all_events)

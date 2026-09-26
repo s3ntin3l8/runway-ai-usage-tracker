@@ -935,6 +935,7 @@ class _ProviderConfigUpdate(BaseModel):
     poll_interval_seconds: int | None = None
     collection_strategies: list[dict] | None = None  # [{"id": "web", "enabled": true}, ...]
     opencode_workspace_id: str | None = None  # empty string clears; None = no change
+    billing_type: Literal["subscription", "pay_as_you_go", "unknown"] | None = None
 
 
 class _AccountPreviewRequest(BaseModel):
@@ -1063,6 +1064,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "poll_interval_seconds": r.poll_interval_seconds,
                 "collection_strategies": r.strategies,
                 "opencode_workspace_id": r.opencode_workspace_id,
+                "billing_type": r.billing_type,
                 # `is_orphaned` surfaces the orphaned-bookkeeping-row
                 # bug in the settings UI: #286 highlights
                 # `account_id="default"` rows that have been shadowed
@@ -1580,6 +1582,8 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         row.strategies = body.collection_strategies if body.collection_strategies else None
     if body.opencode_workspace_id is not None and provider_id == "opencode":
         row.opencode_workspace_id = body.opencode_workspace_id.strip() or None
+    if body.billing_type is not None:
+        row.billing_type = body.billing_type
     if body.clear_api_key is True:
         # Explicit-clear flag wins over any same-field write in the body
         # (the UI sends one or the other, not both). Wipe the stored encrypted

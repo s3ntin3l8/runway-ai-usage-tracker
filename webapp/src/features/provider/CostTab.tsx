@@ -29,10 +29,12 @@ export function CostTab({
   providerId,
   accountId,
   scope,
+  billingType = 'unknown',
 }: {
   providerId: string;
   accountId: string;
   scope: TabScope;
+  billingType?: 'unknown' | 'subscription' | 'pay_as_you_go';
 }) {
   const { excludeCache } = useExcludeCache();
   const range = scope.range;
@@ -53,6 +55,7 @@ export function CostTab({
   const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRolling);
   const cumulative = isRolling ? rangeCumulative : isLiveMonth ? liveCumulative : monthCumulative;
   const scopeLabel = scope.label;
+  const moneyLabel = billingType === 'pay_as_you_go' ? 'Cost' : 'Estimated usage value';
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
@@ -73,20 +76,34 @@ export function CostTab({
 
   const stats = isLiveMonth
     ? [
-        { label: 'Spend (MTD)', value: formatCost(cost.data?.current_month_to_date ?? null) },
         {
-          label: 'Projected EOM',
+          label: `${moneyLabel} (MTD)`,
+          value: formatCost(cost.data?.current_month_to_date ?? null),
+        },
+        {
+          label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
           value: formatCost(cost.data?.projected_eom ?? null),
           hint: cost.data ? `${cost.data.days_remaining}d left` : undefined,
         },
-        { label: 'Daily burn (7d)', value: formatCost(cost.data?.daily_burn_avg_7d ?? null) },
-        { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
+        {
+          label: `${moneyLabel} per day (7d)`,
+          value: formatCost(cost.data?.daily_burn_avg_7d ?? null),
+        },
+        { label: `${moneyLabel} (lifetime)`, value: formatCost(lifetime?.cost_usd ?? null) },
       ]
     : [
-        { label: `Spend · ${scopeLabel}`, value: formatCost(monthBucket?.cost_usd ?? null) },
-        { label: 'Projected EOM', value: '—', hint: 'current month only' },
-        { label: 'Daily burn (7d)', value: '—', hint: 'current month only' },
-        { label: 'Lifetime', value: formatCost(lifetime?.cost_usd ?? null) },
+        { label: `${moneyLabel} · ${scopeLabel}`, value: formatCost(monthBucket?.cost_usd ?? null) },
+        {
+          label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          value: '—',
+          hint: 'current month only',
+        },
+        {
+          label: billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+          value: '—',
+          hint: 'current month only',
+        },
+        { label: `${moneyLabel} (lifetime)`, value: formatCost(lifetime?.cost_usd ?? null) },
       ];
   const statsLoading = isLiveMonth
     ? cost.isPending || cumulative.isPending
@@ -111,24 +128,26 @@ export function CostTab({
         providerId={providerId}
         accountId={accountId}
         metric="cost"
-        title={`Cost per day · ${scopeLabel}`}
+        title={`${moneyLabel} per day · ${scopeLabel}`}
         range={range}
         excludeCache={excludeCache}
       />
 
       <SplitTable
-        title={`Cost by model · ${scopeLabel}`}
+        title={`${moneyLabel} by model · ${scopeLabel}`}
         split={monthBucket?.by_model}
         loading={cumulative.isPending}
         nameHeader="Model"
         scopeLabel={scopeLabel}
+        valueLabel={moneyLabel}
       />
       <SplitTable
-        title={`Cost by sidecar · ${scopeLabel}`}
+        title={`${moneyLabel} by sidecar · ${scopeLabel}`}
         split={monthBucket?.by_sidecar}
         loading={cumulative.isPending}
         nameHeader="Sidecar"
         scopeLabel={scopeLabel}
+        valueLabel={moneyLabel}
       />
     </div>
   );
@@ -140,12 +159,14 @@ function SplitTable({
   loading,
   nameHeader,
   scopeLabel,
+  valueLabel,
 }: {
   title: string;
   split: CumulativeBucket['by_model'] | undefined | null;
   loading: boolean;
   nameHeader: string;
   scopeLabel: string;
+  valueLabel: string;
 }) {
   const { excludeCache } = useExcludeCache();
   const rows = Object.entries(split ?? {}).sort(
@@ -190,7 +211,7 @@ function SplitTable({
                     </>
                   )}
                   {hasReasoning ? <TH className="text-right">Reasoning</TH> : null}
-                  <TH className="text-right">Cost</TH>
+                  <TH className="text-right">{valueLabel}</TH>
                 </TR>
               </THead>
               <TBody>
@@ -202,6 +223,7 @@ function SplitTable({
                     excludeCache={excludeCache}
                     hasReasoning={hasReasoning}
                     colSpan={colSpan}
+                    valueLabel={valueLabel}
                   />
                 ))}
               </TBody>
@@ -223,12 +245,14 @@ function SplitRow({
   excludeCache,
   hasReasoning,
   colSpan,
+  valueLabel,
 }: {
   name: string;
   b: CumulativeModelBucket;
   excludeCache: boolean;
   hasReasoning: boolean;
   colSpan: number;
+  valueLabel: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -268,7 +292,7 @@ function SplitRow({
         <TR className="hover:bg-transparent">
           <TD colSpan={colSpan} className="p-0">
             <div className="bg-surface-2/40 px-4 py-4">
-              <DetailSection title="Cost breakdown">
+              <DetailSection title={`${valueLabel} breakdown`}>
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
                   <Stat label="Input $" value={formatCost(b.cost_input ?? 0)} />
                   <Stat label="Output $" value={formatCost(b.cost_output ?? 0)} />

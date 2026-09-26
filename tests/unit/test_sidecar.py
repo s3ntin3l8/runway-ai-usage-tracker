@@ -280,7 +280,7 @@ class TestAntigravityTokenStamp:
         )
         return tok
 
-    def test_token_card_stamped_with_resolved_email(self, tmp_path):
+    def test_token_card_does_not_inherit_server_account_hint(self, tmp_path):
         tok = self._write_token_file(tmp_path)
         config = self._ag_config(tok)
         with patch.dict(
@@ -289,7 +289,7 @@ class TestAntigravityTokenStamp:
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert len(token_cards) == 1
-        assert token_cards[0]["account_id"] == "user@example.com"
+        assert token_cards[0]["account_id"] == "default"
 
     def test_token_card_defaults_when_email_unknown(self, tmp_path):
         tok = self._write_token_file(tmp_path)
@@ -1812,6 +1812,7 @@ def test_run_collection_events_use_server_hint_when_local_default(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        account_source=None,
         server_account_tag_hints=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
@@ -1913,6 +1914,7 @@ def test_run_collection_events_reported_untagged_when_no_hint(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        account_source=None,
         server_account_tag_hints=None,
     ) -> None:
         captured_account_ids.extend(account_ids)
@@ -1998,6 +2000,7 @@ def test_run_collection_events_untagged_only_when_events_extracted(
         watermark: Any,
         bootstrap_days: int,
         out_events: list[dict[str, Any]],
+        account_source=None,
         server_account_tag_hints=None,
     ) -> None:
         return  # emits nothing
@@ -2102,6 +2105,7 @@ def test_run_collection_events_no_untagged_when_identity_resolved(
             watermark: Any,
             bootstrap_days: int,
             out_events: list[dict[str, Any]],
+            account_source=None,
             server_account_tag_hints=None,
         ) -> None:
             captured_account_ids.clear()

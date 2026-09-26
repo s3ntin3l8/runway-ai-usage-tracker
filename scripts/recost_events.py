@@ -2,16 +2,18 @@
 """Recompute cost_usd on usage_events and rebuild derived cost tables.
 
 Use after a provider_pricing seed change so that existing events pick up the
-new rates. Three passes are run in sequence:
+new rates. Run once after upgrading to populate the new reported and estimated
+cost columns for existing events. Stop the server before running so SQLite has
+one writer. Three passes are run in sequence:
 
   Phase B — update usage_events.cost_usd where the recomputed value differs.
   Phase C — delete and rebuild usage_period_rollup for the affected providers.
   Phase D — delete and rebuild usage_windows for the affected providers.
 
-OpenCode events (provider_id 'opencode', 'opencode-free', and any other
-'opencode-*' sub-provider, e.g. 'opencode-byok') carry an authoritative cost
-supplied by the provider; they are always skipped. Error events (kind !=
-'message') never had a cost and are always skipped.
+Source-reported OpenCode amounts are migrated into cost_reported_usd and kept
+separate from calculated token value. Account billing_type selects the shown
+total: subscriptions and unknown accounts use estimates; pay-as-you-go accounts
+use reported amounts when available. Error events are skipped.
 
 Note on effective_from: cost_calculator only applies a pricing row when
 effective_from <= event.ts.date(). If the new seed rows are dated today,
@@ -49,20 +51,10 @@ if str(_REPO_ROOT) not in sys.path:
 from sqlmodel import Session, delete, select  # noqa: E402
 
 from app.core.db import engine  # noqa: E402
-from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow  # noqa: E402
-from app.services.cost_calculator import compute_event_cost  # noqa: E402
+from app.models.db import ProviderConfig, UsageEvent, UsagePeriodRollup, UsageWindow  # noqa: E402
+from app.services.cost_calculator import compute_event_cost_breakdown  # noqa: E402
 from app.services.period_rollups import update_rollups_for_event  # noqa: E402
 from app.services.window_closer import close_window  # noqa: E402
-
-# "opencode" itself plus every opencode-* sub-provider (opencode-free,
-# opencode-byok, opencode-openrouter, and any future opencode-<slug> derived
-# by map_opencode_provider_id) — matched via a LIKE prefix below rather than
-# an exact-id tuple so new siblings are covered automatically. The
-# _OC_CANONICAL_MAP fold-in targets (minimax, kimi_coding, ollama, ...) are
-# NOT skipped: post-fold their events are canonical provider ids and get
-# recomputed from provider_pricing like any other provider (currently $0 —
-# no pricing rows exist for them, matching the free-tier cost OpenCode logged).
-_SKIP_PROVIDER_PREFIX = "opencode"
 
 # Phase D commits and expunges every _WINDOW_BATCH window rebuilds. close_window()
 # loads events and writes window rows into the session, so without periodic
@@ -75,9 +67,6 @@ _WINDOW_BATCH = 200
 
 def _event_scope(stmt, providers: list[str] | None, since: date | None):
     stmt = stmt.where(UsageEvent.kind == "message")
-    stmt = stmt.where(
-        UsageEvent.provider_id.notlike(f"{_SKIP_PROVIDER_PREFIX}%")  # type: ignore[attr-defined]
-    )
     if providers:
         stmt = stmt.where(UsageEvent.provider_id.in_(providers))  # type: ignore[attr-defined]
     if since:
@@ -98,7 +87,7 @@ def phase_b_recost(
 
     updated = unchanged = zeroed = 0
     for i, ev in enumerate(events, 1):
-        new_cost = compute_event_cost(
+        breakdown = compute_event_cost_breakdown(
             session,
             provider_id=ev.provider_id,
             model_id=ev.model_id,
@@ -109,13 +98,39 @@ def phase_b_recost(
             tokens_cache_create=ev.tokens_cache_create,
             tokens_reasoning=ev.tokens_reasoning,
         )
-        if abs(new_cost - ev.cost_usd) > 1e-9:
+        config = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == ev.provider_id,
+                ProviderConfig.account_id == ev.account_id,
+            )
+        ).first()
+        reported_cost = ev.cost_reported_usd
+        if reported_cost is None and ev.provider_id.startswith("opencode"):
+            # Legacy OpenCode backend events stored the logged message amount
+            # in cost_usd. Canonical-mapped events intentionally cleared it.
+            reported_cost = ev.cost_usd
+        new_cost = (
+            reported_cost
+            if config and config.billing_type == "pay_as_you_go" and reported_cost is not None
+            else breakdown.total
+        )
+        if (
+            abs(new_cost - ev.cost_usd) > 1e-9
+            or abs(breakdown.total - ev.cost_estimated_usd) > 1e-9
+            or reported_cost != ev.cost_reported_usd
+        ):
             if new_cost == 0.0:
                 zeroed += 1
             else:
                 updated += 1
             if not dry_run:
                 ev.cost_usd = new_cost
+                ev.cost_reported_usd = reported_cost
+                ev.cost_estimated_usd = breakdown.total
+                ev.cost_input = breakdown.input
+                ev.cost_output = breakdown.output
+                ev.cost_cache_read = breakdown.cache_read
+                ev.cost_cache_create = breakdown.cache_create
                 session.add(ev)
         else:
             unchanged += 1

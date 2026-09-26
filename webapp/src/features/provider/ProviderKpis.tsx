@@ -21,6 +21,8 @@ export function ProviderKpis({
   const cumulative = useProviderCumulative(providerId, accountId);
   const cost = useProviderCostForecast(providerId, accountId);
   const forecast = useProviderForecast(providerId, accountId);
+  const billingType = entry.billing_type ?? 'unknown';
+  const moneyLabel = billingType === 'pay_as_you_go' ? 'Spend' : 'Estimated usage value';
 
   const kind = cardKind(critical);
 
@@ -80,13 +82,13 @@ export function ProviderKpis({
           loading={forecast.isPending}
         />
         <StatTile
-          label="Spend (MTD)"
+          label={`${moneyLabel} (MTD)`}
           value={formatCost(cost.data?.current_month_to_date ?? null)}
           hint={cost.data ? `→ ${formatCost(cost.data.projected_eom)} EOM` : undefined}
           loading={cost.isPending}
         />
         <StatTile
-          label="Daily burn (7d)"
+          label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
           value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
           hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
           loading={cost.isPending}
@@ -133,7 +135,7 @@ export function ProviderKpis({
         />
         {hasCost ? (
           <StatTile
-            label="Spend (MTD)"
+            label={`${moneyLabel} (MTD)`}
             value={formatCost(cost.data?.current_month_to_date ?? null)}
             hint={cost.data ? `→ ${formatCost(cost.data.projected_eom)} EOM` : undefined}
             loading={cost.isPending}
@@ -147,7 +149,7 @@ export function ProviderKpis({
         )}
         {hasCost ? (
           <StatTile
-            label="Daily burn (7d)"
+            label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
             value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
             hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
             loading={cost.isPending}
@@ -179,19 +181,19 @@ export function ProviderKpis({
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <StatTile
-        label="Spend (MTD)"
+        label={`${moneyLabel} (MTD)`}
         value={formatCost(cost.data?.current_month_to_date ?? null)}
         hint={cost.data ? `→ ${formatCost(cost.data.projected_eom)} EOM` : undefined}
         loading={cost.isPending}
       />
       <StatTile
-        label="Projected EOM"
+        label={billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value'}
         value={formatCost(cost.data?.projected_eom ?? null)}
         hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
         loading={cost.isPending}
       />
       <StatTile
-        label="Daily burn (7d)"
+        label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
         value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
         loading={cost.isPending}
       />

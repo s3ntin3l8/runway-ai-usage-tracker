@@ -42,14 +42,14 @@ describe('CostDonut', () => {
     expect(series[0].data).toEqual([]);
   });
 
-  it('subtracts cost_cache from slices when excludeCache is set', () => {
+  it('shows calculated non-cache value when excludeCache is set', () => {
     const data: Record<string, CumulativeModelBucket> = {
-      opus: { cost_usd: 10, cost_cache: 7 },
-      sonnet: { cost_usd: 4, cost_cache: 1 },
+      opus: { cost_usd: 10, cost_input: 1, cost_output: 2, cost_cache: 7 },
+      sonnet: { cost_usd: 4, cost_input: 2, cost_output: 1, cost_cache: 1 },
     };
     render(<CostDonut data={data} excludeCache />, { wrapper });
     const series = captured.option!.series as Series;
-    // opus 10−7=3, sonnet 4−1=3 (sort is stable for ties → insertion order).
+    // Component estimates remain usable even when the total is reported.
     expect(series[0].data).toEqual([
       { name: 'opus', value: 3 },
       { name: 'sonnet', value: 3 },
@@ -62,11 +62,11 @@ describe('modelCost', () => {
     expect(modelCost({ cost_usd: 5, cost_cache: 2 }, false)).toBe(5);
   });
 
-  it('drops the cache portion when excluding', () => {
-    expect(modelCost({ cost_usd: 5, cost_cache: 2 }, true)).toBe(3);
+  it('uses token-priced non-cache components when excluding', () => {
+    expect(modelCost({ cost_usd: 5, cost_input: 2, cost_output: 1, cost_cache: 2 }, true)).toBe(3);
   });
 
-  it('clamps at 0 when an estimated cache cost exceeds the total', () => {
+  it('returns zero when no non-cache components have been priced', () => {
     expect(modelCost({ cost_usd: 1, cost_cache: 4 }, true)).toBe(0);
   });
 });

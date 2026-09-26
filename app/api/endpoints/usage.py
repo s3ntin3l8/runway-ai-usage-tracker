@@ -221,9 +221,10 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
 
     # Filter out archived providers — their latest_usage rows are preserved
     # (no deletion) but they should not appear in the active fleet view.
-    archived_pairs = {
-        (r.provider_id, r.account_id)
-        for r in session.exec(select(ProviderConfig).where(ProviderConfig.archived)).all()
+    provider_configs = session.exec(select(ProviderConfig)).all()
+    archived_pairs = {(r.provider_id, r.account_id) for r in provider_configs if r.archived}
+    billing_types = {
+        (r.provider_id, r.account_id): r.billing_type or "unknown" for r in provider_configs
     }
 
     # Group cards by (provider_id, account_id)
@@ -266,6 +267,7 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         synthetic: dict[str, Any] = {
             "provider_id": pid,
             "account_id": aid,
+            "billing_type": billing_types.get((pid, aid), "unknown"),
             "service_name": pid.replace("-", " ").title(),
             "icon": "⚡" if pid.startswith("opencode") else "✦",
             "variant": "default",
@@ -355,6 +357,7 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
             {
                 "provider_id": pid,
                 "account_id": aid,
+                "billing_type": billing_types.get((pid, aid), "unknown"),
                 "critical_gauge": critical,
                 "secondary_limits": secondary,
                 "sidecar_contributions": contrib.get((pid, aid), {}),

@@ -1,10 +1,10 @@
 import json
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
@@ -19,11 +19,13 @@ from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
     LatestUsage,
+    PendingUsageEvent,
     ProviderConfig,
     SidecarRegistry,
     SystemConfig,
+    UsageEvent,
 )
-from app.models.schemas import IngestRequest
+from app.models.schemas import IngestRequest, UsageEventPush
 from app.services import audit_log, pairing
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
@@ -39,6 +41,7 @@ from app.services.credential_tags import (
     live_sidecar_ids,
 )
 from app.services.credential_token import issue_credential_token
+from app.services.event_ingestor import EventIngestor
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
 
@@ -49,6 +52,11 @@ router = APIRouter()
 class SidecarUpdateRequest(BaseModel):
     custom_name: str | None = None
     tags: list[str] | None = None
+
+
+class PendingEventAssignment(BaseModel):
+    event_ids: list[int]
+    account_id: str
 
 
 @router.post("/ingest")
@@ -402,7 +410,7 @@ def _fingerprinted_credential_hints(
             .order_by(col(ProviderConfig.provider_id), col(ProviderConfig.account_id))
         ).all()
     )
-    out: dict[str, dict[str, str]] = {}
+    candidates: dict[str, dict[str, set[str]]] = {}
     for row in rows:
         try:
             api_key = row.api_key
@@ -413,11 +421,13 @@ def _fingerprinted_credential_hints(
         if not fingerprint:
             continue
         hint_key = keyed_credential_origin(f"provider:{row.provider_id}", fingerprint)
-        # Deterministic first-wins (rows ordered by provider_id, account_id):
-        # the same key stored under two accounts is operator
-        # misconfiguration, not something to resolve silently in either
-        # direction.
-        out.setdefault(row.provider_id, {}).setdefault(hint_key, row.account_id)
+        candidates.setdefault(row.provider_id, {}).setdefault(hint_key, set()).add(row.account_id)
+    # The same key stored under multiple accounts is ambiguous; keep it for
+    # manual assignment rather than making ordered rows an accidental policy.
+    out = {
+        provider_id: {origin: next(iter(ids)) for origin, ids in origins.items() if len(ids) == 1}
+        for provider_id, origins in candidates.items()
+    }
     if not out:
         return {}
     return out
@@ -476,18 +486,6 @@ def _account_tag_hints_for_providers(
     # it doesn't need to be: only a sidecar that already holds the key can
     # build a matching fingerprint, so the match is the scoping.
     for pid, by_origin in _fingerprinted_credential_hints(session, providers).items():
-        bucket = resolved.setdefault(pid, {})
-        for origin, account_id in by_origin.items():
-            bucket.setdefault(origin, account_id)
-    # Auto-hints key off the *original* requester identity: an
-    # unidentified fetcher in a multi-host deployment gets no auto-hints
-    # (safe default), while ≤1 live sidecar ships unconditionally.
-    auto = CredentialTagRepo.auto_hints_for_single_account_providers(
-        session, providers=providers, sidecar_id=sidecar_id
-    )
-    # Operator tags win over auto-hints — explicit operator choice is
-    # never overridden by the implicit single-account heuristic.
-    for pid, by_origin in auto.items():
         bucket = resolved.setdefault(pid, {})
         for origin, account_id in by_origin.items():
             bucket.setdefault(origin, account_id)
@@ -570,28 +568,13 @@ async def post_credential_manifest(
     # keep-set — entries_received must reflect what the sidecar reported.
     entries_received = sum(len(v) for v in keep_by_provider.values())
 
-    # Auto-hint stickiness (#319): the sidecar stops reporting a
-    # synthetic ``provider:<pid>`` origin the moment the auto-hint
-    # resolves it, and delete_stale would then prune the pending row —
-    # which is exactly the signal multi-host auto-hint delivery keys
-    # off, so the hint would oscillate off one manifest cycle after it
-    # turned on. Retain those rows for as long as their auto-hint is
-    # still active (they're hidden from the Untagged dialog via the
-    # effective-hint filter on GET .../tags/pending). Candidates: pids
-    # reported this cycle plus pids of rows still pending from before.
+    # Retain currently reported origins and prune origins no longer present.
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
     candidate_pids = sorted({r.provider_id for r in existing_rows} | set(keep_by_provider))
-    auto = CredentialTagRepo.auto_hints_for_single_account_providers(
-        session, providers=candidate_pids, sidecar_id=payload.sidecar_id
-    )
-    for pid, by_origin in auto.items():
-        keep_by_provider.setdefault(pid, set()).update(by_origin)
 
-    removed = PendingCredentialTagRepo.delete_stale(
-        session,
-        sidecar_id=payload.sidecar_id,
-        keep_origins_by_provider=keep_by_provider,
-    )
+    # An origin disappearing from a later scan does not prove that previously
+    # collected data was assigned. Keep it until an operator resolves it.
+    removed = 0
     session.commit()
 
     resolved = _account_tag_hints_for_providers(
@@ -841,25 +824,108 @@ async def list_pending_credential_tags(
     }
 
 
-def _get_active_identities(session: Session) -> dict[str, str]:
-    """Map provider_id to its single 'real' account_id seen in LatestUsage.
-
-    Used by sidecars to discover their identity when local logs are anonymous.
-    Kept as a single-value-per-provider dict for backward compat with existing
-    sidecars. Multi-account consumers should read ``_get_active_identity_lists``
-    (the new field) for the full per-provider list.
-    """
-    from app.services.credential_tags import live_sidecar_ids
-
-    # Old sidecars prefer this value over their own local discovery, so it
-    # must never name another host's account: ship it only when there is at
-    # most one live sidecar AND the provider has exactly one real account.
-    # Anything else resolves through the per-sidecar tag / auto-hint path.
-    if len(live_sidecar_ids(session)) > 1:
-        return {}
+@router.get("/events/pending")
+async def list_pending_usage_events(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    rows = list(
+        session.exec(
+            select(PendingUsageEvent)
+            .order_by(cast(Any, PendingUsageEvent.ts).desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+    )
     return {
-        pid: aids[0] for pid, aids in _get_active_identity_lists(session).items() if len(aids) == 1
+        "items": [
+            {
+                "id": row.id,
+                "provider_id": row.provider_id,
+                "event_id": row.event_id,
+                "sidecar_id": row.sidecar_id,
+                "ts": row.ts.isoformat(),
+                "reason": row.reason,
+                "model_id": json.loads(row.payload_json).get("model_id"),
+                "session_id": json.loads(row.payload_json).get("session_id"),
+            }
+            for row in rows
+        ],
+        "total": session.exec(select(func.count()).select_from(PendingUsageEvent)).one(),
+        "offset": offset,
+        "limit": limit,
     }
+
+
+@router.post("/events/pending/assign")
+async def assign_pending_usage_events(
+    request: Request,
+    body: PendingEventAssignment,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    if not body.event_ids or len(body.event_ids) > 1000:
+        raise HTTPException(status_code=422, detail="Select between 1 and 1000 events.")
+    account_id = resolve_account_id("", body.account_id, None)
+    # Pending event provider ids may include OpenCode backend siblings. The
+    # configured account must match the exact provider to prevent cross-provider
+    # assignment.
+    rows = list(
+        session.exec(
+            select(PendingUsageEvent).where(cast(Any, PendingUsageEvent.id).in_(body.event_ids))
+        ).all()
+    )
+    if len(rows) != len(set(body.event_ids)):
+        raise HTTPException(status_code=404, detail="One or more pending events were not found.")
+    for row in rows:
+        configured = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == row.provider_id,
+                ProviderConfig.account_id == account_id,
+            )
+        ).first()
+        if configured is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No account {account_id!r} configured for {row.provider_id!r}.",
+            )
+
+    # Ingest is idempotent. Keep pending rows until every promotion succeeds;
+    # a retry after a partial failure safely deduplicates already-promoted rows.
+    for row in rows:
+        payload = UsageEventPush.model_validate_json(row.payload_json).model_copy(
+            update={"account_id": account_id, "account_source": "tag"}
+        )
+        existing = session.exec(
+            select(UsageEvent).where(
+                UsageEvent.provider_id == row.provider_id,
+                UsageEvent.event_id == row.event_id,
+            )
+        ).first()
+        # A newly resolved push from another sidecar may have arrived while
+        # this pending copy was waiting. Reuse its sidecar identity so the
+        # explicit operator assignment can safely move that event and its
+        # rollups instead of being mistaken for a competing host replay.
+        promotion_sidecar = existing.sidecar_id if existing is not None else row.sidecar_id
+        EventIngestor(session).ingest([payload], sidecar_id=promotion_sidecar)
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    audit_log.record(
+        session,
+        request,
+        action="usage.pending_events_assigned",
+        target_id=f"{rows[0].provider_id if rows else ''}/{account_id}",
+        payload={"event_count": len(rows)},
+    )
+    return {"assigned": len(rows), "provider_id": rows[0].provider_id if rows else None}
+
+
+def _get_active_identities(_session: Session) -> dict[str, str]:
+    """Deprecated compatibility field: never infer a host identity from usage."""
+    return {}
 
 
 def _get_active_identity_lists(session: Session) -> dict[str, list[str]]:

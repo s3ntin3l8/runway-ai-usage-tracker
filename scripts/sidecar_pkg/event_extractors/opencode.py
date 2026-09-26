@@ -107,47 +107,21 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 
 
 # OpenCode providerIDs that front a provider Runway already collects directly
-# -> (canonical provider_id, account_id override or None to keep the event's
-# own account). Keep in sync with scripts/reclassify_opencode_providers.py,
-# which reapplies this mapping to already-ingested events.
+# -> (canonical provider_id, explicit account override or None). With no
+# override, a canonical provider's own credential tag must identify the
+# account; OpenCode's user identity is not evidence about which upstream
+# account handled the request. Unmatched events stay pending for assignment.
+# Keep this in sync with scripts/reclassify_opencode_providers.py.
 _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
-    # MiniMax's coding-plan collector has no per-user identity upstream
-    # (API-key-only, no email in the API response), so quota cards live at
-    # whatever account_id the operator configured in provider_configs.
-    # Pass the event's own account through (None override) and let the
-    # server's tag-hint flow (PR #290) carry the operator's chosen
-    # account_id back to the sidecar via /fleet/config's
-    # account_tag_hints. The events branch in sidecar.run_collection
-    # consults both the iterating-provider key and every canonical
-    # provider this extractor might retag to — when no canonical hint
-    # is available, it reports the events as untagged via the same
-    # /fleet/credentials/manifest POST the token-card branch uses, and
-    # the operator can tag them in the Untagged Credentials dialog.
-    # Forcing "default" here would split the quota gauge from the
-    # sidecar's event stream — see the issue: label-set account split.
+    # MiniMax coding plan exposes no provider account identity in OpenCode.
     "minimax-coding-plan": ("minimax", None),
-    # Kimi For Coding (kimi-code-plan-global backend in OpenCode; modelIDs
-    # "k3-256k" / "kimi-for-coding"). Pass the account through: OpenCode
-    # resolves the real account identity (usually the user's email), which
-    # lands on the same account a user-labeled kimi_coding quota card
-    # resolves to via resolve_account_id. Forcing "default" here split
-    # enrichment events and quota cards into two rows (issue: label-set
-    # account).
+    # Kimi For Coding (kimi-code-plan-global backend in OpenCode).
     "kimi-code-plan-global": ("kimi_coding", None),
-    # Ollama Cloud — OllamaCloud quota cards resolve to the user's ollama.com
-    # email via resolve_account_id(account_label from the settings page).
-    # Pass the account through (kimi-style), so OpenCode's resolved email
-    # lands on the same grain. Forcing "default" would split enrichment from
-    # the quota card because the card account is the email, not "default".
+    # Ollama Cloud.
     "ollama-cloud": ("ollama", None),
-    # OpenRouter — events proxied through opencode's "openrouter" backend
-    # already land on the openrouter provider's quota card via the
-    # `api_key` extraction in sidecar.py + openrouter collector. Pass the
-    # account through (same identity-pinning reasoning as kimi/ollama
-    # above); the server's tag-hint flow carries the operator's chosen
-    # account_id back when no in-band identity is set.
+    # OpenRouter.
     "openrouter": ("openrouter", None),
-    # xAI's CLI proxy quota collector uses the same provider identity.
+    # xAI.
     "xai": ("xai", None),
     # DeepSeek — BYOK keys inside OpenCode (providerID "deepseek") are
     # pay-as-you-go against the DeepSeek prepaid balance, so retag onto the
@@ -164,9 +138,7 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
 
 
 def map_opencode_canonical(oc_provider_id: str) -> tuple[str, str | None] | None:
-    """If `oc_provider_id` fronts a provider Runway collects directly, return
-    the (provider_id, account_id override) to retag onto. A None account
-    override keeps the event's own account_id. Otherwise None."""
+    """Return the canonical provider and optional explicit account override."""
     return _OC_CANONICAL_MAP.get((oc_provider_id or "").strip().lower())
 
 
@@ -338,13 +310,30 @@ def parse_opencode_events(
             runway_provider_id = canonical_provider_id
             if account_override is not None:
                 event_account_id = account_override
+                event_account_source = "tag"
             elif canonical_hints:
                 canonical_hint = canonical_hints.get(canonical_provider_id, {}).get(
                     f"provider:{canonical_provider_id}"
                 )
                 if canonical_hint:
                     event_account_id = canonical_hint
+                    event_account_source = "tag"
+                else:
+                    # The account identity used for the OpenCode provider
+                    # does not prove which account owns a message billed by
+                    # an underlying provider such as xAI or OpenRouter.
+                    event_account_id = "default"
+                    event_account_source = "default"
+            else:
+                # The OpenCode account identity identifies the OpenCode user,
+                # not which account they used through a canonical backend.
+                # Keep this event pending until the canonical provider is
+                # explicitly mapped to one of its configured accounts.
+                event_account_id = "default"
+                event_account_source = "default"
             cost_usd = None
+        else:
+            event_account_source = None
 
         # A failed request (bad auth, no subscription, etc.) never actually
         # incurred usage — push it as kind="error" so it doesn't inflate
@@ -355,6 +344,7 @@ def parse_opencode_events(
                 UsageEventPush(
                     provider_id=runway_provider_id,
                     account_id=event_account_id,
+                    account_source=event_account_source,
                     event_id=event_id,
                     ts=ts.isoformat(),
                     model_id=model_id,
@@ -370,6 +360,7 @@ def parse_opencode_events(
             UsageEventPush(
                 provider_id=runway_provider_id,
                 account_id=event_account_id,
+                account_source=event_account_source,
                 event_id=event_id,
                 ts=ts.isoformat(),
                 model_id=model_id,

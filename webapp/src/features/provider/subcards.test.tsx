@@ -40,8 +40,8 @@ describe('ProviderKpis', () => {
     renderWithProviders(<ProviderKpis entry={fleetEntry()} />);
     expect(await screen.findByText('Current')).toBeInTheDocument();
     expect(screen.getByText('Projected at reset')).toBeInTheDocument();
-    expect(screen.getByText('Spend (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Daily burn (7d)')).toBeInTheDocument();
+    expect(screen.getByText('Estimated usage value (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Daily usage value (7d)')).toBeInTheDocument();
     expect(screen.getByText('Tokens (month)')).toBeInTheDocument();
     expect(screen.getByText('Cache hit')).toBeInTheDocument();
   });
