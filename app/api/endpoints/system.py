@@ -1613,6 +1613,16 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
         row.api_key = val if val else None
 
+        if not val:
+            # Documented empty-string clear (the API/script path — the UI
+            # sends clear_api_key) must invalidate the cache mirror too, or
+            # collectors keep using the removed key until its TTL expires.
+            # Same shape as the clear_api_key branch above (PR #287).
+            if provider_id in ("opencode", "ollama"):
+                await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
+            else:
+                await token_cache.remove(provider_id, account_id)
+
         # Propagate to token_cache if this is also mapped as an OAuth token.
         # Stamp under the resolved account_id (no longer hard-coded "default")
         # so the new per-account endpoint keeps credentials and identity aligned.

@@ -452,6 +452,74 @@ def test_kimi_clear_api_key_drops_cache_mirror(client: TestClient):
     assert not _kimi_cache_tokens("default")
 
 
+def test_kimi_empty_string_api_key_clear_drops_cache_mirror(client: TestClient):
+    """The documented empty-string clear (`api_key: ""` — the API/script
+    path; the UI sends clear_api_key) must invalidate the mirror too, or
+    collectors keep the removed key until its cache TTL expires."""
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding",
+        json={"api_key": "sk-kimi-test-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert _kimi_cache_tokens("default")
+
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding",
+        json={"api_key": ""},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert not _kimi_cache_tokens("default")
+
+
+def test_kimi_cache_mirror_resolves_through_real_collector(client: TestClient):
+    """End-to-end (issue #343): PUT mirror → real ``_resolve_code_bearer``.
+
+    Tiers 1-2 (DB/env) are neutralized so the assertion can only pass via
+    the token-cache tier through the real store — pinning the writer/reader
+    account-id contract that the mocked collector unit tests cannot see."""
+    import asyncio
+    from unittest.mock import patch as mock_patch
+
+    from app.services.collectors.kimi_coding import KimiCodingCollector
+
+    r = client.put(
+        "/api/v1/system/provider-config/kimi_coding",
+        json={"api_key": "sk-kimi-e2e-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    async def _resolve(account_id: str):
+        collector = KimiCodingCollector(account_id=account_id)
+        with (
+            mock_patch("app.services.collectors.kimi_coding.credential_provider") as mock_cp,
+            mock_patch("app.services.collectors.kimi_coding.settings") as mock_settings,
+        ):
+            mock_cp.get_provider_api_key.return_value = None
+            mock_cp.get_provider_session_cookie.return_value = None
+            mock_cp.get_credentials.return_value = {}
+            mock_settings.KIMI_AUTH_TOKEN = ""
+            mock_settings.KIMI_CODE_API_KEY = ""
+            mock_settings.KIMI_CODE_BASE_URL = ""
+            return await collector._resolve_code_bearer()
+
+    resolved = asyncio.run(_resolve("default"))
+    assert resolved is not None, "cached mirror did not resolve"
+    token, input_source, is_cli = resolved
+    assert token == "sk-kimi-e2e-123"  # pragma: allowlist secret
+    assert input_source == "config"
+    assert is_cli is False
+
+    # A collector under a different identity still reaches the mirror when
+    # its own cache slot is absent (get_with_metadata's "default" fallback).
+    resolved = asyncio.run(_resolve("alice@example.com"))
+    assert resolved is not None, "default-slot fallback did not resolve"
+    assert resolved[0] == "sk-kimi-e2e-123"  # pragma: allowlist secret
+    assert resolved[2] is False
+
+
 def test_is_orphaned_true_when_default_shadowed_by_live_sibling(
     client: TestClient, session: Session
 ) -> None:

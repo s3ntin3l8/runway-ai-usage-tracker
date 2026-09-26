@@ -2,7 +2,8 @@
 Kimi Coding (Kimi For Coding) quota collector.
 
 Collection Strategies (both standalone-capable, UI-reorderable):
-- api:  GET {base}/coding/v1/usages — Kimi Code API key (DB > env > CLI credential)
+- api:  GET {base}/coding/v1/usages — Kimi Code API key
+        (DB > env > token-cache api_key slot > CLI credential)
 - web:  POST www.kimi.com/apiv2/.../GetUsages + GetSubscriptionStats +
         GetSubscription — kimi-auth cookie
 
@@ -405,7 +406,11 @@ class KimiCodingCollector(BaseCollector):
             return []
 
         if resp.status_code == 401 and not is_cli:
-            self._api_key_auth_failed = True
+            # Only an *explicit* key (UI paste / env) is authoritative for
+            # suppressing the web fallback below. A sidecar-discovered key
+            # that 401s must not mask a working cookie card.
+            if input_source in (self.INPUT_SOURCE_CONFIG, self.INPUT_SOURCE_SERVER):
+                self._api_key_auth_failed = True
             return [
                 error_card(
                     "Kimi Coding",
