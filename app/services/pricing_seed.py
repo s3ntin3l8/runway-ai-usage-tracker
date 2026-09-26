@@ -866,9 +866,18 @@ PRICING_SEED: list[dict] = [
         "(metronome.com/pricing-index/xai-api, aicomp.prygn.com); not on the "
         "current pricing page",
     },
-    # Deliberately unseeded (stay $0): grok-4.1, grok-4-mini — seen only in
-    # test fixtures, no official current rate found; a proxy rate was rejected
-    # in favour of leaving them unpriced (issue #346).
+    # Deliberately given no row — no official current rate found, and a proxy
+    # rate was rejected in favour of leaving them unseeded (issue #346):
+    # - grok-4.1 still bills $0: the version-suffix strip reduces it to the
+    #   family "grok", which has no row, and the segment trim can never reach
+    #   grok-4 because its dotted minor version isn't a "-" segment.
+    # - grok-4-mini does NOT bill $0: segment trim reduces it to grok-4 and
+    #   bills at that family rate, logging the calculator's "no pricing row"
+    #   warning. Accepted deliberately rather than inventing a mini rate —
+    #   pinned by test_xai_grok4_mini_bills_at_grok4_family_rate. The same
+    #   fallback applies to any other unseeded grok-4* slug (e.g. grok-4.1-fast,
+    #   grok-4.20-beta), which is the calculator's designed trade-off: land on
+    #   a sibling rate with a warning instead of silently billing $0.
     # GPT-OSS 120B: no row — cost defaults to 0.
 ]
 

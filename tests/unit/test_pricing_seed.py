@@ -431,7 +431,12 @@ def test_seed_xai_grok_build_rates():
 
 
 def test_seed_xai_unpriced_ids_have_no_row():
-    """grok-4.1 / grok-4-mini have no official rate — intentionally unpriced."""
+    """grok-4.1 / grok-4-mini get no dedicated row (issue #346).
+
+    This only pins the seed contents — the calculator-level consequence of
+    having no row differs per id (grok-4.1 stays $0, grok-4-mini falls back to
+    the grok-4 family rate) and is pinned in test_cost_calculator.py.
+    """
     s = _make_session()
     seed_pricing_table(s)
     for model_id in ("grok-4.1", "grok-4-mini"):

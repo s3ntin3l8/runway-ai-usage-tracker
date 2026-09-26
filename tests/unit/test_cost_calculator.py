@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
@@ -891,7 +892,13 @@ def test_xai_grok43_cost_includes_cache_read():
 
 
 def test_xai_unseeded_grok41_stays_zero():
-    """grok-4.1 has no row and no family fallback — cost stays 0 (issue #346)."""
+    """grok-4.1 has no row and no reachable fallback — cost stays 0 (issue #346).
+
+    The version-suffix strip reduces "grok-4.1" to the family "grok", which has
+    no row, and the segment trim can't reach grok-4 (the dotted minor version
+    isn't "-"-separated). Safe only because of that shape — see the grok-4-mini
+    test below for the id shape that does fall through.
+    """
     s = _seeded_session()
     cost = compute_event_cost(
         s,
@@ -905,3 +912,29 @@ def test_xai_unseeded_grok41_stays_zero():
         tokens_reasoning=0,
     )
     assert cost == 0.0
+
+
+def test_xai_grok4_mini_bills_at_grok4_family_rate(caplog):
+    """grok-4-mini has no row — segment trim lands on grok-4 and bills there.
+
+    Deliberate: no official mini rate exists, so rather than invent one we
+    accept the calculator's designed sibling-fallback (with its warning) over
+    silently billing $0. If a real mini rate is ever published, seed it and
+    update this test.
+    """
+    s = _seeded_session()
+    with caplog.at_level(logging.WARNING, logger="app.services.cost_calculator"):
+        cost = compute_event_cost(
+            s,
+            provider_id="xai",
+            model_id="grok-4-mini",
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=0,
+            tokens_cache_create=0,
+            tokens_reasoning=0,
+        )
+    # grok-4 family rate: $3.00 + $15.00.
+    assert cost == 18.00
+    assert any("billing at the 'grok-4' family rate" in record.message for record in caplog.records)
