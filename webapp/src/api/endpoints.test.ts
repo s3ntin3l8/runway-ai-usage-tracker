@@ -3,6 +3,7 @@ import {
   fetchAppConfig,
   fetchFleetUsage,
   fetchLimits,
+  fetchPendingUsageEvents,
   fetchProviderConfigs,
   fetchSidecars,
   fetchStatus,
@@ -11,6 +12,7 @@ import {
   forceCollect,
   getDashboardLayout,
   getGitHubOAuthStatus,
+  assignPendingUsageEvents,
   initGitHubOAuth,
   logoutGitHub,
   postWake,
@@ -59,6 +61,13 @@ describe('endpoints', () => {
     const data = await fetchFleetUsage();
     expect(data).toEqual(payload);
     expect(lastCall()[0]).toBe('/api/v1/usage/fleet');
+  });
+
+  it('fetchPendingUsageEvents requests a page of unassigned usage', async () => {
+    const payload = { items: [], total: 0, offset: 100, limit: 100 };
+    mockFetch().mockResolvedValue(jsonResponse(payload));
+    await expect(fetchPendingUsageEvents(100)).resolves.toEqual(payload);
+    expect(lastCall()[0]).toBe('/api/v1/fleet/events/pending?offset=100&limit=100');
   });
 
   it('fetchSidecars hits the sidecars path', async () => {
@@ -153,6 +162,15 @@ describe('endpoints', () => {
     const [path, init] = lastCall();
     expect(path).toBe('/api/v1/system/force-collect');
     expect(init.method).toBe('POST');
+  });
+
+  it('assignPendingUsageEvents POSTs selected event ids and account', async () => {
+    mockFetch().mockResolvedValue(jsonResponse({ assigned: 2, provider_id: 'xai' }));
+    await assignPendingUsageEvents([12, 13], 'alice@example.com');
+    const [path, init] = lastCall();
+    expect(path).toBe('/api/v1/fleet/events/pending/assign');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ event_ids: [12, 13], account_id: 'alice@example.com' }));
   });
 
   it('logoutGitHub POSTs to github logout', async () => {

@@ -46,6 +46,12 @@ describe('ProviderKpis', () => {
     expect(screen.getByText('Cache hit')).toBeInTheDocument();
   });
 
+  it('labels pay-as-you-go account values as spend', async () => {
+    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'pay_as_you_go' })} />);
+    expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Daily burn (7d)')).toBeInTheDocument();
+  });
+
   describe('tokens kind (unlimited / passive provider)', () => {
     const tokenFleetEntry = () =>
       fleetEntry({
