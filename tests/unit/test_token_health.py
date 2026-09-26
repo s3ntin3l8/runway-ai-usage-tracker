@@ -430,6 +430,34 @@ class TestPerAccountAndInvalid:
         assert rows["config:default"]["status"] == "valid"
 
     @pytest.mark.asyncio
+    async def test_default_flag_does_not_paint_every_account_of_the_provider(self):
+        from app.services import auth_failures
+
+        cache = self._cache(
+            [
+                ("openrouter", "hashaaaaaaaa", {"api_key": _FAKE_1}, {}),
+                ("openrouter", "hashbbbbbbbb", {"api_key": _FAKE_2}, {}),
+            ]
+        )
+        auth_failures.mark("openrouter", "default")
+        rows = await self._health(cache)
+        assert rows["hashaaaaaaaa"]["status"] == "valid"
+        assert rows["hashbbbbbbbb"]["status"] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_default_flag_stays_on_default_rows_when_a_hash_row_coexists(self):
+        from app.services import auth_failures
+
+        cfg = MagicMock(provider_id="openrouter", account_id="default", account_label=None)
+        cfg.api_key = "sk-or-cfg"  # pragma: allowlist secret
+        cfg.session_cookie = None
+        cache = self._cache([("openrouter", "hashaaaaaaaa", {"api_key": _FAKE_1}, {})])
+        auth_failures.mark("openrouter", "default")
+        rows = await self._health(cache, configs=[cfg])
+        assert rows["config:default"]["status"] == "invalid"
+        assert rows["hashaaaaaaaa"]["status"] == "valid"
+
+    @pytest.mark.asyncio
     async def test_default_credential_flag_reaches_the_default_config_row(self):
         """A dashboard-pasted `default` key is flagged under `default` (the
         collector's credential_account_id), which matches its config row."""
