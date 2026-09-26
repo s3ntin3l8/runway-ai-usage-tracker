@@ -742,3 +742,21 @@ class TestSmartCollectorAuthFailureFlag:
         await smart.collect(mock_client)
 
         assert auth_failures.flagged_accounts("test_provider") == set()
+
+    @pytest.mark.asyncio
+    async def test_flag_follows_credential_account_id_over_resolved_identity(
+        self, mock_collector, mock_client
+    ):
+        from app.services import auth_failures
+
+        mock_collector.account_id = "me@x.com"  # resolved identity
+        mock_collector.credential_account_id = "default"  # the credential row it uses
+        request = httpx.Request("GET", "https://example.test")
+        mock_collector.collect.side_effect = httpx.HTTPStatusError(
+            "forbidden", request=request, response=httpx.Response(403, request=request)
+        )
+        smart = SmartCollector(mock_collector, "T", ttl=0, error_threshold=3, error_retry_delay=0)
+
+        await smart.collect(mock_client)
+
+        assert auth_failures.flagged_accounts("test_provider") == {"default"}

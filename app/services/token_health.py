@@ -86,21 +86,17 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
     Matching is by *identity*, not by the borrowing rule: two different
     opaque/fingerprint-keyed accounts of one provider must not flag each
     other. A row matches when its canonical account id equals a flagged id, or
-    when the flagged id is ``default`` (an unscoped collector — matches every
-    row of the provider). A ``default`` row (an unscoped server/config
-    credential) can't name the identity its collector resolved, so it matches a
-    flag only when the provider has at most one *other* account — with two or
-    more it is ambiguous and stays as is (under-flag rather than show a healthy
-    credential as rejected). A hash-keyed row is never linked to a flagged email.
+    when the flagged id is ``default`` (an unscoped collector/credential —
+    matches every row of the provider). A ``default`` row is *not* matched by a
+    flag under some other identity, and a hash-keyed row is never linked to a
+    flagged email: under-flag rather than show a healthy credential as
+    rejected. (Collectors flag under the credential they use —
+    ``credential_account_id`` — so a dashboard-pasted default key is flagged as
+    ``default``, not as the identity it resolves to.)
 
-    Runs after every row exists because the ``default`` case needs to know the
-    provider's other accounts.
+    Runs after every row exists so statuses are final before redundancy is
+    computed.
     """
-    accounts_by_provider: dict[str, set[str]] = {}
-    for r in rows:
-        accounts_by_provider.setdefault(r["provider"], set()).add(
-            canonical_account_id(_underlying_account(r["account_id"]))
-        )
     for r in rows:
         if r["status"] not in ("valid", "unknown"):
             continue
@@ -108,8 +104,7 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
         if not flagged:
             continue
         row_id = canonical_account_id(_underlying_account(r["account_id"]))
-        others = accounts_by_provider[r["provider"]] - {"default"}
-        if "default" in flagged or row_id in flagged or (row_id == "default" and len(others) <= 1):
+        if "default" in flagged or row_id in flagged:
             r["status"] = "invalid"
 
 

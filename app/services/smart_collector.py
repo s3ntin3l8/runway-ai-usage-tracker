@@ -156,9 +156,13 @@ class SmartCollector:
 
     def _auth_identity(self) -> tuple[str | None, str | None]:
         """(provider_id, account_id) the auth-failure registry keys this collector by."""
+        # A default collector carries a resolved identity in `account_id` but names
+        # the credential row it actually uses in `credential_account_id`; the flag
+        # follows the credential, which is what Token Health rows describe.
         return (
             getattr(self.collector, "PROVIDER_ID", None),
-            getattr(self.collector, "account_id", None),
+            getattr(self.collector, "credential_account_id", None)
+            or getattr(self.collector, "account_id", None),
         )
 
     def _mark_success(self, result: list[dict[str, Any]], now: float) -> None:

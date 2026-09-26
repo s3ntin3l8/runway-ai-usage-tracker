@@ -410,8 +410,8 @@ class TestPerAccountAndInvalid:
 
     @pytest.mark.asyncio
     async def test_default_row_is_not_flagged_when_provider_has_several_accounts(self):
-        """A flag under one identified account is ambiguous for an unscoped
-        (`default`) config/server row once the provider has 2+ other accounts."""
+        """A flag under one identified account does not reach an unscoped
+        (`default`) config/server row."""
         from app.services import auth_failures
 
         cache = self._cache(
@@ -430,17 +430,33 @@ class TestPerAccountAndInvalid:
         assert rows["config:default"]["status"] == "valid"
 
     @pytest.mark.asyncio
-    async def test_default_row_is_flagged_in_a_single_account_deployment(self):
-        """The collector resolves an identity for a dashboard-pasted `default` key,
-        so the rejection is flagged under that identity — the default row is it."""
+    async def test_default_credential_flag_reaches_the_default_config_row(self):
+        """A dashboard-pasted `default` key is flagged under `default` (the
+        collector's credential_account_id), which matches its config row."""
         from app.services import auth_failures
 
         cfg = MagicMock(provider_id="zai", account_id="default", account_label=None)
         cfg.api_key = "zk-default-cfg"  # pragma: allowlist secret
         cfg.session_cookie = None
-        auth_failures.mark("zai", "me@x.com")
+        auth_failures.mark("zai", "default")
         rows = await self._health(self._cache([]), configs=[cfg])
         assert rows["config:default"]["status"] == "invalid"
+
+    @pytest.mark.asyncio
+    async def test_default_row_is_not_flagged_by_another_identitys_rejection(self):
+        from app.services import auth_failures
+
+        cfg = MagicMock(provider_id="zai", account_id="default", account_label=None)
+        cfg.api_key = "zk-default-cfg"  # pragma: allowlist secret
+        cfg.session_cookie = None
+        auth_failures.mark("zai", "work")
+        rows = await self._health(
+            self._cache([]),
+            configs=[cfg],
+            server_creds={"zai": {"api_key": _FAKE_2}},
+        )
+        assert rows["config:default"]["status"] == "valid"
+        assert rows["server"]["status"] == "valid"
 
     @pytest.mark.asyncio
     async def test_assumed_valid_config_row_is_not_a_healthy_sibling(self):
