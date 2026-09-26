@@ -2373,16 +2373,33 @@ def credential_origin_for_provider(provider_id: str) -> str:
     return f"provider:{provider_id}"
 
 
-# Providers whose credential is a bare API key with no per-account identity
-# of its own (#347). For these, the *file or variable* descriptor alone is
-# not enough to identify the credential: `path:/home/u/.local/share/
-# opencode/auth.json` is the same string on every host with the same
-# username, and the same string before and after a key rotation. Two hosts
-# (or two keys) sharing an origin would share the operator's tag and inherit
-# each other's account, so their origins are suffixed with a fingerprint of
-# the discovered value. Other providers keep the plain descriptor — they
-# either carry a real identity (anthropic, chatgpt) or are out of scope.
-_FINGERPRINTED_ORIGIN_PROVIDERS = frozenset({"opencode"})
+# Which providers get key-scoped origins (and why) is documented on
+# ``FINGERPRINTED_ORIGIN_PROVIDERS`` in ``scripts/sidecar_pkg/identity.py`` —
+# the server mirrors that set so it can answer ``provider:<pid>#<fp>``
+# hints (#347, #349).
+#
+# Which candidate dict field carries that key, in preference order. Every
+# provider in the set reports its credential under ``api_key`` except xai,
+# whose rules map every source's bearer to ``xai_access`` — fingerprint
+# ``api_key`` there and no suffix would be derivable at all.
+#
+# xai then takes the *first* field it finds, and that order matters: the
+# access JWT expires in about seven days and the Grok / OpenCode CLI
+# refreshes it behind Runway's back (``app/services/collectors/xai.py``), so
+# fingerprinting it would mint a new origin — and strand the operator tag on
+# the old one — every week. File and CLI candidates ship the refresh token
+# (``xai.refresh`` / ``refresh_token``), so they key on that; only the
+# access-only ``GROK_OAUTH_TOKEN`` env candidate falls back to
+# ``xai_access``, because it has nothing else to identify it by.
+#
+# Consequence worth knowing before touching tier 1b: a pasted bearer is an
+# *access* token (``provider_configs.api_key``), so the server's
+# ``provider:xai#<fp>`` hint answers for the env candidate but never for a
+# refresh-keyed file/CLI origin. Those get tagged, and the tag then outlives
+# every access refresh.
+_FINGERPRINT_KEY_FIELDS: dict[str, tuple[str, ...]] = {
+    "xai": ("xai_refresh", "xai_access"),
+}
 
 
 def fingerprinted_credential_origin(
@@ -2391,19 +2408,29 @@ def fingerprinted_credential_origin(
     """Return ``base_origin`` suffixed with the credential fingerprint where
     the provider needs a key-scoped origin, else ``base_origin`` unchanged.
 
-    See ``_FINGERPRINTED_ORIGIN_PROVIDERS`` for why. Callers pass the
+    See ``FINGERPRINTED_ORIGIN_PROVIDERS`` for why. Callers pass the
     candidate token dict so the origin can be derived from the exact value
-    that will be shipped. A missing / blank ``api_key`` leaves the plain
-    origin in place — there is no credential to disambiguate.
+    that will be shipped; where a provider lists several candidate fields
+    (see ``_FINGERPRINT_KEY_FIELDS``), the first one carrying a value wins.
+    A candidate with none of them leaves the plain origin in place — there
+    is no credential to disambiguate, which is also exactly what keeps
+    non-key candidates (cookies, CLI-OAuth tokens, ``openrouter``'s
+    cosmetic env vars) plain without a per-candidate opt-out.
     """
-    if provider_id not in _FINGERPRINTED_ORIGIN_PROVIDERS:
-        return base_origin
     from scripts.sidecar_pkg.identity import (
+        FINGERPRINTED_ORIGIN_PROVIDERS,
         credential_fingerprint,
         keyed_credential_origin,
     )
 
-    fingerprint = credential_fingerprint(str(candidate_tokens.get("api_key") or ""))
+    if provider_id not in FINGERPRINTED_ORIGIN_PROVIDERS:
+        return base_origin
+
+    fingerprint: str | None = None
+    for key_field in _FINGERPRINT_KEY_FIELDS.get(provider_id, ("api_key",)):
+        fingerprint = credential_fingerprint(str(candidate_tokens.get(key_field) or ""))
+        if fingerprint:
+            break
     if not fingerprint:
         return base_origin
     return keyed_credential_origin(base_origin, fingerprint)
@@ -2665,7 +2692,15 @@ class GenericCollector:
                         # refresh-only or identity-only entry is not usable.
                         if candidate_tokens.get("xai_access"):
                             token_candidates.append(
-                                (candidate_tokens, f"path:{Path(path).resolve()}", "file")
+                                (
+                                    candidate_tokens,
+                                    fingerprinted_credential_origin(
+                                        f"path:{Path(path).resolve()}",
+                                        provider_id,
+                                        candidate_tokens,
+                                    ),
+                                    "file",
+                                )
                             )
                             logging.info(f"  [{provider_id}] grok CLI auth.json matched: {path}")
                     except Exception as exc:

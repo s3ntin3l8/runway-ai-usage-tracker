@@ -2,6 +2,7 @@ import json
 import os
 from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
 import yaml
 
 from app.services.credential_provider import CredentialProvider
@@ -160,3 +161,58 @@ def test_expand_rule_paths_plain_exact_match(tmp_path):
     existing.write_text("{}")
     assert _expand_rule_paths([str(existing)]) == [str(existing)]
     assert _expand_rule_paths([str(tmp_path / "missing.json")]) == []
+
+
+# The three sibling providers whose opencode auth.json rule was added to
+# registry.json by #351: (provider_id, env var that must win, auth.json key).
+_OPENCODE_AUTH_JSON_PROVIDERS = [
+    ("openrouter", "OPENROUTER_API_KEY", "openrouter"),
+    ("minimax", "MINIMAX_API_KEY", "minimax-coding-plan"),
+    ("kimi_coding", "KIMI_CODE_API_KEY", "kimi-code-plan-global"),
+]
+
+
+@pytest.mark.parametrize(("provider_id", "env_var", "service_key"), _OPENCODE_AUTH_JSON_PROVIDERS)
+def test_opencode_auth_json_file_rule_extracts_nested_api_key(
+    provider_id, env_var, service_key, tmp_path, monkeypatch
+):
+    """The opencode auth.json file rule maps `<service>.key` -> api_key (#351).
+
+    ``_resolve_mapping_value`` must descend into auth.json's nested
+    ``{"<service>": {"key": ...}}`` shape the way it already does for
+    ``ollama-cloud.key`` — the server-side half of the registry parity fix.
+    """
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(json.dumps({service_key: {"key": "sk-live-from-auth"}}))
+
+    monkeypatch.setattr(
+        "app.services.credential_provider._expand_rule_paths", lambda _paths: [str(auth_path)]
+    )
+    monkeypatch.setenv(env_var, "")
+
+    creds = CredentialProvider.get_credentials(provider_id)
+
+    assert creds["api_key"] == "sk-live-from-auth"  # pragma: allowlist secret
+    assert creds.sources["api_key"] == "server"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize(("provider_id", "env_var", "service_key"), _OPENCODE_AUTH_JSON_PROVIDERS)
+def test_opencode_auth_json_env_rule_beats_file_rule(
+    provider_id, env_var, service_key, monkeypatch, tmp_path
+):
+    """Rule order mirrors the sidecar: a set env var wins over the file lookup.
+
+    Parametrized across all three siblings so the env-before-file placement
+    that keeps ``get_credentials`` first-wins is pinned for each of them.
+    """
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(json.dumps({service_key: {"key": "sk-from-file"}}))
+
+    monkeypatch.setattr(
+        "app.services.credential_provider._expand_rule_paths", lambda _paths: [str(auth_path)]
+    )
+    monkeypatch.setenv(env_var, "sk-from-env")
+
+    creds = CredentialProvider.get_credentials(provider_id)
+
+    assert creds["api_key"] == "sk-from-env"  # pragma: allowlist secret

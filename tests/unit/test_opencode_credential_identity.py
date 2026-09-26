@@ -185,10 +185,13 @@ class TestKeyedCredentialOrigins:
         assert base == f"path:{auth.resolve()}"
         assert fingerprint == FP_A
 
-    def test_fingerprint_is_kept_for_other_providers(self) -> None:
-        """The helper is generic but the *use* is opencode-only for now
-        (#347 scope): every other provider keeps its plain descriptor so no
-        existing operator tag moves."""
+    def test_fingerprint_is_kept_for_non_keyed_providers(self) -> None:
+        """The helper is generic but the *use* is gated on
+        ``FINGERPRINTED_ORIGIN_PROVIDERS`` (#349): a provider outside that
+        set keeps its plain descriptor so no existing operator tag moves,
+        and so does a keyed provider whose candidate simply carries no key
+        (a cookie, ``openrouter``'s cosmetic env vars, …) — a candidate
+        with nothing to fingerprint stays plain by construction."""
         assert (
             sc.fingerprinted_credential_origin(
                 "provider:anthropic", "anthropic", {"api_key": KEY_A}
@@ -198,6 +201,12 @@ class TestKeyedCredentialOrigins:
         assert (
             sc.fingerprinted_credential_origin("provider:opencode", "opencode", {})
             == "provider:opencode"
+        )
+        assert (
+            sc.fingerprinted_credential_origin(
+                "env:OPENROUTER_HTTP_REFERER", "openrouter", {"http_referer": "https://x"}
+            )
+            == "env:OPENROUTER_HTTP_REFERER"
         )
 
 

@@ -70,6 +70,11 @@
           "type": "env",
           "variable": "OPENROUTER_API_KEY",
           "mapping": { "value": "api_key" }
+        },
+        {
+          "type": "file",
+          "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
+          "mapping": { "openrouter.key": "api_key" }
         }
       ]
     },
@@ -104,6 +109,11 @@
           "type": "env",
           "variable": "MINIMAX_API_KEY",
           "mapping": { "value": "api_key" }
+        },
+        {
+          "type": "file",
+          "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
+          "mapping": { "minimax-coding-plan.key": "api_key" }
         }
       ]
     },
@@ -237,6 +247,11 @@
       "session_cookie_help": "Legacy fallback: kimi-auth JWT cookie from browser DevTools",
       "rules": [
         { "type": "env", "variable": "KIMI_CODE_API_KEY", "mapping": { "value": "api_key" } },
+        {
+          "type": "file",
+          "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
+          "mapping": { "kimi-code-plan-global.key": "api_key" }
+        },
         {
           "type": "env",
           "variable": "KIMI_AUTH_TOKEN",
