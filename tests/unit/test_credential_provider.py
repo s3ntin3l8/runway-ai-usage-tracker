@@ -163,14 +163,16 @@ def test_expand_rule_paths_plain_exact_match(tmp_path):
     assert _expand_rule_paths([str(tmp_path / "missing.json")]) == []
 
 
-@pytest.mark.parametrize(
-    ("provider_id", "env_var", "service_key"),
-    [
-        ("openrouter", "OPENROUTER_API_KEY", "openrouter"),
-        ("minimax", "MINIMAX_API_KEY", "minimax-coding-plan"),
-        ("kimi_coding", "KIMI_CODE_API_KEY", "kimi-code-plan-global"),
-    ],
-)
+# The three sibling providers whose opencode auth.json rule was added to
+# registry.json by #351: (provider_id, env var that must win, auth.json key).
+_OPENCODE_AUTH_JSON_PROVIDERS = [
+    ("openrouter", "OPENROUTER_API_KEY", "openrouter"),
+    ("minimax", "MINIMAX_API_KEY", "minimax-coding-plan"),
+    ("kimi_coding", "KIMI_CODE_API_KEY", "kimi-code-plan-global"),
+]
+
+
+@pytest.mark.parametrize(("provider_id", "env_var", "service_key"), _OPENCODE_AUTH_JSON_PROVIDERS)
 def test_opencode_auth_json_file_rule_extracts_nested_api_key(
     provider_id, env_var, service_key, tmp_path, monkeypatch
 ):
@@ -194,16 +196,23 @@ def test_opencode_auth_json_file_rule_extracts_nested_api_key(
     assert creds.sources["api_key"] == "server"  # pragma: allowlist secret
 
 
-def test_opencode_auth_json_env_rule_beats_file_rule(monkeypatch, tmp_path):
-    """Rule order mirrors the sidecar: a set env var wins over the file lookup."""
+@pytest.mark.parametrize(("provider_id", "env_var", "service_key"), _OPENCODE_AUTH_JSON_PROVIDERS)
+def test_opencode_auth_json_env_rule_beats_file_rule(
+    provider_id, env_var, service_key, monkeypatch, tmp_path
+):
+    """Rule order mirrors the sidecar: a set env var wins over the file lookup.
+
+    Parametrized across all three siblings so the env-before-file placement
+    that keeps ``get_credentials`` first-wins is pinned for each of them.
+    """
     auth_path = tmp_path / "auth.json"
-    auth_path.write_text(json.dumps({"openrouter": {"key": "sk-from-file"}}))
+    auth_path.write_text(json.dumps({service_key: {"key": "sk-from-file"}}))
 
     monkeypatch.setattr(
         "app.services.credential_provider._expand_rule_paths", lambda _paths: [str(auth_path)]
     )
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-from-env")
+    monkeypatch.setenv(env_var, "sk-from-env")
 
-    creds = CredentialProvider.get_credentials("openrouter")
+    creds = CredentialProvider.get_credentials(provider_id)
 
     assert creds["api_key"] == "sk-from-env"  # pragma: allowlist secret
