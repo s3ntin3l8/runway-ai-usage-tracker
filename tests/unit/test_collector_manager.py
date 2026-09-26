@@ -152,6 +152,34 @@ class TestCollectorManagerInitialization:
         assert "anthropic:alice@example.com" in manager.smart_collectors
 
     @pytest.mark.asyncio
+    async def test_durable_xai_identity_keeps_its_identity_scoped_token(self, manager):
+        manager.smart_collectors = {}
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+                return_value=[("xai", "alice@example.com", "Alice")],
+            ),
+            patch("sqlmodel.Session") as session_cls,
+        ):
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [
+                [],  # ProviderConfig rows
+                [("xai", "alice@example.com")],  # durable LatestUsage identity
+            ]
+            inner.exec.return_value.first.return_value = None
+            session_cls.return_value.__enter__.return_value = inner
+
+            await manager._sync_collectors(force=True)
+
+        xai_default = manager.smart_collectors["xai:default"].collector
+        assert xai_default.account_id == "alice@example.com"
+        assert not hasattr(xai_default, "credential_account_id")
+        # The default collector reads this same email-keyed cache slot, so the
+        # dynamic twin is correctly skipped without losing the credential.
+        assert "xai:alice@example.com" not in manager.smart_collectors
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_prunes_stale_dynamic_collectors(self, manager):
         """Test that collectors for missing accounts are removed."""
         # Add a fake dynamic collector

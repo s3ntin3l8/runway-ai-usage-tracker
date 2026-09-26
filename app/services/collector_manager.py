@@ -168,9 +168,12 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     collector_instance = cls(account_id=durable_aid, account_label=db_label)
-                    # The display identity may be learned from prior usage,
-                    # while this collector still reads the default credential.
-                    collector_instance.credential_account_id = "default"
+                    if not isinstance(collector_instance, XaiCollector):
+                        # Most providers keep default credentials under the
+                        # sentinel, even when their display identity is known.
+                        collector_instance.credential_account_id = "default"
+                    # xAI token-cache credentials are keyed by the resolved
+                    # identity, so XaiCollector must keep using its account_id.
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)
