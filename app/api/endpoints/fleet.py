@@ -25,7 +25,12 @@ from app.models.db import (
 )
 from app.models.schemas import IngestRequest
 from app.services import audit_log, pairing
-from app.services.account_identity import normalize_sidecar_id, resolve_account_id
+from app.services.account_identity import (
+    credential_fingerprint,
+    keyed_credential_origin,
+    normalize_sidecar_id,
+    resolve_account_id,
+)
 from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
 from app.services.credential_tags import (
     CredentialTagRepo,
@@ -359,6 +364,61 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     }
 
 
+def _fingerprinted_credential_hints(
+    session: Session, providers: list[str]
+) -> dict[str, dict[str, str]]:
+    """``{provider_id: {provider:<pid>#<fingerprint>: account_id}}`` for
+    providers whose credential is a bare API key (#347).
+
+    The sidecar suffixes such a credential's origin with a fingerprint of
+    the value it found on disk so two hosts (or one host after a key
+    rotation) can never share an origin. When the same key has been pasted
+    into ``provider_configs``, the server can recognise it here and answer
+    with the account that paste belongs to — without ever seeing the
+    sidecar's filesystem layout, and without the sidecar ever seeing a key
+    it didn't already hold. Only the 12-hex fingerprint crosses the wire.
+
+    The hint key is built from the *provider* descriptor rather than the
+    file descriptor precisely because the server does not know the
+    sidecar's path: it can only ever construct ``provider:<pid>#<fp>``.
+
+    Unlike the auto-hint this ships unconditionally — a fingerprint is not
+    a guess. A sidecar that lacks the key cannot produce a matching
+    fingerprint, so there is nothing to scope: the match is the scoping.
+    """
+    if "opencode" not in providers:
+        return {}
+
+    rows = list(
+        session.exec(
+            select(ProviderConfig)
+            .where(
+                ProviderConfig.provider_id == "opencode",
+                ProviderConfig.enabled == True,  # noqa: E712 — SQLModel needs the ==
+            )
+            .order_by(col(ProviderConfig.account_id))
+        ).all()
+    )
+    out: dict[str, str] = {}
+    for row in rows:
+        try:
+            api_key = row.api_key
+        except Exception:  # pragma: no cover — undecryptable stored key
+            logger.debug("fingerprint hint: cannot decrypt opencode key", exc_info=True)
+            continue
+        fingerprint = credential_fingerprint(api_key)
+        if not fingerprint:
+            continue
+        hint_key = keyed_credential_origin("provider:opencode", fingerprint)
+        # Deterministic first-wins (rows ordered by account_id): the same
+        # key stored under two accounts is operator misconfiguration, not
+        # something to resolve silently in either direction.
+        out.setdefault(hint_key, row.account_id)
+    if not out:
+        return {}
+    return {"opencode": out}
+
+
 def _account_tag_hints_for_providers(
     session: Session, providers: list[str], *, sidecar_id: str | None = None
 ) -> dict[str, dict[str, str]]:
@@ -375,15 +435,19 @@ def _account_tag_hints_for_providers(
     through the same SQL shape (PR #290 round-2 review Hermes body
     suggestion #6).
 
-    Merges the operator-resolved ``credential_tags`` rows on top of the
-    auto-hints for single-account providers — the auto-hint is the
-    fallback for a fresh provider like MiniMax whose quota gauge lives
-    at the operator's chosen account but whose upstream has no per-
-    user identity, so the sidecar's local discovery returns nothing
-    useful. The hint unblocks the events on the very next cycle so
-    the quota gauge and the sidecar events merge into one Fleet
-    entry. Operator tags (when present) always win, since they're
-    explicit and the auto-hint is implicit.
+    Merge order, most authoritative first:
+
+    1. operator ``credential_tags`` rows — explicit, always win;
+    2. :func:`_fingerprinted_credential_hints` — a definitive match
+       between the sidecar's discovered key and a key the operator
+       pasted into ``provider_configs`` (#347 T1);
+    3. the single-account auto-hint — implicit, kept as the last
+       resort for a fresh provider like MiniMax whose quota gauge
+       lives at the operator's chosen account but whose upstream has
+       no per-user identity, so the sidecar's local discovery returns
+       nothing useful. The hint unblocks the events on the very next
+       cycle so the quota gauge and the sidecar events merge into one
+       Fleet entry.
 
     Requester identity: with ``sidecar_id`` given, both that sidecar's
     scoped tags and deployment-wide (NULL) tags ship (scoped winning).
@@ -402,6 +466,15 @@ def _account_tag_hints_for_providers(
     resolved = CredentialTagRepo.list_pending_payload(
         session, providers=providers, sidecar_id=effective_sidecar_id
     )
+    # A fingerprint match outranks the auto-hint but never an operator tag:
+    # the tag is a deliberate per-origin choice, the fingerprint a derived
+    # one. Unlike tags, the fingerprint hint is not scoped to a sidecar —
+    # it doesn't need to be: only a sidecar that already holds the key can
+    # build a matching fingerprint, so the match is the scoping.
+    for pid, by_origin in _fingerprinted_credential_hints(session, providers).items():
+        bucket = resolved.setdefault(pid, {})
+        for origin, account_id in by_origin.items():
+            bucket.setdefault(origin, account_id)
     # Auto-hints key off the *original* requester identity: an
     # unidentified fetcher in a multi-host deployment gets no auto-hints
     # (safe default), while ≤1 live sidecar ships unconditionally.
