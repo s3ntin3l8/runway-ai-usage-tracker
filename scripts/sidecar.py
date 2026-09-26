@@ -1025,8 +1025,8 @@ def _unlink_queue_file(dir_fd: int, name: str) -> None:
         os.close(fd)
 
 
-def queue_push(payload: dict[str, Any]) -> None:
-    """Add payload to offline queue."""
+def queue_push(payload: dict[str, Any]) -> bool:
+    """Add payload to the bounded offline queue; return False when full."""
     if os.name == "nt":
         ensure_dirs()
 
@@ -1035,25 +1035,48 @@ def queue_push(payload: dict[str, Any]) -> None:
     queue_file = get_queue_dir() / f"{today}.jsonl"
 
     entry = {"ts": int(time.time()), "payload": payload}
+    line = json.dumps(entry, separators=(",", ":")) + "\n"
+    max_size_bytes = 10 * 1024 * 1024
 
     if os.name == "nt":
+        total_size = sum(f.stat().st_size for f in get_queue_dir().glob("*.jsonl"))
+        if total_size + len(line.encode("utf-8")) > max_size_bytes:
+            logging.error(
+                "Offline queue reached its 10 MB limit; retaining existing entries and "
+                "skipping this payload; the next collection cycle will retry source data."
+            )
+            return False
         with open(queue_file, "a") as f:
-            f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+            f.write(line)
     else:
         dir_fd = _secure_queue_dir()
         try:
+            total_size = 0
+            for name in _queue_names(dir_fd):
+                fd = _open_queue_file(dir_fd, name, os.O_RDONLY)
+                try:
+                    total_size += os.fstat(fd).st_size
+                finally:
+                    os.close(fd)
+            if total_size + len(line.encode("utf-8")) > max_size_bytes:
+                logging.error(
+                    "Offline queue reached its 10 MB limit; retaining existing entries and "
+                    "skipping this payload; the next collection cycle will retry source data."
+                )
+                return False
             fd = _open_queue_file(
                 dir_fd,
                 queue_file.name,
                 os.O_WRONLY | os.O_APPEND | os.O_CREAT,
             )
             with os.fdopen(fd, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+                f.write(line)
         finally:
             os.close(dir_fd)
 
     logging.info(f"Queued payload for retry: {queue_file.name}")
     queue_rotate()
+    return True
 
 
 def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) -> None:
@@ -3913,14 +3936,18 @@ class DaemonRunner:
                 os._exit(70)  # EX_SOFTWARE
 
             # Only queue metrics payloads; heartbeats don't need to be queued
+            queue_saved = True
             if metrics or events:
-                queue_push(payload)
+                queue_saved = queue_push(payload)
 
             with self._lock:
                 self.last_error = str(result)
                 # "error" if we got a real HTTP response (non-2xx), "queued" for
-                # network-level failures (no connectivity, code 0)
-                self._status_reason = "error" if code > 0 else "queued"
+                # network-level failures (no connectivity, code 0) with a durable
+                # queue entry.
+                self._status_reason = "error" if code > 0 or not queue_saved else "queued"
+                if not queue_saved:
+                    self.last_error = "Offline queue is full; payload was not saved for retry."
             self._fire_status_change()
             # Earlier successful batches may have consumed one-shot server instructions.
             self._apply_ingest_instructions(

@@ -22,7 +22,11 @@ export function ProviderKpis({
   const cost = useProviderCostForecast(providerId, accountId);
   const forecast = useProviderForecast(providerId, accountId);
   const billingType = entry.billing_type ?? 'unknown';
-  const moneyLabel = billingType === 'pay_as_you_go' ? 'Spend' : 'Estimated usage value';
+  const moneyLabel = billingType === 'pay_as_you_go'
+    ? 'Spend'
+    : billingType === 'unknown'
+      ? 'Usage value'
+      : 'Estimated usage value';
 
   const kind = cardKind(critical);
 

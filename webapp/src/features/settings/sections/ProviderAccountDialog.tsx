@@ -212,7 +212,7 @@ function ProviderAccountForm({
           onChange={(event) => setBillingType(event.target.value as typeof billingType)}
           className="h-9 rounded-md border border-border bg-surface-1 px-3 text-sm text-fg"
         >
-          <option value="unknown">Unknown · show estimated usage value</option>
+          <option value="unknown">Unknown · show usage value</option>
           <option value="subscription">Subscription · show estimated usage value</option>
           <option value="pay_as_you_go">Pay as you go · show reported cost when available</option>
         </select>

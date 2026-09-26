@@ -143,9 +143,9 @@ class EventIngestor:
                     tokens_cache_create_1h=push.tokens_cache_create_1h,
                     tokens_cache_create_5m=push.tokens_cache_create_5m,
                 )
-                # Provider-supplied cost (e.g. OpenCode logs it per message) is
-                # authoritative for the total; otherwise use the computed sum.
-                # The components stay pricing-derived (best-effort) either way.
+                # PAYG accounts prefer a provider-reported amount (e.g. an
+                # OpenCode log value); subscription and unknown accounts use
+                # the computed estimate. Components stay pricing-derived.
                 config = self.session.exec(
                     select(ProviderConfig).where(
                         ProviderConfig.provider_id == push.provider_id,

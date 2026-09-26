@@ -67,7 +67,7 @@ def test_phase_b_updates_zero_cost_event():
     assert zeroed == 0
 
 
-def test_phase_b_preserves_reported_opencode_cost_separately():
+def test_phase_b_preserves_unknown_opencode_total_and_reported_cost():
     s = _make_session()
     oc_ev = UsageEvent(
         provider_id="opencode",
@@ -86,7 +86,7 @@ def test_phase_b_preserves_reported_opencode_cost_separately():
     phase_b_recost(s, providers=None, since=None, dry_run=False)
 
     s.refresh(oc_ev)
-    assert oc_ev.cost_usd == 0.0
+    assert oc_ev.cost_usd == 99.0
     assert oc_ev.cost_reported_usd == 99.0
     assert oc_ev.cost_estimated_usd == 0.0
 

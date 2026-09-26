@@ -317,10 +317,10 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     }
 
 
-def test_manifest_keeps_pending_entries_until_operator_resolves(
+def test_manifest_prunes_origins_missing_from_complete_snapshot(
     client: TestClient, session: Session
 ):
-    """A missed manifest must not erase an unresolved account assignment."""
+    """A complete manifest removes credential origins that disappeared."""
     from app.services.credential_tags import PendingCredentialTagRepo
 
     body_full = {
@@ -344,13 +344,13 @@ def test_manifest_keeps_pending_entries_until_operator_resolves(
     }
     r2 = _post_manifest(client, body_partial)
     assert r2.status_code == 200
-    assert r2.json()["entries_pruned"] == 0
+    assert r2.json()["entries_pruned"] == 1
     pending_a = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
-    assert {p.credential_origin for p in pending_a} == {"path:/a", "path:/b"}
+    assert {p.credential_origin for p in pending_a} == {"path:/a"}
 
 
-def test_manifest_does_not_prune_pending_rows(client: TestClient, session: Session):
-    """A later empty manifest leaves both sidecars' assignments available."""
+def test_manifest_prunes_only_the_reporting_sidecar(client: TestClient, session: Session):
+    """A later empty snapshot prunes alpha without touching beta."""
     from app.services.credential_tags import PendingCredentialTagRepo
 
     for sidecar in ("alpha", "beta"):
@@ -364,11 +364,11 @@ def test_manifest_does_not_prune_pending_rows(client: TestClient, session: Sessi
 
     r = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})  # alpha now empty
     assert r.status_code == 200
-    assert r.json()["entries_pruned"] == 0
+    assert r.json()["entries_pruned"] == 1
 
     assert [
         (r.sidecar_id, r.credential_origin) for r in PendingCredentialTagRepo.list_all(session)
-    ] == [("alpha", "path:/shared"), ("beta", "path:/shared")]
+    ] == [("beta", "path:/shared")]
 
 
 def test_manifest_normalizes_fqdn_sidecar_id(client: TestClient, session: Session):
@@ -1174,10 +1174,10 @@ def test_auto_hint_withheld_when_unidentified_in_multi_host(
     assert r.json()["account_tag_hints"] == {}
 
 
-def test_manifest_keeps_auto_hint_pending_row_when_sidecar_stops_reporting(
+def test_manifest_prunes_stale_pending_credential_origin(
     client: TestClient, session: Session
 ) -> None:
-    """Pending rows survive future empty manifests until user assignment."""
+    """A complete empty manifest clears stale credential origins."""
     from app.services.credential_tags import PendingCredentialTagRepo
 
     session.add(
@@ -1207,15 +1207,19 @@ def test_manifest_keeps_auto_hint_pending_row_when_sidecar_stops_reporting(
         credential_origin="provider:minimax",
     )
 
-    # Cycle 2: the source disappears; pending assignment still remains.
+    # Cycle 2: the source disappears from a complete manifest.
     r2 = _post_manifest(client, {"sidecar_id": "alpha", "entries": []})
     assert r2.status_code == 200, r2.text
-    assert PendingCredentialTagRepo.get(
-        session,
-        sidecar_id="alpha",
-        provider_id="minimax",
-        credential_origin="provider:minimax",
-    ), "sticky auto-hint pending row must survive a resolve-and-stop-reporting cycle"
+    assert r2.json()["entries_pruned"] == 1
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="alpha",
+            provider_id="minimax",
+            credential_origin="provider:minimax",
+        )
+        is None
+    )
 
 
 def test_pending_usage_event_can_be_assigned_and_promoted(client: TestClient, session: Session):
@@ -1264,6 +1268,52 @@ def test_pending_usage_event_can_be_assigned_and_promoted(client: TestClient, se
     assert stored.account_id == "alice@example.com"
     assert stored.attribution_source == "tag"
     assert stored.tokens_input == 1000
+
+
+def test_assigning_opencode_pending_event_persists_provider_mapping(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(session, provider_id="xai", account_id="alice@example.com")
+    push = UsageEventPush(
+        provider_id="xai",
+        account_id="default",
+        account_source="default",
+        event_id="opencode-xai-pending",
+        ts="2026-09-01T10:00:00Z",
+        model_id="grok-4",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="alpha",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "alice@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    tag = CredentialTagRepo.get(
+        session,
+        provider_id="xai",
+        credential_origin="provider:xai",
+        sidecar_id="alpha",
+    )
+    assert tag is not None
+    assert tag.account_id == "alice@example.com"
 
 
 def test_pending_endpoint_hides_origin_with_effective_hint(

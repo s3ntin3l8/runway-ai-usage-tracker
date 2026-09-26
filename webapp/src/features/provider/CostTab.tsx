@@ -55,7 +55,11 @@ export function CostTab({
   const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRolling);
   const cumulative = isRolling ? rangeCumulative : isLiveMonth ? liveCumulative : monthCumulative;
   const scopeLabel = scope.label;
-  const moneyLabel = billingType === 'pay_as_you_go' ? 'Cost' : 'Estimated usage value';
+  const moneyLabel = billingType === 'pay_as_you_go'
+    ? 'Cost'
+    : billingType === 'unknown'
+      ? 'Usage value'
+      : 'Estimated usage value';
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;

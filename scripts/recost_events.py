@@ -12,8 +12,10 @@ one writer. Three passes are run in sequence:
 
 Source-reported OpenCode amounts are migrated into cost_reported_usd and kept
 separate from calculated token value. Account billing_type selects the shown
-total: subscriptions and unknown accounts use estimates; pay-as-you-go accounts
-use reported amounts when available. Error events are skipped.
+total: subscriptions use estimates, pay-as-you-go accounts use reported
+amounts when available, and unknown OpenCode accounts retain their prior total
+until the operator selects a billing type. Other unknown accounts use estimates.
+Error events are skipped.
 
 Note on effective_from: cost_calculator only applies a pricing row when
 effective_from <= event.ts.date(). If the new seed rows are dated today,
@@ -109,11 +111,16 @@ def phase_b_recost(
             # Legacy OpenCode backend events stored the logged message amount
             # in cost_usd. Canonical-mapped events intentionally cleared it.
             reported_cost = ev.cost_usd
-        new_cost = (
-            reported_cost
-            if config and config.billing_type == "pay_as_you_go" and reported_cost is not None
-            else breakdown.total
-        )
+        billing_type = config.billing_type if config else "unknown"
+        if billing_type == "pay_as_you_go" and reported_cost is not None:
+            new_cost = reported_cost
+        elif billing_type == "unknown" and ev.provider_id.startswith("opencode"):
+            # Preserve the legacy source total for accounts whose billing
+            # type has not been selected. Operators can choose subscription
+            # or PAYG later and rerun recost without losing that original.
+            new_cost = ev.cost_usd
+        else:
+            new_cost = breakdown.total
         if (
             abs(new_cost - ev.cost_usd) > 1e-9
             or abs(breakdown.total - ev.cost_estimated_usd) > 1e-9

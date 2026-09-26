@@ -28,7 +28,16 @@ export function PendingUsageEventsCard() {
     },
     onError: (error) => toast.error(error.message),
   });
-  if (pending.isPending || !pending.data?.total) return null;
+  if (pending.isPending) return null;
+  if (pending.isError) {
+    return (
+      <Card className="mb-3 border-warning/40 bg-warning-muted p-3">
+        <h2 className="text-sm font-semibold">Unassigned usage</h2>
+        <p className="mt-1 text-xs text-fg-muted">Could not load unassigned usage events. Try refreshing the page.</p>
+      </Card>
+    );
+  }
+  if (!pending.data?.total) return null;
 
   return (
     <Card className="mb-3 border-warning/40 bg-warning-muted p-3">

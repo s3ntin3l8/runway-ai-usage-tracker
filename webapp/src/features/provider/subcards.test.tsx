@@ -37,7 +37,7 @@ describe('ProviderKpis', () => {
   });
 
   it('renders the six KPI tiles with values', async () => {
-    renderWithProviders(<ProviderKpis entry={fleetEntry()} />);
+    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'subscription' })} />);
     expect(await screen.findByText('Current')).toBeInTheDocument();
     expect(screen.getByText('Projected at reset')).toBeInTheDocument();
     expect(screen.getByText('Estimated usage value (MTD)')).toBeInTheDocument();
@@ -50,6 +50,11 @@ describe('ProviderKpis', () => {
     renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'pay_as_you_go' })} />);
     expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Daily burn (7d)')).toBeInTheDocument();
+  });
+
+  it('labels unknown account values neutrally', async () => {
+    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'unknown' })} />);
+    expect(await screen.findByText('Usage value (MTD)')).toBeInTheDocument();
   });
 
   describe('tokens kind (unlimited / passive provider)', () => {

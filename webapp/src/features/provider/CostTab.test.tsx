@@ -44,12 +44,12 @@ describe('CostTab', () => {
     expect(await screen.findByText(/20d left/)).toBeInTheDocument();
   });
 
-  it('labels unknown billing as estimated usage value', async () => {
+  it('labels unknown billing neutrally while preserving the usage value', async () => {
     renderWithProviders(
       <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
-    expect(await screen.findByText('Estimated usage value (MTD)')).toBeInTheDocument();
+    expect(await screen.findByText('Usage value (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected usage value')).toBeInTheDocument();
   });
 

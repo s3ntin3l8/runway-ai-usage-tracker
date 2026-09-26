@@ -572,9 +572,14 @@ async def post_credential_manifest(
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
     candidate_pids = sorted({r.provider_id for r in existing_rows} | set(keep_by_provider))
 
-    # An origin disappearing from a later scan does not prove that previously
-    # collected data was assigned. Keep it until an operator resolves it.
-    removed = 0
+    # A manifest is a complete snapshot for this sidecar. Prune credential
+    # origins that are no longer present; usage events are stored separately
+    # and are never removed by this credential-only operation.
+    removed = PendingCredentialTagRepo.delete_stale(
+        session,
+        sidecar_id=payload.sidecar_id,
+        keep_origins_by_provider=keep_by_provider,
+    )
     session.commit()
 
     resolved = _account_tag_hints_for_providers(
@@ -839,8 +844,13 @@ async def list_pending_usage_events(
             .limit(limit)
         ).all()
     )
-    return {
-        "items": [
+    items = []
+    for row in rows:
+        try:
+            payload = json.loads(row.payload_json)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        items.append(
             {
                 "id": row.id,
                 "provider_id": row.provider_id,
@@ -848,11 +858,12 @@ async def list_pending_usage_events(
                 "sidecar_id": row.sidecar_id,
                 "ts": row.ts.isoformat(),
                 "reason": row.reason,
-                "model_id": json.loads(row.payload_json).get("model_id"),
-                "session_id": json.loads(row.payload_json).get("session_id"),
+                "model_id": payload.get("model_id"),
+                "session_id": payload.get("session_id"),
             }
-            for row in rows
-        ],
+        )
+    return {
+        "items": items,
         "total": session.exec(select(func.count()).select_from(PendingUsageEvent)).one(),
         "offset": offset,
         "limit": limit,
@@ -898,6 +909,18 @@ async def assign_pending_usage_events(
         payload = UsageEventPush.model_validate_json(row.payload_json).model_copy(
             update={"account_id": account_id, "account_source": "tag"}
         )
+        # OpenCode doesn't identify which credential origin handled a
+        # message. Persist an explicit provider-level tag scoped to the
+        # source sidecar so later messages use the operator's resolution.
+        if row.provider_id in {"minimax", "kimi_coding", "ollama", "openrouter", "xai"}:
+            CredentialTagRepo.set_tag(
+                session,
+                provider_id=row.provider_id,
+                credential_origin=f"provider:{row.provider_id}",
+                account_id=account_id,
+                sidecar_id=row.sidecar_id,
+                set_by="operator",
+            )
         existing = session.exec(
             select(UsageEvent).where(
                 UsageEvent.provider_id == row.provider_id,

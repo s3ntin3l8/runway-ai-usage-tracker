@@ -484,6 +484,17 @@ class TestQueueRotate:
         entry = json.loads(files[0].read_text().strip())
         assert entry["payload"] == {"provider": "test", "metrics": []}
 
+    def test_queue_push_retains_existing_entries_when_limit_is_reached(self, tmp_path):
+        existing = tmp_path / "2026-01-01.jsonl"
+        existing.write_bytes(b"x" * (10 * 1024 * 1024))
+
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
+            with patch.object(sidecar, "ensure_dirs"):
+                assert sidecar.queue_push({"events": [{"event_id": "retry-me"}]}) is False
+
+        assert existing.stat().st_size == 10 * 1024 * 1024
+        assert len(list(tmp_path.glob("*.jsonl"))) == 1
+
 
 class TestQueueFlush:
     def test_event_ingest_error_is_retained_and_retried(self, tmp_path, monkeypatch):
@@ -1071,7 +1082,7 @@ class TestDaemonRunnerQueuedStatus:
                 return_value=(False, "timeout", 0),
             ),
             patch.object(sidecar, "queue_flush"),
-            patch.object(sidecar, "queue_push", side_effect=lambda p: queued.append(p)),
+            patch.object(sidecar, "queue_push", side_effect=lambda p: (queued.append(p), True)[1]),
         ):
             runner.run_once()
 

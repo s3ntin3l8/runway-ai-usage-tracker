@@ -108,8 +108,8 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 
 # OpenCode providerIDs that front a provider Runway already collects directly
 # -> (canonical provider_id, explicit account override or None). With no
-# override, a canonical provider's own credential tag must identify the
-# account; OpenCode's user identity is not evidence about which upstream
+# override, a canonical provider's unambiguous credential tag must identify
+# the account; OpenCode's user identity is not evidence about which upstream
 # account handled the request. Unmatched events stay pending for assignment.
 # Keep this in sync with scripts/reclassify_opencode_providers.py.
 _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
@@ -312,9 +312,16 @@ def parse_opencode_events(
                 event_account_id = account_override
                 event_account_source = "tag"
             elif canonical_hints:
-                canonical_hint = canonical_hints.get(canonical_provider_id, {}).get(
-                    f"provider:{canonical_provider_id}"
-                )
+                provider_hints = canonical_hints.get(canonical_provider_id, {})
+                # OpenCode only tells us which upstream provider served a
+                # message, not which credential origin it used. Match a
+                # provider-level tag directly, or use an origin tag only
+                # when every reported origin agrees on one account.
+                canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
+                if canonical_hint is None:
+                    hinted_accounts = set(provider_hints.values())
+                    if len(hinted_accounts) == 1:
+                        canonical_hint = next(iter(hinted_accounts))
                 if canonical_hint:
                     event_account_id = canonical_hint
                     event_account_source = "tag"

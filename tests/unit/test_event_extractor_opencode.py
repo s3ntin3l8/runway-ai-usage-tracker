@@ -687,6 +687,23 @@ def test_parse_opencode_events_applies_canonical_hint_after_retag():
         db_path.unlink(missing_ok=True)
 
 
+def test_parse_opencode_events_uses_one_unambiguous_credential_origin_hint():
+    db_path = _build_db([_minimax_message("msg_minimax_fingerprint_hint")])
+    try:
+        evts = parse_opencode_events(
+            db_path,
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints={"minimax": {"provider:minimax#fingerprint-1": "alice@example.com"}},
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "minimax"
+        assert evts[0].account_id == "alice@example.com"
+        assert evts[0].account_source == "tag"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
 def test_parse_opencode_events_keeps_local_account_when_canonical_hint_is_other_provider():
     """When the canonical hint targets a *different* provider than the
     retag target, the extractor's canonical hint must NOT apply —

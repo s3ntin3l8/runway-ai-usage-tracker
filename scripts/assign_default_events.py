@@ -79,9 +79,8 @@ def assign_events(provider_id: str, account_id: str, event_ids: list[str], apply
                 )
             ).all()
             for row in rows:
-                for aid in ("default", account_id):
-                    key = (aid, row.window_type, row.window_start, row.window_end)
-                    boundaries[key] = (row.limit_value, row.pct_used)
+                key = (row.account_id, row.window_type, row.window_start, row.window_end)
+                boundaries[key] = (row.limit_value, row.pct_used)
 
         for event in events:
             if event.kind == "message":
