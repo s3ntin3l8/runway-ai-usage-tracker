@@ -16,6 +16,7 @@ import httpx
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
+from app.services.collectors.deepseek import DeepSeekCollector
 from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
 from app.services.collectors.kimi_api import KimiApiCollector
@@ -58,6 +59,7 @@ class CollectorManager:
             "kimi_coding": (KimiCodingCollector, "Kimi Coding", 900),
             "kimi_k2": (KimiK2Collector, "Kimi K2", 900),
             "openrouter": (OpenRouterCollector, "OpenRouter", 900),
+            "deepseek": (DeepSeekCollector, "DeepSeek", 900),
             "minimax": (MiniMaxCollector, "MiniMax", 900),
             "ollama": (OllamaCollector, "Ollama Cloud", 900),
             "xai": (XaiCollector, "xAI (Grok)", 900),

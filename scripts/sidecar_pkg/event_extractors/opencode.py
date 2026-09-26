@@ -33,11 +33,21 @@ computing from the pricing table.
 providerID -> runway provider_id mapping (see _OC_PROVIDER_MAP below):
   - "opencode"          -> "opencode-free"      (free-tier models)
   - "opencode-go"       -> "opencode"           (paid Go subscription; carries
-                                                   the web-scraper quota gauges)
+                                                   the web-scraper quota gauges;
+                                                   deepseek-v4-flash/pro served
+                                                   from the Go tier stay here —
+                                                   they are billed to the
+                                                   subscription, not to a
+                                                   DeepSeek balance)
   - "open-design-byok"  -> "opencode-byok"      (bring-your-own-key)
   - "openrouter"        -> "opencode-openrouter"
   - "ollama-cloud"      -> "opencode-ollama"    (folded onto "ollama" by
                                                  _OC_CANONICAL_MAP below)
+  - "deepseek"          -> "opencode-deepseek"  (folded onto the direct
+                                                 "deepseek" provider by
+                                                 _OC_CANONICAL_MAP below —
+                                                 BYOK keys are pay-as-you-go
+                                                 against the DeepSeek balance)
   - anything else       -> "opencode-<slug>"    (never silently folds into Go)
   - missing/empty       -> "opencode"           (historical default)
 
@@ -139,6 +149,17 @@ _OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     "openrouter": ("openrouter", None),
     # xAI's CLI proxy quota collector uses the same provider identity.
     "xai": ("xai", None),
+    # DeepSeek — BYOK keys inside OpenCode (providerID "deepseek") are
+    # pay-as-you-go against the DeepSeek prepaid balance, so retag onto the
+    # direct "deepseek" provider: its quota card comes from
+    # GET api.deepseek.com/user/balance. The Go subscription's deepseek
+    # models (providerID "opencode-go", modelIDs "deepseek-v4-flash" /
+    # "deepseek-v4-pro") are deliberately NOT here — they stay on
+    # "opencode" because the subscription, not the DeepSeek balance, pays
+    # for them. Pass the account through (kimi-style): OpenCode resolves
+    # the real account identity and the server's account_tag_hints flow
+    # retargets it onto the operator-labeled balance-card account.
+    "deepseek": ("deepseek", None),
 }
 
 

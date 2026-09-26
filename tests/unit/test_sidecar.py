@@ -101,6 +101,23 @@ class TestOpenCodeCredentialRules:
         assert cookie_slots == {"auth", "__Host-console_session"}
 
 
+class TestDeepSeekCredentialRules:
+    """The DeepSeek balance collector consumes the same API key the opencode
+    CLI stores for its BYOK provider — both registries must ship the rule."""
+
+    def test_baked_and_canonical_registries_discover_env_and_auth_json(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
+            rules = provider["deepseek"]["rules"]
+            env_rule = next(rule for rule in rules if rule.get("type") == "env")
+            assert env_rule["variable"] == "DEEPSEEK_API_KEY"
+            assert env_rule["mapping"] == {"value": "api_key"}
+            file_rule = next(rule for rule in rules if rule.get("type") == "file")
+            assert "~/.local/share/opencode/auth.json" in file_rule["paths"]
+            assert "~/.opencode/auth.json" in file_rule["paths"]
+            assert file_rule["mapping"] == {"deepseek.key": "api_key"}
+
+
 class TestXaiCredentialRules:
     def test_baked_and_canonical_registries_map_actual_auth_fields(self):
         registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())

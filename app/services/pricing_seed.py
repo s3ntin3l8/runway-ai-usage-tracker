@@ -884,6 +884,71 @@ PRICING_SEED: list[dict] = [
     #   grok-4.20-beta), which is the calculator's designed trade-off: land on
     #   a sibling rate with a warning instead of silently billing $0.
     # GPT-OSS 120B: no row — cost defaults to 0.
+    # ── DeepSeek ──────────────────────────────────────────────────────────────
+    # Rates per https://api-docs.deepseek.com/quick_start/pricing, checked
+    # 2026-09-26. USD per 1M tokens. Keyed on provider_id="deepseek" — the
+    # direct BYOK provider (see collectors/deepseek.py and the extractor's
+    # _OC_CANONICAL_MAP "deepseek" entry). OpenCode-routed deepseek models on
+    # the Go subscription stay on provider_id="opencode" with their
+    # logged cost and never reach these rows.
+    # - OFF-PEAK rates are seeded: DeepSeek charges 2x during peak hours
+    #   (01:00-04:00 & 06:00-10:00 UTC, Mon-Fri excl. CN holidays), but
+    #   provider_pricing has no time-of-day column (same class of limitation
+    #   as Gemini's >200K tier). Peak-hour events undercount 2x.
+    # - cache_read_per_mtok = the "cache hit" input rate; the "cache miss"
+    #   rate is input_per_mtok.
+    # - cache_create_per_mtok = input rate: DeepSeek uses implicit caching
+    #   with no separate cache-write charge, and its API reports no
+    #   cache-creation token field — pricing a hypothetical write at the
+    #   miss rate is the conservative choice (xai rationale, #350).
+    # - effective_from backdated to 2026-01-01 so reclassified BYOK events
+    #   predating this seed still find a row (cost_calculator only applies
+    #   rows with effective_from <= ts.date()); no historical price series
+    #   exists, same backdating rationale as the xai/chatgpt/gemini rows.
+    # - Legacy ids (deepseek-chat, deepseek-reasoner) are deliberately
+    #   unseeded — retired from the current pricing page (issue #346
+    #   precedent: no official current rate, leave at $0 rather than guess).
+    {
+        "provider_id": "deepseek",
+        "model_id": "deepseek-v4-flash",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.60,
+        "cache_read_per_mtok": 0.003,
+        "cache_create_per_mtok": 0.15,
+        "notes": "DeepSeek-V4.1-Flash (legacy name deepseek-v4-flash), off-peak",
+    },
+    {
+        "provider_id": "deepseek",
+        "model_id": "deepseek-flash",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.60,
+        "cache_read_per_mtok": 0.003,
+        "cache_create_per_mtok": 0.15,
+        "notes": "DeepSeek-V4.1-Flash (canonical API model name), off-peak",
+    },
+    {
+        "provider_id": "deepseek",
+        "model_id": "deepseek-v4.1-flash",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.60,
+        "cache_read_per_mtok": 0.003,
+        "cache_create_per_mtok": 0.15,
+        "notes": "DeepSeek-V4.1-Flash — dotted id the segment-trim fallback "
+        "cannot reach, seeded explicitly",
+    },
+    {
+        "provider_id": "deepseek",
+        "model_id": "deepseek-v4-pro",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.66,
+        "output_per_mtok": 1.98,
+        "cache_read_per_mtok": 0.022,
+        "cache_create_per_mtok": 0.66,
+        "notes": "DeepSeek-V4-Pro-0813, off-peak",
+    },
 ]
 
 

@@ -17,11 +17,12 @@ def manager():
 class TestCollectorManagerInitialization:
     def test_init_registry_count(self, manager):
         """Test that default registry contains expected providers."""
-        # 14 providers, including xAI.
-        assert len(manager.collector_registry) == 14
+        # 15 providers, including xAI and DeepSeek.
+        assert len(manager.collector_registry) == 15
         assert "anthropic" in manager.collector_registry
         assert "antigravity" in manager.collector_registry
         assert "xai" in manager.collector_registry
+        assert "deepseek" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
 
     @pytest.mark.asyncio

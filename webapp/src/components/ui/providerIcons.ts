@@ -16,6 +16,7 @@ import zai from '@/assets/providers/zai.svg';
 import kimi from '@/assets/providers/kimi.svg';
 import minimax from '@/assets/providers/minimax.svg';
 import openrouter from '@/assets/providers/openrouter.svg';
+import deepseek from '@/assets/providers/deepseek.svg';
 import ollama from '@/assets/providers/ollama.svg';
 import antigravity from '@/assets/providers/antigravity.svg';
 
@@ -40,6 +41,7 @@ const PROVIDER_ICONS: Record<string, string> = {
   kimi_k2: kimi,
   minimax,
   openrouter,
+  deepseek,
   ollama,
   antigravity,
 };

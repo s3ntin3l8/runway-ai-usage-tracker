@@ -73,6 +73,27 @@
         }
       ]
     },
+    "deepseek": {
+      "name": "DeepSeek",
+      "icon": "🐋",
+      "api_key_label": "API Key (api)",
+      "api_key_help": "DeepSeek API key (sk-...); auto-discovered from opencode's auth.json or DEEPSEEK_API_KEY",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "DEEPSEEK_API_KEY",
+          "mapping": { "value": "api_key" }
+        },
+        {
+          "type": "file",
+          "paths": [
+            "~/.local/share/opencode/auth.json",
+            "~/.opencode/auth.json"
+          ],
+          "mapping": { "deepseek.key": "api_key" }
+        }
+      ]
+    },
     "minimax": {
       "name": "MiniMax",
       "icon": "🤖",
