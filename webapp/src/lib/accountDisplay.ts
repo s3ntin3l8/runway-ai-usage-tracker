@@ -61,6 +61,6 @@ export function credentialAccountName(accountId: string, label?: string | null):
   if (trimmed !== '') return trimmed;
   if (accountId === 'server') return 'Server environment';
   const m = /^config(?:-cookie)?:(.+)$/.exec(accountId);
-  if (m) return m[1] === 'default' ? 'Default account' : m[1];
+  if (m) return m[1] === 'default' ? 'Default account' : maskAccountId(m[1]);
   return maskAccountId(accountId);
 }

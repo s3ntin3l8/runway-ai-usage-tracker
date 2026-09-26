@@ -1326,3 +1326,23 @@ def test_delete_provider_config_reenable_put_stays_disabled(
     ).one()
     assert row.archived is False
     assert row.enabled is True
+
+
+def test_only_a_credential_change_clears_the_auth_failure_flag(client: TestClient):
+    """A label-only save must not dismiss a live "provider rejected it" flag."""
+    from app.services import auth_failures
+
+    url = "/api/v1/system/provider-config/openrouter/alice@example.com"
+    auth_failures.mark("openrouter", "alice@example.com")
+
+    r = client.put(url, json={"account_label": "Alice"}, headers=_admin_headers())
+    assert r.status_code == 200, r.text
+    r = client.put(url, json={"enabled": True}, headers=_admin_headers())
+    assert r.status_code == 200, r.text
+    assert auth_failures.flagged_accounts("openrouter") == {"alice@example.com"}
+
+    r = client.put(
+        url, json={"api_key": "sk-or-new"}, headers=_admin_headers()
+    )  # pragma: allowlist secret
+    assert r.status_code == 200, r.text
+    assert auth_failures.flagged_accounts("openrouter") == set()

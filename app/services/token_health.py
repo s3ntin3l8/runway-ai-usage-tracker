@@ -74,21 +74,28 @@ def _underlying_account(account_id: str) -> str:
 
 
 def _is_flagged_invalid(provider: str, account_id: str) -> bool:
-    """True when a collector recently got 401/403 for an account this row could serve.
+    """True when a collector recently got 401/403 for the account this row stands for.
 
-    Collectors flag under their own id (``default``, an email, …) while cache
-    rows may be keyed by an opaque hash, so match with the same identity
-    semantics fallbacks use: a flagged id matches unless one side is a
-    *different identified* account.
+    Matching is by *identity*, not by the borrowing rule: two different
+    opaque/fingerprint-keyed accounts of one provider must not flag each
+    other. A flagged ``default`` (an unscoped collector) matches every row of
+    the provider, and a ``default`` row (an unscoped server/config credential)
+    matches any flag — the collector may resolve an identity for a credential
+    the row can't name. Anything else needs equal canonical ids; a hash-keyed
+    row is deliberately *not* linked to a flagged email (under-flag rather than
+    show a healthy credential as rejected).
     """
-    row = _underlying_account(account_id)
-    return any(
-        not is_foreign_account_entry(flagged, row) or not is_foreign_account_entry(row, flagged)
-        for flagged in auth_failures.flagged_accounts(provider)
-    )
+    row = canonical_account_id(_underlying_account(account_id))
+    flagged = auth_failures.flagged_accounts(provider)
+    return bool(flagged) and (row == "default" or "default" in flagged or row in flagged)
 
 
 def _collect_server_credentials() -> dict[str, dict[str, Any]]:
+    """Seam for :func:`_scan_server_credentials` (tests isolate the host through it)."""
+    return _scan_server_credentials()
+
+
+def _scan_server_credentials() -> dict[str, dict[str, Any]]:
     """Credentials the *server itself* discovered (env vars / local files) per provider.
 
     Blocking (file + DB reads); call through ``asyncio.to_thread``.
@@ -100,7 +107,12 @@ def _collect_server_credentials() -> dict[str, dict[str, Any]]:
         except Exception as e:
             logger.debug(f"Server credential scan failed for {scrub_log(provider_id)}: {e}")
             continue
-        server_tokens = {k: v for k, v in creds.items() if v and creds.sources.get(k) == "server"}
+        # "config" also covers files inside Runway's own config dir (e.g.
+        # github_oauth.json); values that are really a dashboard-saved
+        # ProviderConfig key are dropped by the caller's dedup.
+        server_tokens = {
+            k: v for k, v in creds.items() if v and creds.sources.get(k) in ("server", "config")
+        }
         if server_tokens:
             found[provider_id] = server_tokens
     return found
@@ -208,7 +220,14 @@ class TokenHealthService:
                     (cfg.session_cookie, "config-cookie", "session_cookie"),
                 ):
                     # Skip if this exact value is already in the live session cache
-                    if not value or f"{cfg.provider_id}:{value}" in seen_token_values:
+                    # (and remember it, so the server-file scan below doesn't
+                    # re-list a dashboard-saved key as a file credential).
+                    if not value:
+                        continue
+                    seen_key = f"{cfg.provider_id}:{value}"
+                    already_listed = seen_key in seen_token_values
+                    seen_token_values.add(seen_key)
+                    if already_listed:
                         continue
                     result.append(
                         _row(

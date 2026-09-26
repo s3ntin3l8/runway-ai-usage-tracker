@@ -382,6 +382,35 @@ class TestPerAccountAndInvalid:
         assert (await self._health(cache))["b@x.com"]["status"] == "valid"
 
     @pytest.mark.asyncio
+    async def test_auth_failure_does_not_leak_between_hash_keyed_accounts(self):
+        """Fingerprint-keyed providers key several distinct accounts by opaque
+        hashes; one rejected credential must not flag its healthy siblings."""
+        from app.services import auth_failures
+
+        cache = self._cache(
+            [
+                ("openrouter", "hashaaaaaaaa", {"api_key": "k1"}, {}),
+                ("openrouter", "hashbbbbbbbb", {"api_key": "k2"}, {}),
+            ]
+        )
+        auth_failures.mark("openrouter", "hashaaaaaaaa")
+        rows = await self._health(cache)
+        assert rows["hashaaaaaaaa"]["status"] == "invalid"
+        assert rows["hashbbbbbbbb"]["status"] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_dashboard_saved_key_is_not_relisted_as_server_credential(self):
+        cfg = MagicMock(provider_id="zai", account_id="default", account_label=None)
+        cfg.api_key = "zk-dashboard"  # pragma: allowlist secret
+        cfg.session_cookie = None
+        rows = await self._health(
+            self._cache([]),
+            configs=[cfg],
+            server_creds={"zai": {"api_key": "zk-dashboard"}},  # pragma: allowlist secret
+        )
+        assert set(rows) == {"config:default"}
+
+    @pytest.mark.asyncio
     async def test_auth_failure_flags_config_and_server_rows(self):
         from app.services import auth_failures
 
@@ -482,3 +511,25 @@ class TestPerAccountAndInvalid:
         with patch("app.services.token_health.token_cache", cache):
             assert await service.delete_credential("zai", "opaque-hash-b") is True
         assert auth_failures.flagged_accounts("zai") == set()  # pragma: allowlist secret
+
+
+class TestServerCredentialScan:
+    def test_includes_runway_config_dir_files_but_not_other_sources(self):
+        """github_oauth.json lives in Runway's own config dir, so it is labelled
+        `config`; it must still be listed (it was the old `local-file` row)."""
+        from app.services.credential_provider import CredentialMap
+        from app.services.token_health import _scan_server_credentials
+
+        def fake(provider_id: str, **_: object) -> CredentialMap:
+            if provider_id == "github":
+                return CredentialMap(
+                    {"oauth_token": "gho_file", "api_key": "from-db", "other": "x"},
+                    sources={"oauth_token": "config", "api_key": "config", "other": "sidecar"},
+                )
+            return CredentialMap({})
+
+        with patch(
+            "app.services.token_health.CredentialProvider.get_credentials", side_effect=fake
+        ):
+            found = _scan_server_credentials()
+        assert found["github"] == {"oauth_token": "gho_file", "api_key": "from-db"}

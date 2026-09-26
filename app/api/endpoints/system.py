@@ -1542,6 +1542,15 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     Shared core of the two PUT endpoints. Callers are responsible for any
     row-count / account_id guards before invoking this helper.
     """
+    # Only a credential write/clear earns a fresh auth verdict; a label / enabled /
+    # archive-only save must not dismiss a live "provider rejected it" flag (during
+    # error backoff that flag is the only signal).
+    credential_changed = (
+        body.api_key is not None
+        or body.session_cookie is not None
+        or bool(body.clear_api_key)
+        or bool(body.clear_session_cookie)
+    )
     row = session.exec(
         select(ProviderConfig).where(
             ProviderConfig.provider_id == provider_id,
@@ -1783,7 +1792,8 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     session.commit()
     # A replaced/removed credential deserves a fresh verdict: drop any stale
     # "provider rejected it" flag so the next collection re-evaluates.
-    auth_failures.clear(provider_id, account_id)
+    if credential_changed:
+        auth_failures.clear(provider_id, account_id)
     # Invalidate server-side fleet/limits caches so archived/restored
     # providers appear or disappear immediately on the next dashboard poll.
     from app.core.cache import cache_clear
