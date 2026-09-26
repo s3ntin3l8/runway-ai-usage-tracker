@@ -11,19 +11,28 @@ The collector reads the access bearer from `xai_access`. The sidecar can obtain 
 - OpenCode `auth.json`, mapping `xai.access` to `xai_access` and `xai.refresh` to `xai_refresh`.
 - Grok CLI `~/.grok/auth.json` (or `$GROK_HOME/auth.json`), selecting an xAI OIDC scope entry and mapping `key` to `xai_access` and `refresh_token` to `xai_refresh`.
 - `GROK_OAUTH_TOKEN`, mapped to `xai_access`.
-- A bearer pasted into provider settings, stored as `xai_access` only.
+- A bearer pasted into provider settings, stored as `provider_configs.api_key` and mirrored into the token cache's `xai_access` slot.
 
-All three sidecar sources get key-scoped origins (#349): the bearer is
-fingerprinted under `xai_access` (never `api_key` — the field the registry
-maps every source to) and suffixed to the origin, e.g.
+All three sidecar sources get key-scoped origins (#349), e.g.
 `path:/home/u/.local/share/opencode/auth.json#495fa9c614ce` or
-`env:GROK_OAUTH_TOKEN#495fa9c614ce`. See *The sibling providers (#349)* in
-[opencode.md](opencode.md). Pasting the same bearer into provider settings
-stores it as `provider_configs.api_key` (mirrored into the token cache's
-`xai_access` slot), which is the same value the sidecar just fingerprinted —
-so the server answers `provider:xai#<fingerprint>` on the next sidecar
-cycle; a rotated bearer is a new origin and lands in Untagged Credentials
-until tagged.
+`env:GROK_OAUTH_TOKEN#495fa9c614ce`. The suffix comes from `xai_refresh`
+when the candidate has it and only falls back to `xai_access`, because the
+access JWT is the part that expires (~7 days) — the Grok / OpenCode CLI
+refreshes it behind Runway's back, and keying on it would mint a new origin
+every week, stranding the tag that was written against the old one. File
+and CLI candidates ship the refresh token (`xai.refresh` in OpenCode's
+`auth.json`, `refresh_token` in `~/.grok/auth.json`) and are keyed by it;
+the access-only `GROK_OAUTH_TOKEN` candidate has nothing else to go on and
+is keyed by its bearer. See *The sibling providers (#349)* in
+[opencode.md](opencode.md).
+
+That split bounds the server-side hint: `provider:xai#<fingerprint>` is
+built from the pasted `provider_configs.api_key`, which is an *access*
+bearer, so it answers for the env candidate (and for a file candidate only
+while the paste still equals its `xai_access`) — never for a refresh-keyed
+origin. Tag a file- or CLI-sourced card against its keyed origin in **Fleet
+→ Untagged Credentials** instead; that tag then survives every access
+refresh and is stranded only when the refresh token itself rotates.
 
 Runway does not refresh these tokens. For Grok CLI credentials, both the quota card and usage events use the selected scope entry's email as the account identity, then its user ID. If neither is available, the normal credential tagging flow lets the operator associate the credential with an account.
 

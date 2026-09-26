@@ -2358,13 +2358,28 @@ def credential_origin_for_provider(provider_id: str) -> str:
 # the server mirrors that set so it can answer ``provider:<pid>#<fp>``
 # hints (#347, #349).
 #
-# Which candidate dict field carries that key. Every provider in the set
-# reports its credential under ``api_key`` except xai, whose OpenCode
-# ``auth.json`` / Grok CLI ``auth.json`` / ``GROK_OAUTH_TOKEN`` candidates
-# all arrive under the registry mapping target ``xai_access``. Fingerprint
-# anything else in the dict and the sidecar's origin would never match the
-# fingerprint the server builds from ``provider_configs.api_key``.
-_FINGERPRINT_KEY_FIELDS: dict[str, str] = {"xai": "xai_access"}
+# Which candidate dict field carries that key, in preference order. Every
+# provider in the set reports its credential under ``api_key`` except xai,
+# whose rules map every source's bearer to ``xai_access`` — fingerprint
+# ``api_key`` there and no suffix would be derivable at all.
+#
+# xai then takes the *first* field it finds, and that order matters: the
+# access JWT expires in about seven days and the Grok / OpenCode CLI
+# refreshes it behind Runway's back (``app/services/collectors/xai.py``), so
+# fingerprinting it would mint a new origin — and strand the operator tag on
+# the old one — every week. File and CLI candidates ship the refresh token
+# (``xai.refresh`` / ``refresh_token``), so they key on that; only the
+# access-only ``GROK_OAUTH_TOKEN`` env candidate falls back to
+# ``xai_access``, because it has nothing else to identify it by.
+#
+# Consequence worth knowing before touching tier 1b: a pasted bearer is an
+# *access* token (``provider_configs.api_key``), so the server's
+# ``provider:xai#<fp>`` hint answers for the env candidate but never for a
+# refresh-keyed file/CLI origin. Those get tagged, and the tag then outlives
+# every access refresh.
+_FINGERPRINT_KEY_FIELDS: dict[str, tuple[str, ...]] = {
+    "xai": ("xai_refresh", "xai_access"),
+}
 
 
 def fingerprinted_credential_origin(
@@ -2375,11 +2390,12 @@ def fingerprinted_credential_origin(
 
     See ``FINGERPRINTED_ORIGIN_PROVIDERS`` for why. Callers pass the
     candidate token dict so the origin can be derived from the exact value
-    that will be shipped. A missing / blank key field leaves the plain
-    origin in place — there is no credential to disambiguate, which is
-    also exactly what keeps non-key candidates (cookies, CLI-OAuth tokens,
-    ``openrouter``'s cosmetic env vars) plain without a per-candidate
-    opt-out.
+    that will be shipped; where a provider lists several candidate fields
+    (see ``_FINGERPRINT_KEY_FIELDS``), the first one carrying a value wins.
+    A candidate with none of them leaves the plain origin in place — there
+    is no credential to disambiguate, which is also exactly what keeps
+    non-key candidates (cookies, CLI-OAuth tokens, ``openrouter``'s
+    cosmetic env vars) plain without a per-candidate opt-out.
     """
     from scripts.sidecar_pkg.identity import (
         FINGERPRINTED_ORIGIN_PROVIDERS,
@@ -2390,8 +2406,11 @@ def fingerprinted_credential_origin(
     if provider_id not in FINGERPRINTED_ORIGIN_PROVIDERS:
         return base_origin
 
-    key_field = _FINGERPRINT_KEY_FIELDS.get(provider_id, "api_key")
-    fingerprint = credential_fingerprint(str(candidate_tokens.get(key_field) or ""))
+    fingerprint: str | None = None
+    for key_field in _FINGERPRINT_KEY_FIELDS.get(provider_id, ("api_key",)):
+        fingerprint = credential_fingerprint(str(candidate_tokens.get(key_field) or ""))
+        if fingerprint:
+            break
     if not fingerprint:
         return base_origin
     return keyed_credential_origin(base_origin, fingerprint)

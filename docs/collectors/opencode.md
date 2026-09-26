@@ -110,11 +110,16 @@ constant, `FINGERPRINTED_ORIGIN_PROVIDERS`, mirrored in
 `scripts/sidecar_pkg/identity.py` (what the sidecar suffixes). Two details
 worth knowing:
 
-- **xai's field is `xai_access`, not `api_key`.** Every xai candidate —
-  OpenCode `auth.json`, Grok CLI `auth.json`, `GROK_OAUTH_TOKEN` — carries
-  the bearer under `xai_access`, so the sidecar fingerprints that field.
-  The server still fingerprints `provider_configs.api_key`, which holds the
-  same pasted value, so both halves agree.
+- **xai's field is `xai_refresh`, falling back to `xai_access`.** No xai
+  candidate carries `api_key` — its rules map every source's bearer to
+  `xai_access` — and that bearer is the part that expires (~7 days, refreshed
+  by the Grok / OpenCode CLI, not Runway), so fingerprinting it would re-key
+  the origin every week. File and CLI candidates ship a refresh token and are
+  keyed by it; `GROK_OAUTH_TOKEN` has none and falls back to its bearer. The
+  server still fingerprints `provider_configs.api_key`, which holds a pasted
+  *access* bearer, so its `provider:xai#<fp>` hint matches the env candidate
+  (and a file candidate only while that paste still equals its `xai_access`)
+  — see [xai.md](xai.md).
 - **Non-key candidates stay plain.** A cookie (`cookie:ollama/session`),
   `kimi_coding`'s own CLI credential file, and `openrouter`'s cosmetic
   `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE` env vars carry no key
@@ -285,7 +290,7 @@ rule now extracts both names.
 | `app/services/collector_manager.py` (`_sync_manual_config_to_cache`) | DB → token-cache bridge for manual UI pastes |
 | `app/api/endpoints/system.py` (`upsert_provider_config_for_account`) | Opencode-specific cookie / API-key parsing |
 | `scripts/sidecar_pkg/identity.py`, `app/services/account_identity.py` | `FINGERPRINTED_ORIGIN_PROVIDERS` + `credential_fingerprint` / keyed-origin helpers (mirrored on both sides) |
-| `scripts/sidecar.py` (`fingerprinted_credential_origin`, `_FINGERPRINT_KEY_FIELDS`) | Sidecar-side key-scoped origin suffixing, incl. xai's `xai_access` field |
+| `scripts/sidecar.py` (`fingerprinted_credential_origin`, `_FINGERPRINT_KEY_FIELDS`) | Sidecar-side key-scoped origin suffixing, incl. xai's refresh-first field order |
 | `app/api/endpoints/fleet.py` (`_fingerprinted_credential_hints`) | Server-side tier-1b hint |
 | `tests/unit/test_opencode_credential_identity.py`, `tests/unit/test_sibling_keyed_origins.py`, `tests/integration/test_fleet_credentials.py` | Identity-source, sibling and isolation coverage |
 
