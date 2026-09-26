@@ -161,6 +161,10 @@ Attribution is structured (issue #103): alongside the human-readable `actor` str
 
 Scope: this is a diagnostic trail with the same trust model as the rest of Runway — useful for "what happened when something surprising changed" — not a legal-grade tamper-evident log. The table is append-only at the application layer; rows can still be deleted by anyone with direct DB access.
 
+## 🐞 Debug Captures
+
+`GET /api/v1/system/debug/raw/{provider_id}` (admin-only, rate-limited) runs a collector live and returns the upstream HTTP exchanges. Known secret headers are masked, and request URLs, response bodies and error messages are passed through `app.core.log_redaction.redact_secrets` / `redact_url`: token-shaped strings (JWTs, bearer values, `sk-…` keys, session cookies), emails, and string values under sensitive keys (`access_token`, `password`, …) become `[REDACTED]`. This is best-effort pattern matching, not a guarantee — treat captures as sensitive.
+
 ## 🔄 Maintenance & Hygiene
 
 ### Credential Rotation

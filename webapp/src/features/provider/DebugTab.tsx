@@ -204,7 +204,7 @@ function RawCapturePane({
       <EmptyState
         icon={Bug}
         title="Capture raw collector output"
-        description="Runs this provider's collector once and records the upstream HTTP exchanges (auth headers masked). Admin only; rate-limited."
+        description="Runs this provider's collector once and records the upstream HTTP exchanges (secrets redacted). Admin only; rate-limited."
         action={
           <Button variant="primary" size="sm" onClick={() => setRequested(true)}>
             Run capture

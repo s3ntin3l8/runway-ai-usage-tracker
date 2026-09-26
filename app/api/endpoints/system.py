@@ -15,6 +15,7 @@ from app import __version__
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.encryption import encryption_service
+from app.core.log_redaction import redact_secrets, redact_url
 from app.core.rate_limit import limiter
 from app.core.security import SESSION_COOKIE, require_admin_key, resolve_auth
 from app.core.utils import scrub_log
@@ -64,6 +65,35 @@ def _mask_headers(headers: dict[str, str]) -> dict[str, str]:
     return safe
 
 
+def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Mask known secret headers, then scrub token shapes in the remaining values."""
+    return {k: str(redact_secrets(v)) for k, v in _mask_headers(headers).items()}
+
+
+def _capture_request_entry(r: httpx.Request) -> dict[str, Any]:
+    return {
+        "method": r.method,
+        "url": redact_url(str(r.url)),
+        "headers": _redact_headers(dict(r.headers)),
+        "timestamp": time.time(),
+    }
+
+
+def _capture_response_entry(r: httpx.Response) -> dict[str, Any]:
+    try:
+        data: Any = r.json()
+    except Exception:
+        data = r.text
+    return {
+        "url": redact_url(str(r.url)),
+        "method": r.request.method,
+        "status": r.status_code,
+        "headers": _redact_headers(dict(r.headers)),
+        "body": redact_secrets(data),
+        "timestamp": time.time(),
+    }
+
+
 # --- Debug/raw per-strategy helpers -----------------------------------------
 
 
@@ -103,32 +133,11 @@ async def _debug_run_one_strategy(
     errs: list[dict[str, Any]] = []
 
     async def _capture_request(r: httpx.Request) -> None:
-        reqs.append(
-            {
-                "method": r.method,
-                "url": str(r.url),
-                "headers": _mask_headers(dict(r.headers)),
-                "timestamp": time.time(),
-            }
-        )
+        reqs.append(_capture_request_entry(r))
 
     async def _capture_response(r: httpx.Response) -> None:
         await r.aread()
-        try:
-            data = r.json()
-        except Exception:
-            data = r.text
-        safe_headers = _mask_headers(dict(r.headers))
-        resps.append(
-            {
-                "url": str(r.url),
-                "method": r.request.method,
-                "status": r.status_code,
-                "headers": safe_headers,
-                "body": data,
-                "timestamp": time.time(),
-            }
-        )
+        resps.append(_capture_response_entry(r))
 
     card_results: list[dict[str, Any]] = []
     async with httpx.AsyncClient(
@@ -141,7 +150,7 @@ async def _debug_run_one_strategy(
         try:
             card_results = await strategy_fn(cl)
         except Exception as exc:
-            errs.append({"type": type(exc).__name__, "message": str(exc)})
+            errs.append({"type": type(exc).__name__, "message": str(redact_secrets(str(exc)))})
 
     is_err = not card_results or any(r.get("remaining") == "ERR" for r in card_results)
 
@@ -446,41 +455,18 @@ async def get_raw_provider_data(
     """
     Run a specific collector and capture raw HTTP responses.
     Useful for troubleshooting provider API changes.
-    Admin-gated: returns live upstream URLs/bodies (auth headers masked).
+    Admin-gated: returns live upstream URLs/bodies (secrets redacted).
     """
     raw_requests: list[dict[str, Any]] = []
     raw_responses: list[dict[str, Any]] = []
     collect_errors: list[dict[str, Any]] = []
 
     async def intercept_request(request: httpx.Request) -> None:
-        raw_requests.append(
-            {
-                "method": request.method,
-                "url": str(request.url),
-                "headers": _mask_headers(dict(request.headers)),
-                "timestamp": time.time(),
-            }
-        )
+        raw_requests.append(_capture_request_entry(request))
 
     async def intercept_response(response: httpx.Response) -> None:
         await response.aread()
-        try:
-            data = response.json()
-        except Exception:
-            data = response.text
-
-        safe_headers = _mask_headers(dict(response.headers))
-
-        raw_responses.append(
-            {
-                "url": str(response.url),
-                "method": response.request.method,
-                "status": response.status_code,
-                "headers": safe_headers,
-                "body": data,
-                "timestamp": time.time(),
-            }
-        )
+        raw_responses.append(_capture_response_entry(response))
 
     try:
         await manager._sync_collectors()
@@ -535,7 +521,9 @@ async def get_raw_provider_data(
                     result = await collector.collect(client)
                     active_strategy_card_count = len(result) if result else 0
                 except Exception as exc:
-                    collect_errors.append({"type": type(exc).__name__, "message": str(exc)})
+                    collect_errors.append(
+                        {"type": type(exc).__name__, "message": str(redact_secrets(str(exc)))}
+                    )
             # Fold legacy collector data into a synthetic strategy entry so
             # the response shape is consistent with the per-strategy path.
             strategy_results["_legacy"] = {
@@ -591,7 +579,7 @@ async def get_raw_provider_data(
         raise
     except Exception as e:
         logger.error(f"Raw debug collection failed for {scrub_log(provider_id)}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(redact_secrets(str(e))))
 
 
 @router.post("/token-health/refresh/{provider}/{account_id}")
