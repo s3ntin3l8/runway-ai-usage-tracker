@@ -32,30 +32,30 @@ class DeepSeekCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
 
     async def _get_api_key(self) -> str | None:
-        """Discover API key: DB (this account, then default) → token cache → env.
+        """Discover API key: this account's DB row → its cache → default/env.
 
-        The dashboard's multi-account wizard stores a pasted ``sk-`` key under
-        a hashed ``credential_hint`` account_id, which the legacy unscoped read
-        deliberately hides (multi-account safety) — so scope the DB read by
-        this collector's account first and only then fall back to the default
-        row.
+        The dashboard wizard stores a pasted ``sk-`` key under a hashed
+        ``credential_hint`` account_id, which the legacy unscoped read hides —
+        so scope the DB read by this collector's account. A non-default
+        collector must not borrow the ``account_id="default"`` row (or the env
+        var): that key belongs to the default card, and adopting it skips this
+        account's own cache entry.
         """
-        for acc in dict.fromkeys([self.account_id, "default"]):
-            if not acc:
-                continue
-            db_key = credential_provider.get_provider_api_key("deepseek", account_id=acc)
+        if self.account_id:
+            db_key = credential_provider.get_provider_api_key(
+                "deepseek", account_id=self.account_id
+            )
             if db_key:
                 self._current_input_source = "config"
                 return db_key
 
-        if self.account_id:
             cache_data = await token_cache.get_with_metadata("deepseek", account_id=self.account_id)
             if cache_data:
                 tokens, metadata = cache_data
                 # The DB→cache mirror writes every key into ``oauth_token``;
                 # only some collectors read the ``api_key`` slot. A cache row
                 # without a usable key field is NOT terminal — fall through so
-                # the env default below still gets its chance.
+                # the default-account env fallback below still gets its chance.
                 cached_key = tokens.get("api_key") or tokens.get("oauth_token")
                 if cached_key:
                     source = metadata.get("source") or "sidecar"
@@ -65,9 +65,18 @@ class DeepSeekCollector(BaseCollector):
                     return cached_key
 
         if self.account_id not in (None, "default"):
-            # The env var belongs to the default account; a dynamic collector
-            # for another account must not claim it (duplicate card risk).
+            # Default-row key and the env var belong to the default account.
+            # A sidecar-spawned collector must not claim either (duplicate card,
+            # and it would never read its own cache entry).
             return None
+
+        # account_id is None or "default". The scoped read above already
+        # covered "default"; None still needs the default row.
+        if self.account_id is None:
+            db_key = credential_provider.get_provider_api_key("deepseek", account_id="default")
+            if db_key:
+                self._current_input_source = "config"
+                return db_key
 
         key = settings.DEEPSEEK_API_KEY or None
         if key:

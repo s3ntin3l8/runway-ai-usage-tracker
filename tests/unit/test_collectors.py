@@ -3845,6 +3845,56 @@ class TestDeepSeekCollector:
         assert result[0]["remaining"] == "$3.00"
         assert result[0]["input_source"] == "server"
 
+    @pytest.mark.asyncio
+    async def test_sidecar_account_reads_own_cache_not_default_row(self, mock_http_client):
+        """A sidecar-spawned account with no ProviderConfig row must not adopt
+        the legacy default-row key — that skips its own cache entry."""
+        seen: list[str | None] = []
+
+        def lookup(_pid: str, *, account_id: str | None = None) -> str | None:
+            seen.append(account_id)
+            return "sk-default-row" if account_id == "default" else None  # pragma: allowlist secret
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = {
+            "is_available": True,
+            "balance_infos": [
+                {
+                    "currency": "USD",
+                    "total_balance": "4.00",
+                    "granted_balance": "0.00",
+                    "topped_up_balance": "4.00",
+                }
+            ],
+        }
+        cache = AsyncMock(return_value=({"api_key": "sk-sidecar"}, {"source": "sidecar"}))
+        request = AsyncMock(return_value=resp)
+        with (
+            patch("app.services.collectors.deepseek.settings") as mock_settings,
+            patch(
+                "app.services.collectors.deepseek.credential_provider.get_provider_api_key",
+                side_effect=lookup,
+            ),
+            patch(
+                "app.services.collectors.deepseek.token_cache.get_with_metadata",
+                cache,
+            ),
+            patch(
+                "app.services.collectors.deepseek.http_request_with_retry",
+                request,
+            ),
+        ):
+            mock_settings.DEEPSEEK_API_KEY = "sk-from-env"  # pragma: allowlist secret
+            collector = DeepSeekCollector(account_id="sidecar-host")
+            result = await collector.collect(mock_http_client)
+
+        cache.assert_awaited()
+        assert "default" not in seen
+        assert request.await_args.kwargs["headers"]["Authorization"] == "Bearer sk-sidecar"
+        assert len(result) == 1
+        assert result[0]["input_source"] == "sidecar"
+
 
 class TestMiniMaxCollector:
     """Test suite for MiniMax collector, against the real /v1/coding_plan/remains
