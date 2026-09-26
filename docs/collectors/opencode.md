@@ -111,9 +111,20 @@ Credentials**:
 | 0 | `OPENCODE_ACCOUNT_LABEL` | Host-local, explicit. Local evidence outranks every server-side hint — the same precedence `_opencode_account_email` applies to events. |
 | 1 | Keyed origin tag | Operator tag written against this exact credential (`…#<fingerprint>`). |
 | 1b | Fingerprint hint | `provider:opencode#<fingerprint>` → account, when the same key is in `provider_configs`. Not a guess, so it ships even in multi-host deployments. |
-| 2 | Legacy plain tag | `path:…` tag written by an older sidecar, before origins were fingerprinted. |
+| 2 | Legacy plain tag | `path:…` tag written by an older sidecar, before origins were fingerprinted. **Compat only — see below.** |
 | 3 | Provider-wide auto-hint | `provider:opencode` → account, **gated** (below). |
 | — | Untagged | Nothing resolved; the credential is not shipped. |
+
+Tier 2 exists so an upgrade does not strand operators who already tagged a
+credential, but it is *not* isolation. A tag on the plain `path:…` origin
+carries no fingerprint, so it still resolves for any host whose base path
+matches (same username, different machine) and it still matches after the
+key under it has been rotated — exactly the silent cross-inheritance
+failure keyed origins were introduced to close. Treat it as a debt to
+clear: tag the entry's keyed origin (`…#<fingerprint>`) in **Fleet →
+Untagged Credentials**, then delete the legacy row from **Fleet →
+Credential mappings**. Until then the credential inherits whatever
+account the legacy tag names.
 
 ### The tier-3 gate
 
