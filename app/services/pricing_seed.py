@@ -723,6 +723,166 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 3.75,
         "notes": "Antigravity Claude Sonnet 4.x",
     },
+    # ── xAI (Grok) ─────────────────────────────────────────────────────────────
+    # Rates per https://docs.x.ai/developers/pricing (identical table at
+    # /developers/models), checked 2026-09-26. USD per 1M tokens.
+    # - cache_create_per_mtok = input rate: xAI publishes no cache-write
+    #   column, and there is no write premium — a cache write is an ordinary
+    #   prompt token billed at the input rate (unlike Anthropic's 1.25x
+    #   writes). The xai extractor subtracts cache-create tokens from
+    #   billable input (event_extractors/xai.py), so leaving this at 0.0
+    #   would make those tokens free outright (review note on #350).
+    #   Cached *reads* still bill at the cheaper cache_read rate below.
+    # - effective_from is backdated to 2025-07-01 (grok-4 launch era) so every
+    #   historical xai event finds a row — cost_calculator only applies rows
+    #   with effective_from <= ts.date(), and no historical price series exists
+    #   (same backdating rationale as the chatgpt/gemini rows above).
+    # - The >=200k-prompt long-context tier (2x for all tokens), Batch API -20%,
+    #   Priority Processing 2x, and the US regional endpoint 1.1x are NOT
+    #   modeled — provider_pricing has no tier/multiplier column (same
+    #   limitation as Gemini's >200K pricing). Long prompts undercount.
+    # - Seed is a fallback only: EventIngestor prefers sidecar-reported
+    #   cost_usd (costUsdTicks) over the computed breakdown. Do not run
+    #   scripts/recost_events.py --provider xai — Phase B would overwrite
+    #   CLI-reported costs.
+    # Documented ids (current pricing page):
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.7",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 6.00,
+        "cache_read_per_mtok": 0.50,
+        "cache_create_per_mtok": 2.00,
+        "notes": "Grok 4.7, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.6",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 6.00,
+        "cache_read_per_mtok": 0.50,
+        "cache_create_per_mtok": 2.00,
+        "notes": "Grok 4.6, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.5",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 6.00,
+        "cache_read_per_mtok": 0.30,
+        "cache_create_per_mtok": 2.00,
+        "notes": "Grok 4.5, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.3",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 1.25,
+        "notes": "Grok 4.3, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.20-0309-reasoning",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 1.25,
+        "notes": "Grok 4.20 0309 reasoning, <200k prompt tier (not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.20-0309-non-reasoning",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 1.25,
+        "notes": "Grok 4.20 0309 non-reasoning, <200k prompt tier (not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.20-multi-agent-0309",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 1.25,
+        "notes": "Grok 4.20 multi-agent 0309, <200k prompt tier (not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-build-0.1",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 2.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 1.00,
+        "notes": "Grok Build 0.1, <200k prompt tier (256k ctx, not modeled)",
+    },
+    # Observed ids not on the current pricing page.
+    {
+        "provider_id": "xai",
+        "model_id": "grok-build",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 2.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 1.00,
+        "notes": "Grok CLI signals.json primaryModelId; rates inherited from "
+        "grok-build-0.1 — not separately published",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 3.00,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.75,
+        "cache_create_per_mtok": 3.00,
+        "notes": "Grok 4 (docs.x.ai/docs/models/grok-4-0709, delisted from the "
+        "current pricing page)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4-fast",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 0.20,
+        "output_per_mtok": 0.50,
+        "cache_read_per_mtok": 0.05,
+        "cache_create_per_mtok": 0.20,
+        "notes": "Grok 4 Fast (official model page, delisted from the current pricing page)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-code-fast-1",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 0.20,
+        "output_per_mtok": 1.50,
+        "cache_read_per_mtok": 0.02,
+        "cache_create_per_mtok": 0.20,
+        "notes": "grok-code-fast-1 — medium confidence, multi-source "
+        "(metronome.com/pricing-index/xai-api, aicomp.prygn.com); not on the "
+        "current pricing page",
+    },
+    # Deliberately given no row — no official current rate found, and a proxy
+    # rate was rejected in favour of leaving them unseeded (issue #346):
+    # - grok-4.1 still bills $0: the version-suffix strip reduces it to the
+    #   family "grok", which has no row, and the segment trim can never reach
+    #   grok-4 because its dotted minor version isn't a "-" segment.
+    # - grok-4-mini does NOT bill $0: segment trim reduces it to grok-4 and
+    #   bills at that family rate, logging the calculator's "no pricing row"
+    #   warning. Accepted deliberately rather than inventing a mini rate —
+    #   pinned by test_xai_grok4_mini_bills_at_grok4_family_rate. The same
+    #   fallback applies to any other unseeded grok-4* slug (e.g. grok-4.1-fast,
+    #   grok-4.20-beta), which is the calculator's designed trade-off: land on
+    #   a sibling rate with a warning instead of silently billing $0.
     # GPT-OSS 120B: no row — cost defaults to 0.
 ]
 

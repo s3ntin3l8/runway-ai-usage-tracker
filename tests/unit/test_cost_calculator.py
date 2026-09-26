@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
@@ -851,3 +852,109 @@ def test_antigravity_scoped_separately_from_gemini():
     )
     # Would be 0 if the lookup accidentally crossed into gemini's namespace.
     assert cost_ag == 2.00
+
+
+# ── xAI (Grok) ───────────────────────────────────────────────────────────────
+
+
+def test_xai_grok43_event_prices_from_seed():
+    """1M input + 1M output on grok-4.3 = $1.25 + $2.50 = $3.75."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.75
+
+
+def test_xai_grok43_cost_includes_cache_read():
+    """cache_read bills at the discounted $0.20/MT rate."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.75 + 0.20
+
+
+def test_xai_grok43_cache_create_bills_at_input_rate():
+    """cache-create tokens are subtracted from billable input by the xai
+    extractor, so they must bill at the input rate — not 0.0 (review note
+    on #350: xAI has no cache-write column, but neither is it free).
+    """
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.75 + 1.25
+
+
+def test_xai_unseeded_grok41_stays_zero():
+    """grok-4.1 has no row and no reachable fallback — cost stays 0 (issue #346).
+
+    The version-suffix strip reduces "grok-4.1" to the family "grok", which has
+    no row, and the segment trim can't reach grok-4 (the dotted minor version
+    isn't "-"-separated). Safe only because of that shape — see the grok-4-mini
+    test below for the id shape that does fall through.
+    """
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.1",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 0.0
+
+
+def test_xai_grok4_mini_bills_at_grok4_family_rate(caplog):
+    """grok-4-mini has no row — segment trim lands on grok-4 and bills there.
+
+    Deliberate: no official mini rate exists, so rather than invent one we
+    accept the calculator's designed sibling-fallback (with its warning) over
+    silently billing $0. If a real mini rate is ever published, seed it and
+    update this test.
+    """
+    s = _seeded_session()
+    with caplog.at_level(logging.WARNING, logger="app.services.cost_calculator"):
+        cost = compute_event_cost(
+            s,
+            provider_id="xai",
+            model_id="grok-4-mini",
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=0,
+            tokens_cache_create=0,
+            tokens_reasoning=0,
+        )
+    # grok-4 family rate: $3.00 + $15.00.
+    assert cost == 18.00
+    assert any("billing at the 'grok-4' family rate" in record.message for record in caplog.records)
