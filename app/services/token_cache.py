@@ -27,6 +27,28 @@ _OAUTH_CREDENTIAL_KEYS = {
     "client_id",
 }
 
+# Origins the user typed into the dashboard. They outrank every other origin
+# (sidecar ids, "server") when a later push re-stamps `source`: a sidecar
+# pushing *any* credential for the same account must not reclassify an
+# explicit paste, or collectors read `input_source=sidecar` for the pasted
+# key and a 401 on it stops being treated as authoritative (PR #352 review).
+_EXPLICIT_SOURCES = frozenset({"config", "manual_config"})
+
+
+def _resolve_source(incoming: str | None, existing: str | None) -> str | None:
+    """Pick the winning origin for an entry being (re)stored.
+
+    Falsy incoming keeps the previous origin; an explicit dashboard origin is
+    never downgraded by a sidecar/server push; otherwise the later push wins.
+    """
+    if not incoming:
+        return existing
+    if not existing:
+        return incoming
+    if existing in _EXPLICIT_SOURCES and incoming not in _EXPLICIT_SOURCES:
+        return existing
+    return incoming
+
 
 class TokenCache:
     """
@@ -137,7 +159,7 @@ class TokenCache:
                 if account_label and not kept_meta.get("account_label"):
                     kept_meta["account_label"] = account_label
                 if source:
-                    kept_meta["source"] = source
+                    kept_meta["source"] = _resolve_source(source, kept_meta.get("source"))
                 self._cache[provider][account_id] = (kept_tokens, kept_meta, time.time())
                 logger.info(
                     "Kept fresher cached token for provider %s (ignored staler push)",
@@ -149,14 +171,15 @@ class TokenCache:
             # server-side refresh that doesn't carry `source` must not erase the
             # sidecar origin recorded by a previous push. A truthy incoming value
             # still wins (fresher push from another sidecar, a `source="config"`
-            # store, etc.).
+            # store, etc.), except that an explicit dashboard origin is never
+            # downgraded by a sidecar/server push (`_resolve_source`).
             prev_meta = existing[1] if existing is not None else {}
             stored_tokens = {**existing[0], **tokens} if existing is not None else tokens
             for key in tokens:
                 self._mark_token_seen(provider, account_id, key)
             metadata = {
                 "account_label": account_label or prev_meta.get("account_label"),
-                "source": source or prev_meta.get("source"),
+                "source": _resolve_source(source, prev_meta.get("source")),
             }
             self._cache[provider][account_id] = (stored_tokens, metadata, time.time())
 

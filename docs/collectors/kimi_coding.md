@@ -26,7 +26,12 @@ balance — those are separate providers (see *Related Files*).
 ## Authentication
 
 Priority within the `api` strategy: **DB API key (UI) → `KIMI_CODE_API_KEY`
-env → Kimi Code CLI access token** (read-only, from
+env → token-cache `api_key` slot → Kimi Code CLI access token**. The cache
+slot holds the same key two ways: mirrored from the dashboard paste (the
+provider PUT and the startup/reload sync both write it — this is what makes
+an account-keyed row reachable, since the DB read above only ever resolves
+the `default` row) and discovered by the sidecar from opencode's
+`auth.json` (see the table below). The CLI token is read-only, from
 `~/.kimi-code/credentials/kimi-code*.json` — kimi-cli writes a per-install
 `kimi-code-env-<hash>.json`; skipped when `expires_at` is stale
 — re-login with the CLI or set an API key). The `web` strategy uses the
