@@ -390,3 +390,55 @@ def test_seed_antigravity_no_gpt_oss_row():
         )
     ).first()
     assert row is None
+
+
+# ── xAI (Grok) pricing rows ──────────────────────────────────────────────────
+
+
+def test_seed_xai_grok43_rates():
+    """Per https://docs.x.ai/developers/pricing (<200k prompt tier)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "xai",
+            ProviderPricing.model_id == "grok-4.3",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.25
+    assert row.output_per_mtok == 2.50
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 0.0
+    assert row.effective_from.isoformat() == "2025-07-01"
+
+
+def test_seed_xai_grok_build_rates():
+    """Observed grok CLI signals.json id inherits grok-build-0.1 rates."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "xai",
+            ProviderPricing.model_id == "grok-build",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.00
+    assert row.output_per_mtok == 2.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_xai_unpriced_ids_have_no_row():
+    """grok-4.1 / grok-4-mini have no official rate — intentionally unpriced."""
+    s = _make_session()
+    seed_pricing_table(s)
+    for model_id in ("grok-4.1", "grok-4-mini"):
+        row = s.exec(
+            select(ProviderPricing).where(
+                ProviderPricing.provider_id == "xai",
+                ProviderPricing.model_id == model_id,
+            )
+        ).first()
+        assert row is None, f"{model_id} should have no pricing row"

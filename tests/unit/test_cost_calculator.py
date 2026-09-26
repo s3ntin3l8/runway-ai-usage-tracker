@@ -851,3 +851,57 @@ def test_antigravity_scoped_separately_from_gemini():
     )
     # Would be 0 if the lookup accidentally crossed into gemini's namespace.
     assert cost_ag == 2.00
+
+
+# ── xAI (Grok) ───────────────────────────────────────────────────────────────
+
+
+def test_xai_grok43_event_prices_from_seed():
+    """1M input + 1M output on grok-4.3 = $1.25 + $2.50 = $3.75."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.75
+
+
+def test_xai_grok43_cost_includes_cache_read():
+    """cache_read at $0.20/MT; cache_create has no published xAI fee."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.3",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=1_000_000,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.75 + 0.20
+
+
+def test_xai_unseeded_grok41_stays_zero():
+    """grok-4.1 has no row and no family fallback — cost stays 0 (issue #346)."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="xai",
+        model_id="grok-4.1",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 0.0

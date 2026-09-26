@@ -723,6 +723,152 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 3.75,
         "notes": "Antigravity Claude Sonnet 4.x",
     },
+    # ── xAI (Grok) ─────────────────────────────────────────────────────────────
+    # Rates per https://docs.x.ai/developers/pricing (identical table at
+    # /developers/models), checked 2026-09-26. USD per 1M tokens.
+    # - cache_create_per_mtok = 0.0: xAI publishes no cache-write fee; cached
+    #   prompt tokens bill at the cached-input rate.
+    # - effective_from is backdated to 2025-07-01 (grok-4 launch era) so every
+    #   historical xai event finds a row — cost_calculator only applies rows
+    #   with effective_from <= ts.date(), and no historical price series exists
+    #   (same backdating rationale as the chatgpt/gemini rows above).
+    # - The >=200k-prompt long-context tier (2x for all tokens), Batch API -20%,
+    #   Priority Processing 2x, and the US regional endpoint 1.1x are NOT
+    #   modeled — provider_pricing has no tier/multiplier column (same
+    #   limitation as Gemini's >200K pricing). Long prompts undercount.
+    # - Seed is a fallback only: EventIngestor prefers sidecar-reported
+    #   cost_usd (costUsdTicks) over the computed breakdown. Do not run
+    #   scripts/recost_events.py --provider xai — Phase B would overwrite
+    #   CLI-reported costs.
+    # Documented ids (current pricing page):
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.7",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 6.00,
+        "cache_read_per_mtok": 0.50,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.7, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.6",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 6.00,
+        "cache_read_per_mtok": 0.50,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.6, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.5",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 6.00,
+        "cache_read_per_mtok": 0.30,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.5, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.3",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.3, <200k prompt tier (>=200k bills 2x, not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.20-0309-reasoning",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.20 0309 reasoning, <200k prompt tier (not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.20-0309-non-reasoning",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.20 0309 non-reasoning, <200k prompt tier (not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4.20-multi-agent-0309",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4.20 multi-agent 0309, <200k prompt tier (not modeled)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-build-0.1",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 2.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok Build 0.1, <200k prompt tier (256k ctx, not modeled)",
+    },
+    # Observed ids not on the current pricing page.
+    {
+        "provider_id": "xai",
+        "model_id": "grok-build",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 2.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok CLI signals.json primaryModelId; rates inherited from "
+        "grok-build-0.1 — not separately published",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 3.00,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.75,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4 (docs.x.ai/docs/models/grok-4-0709, delisted from the "
+        "current pricing page)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-4-fast",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 0.20,
+        "output_per_mtok": 0.50,
+        "cache_read_per_mtok": 0.05,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Grok 4 Fast (official model page, delisted from the current pricing page)",
+    },
+    {
+        "provider_id": "xai",
+        "model_id": "grok-code-fast-1",
+        "effective_from": "2025-07-01",
+        "input_per_mtok": 0.20,
+        "output_per_mtok": 1.50,
+        "cache_read_per_mtok": 0.02,
+        "cache_create_per_mtok": 0.0,
+        "notes": "grok-code-fast-1 — medium confidence, multi-source "
+        "(metronome.com/pricing-index/xai-api, aicomp.prygn.com); not on the "
+        "current pricing page",
+    },
+    # Deliberately unseeded (stay $0): grok-4.1, grok-4-mini — seen only in
+    # test fixtures, no official current rate found; a proxy rate was rejected
+    # in favour of leaving them unpriced (issue #346).
     # GPT-OSS 120B: no row — cost defaults to 0.
 ]
 
