@@ -276,7 +276,14 @@ class TestIngestEndpoint:
                     "pace": "Token",
                     "detail": "[Token Extracted] [Sidecar]",
                     "data_source": "token_extracted",
-                    "metadata": {"oauth_token": oauth_token, "provider_id": "anthropic"},
+                    "metadata": {
+                        "oauth_token": oauth_token,
+                        "provider_id": "anthropic",
+                        "xai_access": "xai-access-test",  # pragma: allowlist secret
+                        "xai_refresh": "xai-refresh-test",  # pragma: allowlist secret
+                        "cli_access_token": "cli-access-test",  # pragma: allowlist secret
+                        "cli_expires_at": 1_800_000_000,
+                    },
                 }
             ],
         }
@@ -296,6 +303,10 @@ class TestIngestEndpoint:
                 mock_cache.store.assert_called_once()
                 stored_tokens = mock_cache.store.call_args[0][1]
                 assert stored_tokens["oauth_token"] == oauth_token
+                assert stored_tokens["xai_access"] == "xai-access-test"
+                assert stored_tokens["xai_refresh"] == "xai-refresh-test"
+                assert stored_tokens["cli_access_token"] == "cli-access-test"
+                assert stored_tokens["cli_expires_at"] == 1_800_000_000
 
         assert response.status_code == 200
 

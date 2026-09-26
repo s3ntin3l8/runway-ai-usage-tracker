@@ -168,11 +168,9 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     collector_instance = cls(account_id=durable_aid, account_label=db_label)
-                    if isinstance(collector_instance, (OpenCodeCollector, OllamaCollector)):
-                        # The default collector can carry a durable resolved
-                        # identity for its cards while its saved credentials
-                        # remain scoped to the default ProviderConfig row.
-                        collector_instance.credential_account_id = "default"
+                    # The display identity may be learned from prior usage,
+                    # while this collector still reads the default credential.
+                    collector_instance.credential_account_id = "default"
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)
@@ -203,10 +201,14 @@ class CollectorManager:
             for p_id, acc_id, acc_name in active_accounts:
                 if p_id in self.collector_registry:
                     default_key = f"{p_id}:default"
-                    if default_key in self.smart_collectors:
-                        logger.debug(
-                            f"Skipping dynamic collector for {p_id}, default already running"
-                        )
+                    default_collector = self.smart_collectors.get(default_key)
+                    # A default collector can carry a durable display identity.
+                    # Skip only the cache entry representing that same account;
+                    # other named accounts must run alongside it.
+                    if acc_id == "default" or (
+                        default_collector is not None
+                        and default_collector.collector.account_id == acc_id
+                    ):
                         continue
                     cls, name, ttl = self.collector_registry[p_id]
 
@@ -308,7 +310,17 @@ class CollectorManager:
             else:
                 all_tokens["oauth_token"] = token_val
                 # These collectors read the credential from the api_key slot.
-                if r.provider_id in ("opencode", "ollama", "minimax", "kimi_coding", "deepseek"):
+                if r.provider_id in (
+                    "opencode",
+                    "ollama",
+                    "minimax",
+                    "kimi_coding",
+                    "deepseek",
+                    "openrouter",
+                    "zai",
+                    "kimi_api",
+                    "kimi_k2",
+                ):
                     all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)

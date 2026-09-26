@@ -106,6 +106,27 @@ class TestCollectorManagerInitialization:
         }
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider_id", ["openrouter", "zai", "kimi_api", "kimi_k2"])
+    async def test_manual_api_provider_keys_are_mirrored_for_collectors(self, manager, provider_id):
+        row = MagicMock(
+            provider_id=provider_id,
+            api_key="sk-test-key",  # pragma: allowlist secret
+            session_cookie=None,
+            oai_sc_cookie=None,
+            account_id="alice@example.com",
+        )
+        with patch(
+            "app.services.collector_manager.token_cache.store", new_callable=AsyncMock
+        ) as store:
+            await manager._sync_manual_config_to_cache(row)
+
+        assert store.call_args.args[1] == {
+            "oauth_token": "sk-test-key",  # pragma: allowlist secret
+            "api_key": "sk-test-key",  # pragma: allowlist secret
+        }
+        assert store.call_args.kwargs["account_id"] == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_default(self, manager):
         """Test that default collectors are spawned."""
         # Clean state
@@ -116,6 +137,19 @@ class TestCollectorManagerInitialization:
         # Check that some default collectors are present
         assert "anthropic:default" in manager.smart_collectors
         assert "gemini:default" in manager.smart_collectors
+
+    @pytest.mark.asyncio
+    async def test_named_accounts_run_alongside_default_collector(self, manager):
+        manager.smart_collectors = {}
+        with patch(
+            "app.services.collector_manager.token_cache.get_all_active_accounts",
+            new_callable=AsyncMock,
+            return_value=[("anthropic", "alice@example.com", "Alice")],
+        ):
+            await manager._sync_collectors(force=True)
+
+        assert "anthropic:default" in manager.smart_collectors
+        assert "anthropic:alice@example.com" in manager.smart_collectors
 
     @pytest.mark.asyncio
     async def test_sync_collectors_prunes_stale_dynamic_collectors(self, manager):

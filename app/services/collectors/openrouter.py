@@ -30,24 +30,24 @@ class OpenRouterCollector(BaseCollector):
 
     async def _get_api_key(self) -> str | None:
         """Discover API key: DB (UI-set) → token cache → env var."""
-        db_key = credential_provider.get_provider_api_key("openrouter")
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        db_key = credential_provider.get_provider_api_key("openrouter", account_id=account_id)
         if db_key:
             self._current_input_source = "config"
             return db_key
 
-        if self.account_id:
-            cache_data = await token_cache.get_with_metadata(
-                "openrouter", account_id=self.account_id
+        cache_data = await token_cache.get_with_metadata("openrouter", account_id=account_id)
+        if cache_data:
+            tokens, metadata = cache_data
+            source = metadata.get("source") or "sidecar"
+            self._current_input_source = (
+                "config" if source in ("config", "manual_config") else "sidecar"
             )
-            if cache_data:
-                tokens, metadata = cache_data
-                source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "config" if source in ("config", "manual_config") else "sidecar"
-                )
-                return tokens.get("api_key")
+            cached_key = tokens.get("api_key") or tokens.get("oauth_token")
+            if cached_key:
+                return cached_key
 
-        key = settings.OPENROUTER_API_KEY or None
+        key = (settings.OPENROUTER_API_KEY or None) if account_id == "default" else None
         if key:
             self._current_input_source = "server"
         return key

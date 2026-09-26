@@ -47,23 +47,27 @@ class KimiApiCollector(BaseCollector):
 
     async def _get_current_key(self) -> str | None:
         """Async key retrieval with cache metadata support."""
-        key = credential_provider.get_provider_api_key("kimi_api") or settings.KIMI_API_KEY or None
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        db_key = credential_provider.get_provider_api_key("kimi_api", account_id=account_id)
+        if db_key:
+            self._current_input_source = "config"
+            return db_key
+        from app.services.token_cache import token_cache
+
+        cache_data = await token_cache.get_with_metadata("kimi_api", account_id=account_id)
+        if cache_data:
+            tokens, metadata = cache_data
+            source = metadata.get("source") or "sidecar"
+            self._current_input_source = (
+                "config" if source in ("config", "manual_config") else "sidecar"
+            )
+            cached_key = tokens.get("api_key") or tokens.get("oauth_token")
+            if cached_key:
+                return cached_key
+        key = (settings.KIMI_API_KEY or None) if account_id == "default" else None
         if key:
             self._current_input_source = "server"
-            return key
-
-        if self.account_id:
-            from app.services.token_cache import token_cache
-
-            cache_data = await token_cache.get_with_metadata("kimi_api", account_id=self.account_id)
-            if cache_data:
-                tokens, metadata = cache_data
-                source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "config" if source in ("config", "manual_config") else "sidecar"
-                )
-                return tokens.get("api_key")
-        return None
+        return key
 
     async def is_configured(self) -> bool:
         """Check if Kimi API key is present."""

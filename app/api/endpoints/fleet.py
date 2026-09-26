@@ -136,6 +136,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                                 "api_key",
                                 "id_token",
                                 "expiry_date",
+                                "xai_access",
+                                "xai_refresh",
+                                "cli_access_token",
+                                "cli_expires_at",
                             )
                             or key.startswith("cookie_")
                         ):

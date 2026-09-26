@@ -41,15 +41,18 @@ class DeepSeekCollector(BaseCollector):
         var): that key belongs to the default card, and adopting it skips this
         account's own cache entry.
         """
-        if self.account_id:
+        credential_account_id = getattr(self, "credential_account_id", None) or self.account_id
+        if credential_account_id:
             db_key = credential_provider.get_provider_api_key(
-                "deepseek", account_id=self.account_id
+                "deepseek", account_id=credential_account_id
             )
             if db_key:
                 self._current_input_source = "config"
                 return db_key
 
-            cache_data = await token_cache.get_with_metadata("deepseek", account_id=self.account_id)
+            cache_data = await token_cache.get_with_metadata(
+                "deepseek", account_id=credential_account_id
+            )
             if cache_data:
                 tokens, metadata = cache_data
                 # The DB→cache mirror writes every key into ``oauth_token``;
@@ -64,7 +67,7 @@ class DeepSeekCollector(BaseCollector):
                     )
                     return cached_key
 
-        if self.account_id not in (None, "default"):
+        if credential_account_id not in (None, "default"):
             # Default-row key and the env var belong to the default account.
             # A sidecar-spawned collector must not claim either (duplicate card,
             # and it would never read its own cache entry).
@@ -72,7 +75,7 @@ class DeepSeekCollector(BaseCollector):
 
         # account_id is None or "default". The scoped read above already
         # covered "default"; None still needs the default row.
-        if self.account_id is None:
+        if credential_account_id is None:
             db_key = credential_provider.get_provider_api_key("deepseek", account_id="default")
             if db_key:
                 self._current_input_source = "config"

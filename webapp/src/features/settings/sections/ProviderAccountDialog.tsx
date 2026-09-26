@@ -1,14 +1,6 @@
-// Per-account edit dialog. Mirrors the legacy single-account form's fields
-// (api_key, session_cookie, account_label, poll interval, strategies with
-// drag-to-reorder) but is keyed by `(provider_id, account_id)` instead of
-// the legacy `account_id="default"` shortcut. Lives behind the v2 settings UI
-// shell; opened from `ProviderDetailDialog` when the user clicks "Edit" on
-// an account row.
-//
-// The Clear-credential button (#273 piggyback) and the wizard's preview
-// integration (#287) land in #287 — this PR ships a clean per-account form
-// that consumes the new `PUT /api/v1/system/provider-config/{provider_id}/{account_id}`
-// endpoint.
+// Per-account edit form for credentials, labels, poll intervals, and
+// collection strategies. It is keyed by `(provider_id, account_id)` and
+// opened from `ProviderDetailDialog` for the selected account.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -145,7 +137,7 @@ function ProviderAccountForm({
     mutationFn: () => {
       const body: ProviderConfigUpdate = {
         enabled,
-        // Empty string means "clear" server-side (mirrors the legacy form's
+        // Empty string means "clear" server-side (mirrors the provider account form's
         // behaviour); trimmed value otherwise.
         account_label: label.trim(),
         poll_interval_seconds: pollInterval.trim() === '' ? null : Number(pollInterval),

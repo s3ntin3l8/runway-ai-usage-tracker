@@ -76,7 +76,7 @@ class XaiCollector(BaseCollector):
 
     async def is_configured(self) -> bool:
         """xAI needs an access bearer; refresh-only credentials aren't consumed here."""
-        acc = self.account_id or "default"
+        acc = getattr(self, "credential_account_id", None) or self.account_id or "default"
         return bool(await token_cache.get_token("xai", "xai_access", account_id=acc))
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -87,7 +87,7 @@ class XaiCollector(BaseCollector):
 
     async def _get_xai_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Bearer OAuth path: ``/v1/billing`` + optional ``/v1/settings``."""
-        account_id = self.account_id or "default"
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         access = await token_cache.get_token("xai", "xai_access", account_id=account_id)
         cache_data = await token_cache.get_with_metadata("xai", account_id=account_id)
         if cache_data and cache_data[0].get("xai_access") == access:

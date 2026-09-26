@@ -1,8 +1,6 @@
 // Tests for the per-account edit dialog introduced in #286. The dialog opens
 // from `ProviderDetailDialog`'s "Edit" ⋮ menu item and lets the user update
 // the account_label / poll interval / per-strategy enable toggles / credentials
-// for one `(provider_id, account_id)` row. Lives behind the v2 settings UI
-// shell (`?providers=v2`); rolls back to `LegacyEditDialog` when the flag is
 // absent. Clear-button tests for the credential inputs (#287) live in
 // `ProviderAccountDialog.test.tsx` on the wizard branch.
 
