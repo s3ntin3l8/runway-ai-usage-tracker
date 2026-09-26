@@ -901,10 +901,11 @@ def test_fingerprint_hint_ships_for_stored_xai_key(client: TestClient, session: 
     *origin* prefers the refresh token when the candidate has one (the
     access JWT rotates weekly). The hint built here is server-side and
     hashes whatever was pasted — an access bearer — so it lines up with the
-    ``GROK_OAUTH_TOKEN`` candidate and with a file candidate only while that
-    paste still equals its ``xai_access``. What matters for #349 is that a
-    stored xai row answers under ``provider:xai#<fp>`` like every other
-    keyed provider, instead of dropping out of the hint map."""
+    ``GROK_OAUTH_TOKEN`` candidate and never with a refresh-keyed file or
+    CLI origin, whose fingerprint on the card is the refresh token. What
+    matters for #349 is that a stored xai row answers under
+    ``provider:xai#<fp>`` like every other keyed provider, instead of
+    dropping out of the hint map."""
     _add_provider_config(
         session,
         provider_id="xai",

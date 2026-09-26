@@ -117,9 +117,9 @@ worth knowing:
   the origin every week. File and CLI candidates ship a refresh token and are
   keyed by it; `GROK_OAUTH_TOKEN` has none and falls back to its bearer. The
   server still fingerprints `provider_configs.api_key`, which holds a pasted
-  *access* bearer, so its `provider:xai#<fp>` hint matches the env candidate
-  (and a file candidate only while that paste still equals its `xai_access`)
-  — see [xai.md](xai.md).
+  *access* bearer, so its `provider:xai#<fp>` hint answers for the env
+  candidate and never for a refresh-keyed file/CLI origin — see
+  [xai.md](xai.md).
 - **Non-key candidates stay plain.** A cookie (`cookie:ollama/session`),
   `kimi_coding`'s own CLI credential file, and `openrouter`'s cosmetic
   `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE` env vars carry no key

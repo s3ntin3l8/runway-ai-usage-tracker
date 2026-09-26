@@ -28,9 +28,9 @@ is keyed by its bearer. See *The sibling providers (#349)* in
 
 That split bounds the server-side hint: `provider:xai#<fingerprint>` is
 built from the pasted `provider_configs.api_key`, which is an *access*
-bearer, so it answers for the env candidate (and for a file candidate only
-while the paste still equals its `xai_access`) — never for a refresh-keyed
-origin. Tag a file- or CLI-sourced card against its keyed origin in **Fleet
+bearer, so it answers for the env candidate — never for a refresh-keyed
+file or CLI origin, whose fingerprint on the card is the refresh token.
+Tag a file- or CLI-sourced card against its keyed origin in **Fleet
 → Untagged Credentials** instead; that tag then survives every access
 refresh and is stranded only when the refresh token itself rotates.
 
