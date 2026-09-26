@@ -392,7 +392,9 @@ async def test_truthy_source_still_overrides_prior_origin(cache):
     """A store that explicitly carries a `source` must override the previous origin.
 
     Ensures the fall-back only applies when the incoming `source` is falsy —
-    a fresher sidecar push or a `source="config"` store should still win.
+    an upgrade to `source="config"` (or a push from another sidecar) must
+    still win. The one asymmetry: a non-explicit push cannot *downgrade* an
+    explicit dashboard origin (see the next test).
     """
     await cache.store(
         "claude",
@@ -409,3 +411,60 @@ async def test_truthy_source_still_overrides_prior_origin(cache):
 
     stats = await cache.get_all_stats()
     assert stats["claude"]["user@example.com"]["source"] == "config"
+
+
+@pytest.mark.asyncio
+async def test_sidecar_push_does_not_downgrade_config_origin(cache):
+    """A dashboard paste keeps its `config` origin after a sidecar push.
+
+    Entry-level `source` is what collectors turn into `input_source`: if a
+    sidecar pushing an *independent* credential family for the same account
+    re-stamped it, the pasted key would read `input_source=sidecar` and a 401
+    on it would stop being treated as authoritative (PR #352 review). The
+    pasted `api_key` itself must survive too.
+    """
+    await cache.store(
+        "kimi_coding",
+        {"api_key": "sk-pasted", "oauth_token": "sk-pasted"},  # pragma: allowlist secret
+        account_id="user@example.com",
+        source="config",
+    )
+    await cache.store(
+        "kimi_coding",
+        {"cli_access_token": "cli-token"},
+        account_id="user@example.com",
+        source="sidecar-laptop",
+    )
+
+    tokens = await cache.get("kimi_coding", "user@example.com")
+    assert tokens["api_key"] == "sk-pasted"  # pragma: allowlist secret
+    assert tokens["cli_access_token"] == "cli-token"
+    stats = await cache.get_all_stats()
+    assert stats["kimi_coding"]["user@example.com"]["source"] == "config"
+
+
+@pytest.mark.asyncio
+async def test_staler_sidecar_push_keeps_config_origin(cache):
+    """The staler-push path applies the same precedence as the merge path.
+
+    An expired sidecar token neither clobbers fresher tokens nor downgrades
+    the dashboard origin recorded for the account.
+    """
+    now_ms = int(time.time() * 1000)
+    await cache.store(
+        "gemini",
+        {"oauth_token": "fresh", "expiry_date": str(now_ms + 3_600_000)},
+        account_id="user@example.com",
+        source="config",
+    )
+    await cache.store(
+        "gemini",
+        {"oauth_token": "stale", "expiry_date": str(now_ms - 3_600_000)},
+        account_id="user@example.com",
+        source="sidecar-laptop",
+    )
+
+    tokens = await cache.get("gemini", "user@example.com")
+    assert tokens["oauth_token"] == "fresh"
+    stats = await cache.get_all_stats()
+    assert stats["gemini"]["user@example.com"]["source"] == "config"

@@ -392,11 +392,11 @@ def test_clear_api_key_wipes_encrypted_blob(client: TestClient):
     assert default_row["api_key_set"] is False
 
 
-def _kimi_cache_tokens(account_id: str) -> dict:
-    """Tokens cached for a kimi_coding account (empty dict when absent)."""
+def _cache_tokens(provider: str, account_id: str) -> dict:
+    """Tokens cached for a provider/account (empty dict when absent)."""
     from app.services.token_cache import token_cache
 
-    entry = token_cache._cache.get("kimi_coding", {}).get(account_id)
+    entry = token_cache._cache.get(provider, {}).get(account_id)
     return entry[0] if entry else {}
 
 
@@ -412,7 +412,7 @@ def test_kimi_api_key_legacy_put_mirrors_to_token_cache(client: TestClient):
     )
     assert r.status_code == 200, r.text
 
-    tokens = _kimi_cache_tokens("default")
+    tokens = _cache_tokens("kimi_coding", "default")
     assert tokens["api_key"] == "sk-kimi-test-123"  # pragma: allowlist secret
     assert tokens["oauth_token"] == "sk-kimi-test-123"  # pragma: allowlist secret
 
@@ -428,7 +428,7 @@ def test_kimi_api_key_per_account_put_mirrors_to_token_cache(client: TestClient)
     )
     assert r.status_code == 200, r.text
 
-    tokens = _kimi_cache_tokens("alice@example.com")
+    tokens = _cache_tokens("kimi_coding", "alice@example.com")
     assert tokens["api_key"] == "sk-kimi-alice-123"  # pragma: allowlist secret
 
 
@@ -441,7 +441,7 @@ def test_kimi_clear_api_key_drops_cache_mirror(client: TestClient):
         headers=_admin_headers(),
     )
     assert r.status_code == 200, r.text
-    assert _kimi_cache_tokens("default")
+    assert _cache_tokens("kimi_coding", "default")
 
     r = client.put(
         "/api/v1/system/provider-config/kimi_coding",
@@ -449,7 +449,7 @@ def test_kimi_clear_api_key_drops_cache_mirror(client: TestClient):
         headers=_admin_headers(),
     )
     assert r.status_code == 200, r.text
-    assert not _kimi_cache_tokens("default")
+    assert not _cache_tokens("kimi_coding", "default")
 
 
 def test_kimi_empty_string_api_key_clear_drops_cache_mirror(client: TestClient):
@@ -462,7 +462,7 @@ def test_kimi_empty_string_api_key_clear_drops_cache_mirror(client: TestClient):
         headers=_admin_headers(),
     )
     assert r.status_code == 200, r.text
-    assert _kimi_cache_tokens("default")
+    assert _cache_tokens("kimi_coding", "default")
 
     r = client.put(
         "/api/v1/system/provider-config/kimi_coding",
@@ -470,7 +470,47 @@ def test_kimi_empty_string_api_key_clear_drops_cache_mirror(client: TestClient):
         headers=_admin_headers(),
     )
     assert r.status_code == 200, r.text
-    assert not _kimi_cache_tokens("default")
+    assert not _cache_tokens("kimi_coding", "default")
+
+
+def test_empty_string_api_key_clear_preserves_other_cache_slots(client: TestClient):
+    """opencode/ollama empty-string clears drop only the api_key family — a
+    sidecar-pushed credential in another slot must survive (same shape as the
+    clear_api_key flag, PR #287)."""
+    import asyncio
+
+    from app.services.token_cache import token_cache
+
+    r = client.put(
+        "/api/v1/system/provider-config/ollama",
+        json={"api_key": "sk-ollama-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    seeded = _cache_tokens("ollama", "default")
+    assert seeded["api_key"] == "sk-ollama-123"  # pragma: allowlist secret
+
+    # A sidecar push lands an independent credential family for the same account.
+    asyncio.run(
+        token_cache.store(
+            "ollama",
+            {"session_cookie": "sidecar-cookie"},  # pragma: allowlist secret
+            account_id="default",
+            source="sidecar-a",
+        )
+    )
+
+    r = client.put(
+        "/api/v1/system/provider-config/ollama",
+        json={"api_key": ""},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    tokens = _cache_tokens("ollama", "default")
+    assert "api_key" not in tokens
+    assert "oauth_token" not in tokens
+    assert tokens.get("session_cookie") == "sidecar-cookie"  # pragma: allowlist secret
 
 
 def test_kimi_cache_mirror_resolves_through_real_collector(client: TestClient):
