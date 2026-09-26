@@ -3,6 +3,7 @@ import hashlib
 import pytest
 
 from app.services.account_identity import (
+    FINGERPRINTED_ORIGIN_PROVIDERS,
     credential_fingerprint,
     keyed_credential_origin,
     normalize_sidecar_id,
@@ -254,6 +255,10 @@ class TestCredentialFingerprint:
     def test_server_and_sidecar_implementations_agree(self):
         from scripts.sidecar_pkg import identity as sidecar_identity
 
+        # The provider set is the third mirrored name: the sidecar uses it to
+        # suffix origins, the server to know which rows may answer a
+        # ``provider:<pid>#<fp>`` hint. Divergent copies = dropped hints.
+        assert FINGERPRINTED_ORIGIN_PROVIDERS == (sidecar_identity.FINGERPRINTED_ORIGIN_PROVIDERS)
         samples = ["oc_sk_test_key", "sk-or-v1-abc", "oc_sk_beta", None, ""]
         for s in samples:
             assert credential_fingerprint(s) == sidecar_identity.credential_fingerprint(s)

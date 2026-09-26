@@ -109,6 +109,14 @@ manual cookie paste needed on hosts with the opencode CLI. When the API key
 is unavailable the collector transparently falls back to the cookie scrape
 of `/settings`, so legacy browser-cookie setups continue to work.
 
+The discovered key's origin is key-scoped exactly like opencode's own
+(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
+[opencode.md](opencode.md)), so two hosts — or a rotated key — can never
+share one operator tag. Paste the same key into Providers → ollama and the
+server answers `provider:ollama#<fingerprint>` on the next sidecar cycle.
+The cookie (`cookie:ollama/session` / `OLLAMA_SESSION_TOKEN`) candidates
+are not keys and keep their plain origins.
+
 Already-ingested events under the old `opencode-ollama` id need a one-time
 migration, with the server **stopped** (SQLite is single-writer) and
 `APP_HOST=127.0.0.1`. The default-vs-email duplication must be collapsed first
