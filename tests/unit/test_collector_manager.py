@@ -178,6 +178,13 @@ class TestCollectorManagerInitialization:
         # The default collector reads this same email-keyed cache slot, so the
         # dynamic twin is correctly skipped without losing the credential.
         assert "xai:alice@example.com" not in manager.smart_collectors
+        with patch(
+            "app.services.collectors.xai.token_cache.get_token",
+            new_callable=AsyncMock,
+            return_value="alice-access-token",  # pragma: allowlist secret
+        ) as get_token:
+            assert await xai_default.is_configured()
+        get_token.assert_awaited_once_with("xai", "xai_access", account_id="alice@example.com")
 
     @pytest.mark.asyncio
     async def test_sync_collectors_prunes_stale_dynamic_collectors(self, manager):
