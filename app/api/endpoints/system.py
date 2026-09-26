@@ -1613,10 +1613,26 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
         row.api_key = val if val else None
 
+        if not val:
+            # Documented empty-string clear (the API/script path — the UI
+            # sends clear_api_key) must invalidate the cache mirror too, or
+            # collectors keep using the removed key until its TTL expires.
+            # Same shape as the clear_api_key branch above (PR #287).
+            if provider_id in ("opencode", "ollama"):
+                await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
+            else:
+                await token_cache.remove(provider_id, account_id)
+
         # Propagate to token_cache if this is also mapped as an OAuth token.
         # Stamp under the resolved account_id (no longer hard-coded "default")
         # so the new per-account endpoint keeps credentials and identity aligned.
-        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini", "ollama"):
+        if row.api_key and provider_id in (
+            "chatgpt",
+            "anthropic",
+            "gemini",
+            "ollama",
+            "kimi_coding",
+        ):
             tokens = {"oauth_token": row.api_key}
 
             # For ChatGPT, try to extract the account_id from the token if it's a JWT
@@ -1636,6 +1652,12 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
             # Ollama reads the API key under the "api_key" token-cache slot.
             if provider_id == "ollama":
+                tokens["api_key"] = row.api_key
+
+            # Kimi Coding is the same pattern: the collector resolves a
+            # dashboard paste from the api_key slot (issue #343) — without
+            # this mirror an account-keyed row never reaches the collector.
+            if provider_id == "kimi_coding":
                 tokens["api_key"] = row.api_key
 
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")

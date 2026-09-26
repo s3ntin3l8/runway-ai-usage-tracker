@@ -60,6 +60,30 @@ class TestCollectorManagerInitialization:
         }
 
     @pytest.mark.asyncio
+    async def test_manual_kimi_key_is_mirrored_to_api_key_slot(self, manager):
+        """Issue #343: the reload path must publish a dashboard-pasted kimi_coding
+        key under the api_key slot the collector reads, or an account-keyed row
+        survives a restart invisible to _resolve_code_bearer."""
+        row = MagicMock(
+            provider_id="kimi_coding",
+            api_key="sk-kimi-test-123",  # pragma: allowlist secret
+            session_cookie=None,
+            oai_sc_cookie=None,
+            account_id="alice@example.com",
+        )
+        with patch(
+            "app.services.collector_manager.token_cache.store", new_callable=AsyncMock
+        ) as store:
+            await manager._sync_manual_config_to_cache(row)
+
+        assert store.call_args.args[1] == {
+            "oauth_token": "sk-kimi-test-123",  # pragma: allowlist secret
+            "api_key": "sk-kimi-test-123",  # pragma: allowlist secret
+        }
+        assert store.call_args.kwargs["account_id"] == "alice@example.com"
+        assert store.call_args.kwargs["source"] == "config"
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_default(self, manager):
         """Test that default collectors are spawned."""
         # Clean state

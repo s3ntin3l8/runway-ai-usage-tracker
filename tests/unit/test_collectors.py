@@ -2998,6 +2998,99 @@ class TestKimiCodingCollector:
         assert len(result) == 2  # vestigial monthly "code" pool suppressed
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("cache_source", "expected_input_source"),
+        [
+            ("config", "config"),
+            ("manual_config", "config"),
+            ("sidecar-abc123", "sidecar"),
+        ],
+    )
+    async def test_collect_api_key_from_token_cache(
+        self, mock_http_client, cache_source, expected_input_source
+    ):
+        """Issue #343: a dashboard-pasted key mirrored into the ``api_key``
+        cache slot resolves when the DB and env paths miss. Cache metadata
+        drives input_source (config for UI pastes, sidecar otherwise), the
+        lookup is identity-scoped, and an API key is not a CLI token — no
+        X-Msh-* identity headers."""
+        collector = KimiCodingCollector(account_id="alice@example.com")
+        cache_patcher = patch(
+            "app.services.collectors.kimi_coding.token_cache.get_with_metadata",
+            new_callable=AsyncMock,
+            return_value=(
+                {"api_key": "sk-kimi-cache-123"},  # pragma: allowlist secret
+                {"source": cache_source},
+            ),
+        )
+        cache_lookup = cache_patcher.start()
+        patchers = [
+            self._patch_credentials(api_key=None),
+            self._mock_settings(),
+            cache_patcher,
+        ]
+        self._http_router(mock_http_client, [("/coding/v1/usages", self.CODE_API_PRO_RESPONSE)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        call = mock_http_client.request.call_args
+        headers = call.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer sk-kimi-cache-123"  # pragma: allowlist secret
+        assert "X-Msh-Platform" not in headers
+        assert "X-Msh-Device-Id" not in headers
+        assert result
+        assert all(c.get("input_source") == expected_input_source for c in result)
+
+        # Identity-scoped lookup: never the "newest account" fallback that
+        # get_with_metadata would use for account_id=None.
+        assert cache_lookup.call_args.args[0] == "kimi_coding"
+        assert cache_lookup.call_args.kwargs["account_id"] == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_cached_api_key_outranks_cli_token(self, mock_http_client):
+        """A usable cached API key wins over a fresh CLI token (API-key class
+        outranks the CLI tier, mirroring the DB-first precedence) — and the
+        request must not carry CLI identity headers."""
+        from app.services.credential_provider import CredentialMap
+
+        future = datetime.now(UTC).timestamp() + 3600
+        creds = CredentialMap(
+            {"cli_access_token": "cli_access_token_123", "cli_expires_at": future},
+            sources={"cli_access_token": "server"},
+        )
+        collector = KimiCodingCollector()
+        with patch(
+            "app.services.collectors.kimi_coding.token_cache.get_with_metadata",
+            new_callable=AsyncMock,
+            return_value=(
+                {"api_key": "sk-kimi-cache-123"},  # pragma: allowlist secret
+                {"source": "config"},
+            ),
+        ) as cache_lookup:
+            patchers = [
+                self._patch_credentials(creds=creds),
+                self._mock_settings(),
+            ]
+            self._http_router(mock_http_client, [("/coding/v1/usages", self.CODE_API_PRO_RESPONSE)])
+            try:
+                result = await collector.collect(mock_http_client)
+            finally:
+                for p in patchers:
+                    p.stop()
+
+        assert cache_lookup.call_args.args[0] == "kimi_coding"
+        assert cache_lookup.call_args.kwargs["account_id"] == "default"
+        call = mock_http_client.request.call_args
+        headers = call.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer sk-kimi-cache-123"  # pragma: allowlist secret
+        assert "X-Msh-Platform" not in headers
+        assert result
+
+    @pytest.mark.asyncio
     async def test_collect_stale_cli_token_falls_back_to_cookie(self, mock_http_client):
         """Expired CLI token is skipped; the cookie path takes over."""
         from app.services.credential_provider import CredentialMap
