@@ -210,6 +210,22 @@ async def test_debug_run_one_strategy_exception():
 
 
 @pytest.mark.asyncio
+async def test_debug_run_one_strategy_error_message_is_redacted():
+    from app.api.endpoints.system import _debug_run_one_strategy
+
+    collector = _FakeCollector()
+    collector.STRATEGIES = {"web": ("Web API", "_web")}
+
+    async def _mock_strategy(client) -> list[dict]:
+        raise ValueError("rejected Bearer abcdefgh12345678 for me@example.com")
+
+    result = await _debug_run_one_strategy(collector, _mock_strategy, "web", "primary")
+    message = result["errors"][0]["message"]
+    assert "abcdefgh12345678" not in message
+    assert "me@example.com" not in message
+
+
+@pytest.mark.asyncio
 async def test_debug_run_one_strategy_empty():
     from app.api.endpoints.system import _debug_run_one_strategy
 

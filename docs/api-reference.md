@@ -60,7 +60,7 @@ All API routes are under `/api/v1/`.
 | `POST` | `/api/v1/system/cleanup` | Prune stale records and inactive sidecars (admin) |
 | `POST` | `/api/v1/system/wake` | Reset dormancy, restore normal polling |
 | `POST` | `/api/v1/system/check-updates` | Force an immediate GitHub release poll for server + sidecars, refreshing the update-banner cache (admin) |
-| `GET` | `/api/v1/system/debug/raw/{provider_id}` | Run collector and return raw HTTP responses (debug) |
+| `GET` | `/api/v1/system/debug/raw/{provider_id}` | Run collector and return raw HTTP exchanges (debug; secrets redacted best-effort, admin) |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts; optional `account_id` scopes an alert to one account (admin) |
 | `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
