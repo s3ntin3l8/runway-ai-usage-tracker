@@ -23,7 +23,11 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent, UsagePeriodRollup
-from app.services.period_rollups import rebuild_rollups_for_pairs, update_rollups_for_event
+from app.services.period_rollups import (
+    rebuild_rollups_for_pairs,
+    rebuild_rollups_for_providers,
+    update_rollups_for_event,
+)
 
 
 def _new_session() -> Session:
@@ -259,3 +263,59 @@ def test_multiple_pairs_only_touch_their_own_rows():
     alice = _rollup_snapshot(session, "minimax", "alice@example.com")
     bob = _rollup_snapshot(session, "minimax", "bob@example.com")
     assert alice and bob
+
+
+# ── rebuild_rollups_for_providers: the coarser whole-provider rebuild ──────
+
+
+def test_rebuild_rollups_for_providers_discovers_pairs_from_events():
+    session = _new_session()
+    session.add(UsageEvent(**_event_kwargs(0, account_id="alice@example.com", event_id="a")))
+    session.add(UsageEvent(**_event_kwargs(0, account_id="bob@example.com", event_id="b")))
+    session.commit()
+
+    count = rebuild_rollups_for_providers(session, ["minimax"])
+    session.commit()
+
+    assert count == 2
+    alice = _rollup_snapshot(session, "minimax", "alice@example.com")
+    bob = _rollup_snapshot(session, "minimax", "bob@example.com")
+    assert alice and bob
+
+
+def test_rebuild_rollups_for_providers_none_means_every_provider():
+    session = _new_session()
+    session.add(UsageEvent(**_event_kwargs(0, provider_id="minimax", event_id="a")))
+    session.add(UsageEvent(**_event_kwargs(0, provider_id="kimi_coding", event_id="b")))
+    session.commit()
+
+    count = rebuild_rollups_for_providers(session, None)
+    session.commit()
+
+    assert count == 2
+    assert _rollup_snapshot(session, "minimax", "s3ntin3l8@gmail.com")
+    assert _rollup_snapshot(session, "kimi_coding", "s3ntin3l8@gmail.com")
+
+
+def test_rebuild_rollups_for_providers_scopes_to_the_given_providers_only():
+    session = _new_session()
+    session.add(UsageEvent(**_event_kwargs(0, provider_id="minimax", event_id="a")))
+    session.add(UsageEvent(**_event_kwargs(0, provider_id="kimi_coding", event_id="b")))
+    session.commit()
+
+    rebuild_rollups_for_providers(session, ["minimax"])
+    session.commit()
+
+    assert not _rollup_snapshot(session, "kimi_coding", "s3ntin3l8@gmail.com")
+
+
+def test_rebuild_rollups_for_providers_excludes_error_only_pairs():
+    """A pair with only error-kind events (no message events) contributes
+    nothing to rollups and shouldn't be discovered as a pair to rebuild."""
+    session = _new_session()
+    session.add(UsageEvent(**_event_kwargs(0, provider_id="minimax", event_id="a", kind="error")))
+    session.commit()
+
+    count = rebuild_rollups_for_providers(session, ["minimax"])
+
+    assert count == 0

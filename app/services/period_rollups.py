@@ -139,6 +139,27 @@ _SUM_SELECT = ", ".join(f"COALESCE({f}, 0) AS {f}" for f in _SUM_FIELDS)
 _SUM_AGG = ", ".join(f"SUM({f})" for f in _SUM_FIELDS)
 
 
+def rebuild_rollups_for_providers(session: Session, providers: list[str] | None) -> int:
+    """Recompute rollups for every (provider_id, account_id) pair currently
+    seen in usage_events for the given providers (`None` = every provider) —
+    the coarser, whole-provider counterpart to `rebuild_rollups_for_pairs`
+    for a repair that doesn't already know which specific pairs it touched
+    (e.g. `scripts/recost_events.py`'s Phase C, which recomputes cost for a
+    whole provider at once). Returns the number of pairs rebuilt.
+    """
+    from sqlalchemy import text
+
+    stmt = "SELECT DISTINCT provider_id, account_id FROM usage_events WHERE kind = 'message'"
+    params: dict[str, object] = {}
+    if providers:
+        placeholders = ", ".join(f":p{i}" for i in range(len(providers)))
+        stmt += f" AND provider_id IN ({placeholders})"
+        params = {f"p{i}": p for i, p in enumerate(providers)}
+    pairs = {(row.provider_id, row.account_id) for row in session.execute(text(stmt), params)}
+    rebuild_rollups_for_pairs(session, pairs)
+    return len(pairs)
+
+
 def rebuild_rollups_for_pairs(session: Session, pairs: set[tuple[str, str]]) -> None:
     """Recompute rollups for ``(provider_id, account_id)`` pairs from events.
 

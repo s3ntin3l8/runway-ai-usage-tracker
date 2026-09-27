@@ -18,7 +18,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.account_identity import canonical_account_id
-from app.services.cost_calculator import compute_event_cost_breakdown
+from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.period_rollups import update_rollups_for_event
 from app.services.project_label import derive_project
 
@@ -128,9 +128,21 @@ class EventIngestor:
                         result.events_duplicate += 1
                     continue  # error events don't roll up
 
-                # Always derive the per-component breakdown from pricing — it
-                # feeds cost-composition views (e.g. exclude-cache).
-                breakdown = compute_event_cost_breakdown(
+                # PAYG accounts prefer a provider-reported amount (e.g. an
+                # OpenCode log value); subscription accounts, and any account
+                # whose model has a resolvable price row, use the computed
+                # estimate. An account with no resolvable price row at all
+                # falls back to the reported cost rather than billing
+                # $0.00 for an unseeded model — see resolve_event_cost.
+                # Components stay pricing-derived either way.
+                config = self.session.exec(
+                    select(ProviderConfig).where(
+                        ProviderConfig.provider_id == push.provider_id,
+                        ProviderConfig.account_id == account_id,
+                    )
+                ).first()
+                billing_type = config.billing_type if config else "unknown"
+                resolved = resolve_event_cost(
                     self.session,
                     provider_id=push.provider_id,
                     model_id=push.model_id,
@@ -142,23 +154,10 @@ class EventIngestor:
                     tokens_reasoning=push.tokens_reasoning,
                     tokens_cache_create_1h=push.tokens_cache_create_1h,
                     tokens_cache_create_5m=push.tokens_cache_create_5m,
+                    billing_type=billing_type,
+                    reported_cost=push.cost_usd,
                 )
-                # PAYG accounts prefer a provider-reported amount (e.g. an
-                # OpenCode log value); subscription and unknown accounts use
-                # the computed estimate. Components stay pricing-derived.
-                config = self.session.exec(
-                    select(ProviderConfig).where(
-                        ProviderConfig.provider_id == push.provider_id,
-                        ProviderConfig.account_id == account_id,
-                    )
-                ).first()
-                billing_type = config.billing_type if config else "unknown"
-                reported_cost = push.cost_usd
-                cost = (
-                    reported_cost
-                    if billing_type == "pay_as_you_go" and reported_cost is not None
-                    else breakdown.total
-                )
+                breakdown = resolved.breakdown
                 ev = UsageEvent(
                     provider_id=push.provider_id,
                     account_id=account_id,
@@ -186,9 +185,9 @@ class EventIngestor:
                     tokens_cache_create_1h=push.tokens_cache_create_1h,
                     tokens_cache_create_5m=push.tokens_cache_create_5m,
                     tokens_reasoning=push.tokens_reasoning,
-                    cost_usd=cost,
-                    cost_reported_usd=reported_cost,
-                    cost_estimated_usd=breakdown.total,
+                    cost_usd=resolved.cost_usd,
+                    cost_reported_usd=resolved.cost_reported_usd,
+                    cost_estimated_usd=resolved.cost_estimated_usd,
                     cost_input=breakdown.input,
                     cost_output=breakdown.output,
                     cost_cache_read=breakdown.cache_read,

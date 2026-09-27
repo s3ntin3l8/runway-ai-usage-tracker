@@ -55,11 +55,38 @@ def record(
     auth = getattr(request.state, "auth", None)
     actor_type = getattr(auth, "actor_type", None)
     actor_meta = getattr(auth, "actor_meta", None)
-    row = AuditLog(
+    record_as(
+        session,
         actor=resolve_actor(request),
         actor_type=actor_type,
-        actor_meta_json=(json.dumps(actor_meta, separators=(",", ":")) if actor_meta else None),
+        actor_meta=actor_meta,
         source_ip=resolve_source_ip(request),
+        action=action,
+        target_id=target_id,
+        payload=payload,
+    )
+
+
+def record_as(
+    session: Session,
+    *,
+    actor: str,
+    actor_type: str | None = None,
+    actor_meta: dict[str, Any] | None = None,
+    source_ip: str | None = None,
+    action: str,
+    target_id: str | None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Same write as `record`, for a caller with no `Request` to pull
+    attribution from — a background job (e.g. a Data Health fix) that
+    knows its own actor identity directly.
+    """
+    row = AuditLog(
+        actor=actor,
+        actor_type=actor_type,
+        actor_meta_json=(json.dumps(actor_meta, separators=(",", ":")) if actor_meta else None),
+        source_ip=source_ip,
         action=action,
         target_id=target_id,
         payload_json=json.dumps(payload, separators=(",", ":")) if payload else None,

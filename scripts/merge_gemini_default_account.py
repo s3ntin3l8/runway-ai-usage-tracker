@@ -15,17 +15,13 @@ duplicate Gemini card.
 
 The mapping fix stops this going forward. This one-shot re-keys the already-orphaned
 ``default`` rows onto the canonical email so the live quota re-merges with the
-email-keyed event enrichment into a single card:
+email-keyed event enrichment into a single card. ``usage_events`` /
+``usage_period_rollup`` are already email-keyed and untouched.
 
-  * latest_usage    -> merge each ``default`` card's *quota* into the matching email
-                       card (reusing ``accumulator.merge_card_json`` so the email
-                       card's ``by_model``/``msgs`` enrichment is preserved), then
-                       drop the now-redundant ``default`` row. When no email card
-                       exists for that ``(window_type, variant, model_id)`` grain the
-                       ``default`` row is retagged in place.
-  * quota_snapshots -> retag ``default`` -> email (dropping any exact-grain/ts
-                       collision) so the ``%`` history / forecast is one series.
-  * usage_events / usage_period_rollup -> already email-keyed; untouched.
+This is a thin CLI wrapper — the actual logic lives in
+app/services/maintenance/account_merge.py, shared with the in-app Data
+Health `orphan_gauge_series` fixer so a host-run script and an in-app fix
+can never drift apart.
 
 Run with the server STOPPED (SQLite is single-writer) and APP_HOST=127.0.0.1::
 
@@ -39,7 +35,6 @@ Run with the server STOPPED (SQLite is single-writer) and APP_HOST=127.0.0.1::
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -51,12 +46,11 @@ if str(_REPO_ROOT) not in sys.path:
 from sqlmodel import Session, select  # noqa: E402
 
 from app.core.db import engine  # noqa: E402
-from app.models.db import LatestUsage, QuotaSnapshot  # noqa: E402
-from app.services.accumulator import merge_card_json  # noqa: E402
-
-# Identity fields carried inside card_json that must NOT leak from the "default"
-# card into the canonical email card during the quota merge.
-_IDENTITY_KEYS = ("account_id", "account_label")
+from app.models.db import LatestUsage  # noqa: E402
+from app.services.maintenance.account_merge import (  # noqa: E402
+    merge_gauge_series,
+    plan_merge_gauge_series,
+)
 
 
 def _resolve_target_email(session: Session, provider_id: str, source: str) -> str | None:
@@ -73,82 +67,6 @@ def _resolve_target_email(session: Session, provider_id: str, source: str) -> st
     return None
 
 
-def _grain(row: LatestUsage | QuotaSnapshot) -> tuple:
-    return (row.window_type, row.variant, row.model_id)
-
-
-def _merge_latest_usage(
-    session: Session, provider_id: str, source: str, target: str, apply: bool
-) -> None:
-    rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == provider_id)).all()
-    by_account_grain: dict[str, dict[tuple, LatestUsage]] = {}
-    for r in rows:
-        by_account_grain.setdefault(r.account_id, {})[_grain(r)] = r
-
-    src_rows = by_account_grain.get(source, {})
-    tgt_rows = by_account_grain.get(target, {})
-
-    print(f"latest_usage: {len(src_rows)} '{source}' card(s), {len(tgt_rows)} '{target}' card(s)")
-    for grain, src in sorted(src_rows.items()):
-        tgt = tgt_rows.get(grain)
-        if tgt is not None:
-            incoming = json.loads(src.card_json)
-            for k in _IDENTITY_KEYS:
-                incoming.pop(k, None)
-            action = "merge quota -> email card, drop default"
-        else:
-            action = "retag default -> email (no email card for this grain)"
-        print(f"  {grain}: {action}")
-        if not apply:
-            continue
-        if tgt is not None:
-            tgt.card_json = merge_card_json(tgt.card_json, incoming)
-            if src.updated_at and (not tgt.updated_at or src.updated_at > tgt.updated_at):
-                tgt.updated_at = src.updated_at
-            session.delete(src)
-        else:
-            card = json.loads(src.card_json)
-            card["account_id"] = target
-            card["account_label"] = target
-            src.account_id = target
-            src.card_json = json.dumps(card)
-
-
-def _retag_snapshots(
-    session: Session, provider_id: str, source: str, target: str, apply: bool
-) -> None:
-    src_snaps = session.exec(
-        select(QuotaSnapshot).where(
-            QuotaSnapshot.provider_id == provider_id,
-            QuotaSnapshot.account_id == source,
-        )
-    ).all()
-    # Existing target grains+ts, to skip exact collisions on the unique constraint.
-    existing = {
-        (s.window_type, s.variant, s.model_id, s.ts)
-        for s in session.exec(
-            select(QuotaSnapshot).where(
-                QuotaSnapshot.provider_id == provider_id,
-                QuotaSnapshot.account_id == target,
-            )
-        ).all()
-    }
-    retag = collide = 0
-    for s in src_snaps:
-        if (s.window_type, s.variant, s.model_id, s.ts) in existing:
-            collide += 1
-            if apply:
-                session.delete(s)
-        else:
-            retag += 1
-            if apply:
-                s.account_id = target
-    print(
-        f"quota_snapshots: {retag} '{source}' row(s) retag -> '{target}', "
-        f"{collide} exact-ts duplicate(s) dropped"
-    )
-
-
 def migrate(provider_id: str, source: str, target: str | None, apply: bool) -> int:
     with Session(engine) as session:
         resolved = target or _resolve_target_email(session, provider_id, source)
@@ -160,14 +78,28 @@ def migrate(provider_id: str, source: str, target: str | None, apply: bool) -> i
             return 1
         print(f"Folding {provider_id!r} account {source!r} -> {resolved!r}\n")
 
-        _merge_latest_usage(session, provider_id, source, resolved, apply)
-        _retag_snapshots(session, provider_id, source, resolved, apply)
-
         if not apply:
+            plan = plan_merge_gauge_series(
+                session, provider_id=provider_id, source=source, target=resolved
+            )
+            print(f"latest_usage: {plan.merged} merge, {plan.retagged} retag (no matching card)")
+            for line in plan.samples:
+                print(f"  {line}")
+            print(
+                f"quota_snapshots: {plan.snapshots_retagged} retag -> {resolved!r}, "
+                f"{plan.snapshots_collided} exact-ts duplicate(s) would be dropped"
+            )
             print("\nDry run — no changes written. Re-run with --apply to execute.")
             return 0
 
-        session.commit()
+        result = merge_gauge_series(
+            session, provider_id=provider_id, source=source, target=resolved
+        )
+        print(f"latest_usage: {result.merged} merged, {result.retagged} retagged")
+        print(
+            f"quota_snapshots: {result.snapshots_retagged} retagged, "
+            f"{result.snapshots_collided} exact-ts duplicate(s) dropped"
+        )
         print("\nApplied. The live quota now resolves under the canonical email account.")
     return 0
 
