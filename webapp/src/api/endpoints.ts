@@ -13,6 +13,9 @@ import type {
   CredentialTagRequest,
   CumulativeResponse,
   DashboardLayout,
+  DataHealthFixPlan,
+  DataHealthJob,
+  DataHealthReport,
   EventRangeResponse,
   EventsResponse,
   FleetResponse,
@@ -407,6 +410,37 @@ export const deleteWebhook = (id: number) =>
 
 export const testWebhook = (id: number) =>
   api<{ status: string }>(`/api/v1/system/webhooks/${id}/test`, { method: 'POST' });
+
+// --- Data Health ---------------------------------------------------------------
+
+export const fetchDataHealthReport = () =>
+  api<DataHealthReport>('/api/v1/system/data-health/');
+
+export const rescanDataHealth = () =>
+  api<{ started: boolean }>('/api/v1/system/data-health/rescan', { method: 'POST' });
+
+export const previewDataHealthFix = (
+  checkId: string,
+  groupKey: string,
+  params: Record<string, unknown>,
+) =>
+  api<DataHealthFixPlan>(`/api/v1/system/data-health/${encodeURIComponent(checkId)}/preview`, {
+    method: 'POST',
+    body: JSON.stringify({ group_key: groupKey, params }),
+  });
+
+export const applyDataHealthFix = (
+  checkId: string,
+  groupKey: string,
+  params: Record<string, unknown>,
+) =>
+  api<{ job_id: string }>(`/api/v1/system/data-health/${encodeURIComponent(checkId)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ group_key: groupKey, params, confirm: true }),
+  });
+
+export const fetchDataHealthJob = (jobId: string) =>
+  api<DataHealthJob>(`/api/v1/system/data-health/jobs/${encodeURIComponent(jobId)}`);
 
 // --- GitHub OAuth ------------------------------------------------------------
 

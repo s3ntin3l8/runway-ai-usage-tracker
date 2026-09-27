@@ -52,6 +52,22 @@ after upgrading.
 - Nothing forces the queue empty. Events sit there safely (excluded from
   totals) for as long as you leave them.
 
+## Open Settings → Data health after upgrading
+
+v3.0.0 ships an in-app **Data health** page (Settings → Data health) that
+scans for the same data-quality issues this release's own prod cleanup
+turned up: a provider config still keyed `default` after its label picked
+up a real identity, events stuck under a legacy OpenCode-sibling provider
+id, events sitting alone under a stale `default` account with a real
+account configured elsewhere, credential tags and gauge-series cards left
+behind by an account move, models priced at $0 with no seed row, and
+`usage_period_rollup` drift from a direct database edit. Each finding shows
+a preview before you apply anything, and checks with dependencies (e.g. a
+default-keyed config) block the checks downstream of them until fixed. See
+[docs/data-health.md](data-health.md) for the full list and what each fix
+does. Worth a look right after upgrading, especially if you've run
+previous versions long enough to accumulate account or provider-id drift.
+
 ## Credential-health alerts are on by default
 
 Existing Discord/Slack webhooks configured before this release will start

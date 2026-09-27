@@ -78,6 +78,18 @@ All API routes are under `/api/v1/`.
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
 | `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|edge` (public) |
 
+### Data health (admin)
+
+See [docs/data-health.md](data-health.md) for what each check finds and fixes.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/v1/system/data-health/` | Cached scan report; starts a background scan in the background if none has completed yet |
+| `POST` | `/api/v1/system/data-health/rescan` | Start a fresh scan (`202`; no-op if one is already running) |
+| `POST` | `/api/v1/system/data-health/{check_id}/preview` | Read-only preview of a fix for one finding group — body: `{group_key, params}` |
+| `POST` | `/api/v1/system/data-health/{check_id}/apply` | Apply a fix (`202`, returns `job_id`) — body: `{group_key, params, confirm: true}`; `409` if the check is currently blocked by an upstream check's unresolved findings, or another job is already running |
+| `GET` | `/api/v1/system/data-health/jobs/{job_id}` | Poll a started fix job's status/result |
+
 ## Auth
 
 ### Admin session (browser)

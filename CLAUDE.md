@@ -75,6 +75,8 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 
 **Multi-host startup gates:** when `APP_HOST != 127.0.0.1`, the server refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, and an explicit `CORS_ORIGINS` allow-list — sidecar payloads carry tokens, and HMAC isn't confidentiality. See `docs/SECURITY.md`.
 
+**Data Health / repair logic:** all data-repair logic (retagging events, rekeying a `provider_configs` row, merging gauge series, recosting, rebuilding rollups/windows) lives in `app/services/maintenance/` — a `plan_*`/`apply_*` pair per repair, each `apply_*` chunked (`_chunked_sql.py`'s id-cursor `chunked_update`/`chunked_delete`) so it never holds SQLite's writer lock for one giant transaction. `app/services/data_health/checks/` only decides *when* to offer a repair (read-only `detect()`) and exposes it through `/api/v1/system/data-health/*` (`app/services/data_health/jobs.py`'s single-flight job registry) and the Settings → Data health page. Host-run scripts (`scripts/recost_events.py`, `scripts/assign_default_events.py`, `scripts/merge_gemini_default_account.py`) are thin wrappers over the same functions, so an operator running one from the CLI and the in-app fixer can never drift apart. See `docs/data-health.md`.
+
 ## CI/CD
 The core build/release workflows in `.github/workflows/` (alongside CodeQL, dependency-review, and a GHCR image-cleanup job):
 

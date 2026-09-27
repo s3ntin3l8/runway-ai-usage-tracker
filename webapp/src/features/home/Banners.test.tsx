@@ -1,6 +1,12 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { FleetEntry, LimitCard, TokenHealthEntry } from '@/api/types';
+import type {
+  DataHealthCheckReport,
+  DataHealthReport,
+  FleetEntry,
+  LimitCard,
+  TokenHealthEntry,
+} from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { Banners } from './Banners';
 
@@ -158,5 +164,62 @@ describe('Banners credential health', () => {
       />,
     );
     expect(screen.getByText(/2 credentials need attention/i)).toBeInTheDocument();
+  });
+});
+
+const dataHealthCheck = (o: Partial<DataHealthCheckReport> = {}): DataHealthCheckReport => ({
+  check_id: 'config_default_keyed',
+  severity: 'error',
+  total_count: 0,
+  fixable_count: 0,
+  groups: [],
+  blocked_by: [],
+  blocked: false,
+  ...o,
+});
+
+describe('Banners data health', () => {
+  it('raises a banner for a single error-severity check with findings', () => {
+    renderWithProviders(
+      <Banners
+        tokens={[]}
+        anomalies={[]}
+        dataHealth={{ scanning: false, checks: [dataHealthCheck({ total_count: 1 })] }}
+      />,
+    );
+    expect(screen.getByText(/data health found an issue: config_default_keyed/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /review and fix/i })).toHaveAttribute(
+      'href',
+      '/settings/data-health',
+    );
+  });
+
+  it('summarises several checks with findings', () => {
+    const report: DataHealthReport = {
+      scanning: false,
+      checks: [
+        dataHealthCheck({ check_id: 'a', total_count: 1 }),
+        dataHealthCheck({ check_id: 'b', total_count: 2 }),
+      ],
+    };
+    renderWithProviders(<Banners tokens={[]} anomalies={[]} dataHealth={report} />);
+    expect(screen.getByText(/data health found issues in 2 checks/i)).toBeInTheDocument();
+  });
+
+  it('ignores warn/info severity and clean checks', () => {
+    const report: DataHealthReport = {
+      scanning: false,
+      checks: [
+        dataHealthCheck({ severity: 'warn', total_count: 5 }),
+        dataHealthCheck({ severity: 'error', total_count: 0 }),
+      ],
+    };
+    renderWithProviders(<Banners tokens={[]} anomalies={[]} dataHealth={report} />);
+    expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render when dataHealth is undefined', () => {
+    renderWithProviders(<Banners tokens={[]} anomalies={[]} />);
+    expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
   });
 });

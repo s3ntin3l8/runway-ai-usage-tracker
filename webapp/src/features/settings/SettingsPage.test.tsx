@@ -27,6 +27,9 @@ vi.mock('./sections/AuditSection', () => ({
 vi.mock('./sections/AboutSection', () => ({
   AboutSection: () => <div>About content</div>,
 }));
+vi.mock('./sections/DataHealthSection', () => ({
+  DataHealthSection: () => <div>Data health content</div>,
+}));
 
 // SettingsPage renders its own <Routes> for nested sections, so it must mount
 // under a parent /settings/* route.
@@ -47,11 +50,17 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('link', { name: /providers/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /alerts/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /audit log/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /data health/i })).toBeInTheDocument();
   });
 
   it('renders the matching section for a deep-linked route', () => {
     renderAt('/settings/system');
     expect(screen.getByText('System content')).toBeInTheDocument();
+  });
+
+  it('renders the Data health section for its deep-linked route', () => {
+    renderAt('/settings/data-health');
+    expect(screen.getByText('Data health content')).toBeInTheDocument();
   });
 
   it('navigates to a section when a nav link is clicked', async () => {
