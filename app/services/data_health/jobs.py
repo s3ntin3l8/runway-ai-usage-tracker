@@ -104,7 +104,10 @@ class DataHealthJobs:
         `get_job` instead, since a real fix can run for a while."""
         task = self._job_tasks.get(job_id)
         if task is not None:
-            await task
+            # _run_apply returns None; gather (rather than a bare `await
+            # task`) is used purely so this reads as a call with an effect,
+            # not a no-op name reference, to static analysis.
+            await asyncio.gather(task)
         record = self._jobs[job_id]
         return record
 

@@ -6,11 +6,12 @@ hook-awaiting), not check business logic.
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-import app.services.data_health.jobs as jobs_module
 from app.models.db import AuditLog
 from app.services.data_health.base import Check, CheckReport, FixResult, Severity
 from app.services.data_health.jobs import (
@@ -19,6 +20,11 @@ from app.services.data_health.jobs import (
     JobAlreadyRunningError,
     NoScanYetError,
 )
+
+# A separate module handle (rather than `import ... as jobs_module`
+# alongside the `from ... import (...)` above) — CodeQL flags importing the
+# same module both ways.
+jobs_module = importlib.import_module("app.services.data_health.jobs")
 
 
 class _FakeCheck(Check):

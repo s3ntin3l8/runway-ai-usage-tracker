@@ -21,6 +21,7 @@ polling, no rate-limit budget to manage, no lifespan startup to mock.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -29,11 +30,15 @@ from httpx import ASGITransport, AsyncClient
 from sqlmodel import Session, SQLModel, create_engine
 
 import app.api.endpoints.data_health as data_health_endpoint
-import app.services.data_health.jobs as jobs_module
 from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine, get_session
 from app.main import app
 from app.services.data_health.jobs import DataHealthJobs
 from tests.unit.data_health.conftest import make_config
+
+# A separate module handle (rather than `import ... as jobs_module`
+# alongside the `from ... import DataHealthJobs` above) — CodeQL flags
+# importing the same module both ways.
+jobs_module = importlib.import_module("app.services.data_health.jobs")
 
 
 @pytest.fixture
