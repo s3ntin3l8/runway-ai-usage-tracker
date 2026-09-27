@@ -147,12 +147,16 @@ class OrphanCredentialTagsCheck(Check):
             summary = f"Repointed {len(tags)} tag(s) for {provider_id} onto {target}"
             counts = {"tags_repointed": len(tags)}
         elif action == "delete":
-            deleted = CredentialTagRepo.delete_by_account(
-                session, provider_id=provider_id, account_id="default"
-            )
+            # Delete exactly the tags `_orphaned_tags` currently finds — not
+            # a blanket delete_by_account, which would also drop a tag for
+            # a provider that (by now, or always) has a real default
+            # config and so was never orphaned in the first place.
+            tags = _orphaned_tags(session, provider_id)
+            for tag in tags:
+                session.delete(tag)
             session.commit()
-            summary = f"Deleted {deleted} orphan tag(s) for {provider_id}"
-            counts = {"tags_deleted": deleted}
+            summary = f"Deleted {len(tags)} orphan tag(s) for {provider_id}"
+            counts = {"tags_deleted": len(tags)}
         else:
             raise ValueError(f"unknown action {action!r}; expected 'delete' or 'repoint'")
         return (

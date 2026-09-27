@@ -15,6 +15,14 @@ batch only looks at strictly-greater ids than the last one committed, so a
 crash mid-run leaves only committed batches applied, and calling again with
 the same arguments resumes for whatever the (still column-narrowing) `where`
 has left, or is a safe no-op once nothing remains.
+
+The cursor is always `id`-based — `where` may reference any column, but
+progress is tracked purely by ascending `id`, not by any column named in
+`where`. A row inserted mid-run with an `id` less than or equal to the
+current cursor will never be picked up by that run (it's "behind" the
+cursor); this only matters for a `where` some future caller adds that
+targets rows expected to arrive concurrently with a lower id than already-
+processed ones, which none of the current callers do.
 """
 
 from __future__ import annotations

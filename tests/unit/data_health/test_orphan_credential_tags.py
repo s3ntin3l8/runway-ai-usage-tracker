@@ -62,6 +62,24 @@ def test_apply_delete_removes_the_orphan_tag(session):
     assert _check().detect(session).total_count == 0
 
 
+def test_apply_delete_never_touches_a_tag_for_a_provider_with_a_real_default_config(session):
+    """Regression: apply's delete action must re-derive the orphaned set
+    itself (via _orphaned_tags), not blanket-delete every account_id
+    ="default" tag for the group_key's provider — a provider with its own
+    real default config was never orphaned, even if apply is called
+    directly for it (stale client state, a race with a concurrent config
+    fix, or a malformed request) rather than via a group detect() itself
+    surfaced."""
+    make_config(session, provider_id="chatgpt", account_id="default")
+    make_tag(session, provider_id="chatgpt", credential_origin="path:/safe", account_id="default")
+
+    result, _hooks = _check().apply(session, "chatgpt", {"action": "delete"})
+
+    assert result.counts["tags_deleted"] == 0
+    remaining = list(session.exec(select(CredentialTag)))
+    assert len(remaining) == 1  # untouched — chatgpt's default config is real
+
+
 def test_apply_repoint_moves_the_tag_onto_a_configured_account(session):
     make_config(session, provider_id="minimax", account_id="alice@example.com")
     make_tag(session, provider_id="minimax", credential_origin="path:/x", account_id="default")
