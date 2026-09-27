@@ -46,6 +46,11 @@ _SECRET_STRING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\bbearer\s+[\w.~+/=-]{8,}"),
     # Provider API keys / session ids (sk-ant-*, sk-proj-*, sk-or-*, ...)
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
+    # OpenCode Go API tokens
+    re.compile(r"\boc_sk_[A-Za-z0-9_-]{8,}"),
+    # GitHub personal access tokens (classic + fine-grained)
+    re.compile(r"\bghp_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
     # Cookie-style session pairs
     re.compile(r"(?i)\b(sessionKey|session_id|sessionid|sid)=[^;\s\"'&]+"),
 )
@@ -54,7 +59,8 @@ _SECRET_STRING_PATTERNS: tuple[re.Pattern[str], ...] = (
 # ``input_tokens`` / ``max_tokens`` are deliberately left alone.
 _SENSITIVE_KEY = re.compile(
     r"(?i)(^|_|-)(access_?token|refresh_?token|id_?token|token|secret|password|passwd|"
-    r"api_?key|apikey|authorization|cookie|session[\w-]*|credential[s]?|private_?key|csrf[\w-]*)$"
+    r"api[_-]?key|apikey|authorization|cookie|session[\w-]*|credential[s]?|private_?key|"
+    r"csrf[\w-]*)$"
 )
 
 _SENSITIVE_QUERY_PARAMS = frozenset(
@@ -66,6 +72,8 @@ _SENSITIVE_QUERY_PARAMS = frozenset(
         "access_token",
         "refresh_token",
         "id_token",
+        "client_secret",
+        "code",
         "sig",
         "signature",
         "secret",
@@ -75,8 +83,37 @@ _SENSITIVE_QUERY_PARAMS = frozenset(
     }
 )
 
+# Matches a bare http(s) URL embedded in a larger string (an exception
+# message, a log line) so its userinfo/query secrets get scrubbed even when
+# the URL itself was never passed through `redact_url` directly.
+_URL_IN_TEXT_PATTERN = re.compile(r"https?://[^\s\"'<>]+")
+
+
+def _strip_url_secrets(url: str) -> str:
+    """Drop userinfo and mask sensitive query-param *values* in a URL.
+
+    Pure string→string transform with no further scrubbing, so it is safe to
+    call from both `redact_url` and `_redact_string` without recursing into
+    each other.
+    """
+    parts = urlsplit(url)
+    netloc = parts.netloc.rsplit("@", 1)[-1] if "@" in parts.netloc else parts.netloc
+    query = parts.query
+    if query:
+        pairs = [
+            (k, _SECRET_REPLACEMENT if k.lower() in _SENSITIVE_QUERY_PARAMS else v)
+            for k, v in parse_qsl(query, keep_blank_values=True)
+        ]
+        query = urlencode(pairs, safe="[]")
+    return urlunsplit(parts._replace(netloc=netloc, query=query))
+
+
+def _redact_urls_in_text(text: str) -> str:
+    return _URL_IN_TEXT_PATTERN.sub(lambda m: _strip_url_secrets(m.group(0)), text)
+
 
 def _redact_string(value: str) -> str:
+    value = _redact_urls_in_text(value)
     for pattern in _SECRET_STRING_PATTERNS:
         value = pattern.sub(_substitute, value)
     return str(scrub_pii(value))
@@ -92,17 +129,20 @@ def _substitute(match: re.Match[str]) -> str:
 def redact_secrets(value: object) -> object:
     """Return a copy of *value* with credential-shaped content redacted.
 
-    Recurses through dicts/lists; strings are scrubbed for token shapes and
-    emails, and string values under sensitive-looking keys are replaced whole.
-    Non-string scalars (ints, floats, bools, None) pass through, so usage
-    counters keep their values. The input is never mutated.
+    Recurses through dicts/lists; strings are scrubbed for token shapes,
+    embedded URLs and emails. A dict value under a sensitive-looking key
+    (``access_token``, ``session``, ...) is replaced whole — string, list or
+    dict alike — rather than recursed into, since a field named like a
+    credential shouldn't leak its shape either. Non-string scalars (ints,
+    floats, bools, None) pass through, so usage counters keep their values.
+    The input is never mutated.
     """
     if isinstance(value, str):
         return _redact_string(value)
     if isinstance(value, dict):
         out: dict[object, object] = {}
         for k, v in value.items():
-            if isinstance(k, str) and isinstance(v, str) and _SENSITIVE_KEY.search(k):
+            if isinstance(k, str) and isinstance(v, (str, dict, list)) and _SENSITIVE_KEY.search(k):
                 out[k] = _SECRET_REPLACEMENT
             else:
                 out[k] = redact_secrets(v)
@@ -113,12 +153,5 @@ def redact_secrets(value: object) -> object:
 
 
 def redact_url(url: str) -> str:
-    """Redact sensitive query-param values and token-shaped substrings in *url*."""
-    parts = urlsplit(url)
-    if parts.query:
-        pairs = [
-            (k, _SECRET_REPLACEMENT if k.lower() in _SENSITIVE_QUERY_PARAMS else v)
-            for k, v in parse_qsl(parts.query, keep_blank_values=True)
-        ]
-        url = urlunsplit(parts._replace(query=urlencode(pairs, safe="[]")))
-    return _redact_string(url)
+    """Redact userinfo, sensitive query-param values and token shapes in *url*."""
+    return _redact_string(_strip_url_secrets(url))

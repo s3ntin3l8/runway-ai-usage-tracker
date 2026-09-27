@@ -51,6 +51,7 @@ _SECRET_HEADERS: frozenset[str] = frozenset(
         "x-amz-security-token",
         "x-session-token",
         "x-iam-token",
+        "x-activity-session-id",
         "set-cookie",
     }
 )
@@ -578,8 +579,9 @@ async def get_raw_provider_data(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Raw debug collection failed for {scrub_log(provider_id)}: {e}")
-        raise HTTPException(status_code=500, detail=str(redact_secrets(str(e))))
+        safe_message = str(redact_secrets(str(e)))
+        logger.error(f"Raw debug collection failed for {scrub_log(provider_id)}: {safe_message}")
+        raise HTTPException(status_code=500, detail=safe_message)
 
 
 @router.post("/token-health/refresh/{provider}/{account_id}")
