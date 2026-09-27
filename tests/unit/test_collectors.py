@@ -32,6 +32,48 @@ from app.services.collectors.zai import ZaiCollector
 from tests.fixtures.mock_data import ANTHROPIC_OAUTH_LIMITS_RESPONSE
 
 
+@pytest.mark.parametrize(
+    ("collector_cls", "provider_id", "module", "lookup", "env_key"),
+    [
+        (KimiApiCollector, "kimi_api", "kimi_api", "_get_current_key", "KIMI_API_KEY"),
+        (KimiK2Collector, "kimi_k2", "kimi_k2", "_get_current_key", "KIMI_K2_API_KEY"),
+        (MiniMaxCollector, "minimax", "minimax", "_get_current_creds", "MINIMAX_API_KEY"),
+        (OpenRouterCollector, "openrouter", "openrouter", "_get_api_key", "OPENROUTER_API_KEY"),
+        (ZaiCollector, "zai", "zai", "_get_api_key", "ZAI_API_KEY"),
+    ],
+)
+class TestCredentialAccountSlotLookup:
+    @pytest.mark.asyncio
+    async def test_api_key_lookup_uses_credential_account_id(
+        self, collector_cls, provider_id, module, lookup, env_key
+    ):
+        collector = collector_cls(account_id="alice@example.com")
+        collector.credential_account_id = "default"
+        settings_path = f"app.services.collectors.{module}.settings"
+        credential_path = (
+            f"app.services.collectors.{module}.credential_provider.get_provider_api_key"
+        )
+        cache_path = "app.services.token_cache.token_cache.get_with_metadata"
+
+        with (
+            patch(settings_path) as settings,
+            patch(credential_path, return_value=None),
+            patch(
+                cache_path,
+                new_callable=AsyncMock,
+                return_value=(
+                    {"api_key": "api-test-key"},  # pragma: allowlist secret
+                    {"source": "sidecar"},
+                ),
+            ) as get_with_metadata,
+        ):
+            setattr(settings, env_key, "")
+            resolved = await getattr(collector, lookup)()
+
+        assert resolved == "api-test-key"
+        get_with_metadata.assert_awaited_once_with(provider_id, account_id="default")
+
+
 class TestAnthropicCollector:
     """Test suite for Anthropic (Claude) collector."""
 
