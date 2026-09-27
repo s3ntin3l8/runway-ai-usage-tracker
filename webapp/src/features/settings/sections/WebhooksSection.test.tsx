@@ -16,6 +16,7 @@ const webhook = (o: Partial<Webhook> = {}): Webhook => ({
   url: 'https://discord.com/api/webhooks/x',
   channel: 'discord',
   active: true,
+  credential_alerts: true,
   last_fired_at: null,
   ...o,
 });
@@ -83,6 +84,17 @@ describe('WebhooksSection', () => {
     expect(api.updateWebhook).toHaveBeenCalledWith(7, { active: false });
   });
 
+  it('toggles credential alerts via updateWebhook', async () => {
+    vi.mocked(api.fetchWebhooks).mockResolvedValue({
+      webhooks: [webhook({ credential_alerts: true })],
+    });
+    vi.mocked(api.updateWebhook).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<WebhooksSection />);
+
+    await userEvent.click(await screen.findByRole('switch', { name: /credential alerts/i }));
+    expect(api.updateWebhook).toHaveBeenCalledWith(7, { credential_alerts: false });
+  });
+
   it('sends a test message via testWebhook', async () => {
     vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [webhook()] });
     vi.mocked(api.testWebhook).mockResolvedValue({ status: 'ok' });
@@ -128,6 +140,36 @@ describe('WebhooksSection', () => {
       threshold_pct: 80,
       url: 'https://discord.com/api/webhooks/abc',
       channel: 'discord',
+      credential_alerts: true,
+    });
+  });
+
+  it('creates an alert with credential alerts disabled', async () => {
+    vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [] });
+    vi.mocked(api.createWebhook).mockResolvedValue({ id: 101 });
+    renderWithProviders(<WebhooksSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /add alert/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    const combos = within(dialog).getAllByRole('combobox');
+    await userEvent.click(combos[0]);
+    await userEvent.click(await screen.findByRole('option', { name: 'Claude' }));
+
+    await userEvent.type(
+      within(dialog).getByLabelText(/webhook url/i),
+      'https://discord.com/api/webhooks/abc',
+    );
+    await userEvent.click(within(dialog).getByRole('switch', { name: /credential alerts/i }));
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /create alert/i }));
+
+    expect(api.createWebhook).toHaveBeenCalledWith({
+      provider_id: 'claude',
+      threshold_pct: 80,
+      url: 'https://discord.com/api/webhooks/abc',
+      channel: 'discord',
+      credential_alerts: false,
     });
   });
 
@@ -168,6 +210,7 @@ describe('WebhooksSection', () => {
       threshold_pct: 80,
       url: 'https://discord.com/api/webhooks/abc',
       channel: 'discord',
+      credential_alerts: true,
     });
   });
 

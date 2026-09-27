@@ -112,6 +112,7 @@ def init_db() -> None:
         UsagePeriodRollup,
         UsageWindow,
         WebhookConfig,
+        WebhookCredentialAlert,
     )
 
     # Concurrency pragmas (WAL / synchronous=NORMAL) are applied per-connection
@@ -209,6 +210,9 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("provider_pricing", "cache_create_1h_per_mtok", "FLOAT NOT NULL DEFAULT 0"),
     # Per-account webhook scoping: NULL = applies to all accounts (legacy rows).
     ("webhook_configs", "account_id", "VARCHAR"),
+    # Opt-in (default on) for credential-health (expired/invalid) alerts,
+    # alongside the existing threshold alerts. See app.services.credential_alerts.
+    ("webhook_configs", "credential_alerts", "BOOLEAN NOT NULL DEFAULT 1"),
 ]
 
 

@@ -750,6 +750,7 @@ export interface Webhook {
   url: string;
   channel: 'discord' | 'slack';
   active: boolean;
+  credential_alerts: boolean; // also alert when Token Health goes expired/invalid
   last_fired_at?: string | null;
 }
 

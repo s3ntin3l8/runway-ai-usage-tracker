@@ -403,6 +403,7 @@ export interface WebhookCreate {
   url: string;
   channel: 'discord' | 'slack';
   active?: boolean;
+  credential_alerts?: boolean;
 }
 
 export const createWebhook = (body: WebhookCreate) =>
@@ -410,7 +411,9 @@ export const createWebhook = (body: WebhookCreate) =>
 
 export const updateWebhook = (
   id: number,
-  body: Partial<Pick<Webhook, 'threshold_pct' | 'url' | 'active' | 'account_id'>>,
+  body: Partial<
+    Pick<Webhook, 'threshold_pct' | 'url' | 'active' | 'account_id' | 'credential_alerts'>
+  >,
 ) =>
   api<{ status: string }>(`/api/v1/system/webhooks/${id}`, {
     method: 'PATCH',

@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellRing, Plus, Send, Trash2 } from 'lucide-react';
+import { BellRing, Plus, Send, ShieldAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   createWebhook,
@@ -74,7 +74,7 @@ export function WebhooksSection() {
         open={creating}
         onOpenChange={setCreating}
         title="New alert"
-        description="Fires once per crossing; re-arms when usage drops below the threshold."
+        description="Fires once per crossing; re-arms when usage drops below the threshold. Credential alerts fire once per expiry or rejection and re-arm once the credential is healthy again."
       >
         <CreateWebhookForm
           onSaved={() => {
@@ -103,6 +103,11 @@ function WebhookRow({
   const [scope, setScope] = useState(serverScope);
   const toggle = useMutation({
     mutationFn: (active: boolean) => updateWebhook(webhook.id, { active }),
+    onSuccess: onChanged,
+    onError: (err) => toast.error(err.message),
+  });
+  const toggleCredentialAlerts = useMutation({
+    mutationFn: (credential_alerts: boolean) => updateWebhook(webhook.id, { credential_alerts }),
     onSuccess: onChanged,
     onError: (err) => toast.error(err.message),
   });
@@ -182,6 +187,17 @@ function WebhookRow({
       <Badge variant={webhook.channel === 'discord' ? 'accent' : 'unlimited'}>
         {webhook.channel}
       </Badge>
+      <div
+        className="flex items-center gap-1"
+        title="Also alert if this credential expires or is rejected"
+      >
+        <ShieldAlert className="size-3.5 text-fg-subtle" aria-hidden />
+        <Switch
+          checked={webhook.credential_alerts}
+          onCheckedChange={(on) => toggleCredentialAlerts.mutate(on)}
+          aria-label="Credential alerts"
+        />
+      </div>
       <Switch
         checked={webhook.active}
         onCheckedChange={(on) => toggle.mutate(on)}
@@ -219,6 +235,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
   const [threshold, setThreshold] = useState('80');
   const [url, setUrl] = useState('');
   const [channel, setChannel] = useState<'discord' | 'slack'>('discord');
+  const [credentialAlerts, setCredentialAlerts] = useState(true);
 
   const selectedProvider = (providers.data?.providers ?? []).find(
     (p) => p.provider_id === providerId,
@@ -238,6 +255,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
         threshold_pct: Number(threshold),
         url: url.trim(),
         channel,
+        credential_alerts: credentialAlerts,
       }),
     onSuccess: () => {
       toast.success('Alert created');
@@ -322,6 +340,19 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
             <SelectItem value="slack">Slack</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+      <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+        <div className="flex flex-col">
+          <Label htmlFor="wh-credential-alerts">Credential alerts</Label>
+          <span className="text-[11px] text-fg-subtle">
+            Also alert if this credential expires or is rejected by the provider
+          </span>
+        </div>
+        <Switch
+          id="wh-credential-alerts"
+          checked={credentialAlerts}
+          onCheckedChange={setCredentialAlerts}
+        />
       </div>
       <Button type="submit" variant="primary" disabled={!valid} loading={save.isPending}>
         Create alert

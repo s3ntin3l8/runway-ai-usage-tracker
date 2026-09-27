@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.models.db import ProviderConfig, WebhookConfig
 from app.models.schemas import LimitCard
+from app.services.account_identity import resolve_account_id
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,6 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     stamped default + email label. account_id NULL matches any account
     (per-provider alert, current behavior).
     """
-    from app.services.account_identity import resolve_account_id
-
     configs = session.exec(
         select(WebhookConfig).where(WebhookConfig.active == True)  # noqa: E712
     ).all()
@@ -128,16 +127,16 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                 # accumulator/fleet write paths use. Scope side pulls the
                 # provider_configs label so `default` + email label resolves
                 # to the email (pins case-folding and the default→email path).
-                scope = resolve_account_id(
-                    config.provider_id,
-                    config.account_id,
-                    scope_labels.get((config.provider_id, config.account_id)),
-                )
+                scope_label = scope_labels.get((config.provider_id, config.account_id))
                 matched = [
                     c
                     for c in matched
-                    if resolve_account_id(config.provider_id, c.account_id, c.account_label)
-                    == scope
+                    if _scope_matches(
+                        config,
+                        config.provider_id,
+                        resolve_account_id(config.provider_id, c.account_id, c.account_label),
+                        scope_label,
+                    )
                 ]
 
             # Two-pass: categorise all cards before mutating state
@@ -178,22 +177,52 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     session.commit()
 
 
+def _scope_matches(
+    config: WebhookConfig,
+    provider_id: str,
+    resolved_account_id: str,
+    scope_label: str | None,
+) -> bool:
+    """True when *config*'s provider/account scope covers this identity.
+
+    *provider_id*/*resolved_account_id* describe the identity being checked —
+    *resolved_account_id* must already be the output of
+    ``resolve_account_id(provider_id, raw_account_id, account_label)``, same
+    as the card-side computation in `check_and_fire`. *scope_label* is the
+    matching `provider_configs.account_label` for `config`'s own
+    (provider_id, account_id) pair, needed to resolve a scoped config's
+    account_id the same way (a `default` row with an email label resolves to
+    that email).
+    """
+    if config.provider_id not in ("*", provider_id):
+        return False
+    if config.account_id is None:
+        return True
+    scope = resolve_account_id(config.provider_id, config.account_id, scope_label)
+    return scope == resolved_account_id
+
+
+async def _post_payload(client: httpx.AsyncClient, config: WebhookConfig, payload: dict) -> None:
+    """Validate the URL (defense in depth) and POST *payload*; raises on failure."""
+    # Defense in depth: rows created before validate_webhook_url was added
+    # could still hold loopback/metadata URLs. Re-check before each call.
+    validate_webhook_url(config.url)
+    response = await client.post(config.url, json=payload)
+    response.raise_for_status()
+
+
 async def _fire_webhook(
     client: httpx.AsyncClient,
     config: WebhookConfig,
     card: LimitCard,
     used_pct: float,
 ) -> None:
-    """Dispatch a single webhook notification."""
-    # Defense in depth: rows created before validate_webhook_url was added
-    # could still hold loopback/metadata URLs. Re-check before each call.
-    validate_webhook_url(config.url)
+    """Dispatch a single threshold-breach webhook notification."""
     if config.channel == "discord":
         payload = _discord_payload(card, used_pct, config.threshold_pct)
     else:
         payload = _slack_payload(card, used_pct, config.threshold_pct)
-    response = await client.post(config.url, json=payload)
-    response.raise_for_status()
+    await _post_payload(client, config, payload)
     logger.info(f"Webhook fired: {config.provider_id} @ {used_pct:.1f}% (config {config.id})")
 
 
@@ -239,6 +268,72 @@ def _slack_payload(card: LimitCard, used_pct: float, threshold: float) -> dict:
                         "text": f"*Usage:* {used_pct:.1f}% (threshold: {threshold:.0f}%)",
                     },
                 ],
+            },
+        ]
+    }
+
+
+_CREDENTIAL_ALERT_HINT = (
+    "Re-authenticate in Settings → Providers, or check Token Health for details."
+)
+
+
+def _credential_title(status: str) -> str:
+    return (
+        "Credential invalid (rejected by provider)" if status == "invalid" else "Credential expired"
+    )
+
+
+def _credential_discord_payload(
+    provider_id: str,
+    account_label: str | None,
+    account_id: str,
+    status: str,
+    source_name: str | None,
+) -> dict:
+    return {
+        "embeds": [
+            {
+                "title": _credential_title(status),
+                "color": 0xED4245,
+                "fields": [
+                    {"name": "Provider", "value": provider_id, "inline": True},
+                    {"name": "Account", "value": account_label or account_id, "inline": True},
+                    {"name": "Status", "value": status, "inline": True},
+                    {"name": "Source", "value": source_name or "unknown", "inline": True},
+                ],
+                "description": _CREDENTIAL_ALERT_HINT,
+                "footer": {"text": "Runway · credential alert"},
+            }
+        ]
+    }
+
+
+def _credential_slack_payload(
+    provider_id: str,
+    account_label: str | None,
+    account_id: str,
+    status: str,
+    source_name: str | None,
+) -> dict:
+    return {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": _credential_title(status)},
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"*Provider:* {provider_id}"},
+                    {"type": "mrkdwn", "text": f"*Account:* {account_label or account_id}"},
+                    {"type": "mrkdwn", "text": f"*Status:* {status}"},
+                    {"type": "mrkdwn", "text": f"*Source:* {source_name or 'unknown'}"},
+                ],
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _CREDENTIAL_ALERT_HINT},
             },
         ]
     }

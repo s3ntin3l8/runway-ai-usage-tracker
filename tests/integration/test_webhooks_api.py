@@ -2,12 +2,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import ProviderConfig
+from app.models.db import ProviderConfig, WebhookCredentialAlert
 
 
 @pytest.fixture(name="session")
@@ -63,6 +63,56 @@ def test_list_webhooks_after_create(client):
     assert webhooks[0]["threshold_pct"] == 85.0
 
 
+def test_create_webhook_credential_alerts_defaults_true(client):
+    response = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
+    assert response.status_code == 201
+    webhook = client.get("/api/v1/system/webhooks").json()["webhooks"][0]
+    assert webhook["credential_alerts"] is True
+
+
+def test_create_webhook_credential_alerts_can_be_disabled(client):
+    response = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+            "credential_alerts": False,
+        },
+    )
+    assert response.status_code == 201
+    webhook = client.get("/api/v1/system/webhooks").json()["webhooks"][0]
+    assert webhook["credential_alerts"] is False
+
+
+def test_patch_webhook_credential_alerts(client):
+    create_resp = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
+    webhook_id = create_resp.json()["id"]
+    patch_resp = client.patch(
+        f"/api/v1/system/webhooks/{webhook_id}", json={"credential_alerts": False}
+    )
+    assert patch_resp.status_code == 200
+    webhook = client.get("/api/v1/system/webhooks").json()["webhooks"][0]
+    assert webhook["credential_alerts"] is False
+
+
 def test_patch_webhook(client):
     create_resp = client.post(
         "/api/v1/system/webhooks",
@@ -99,6 +149,98 @@ def test_delete_webhook(client):
 
     list_resp = client.get("/api/v1/system/webhooks")
     assert list_resp.json()["webhooks"] == []
+
+
+def test_delete_webhook_clears_credential_alert_rows(client, session):
+    create_resp = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90.0,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
+    webhook_id = create_resp.json()["id"]
+    session.add(
+        WebhookCredentialAlert(
+            webhook_id=webhook_id,
+            provider_id="anthropic",
+            account_id="default",
+            status="invalid",
+        )
+    )
+    session.commit()
+
+    assert client.delete(f"/api/v1/system/webhooks/{webhook_id}").status_code == 204
+    assert session.exec(select(WebhookCredentialAlert)).all() == []
+
+
+def test_patch_account_id_clears_credential_alert_rows(client, session):
+    _seed_account(session)
+    create_resp = client.post("/api/v1/system/webhooks", json=_payload())
+    webhook_id = create_resp.json()["id"]
+    session.add(
+        WebhookCredentialAlert(
+            webhook_id=webhook_id,
+            provider_id="anthropic",
+            account_id="default",
+            status="invalid",
+        )
+    )
+    session.commit()
+
+    patch_resp = client.patch(
+        f"/api/v1/system/webhooks/{webhook_id}", json={"account_id": "work@example.com"}
+    )
+    assert patch_resp.status_code == 200
+    assert session.exec(select(WebhookCredentialAlert)).all() == []
+
+
+def test_patch_unchanged_account_id_preserves_credential_alert_rows(client, session):
+    """PATCH merely echoing the current account_id (e.g. a form re-saving
+    every field) must not wipe an active alert's dedup state."""
+    _seed_account(session)
+    create_resp = client.post(
+        "/api/v1/system/webhooks", json=_payload(account_id="work@example.com")
+    )
+    webhook_id = create_resp.json()["id"]
+    session.add(
+        WebhookCredentialAlert(
+            webhook_id=webhook_id,
+            provider_id="anthropic",
+            account_id="work@example.com",
+            status="invalid",
+        )
+    )
+    session.commit()
+
+    patch_resp = client.patch(
+        f"/api/v1/system/webhooks/{webhook_id}",
+        json={"account_id": "work@example.com", "threshold_pct": 95.0},
+    )
+    assert patch_resp.status_code == 200
+    assert len(session.exec(select(WebhookCredentialAlert)).all()) == 1
+
+
+def test_patch_credential_alerts_off_clears_alert_rows(client, session):
+    create_resp = client.post("/api/v1/system/webhooks", json=_payload())
+    webhook_id = create_resp.json()["id"]
+    session.add(
+        WebhookCredentialAlert(
+            webhook_id=webhook_id,
+            provider_id="anthropic",
+            account_id="default",
+            status="invalid",
+        )
+    )
+    session.commit()
+
+    patch_resp = client.patch(
+        f"/api/v1/system/webhooks/{webhook_id}", json={"credential_alerts": False}
+    )
+    assert patch_resp.status_code == 200
+    assert session.exec(select(WebhookCredentialAlert)).all() == []
 
 
 def test_patch_nonexistent_webhook(client):
@@ -397,6 +539,60 @@ def test_deferred_columns_includes_webhook_account_id():
     assert ("webhook_configs", "account_id", "VARCHAR") in _DEFERRED_COLUMNS
 
 
+def test_deferred_columns_includes_webhook_credential_alerts():
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert (
+        "webhook_configs",
+        "credential_alerts",
+        "BOOLEAN NOT NULL DEFAULT 1",
+    ) in _DEFERRED_COLUMNS
+
+
+def test_add_columns_backfills_credential_alerts_as_true():
+    """An existing DB predating this column gets credential_alerts=1 on every
+    pre-existing row, so already-configured webhooks alert without an opt-in step."""
+    from sqlalchemy import text
+
+    from app.core.db import _add_columns_if_missing
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    with engine.connect() as conn:
+        conn.execute(text("DROP TABLE webhook_configs"))
+        conn.execute(
+            text(
+                "CREATE TABLE webhook_configs ("
+                "id INTEGER PRIMARY KEY, provider_id VARCHAR NOT NULL, account_id VARCHAR, "
+                "threshold_pct FLOAT NOT NULL, url VARCHAR NOT NULL, "
+                "channel VARCHAR NOT NULL, active BOOLEAN, last_fired_at TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO webhook_configs "
+                "(id, provider_id, threshold_pct, url, channel, active) "
+                "VALUES (1, 'anthropic', 90.0, 'https://discord.example.com/hook', 'discord', 1)"
+            )
+        )
+        conn.commit()
+
+        _add_columns_if_missing(conn)
+
+        rows = conn.execute(text("SELECT credential_alerts FROM webhook_configs")).fetchall()
+        assert [r[0] for r in rows] == [1]
+
+        # Idempotent: running again doesn't error or change the backfilled value.
+        _add_columns_if_missing(conn)
+        rows_again = conn.execute(text("SELECT credential_alerts FROM webhook_configs")).fetchall()
+        assert [r[0] for r in rows_again] == [1]
+
+
 def test_migrate_webhook_uniqueness_upgrades_legacy_db():
     """Functional upgrade path: index created without deleting rows; idempotent.
 
@@ -506,16 +702,18 @@ def test_fresh_db_has_single_covering_unique_index():
 
         conn.execute(
             text(
-                "INSERT INTO webhook_configs (provider_id, account_id, threshold_pct, url, channel, active) "
-                "VALUES ('anthropic', 'work@x.com', 90.0, 'https://example.com/h', 'discord', 1)"
+                "INSERT INTO webhook_configs "
+                "(provider_id, account_id, threshold_pct, url, channel, active, credential_alerts) "
+                "VALUES ('anthropic', 'work@x.com', 90.0, 'https://example.com/h', 'discord', 1, 1)"
             )
         )
         conn.commit()
         with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
             conn.execute(
                 text(
-                    "INSERT INTO webhook_configs (provider_id, account_id, threshold_pct, url, channel, active) "
-                    "VALUES ('anthropic', 'work@x.com', 80.0, 'https://example.com/h', 'discord', 1)"
+                    "INSERT INTO webhook_configs "
+                    "(provider_id, account_id, threshold_pct, url, channel, active, credential_alerts) "
+                    "VALUES ('anthropic', 'work@x.com', 80.0, 'https://example.com/h', 'discord', 1, 1)"
                 )
             )
             conn.commit()

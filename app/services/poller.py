@@ -206,6 +206,18 @@ class BackgroundPoller:
         except Exception as e:
             logger.error(f"Webhook check failed (non-fatal): {e}")
 
+        # Fire credential-health alerts (expired/invalid credentials). Runs
+        # even when `cards` is empty — Token Health is independent of
+        # whatever collectors happened to return this cycle, and a fully
+        # broken credential often means zero cards.
+        try:
+            from app.services.credential_alerts import check_credential_alerts
+
+            with Session(engine) as credential_session:
+                await check_credential_alerts(credential_session)
+        except Exception as e:
+            logger.error(f"Credential alert check failed (non-fatal): {e}")
+
 
 # Global instance
 poller = BackgroundPoller()

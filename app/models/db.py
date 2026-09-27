@@ -68,6 +68,46 @@ class WebhookConfig(SQLModel, table=True):  # type: ignore[call-arg]
     channel: str  # "discord" or "slack" — validated by CRUD API at ingestion
     active: bool = Field(default=True)
     last_fired_at: UTCDateTime | None = Field(default=None)  # None = reset/ready to fire
+    # Also alert when a matching credential's Token Health status turns
+    # expired/invalid — see app.services.credential_alerts. Default true so
+    # existing (threshold-only) webhooks pick it up without an opt-in step.
+    credential_alerts: bool = Field(default=True)
+
+
+class WebhookCredentialAlert(SQLModel, table=True):  # type: ignore[call-arg]
+    """Dedup/re-arm state for one webhook's credential-health alerts.
+
+    A row means *webhook_id* has already alerted for *provider_id*/*account_id*'s
+    current bad (expired/invalid) episode — deleting it re-arms the alert.
+    `account_id` is already the canonical, resolved id (see
+    `account_identity.resolve_account_id`), matching how webhook account
+    scoping is compared elsewhere.
+
+    `healthy_since` implements hysteresis: Token Health's `invalid` status
+    comes from the in-memory `auth_failures` registry, which any successful
+    collect clears, so a single healthy observation is not proof the
+    credential is fixed. `app.services.credential_alerts` only deletes the
+    row (re-arming) once `healthy_since` is old enough.
+    """
+
+    __tablename__ = "webhook_credential_alerts"
+    __table_args__ = (
+        UniqueConstraint(
+            "webhook_id",
+            "provider_id",
+            "account_id",
+            name="uq_webhook_credential_alert_scope",
+        ),
+        Index("ix_webhook_credential_alerts_webhook", "webhook_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    webhook_id: int
+    provider_id: str
+    account_id: str
+    status: str  # "expired" | "invalid" — the worst status seen this episode
+    fired_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    healthy_since: UTCDateTime | None = Field(default=None)
 
 
 class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
