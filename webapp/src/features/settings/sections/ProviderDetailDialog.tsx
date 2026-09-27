@@ -4,7 +4,6 @@
 // #287 (wizard lands); #286 ships it disabled with a tooltip pointing at
 // the follow-up PR.
 //
-// Lives behind the v2 settings UI shell (`?providers=v2`).
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
