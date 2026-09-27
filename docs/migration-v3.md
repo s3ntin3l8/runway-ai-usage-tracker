@@ -41,7 +41,7 @@ after upgrading.
 - The account picker only offers accounts that already have a
   `provider_configs` row (Settings → Providers) for that specific provider —
   if the account you want isn't listed, add it there first.
-- **If a provider's only configured account is still keyed `account_id="default"`**
+- **If a configured account is still keyed `account_id="default"`**
   (label may show your email, but the row's own id is `default`), you'll
   see it in the picker labeled `<label> (default)` — a hint, not a
   requirement, that assigning there keeps the event on the shared `default`
