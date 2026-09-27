@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, delete, select
 
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
 from app.services.maintenance.legacy_providers import LEGACY_PROVIDER_MAP
@@ -147,20 +147,18 @@ def apply_legacy_retag(session: Session, legacy_provider_id: str) -> RetagResult
     session.commit()
 
     # The legacy id's own dashboard card/history no longer applies — the
-    # canonical provider's card is authoritative going forward.
-    latest_deleted = session.exec(
-        select(LatestUsage).where(LatestUsage.provider_id == legacy_provider_id)
-    ).all()
-    for card in latest_deleted:
-        session.delete(card)
-    snapshots_deleted = session.exec(
-        select(QuotaSnapshot).where(QuotaSnapshot.provider_id == legacy_provider_id)
-    ).all()
-    for snapshot in snapshots_deleted:
-        session.delete(snapshot)
+    # canonical provider's card is authoritative going forward. Bulk SQL
+    # (rowcount, no hydration) rather than a per-row loop — a stray
+    # provider's quota_snapshots history can run into many rows.
+    latest_result = session.exec(
+        delete(LatestUsage).where(col(LatestUsage.provider_id) == legacy_provider_id)
+    )
+    snapshots_result = session.exec(
+        delete(QuotaSnapshot).where(col(QuotaSnapshot.provider_id) == legacy_provider_id)
+    )
     session.commit()
-    result.latest_usage_dropped = len(latest_deleted)
-    result.quota_snapshots_dropped = len(snapshots_deleted)
+    result.latest_usage_dropped = latest_result.rowcount or 0  # type: ignore[attr-defined]
+    result.quota_snapshots_dropped = snapshots_result.rowcount or 0  # type: ignore[attr-defined]
 
     touched = [legacy_provider_id, canonical]
     result.rollups_rebuilt_pairs = rebuild_rollups_for_providers(session, touched)

@@ -90,6 +90,11 @@ def apply_reassign_default(
     rollups (full recompute — cheap and unconditionally correct, unlike
     replaying a subtract/re-add per event) and any closed windows overlapping
     the moved events' timestamp range for either account. Commits.
+
+    Assumes `app/services/event_identity_migration.py` has already collapsed
+    any cross-account duplicate events at startup — same precondition
+    `legacy_retag.py` documents — so a `source`/`target` pair sharing an
+    event_id can't exist here to begin with.
     """
     plan = plan_reassign_default(
         session, provider_id=provider_id, source=source, target=target, event_ids=event_ids

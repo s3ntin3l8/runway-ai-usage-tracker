@@ -161,7 +161,7 @@ def test_pay_as_you_go_billing_type_is_looked_up_from_provider_config():
     _event(session, cost_usd=0.0, cost_reported_usd=0.0321)
     _price(session, "chatgpt", "gpt-6-sol", rate=2.0)  # would otherwise compute $2.0
 
-    result = apply_recost(session, ["chatgpt"])
+    apply_recost(session, ["chatgpt"])
 
     ev = session.exec(select(UsageEvent)).one()
     assert ev.cost_usd == 0.0321  # trusts the report over the estimate

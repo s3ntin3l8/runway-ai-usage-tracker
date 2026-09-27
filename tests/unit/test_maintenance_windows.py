@@ -198,9 +198,7 @@ def test_rebuild_windows_for_providers_drops_a_window_with_no_supporting_events(
 def test_rebuild_windows_batches_without_losing_windows(monkeypatch):
     """Exercise the _WINDOW_BATCH commit/expunge cycling with more windows
     than one batch, without needing hundreds of real rows in the test."""
-    import app.services.maintenance.windows as windows_mod
-
-    monkeypatch.setattr(windows_mod, "_WINDOW_BATCH", 2)
+    monkeypatch.setattr("app.services.maintenance.windows._WINDOW_BATCH", 2)
     session = _session()
     base_ts = datetime(2026, 8, 1, tzinfo=UTC)
     for i in range(5):

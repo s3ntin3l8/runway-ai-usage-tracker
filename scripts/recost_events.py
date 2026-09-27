@@ -76,7 +76,13 @@ def phase_b_recost(
     since: date | None,
     dry_run: bool,
 ) -> tuple[int, int, int]:
-    """Recompute cost_usd on usage_events. Returns (updated, unchanged, zeroed)."""
+    """Recompute cost_usd on usage_events. Returns (updated, unchanged, zeroed).
+
+    This CLI never passes `only_zero_cost=True` (that's the Data Health
+    `unpriced_models` fixer's contract, not this script's), so the printed
+    total never has a `skipped_still_unpriced` count to exclude — it would
+    always be 0 here.
+    """
     if dry_run:
         plan = plan_recost(session, providers, since=since, sample_size=0)
         print(

@@ -21,8 +21,6 @@ from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.period_rollups import rebuild_rollups_for_pairs
 
-_COST_FIELDS = ("cost_usd", "cost_reported_usd", "cost_estimated_usd")
-
 
 @dataclass(frozen=True)
 class RecostChange:
