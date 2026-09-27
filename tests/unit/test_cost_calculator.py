@@ -478,10 +478,10 @@ def test_chatgpt_gpt56_codename_variants_price_distinctly():
 def test_unseeded_variant_falls_back_via_segment_trim():
     """A slug we haven't seeded yet must not silently cost $0 if a sibling
     with one fewer "-"-segment is seeded — e.g. a hypothetical fourth
-    gpt-5.6 codename ("gpt-5.6-nova") should fall back toward "gpt-5.6" if
-    that ever becomes a seeded row. Verified against a synthetic provider so
-    the mechanism is isolated from real pricing_seed.py contents (which does
-    not seed a bare "gpt-5.6" row today).
+    gpt-5.6 codename ("gpt-5.6-nova") should fall back toward "gpt-5.6"
+    (seeded since it inherits the sol-tier rate for pre-codename events).
+    Verified against a synthetic provider so the mechanism is isolated from
+    real pricing_seed.py contents.
     """
     s = _seeded_session()
     s.add(

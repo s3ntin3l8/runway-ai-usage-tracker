@@ -277,7 +277,7 @@ def _classify_status(
     return "ok"
 
 
-def _make_entry(
+def _make_entry(  # noqa: PLR0913
     card: LimitCard,
     *,
     status: str,
@@ -285,6 +285,7 @@ def _make_entry(
     samples_used: int,
     confidence: float,
     now_state: _NowState,
+    limit_value: float,
     projection: _Projection = _Projection(),
     slope: float | None = None,
     method: str = "theil_sen",
@@ -304,7 +305,10 @@ def _make_entry(
         projected_used=projection.used,
         projected_pct=projection.pct,
         projected_limit_hit_at=projection.hit_at,
-        limit_value=card.limit_value,  # type: ignore[arg-type]
+        # The locally derived limit (falls back to LIMIT_PCT when the card
+        # carries no limit_value but still has a derivable pct_used — e.g. a
+        # kimi_coding monthly card) — never the raw, possibly-None card value.
+        limit_value=limit_value,
         reset_at=card.reset_at,  # type: ignore[arg-type]
         window_start=window_start.isoformat(),
         samples_used=samples_used,
@@ -362,6 +366,7 @@ def _build_forecast_entry(  # noqa: PLR0913
             samples_used=samples_used,
             confidence=confidence if floor_status else 0.0,
             now_state=now_state,
+            limit_value=limit_value,
             projection=(
                 _floor_projection(floor_status, now_state, limit_value)
                 if floor_status
@@ -378,6 +383,7 @@ def _build_forecast_entry(  # noqa: PLR0913
             samples_used=samples_used,
             confidence=confidence,
             now_state=now_state,
+            limit_value=limit_value,
             projection=(
                 _floor_projection(floor_status, now_state, limit_value)
                 if floor_status
@@ -437,6 +443,7 @@ def _build_forecast_entry(  # noqa: PLR0913
         samples_used=samples_used,
         confidence=confidence,
         now_state=now_state,
+        limit_value=limit_value,
         projection=projection,
         slope=fit.slope,
         method=fit.method,
@@ -643,6 +650,7 @@ def _compute_quota_forecast(  # noqa: PLR0912
             samples_used=len(buckets),
             confidence=confidence,
             now_state=now_state,
+            limit_value=limit_value,
         )
 
     xs: list[float] = []

@@ -18,6 +18,9 @@ from sqlmodel.pool import StaticPool
 from app.models.db import UsageEvent, UsagePeriodRollup
 from app.models.schemas import UsageEventPush
 from app.services.event_identity_migration import (
+    _RANKING_SELECT_SQL,
+    _TMP_JOIN_INDEX,
+    _TMP_JOIN_INDEX_SQL,
     INDEX_NAME,
     migrate_to_provider_event_identity,
 )
@@ -185,6 +188,61 @@ def _index_exists(session: Session) -> bool:
     )
 
 
+def test_migration_ranking_join_never_falls_back_to_a_provider_scan(session: Session):
+    """Regression for a real production-scale stall: with no index covering
+    (provider_id, event_id, account_id), the query planner's only option is
+    the old 3-column uq_usage_events_identity (provider_id, account_id,
+    event_id) — event_id isn't its second column, so a seek can only narrow
+    by provider_id and falls back to comparing every row sharing it. On a
+    provider with tens of thousands of events and duplicate groups that's a
+    quadratic blowup that measured as never finishing in over ten minutes
+    against a copy of a real database, versus under a second with the seek.
+
+    Pins the query plan of the migration module's own SQL constants (not a
+    copy re-typed here) so the fix can't silently stop being used.
+    """
+    session.execute(text(f"DROP INDEX {INDEX_NAME}"))  # pre-migration DB
+    session.execute(text(_TMP_JOIN_INDEX_SQL))
+    plan = " ".join(
+        str(row) for row in session.execute(text(f"EXPLAIN QUERY PLAN {_RANKING_SELECT_SQL}"))
+    )
+    assert f"SEARCH e USING COVERING INDEX {_TMP_JOIN_INDEX}" in plan
+    assert "provider_id=? AND event_id=?" in plan
+
+
+def test_migration_creates_the_join_index_before_the_ranking_query(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    """The temp index only helps if it exists before the ranking query
+    runs — pin that ordering so a future refactor can't reorder past it."""
+    session.execute(text(f"DROP INDEX {INDEX_NAME}"))  # pre-migration DB
+    for ev in (
+        _legacy_event("default", "msg_1"),
+        _legacy_event("alice@example.com", "msg_1"),
+    ):
+        session.add(ev)
+        session.flush()
+        update_rollups_for_event(session, ev)
+    session.commit()
+
+    statements: list[str] = []
+    real_execute = Session.execute
+
+    def _spy(self: Session, statement: object, *args: object, **kwargs: object) -> object:
+        statements.append(str(statement))
+        return real_execute(self, statement, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Session, "execute", _spy)
+
+    migrate_to_provider_event_identity(session)
+
+    index_pos = next(i for i, s in enumerate(statements) if _TMP_JOIN_INDEX_SQL in s)
+    ranking_pos = next(
+        i for i, s in enumerate(statements) if "CREATE TEMP TABLE _event_identity_ranked" in s
+    )
+    assert index_pos < ranking_pos
+
+
 def test_migration_collapses_cross_account_duplicates(session: Session):
     session.execute(text(f"DROP INDEX {INDEX_NAME}"))  # pre-migration DB
     # msg_1 double-counted under default + alice (a retag); msg_2 only default.
@@ -216,6 +274,54 @@ def test_migration_collapses_cross_account_duplicates(session: Session):
 def test_migration_is_noop_on_fresh_db(session: Session):
     assert _index_exists(session)  # create_all builds it from the model
     assert migrate_to_provider_event_identity(session) == 0
+
+
+def test_migration_leaves_no_scaffolding_table_behind(session: Session):
+    """The set-based collapse's temp ranking table (a Python loop per
+    duplicate group added minutes to a database with tens of thousands of
+    them) doesn't survive the migration."""
+    session.execute(text(f"DROP INDEX {INDEX_NAME}"))  # pre-migration DB
+    for ev in (
+        _legacy_event("default", "msg_1"),
+        _legacy_event("alice@example.com", "msg_1"),
+    ):
+        session.add(ev)
+        session.flush()
+        update_rollups_for_event(session, ev)
+    session.commit()
+
+    migrate_to_provider_event_identity(session)
+
+    table_names = {
+        row[0]
+        for row in session.execute(text("SELECT name FROM sqlite_temp_master WHERE type='table'"))
+    }
+    assert "_event_identity_ranked" not in table_names
+    assert _index_exists(session)
+
+
+def test_migration_handles_a_three_way_duplicate_group(session: Session):
+    """More than two copies of the same event (a message re-tagged twice)
+    all collapse to the single correct keeper."""
+    session.execute(text(f"DROP INDEX {INDEX_NAME}"))  # pre-migration DB
+    for ev in (
+        _legacy_event("default", "msg_1"),
+        _legacy_event("bob@example.com", "msg_1"),
+        _legacy_event("alice@example.com", "msg_1"),
+    ):
+        session.add(ev)
+        session.flush()
+        update_rollups_for_event(session, ev)
+    session.commit()
+
+    removed = migrate_to_provider_event_identity(session)
+
+    assert removed == 2
+    rows = list(session.exec(select(UsageEvent)))
+    assert len(rows) == 1
+    # The most recently inserted real account wins over an earlier real
+    # account, same as it beats "default".
+    assert rows[0].account_id == "alice@example.com"
 
 
 # ---------------------------------------------------------------------------

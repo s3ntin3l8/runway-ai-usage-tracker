@@ -46,6 +46,58 @@ def test_seed_chatgpt_gpt54_mini_rates():
     assert row.cache_create_per_mtok == 0.0
 
 
+def test_seed_chatgpt_gpt6_sol_rates():
+    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6-sol",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 2.00
+    assert row.output_per_mtok == 10.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_chatgpt_gpt6_luna_rates():
+    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6-luna",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.10
+    assert row.output_per_mtok == 0.50
+    assert row.cache_read_per_mtok == 0.01
+    assert row.cache_create_per_mtok == 0.0
+
+
+def test_seed_chatgpt_bare_gpt56_inherits_sol_rate():
+    """Bare gpt-5.6 (pre-codename-preservation events) prices at the
+    generation's standard (sol) tier rather than falling to $0."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-5.6",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 4.00
+    assert row.output_per_mtok == 20.00
+    assert row.cache_read_per_mtok == 0.40
+    assert row.cache_create_per_mtok == 0.0
+
+
 def test_seed_preserves_anthropic_sonnet_rates():
     s = _make_session()
     seed_pricing_table(s)
