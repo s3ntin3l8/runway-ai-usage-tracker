@@ -168,14 +168,12 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     collector_instance = cls(account_id=durable_aid, account_label=db_label)
-                    if not isinstance(collector_instance, XaiCollector):
+                    if not collector_instance.CREDENTIALS_KEYED_BY_ACCOUNT_ID:
                         # The default collector can carry a durable (or runtime-resolved)
                         # identity for its cards while its credentials remain scoped to
                         # the default ProviderConfig / server row. Auth-failure flagging
                         # also attributes rejected default credentials to `default`.
                         collector_instance.credential_account_id = "default"
-                    # xAI token-cache credentials are keyed by the resolved
-                    # identity, so XaiCollector must keep using its account_id.
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)

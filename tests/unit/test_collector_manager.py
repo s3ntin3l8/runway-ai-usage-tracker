@@ -186,6 +186,7 @@ class TestCollectorManagerInitialization:
 
         xai_default = manager.smart_collectors["xai:default"].collector
         assert xai_default.account_id == "alice@example.com"
+        assert xai_default.CREDENTIALS_KEYED_BY_ACCOUNT_ID
         assert not hasattr(xai_default, "credential_account_id")
         # The default collector reads this same email-keyed cache slot, so the
         # dynamic twin is correctly skipped without losing the credential.

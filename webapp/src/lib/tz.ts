@@ -49,6 +49,8 @@ export function localDateStartISO(date: string, timeZone = getUserTz()): string 
     second: '2-digit',
     hourCycle: 'h23',
   });
+  // The bounded refinement handles DST offsets; for a historically skipped
+  // local calendar date, return the final estimate after the fixed cap.
   for (let i = 0; i < 3; i += 1) {
     const parts = formatter.formatToParts(new Date(guess));
     const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));

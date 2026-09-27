@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 class XaiCollector(BaseCollector):
     PROVIDER_ID = "xai"
     DEFAULT_WINDOW_TYPE = "monthly"
+    CREDENTIALS_KEYED_BY_ACCOUNT_ID = True
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "api": ("OAuth bearer (cli-chat-proxy)", "_get_xai_api"),

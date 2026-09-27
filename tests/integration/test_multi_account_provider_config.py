@@ -104,7 +104,7 @@ def test_provider_update_requires_explicit_account_id(client: TestClient):
         json={"account_label": "ambiguous"},
         headers=_admin_headers(),
     )
-    assert r.status_code in (404, 405)
+    assert r.status_code == 405
 
 
 def test_explicit_put_creates_account_id(client: TestClient):

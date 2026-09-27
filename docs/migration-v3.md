@@ -28,3 +28,8 @@ shortcut is removed; all writes must identify the account being changed.
 The per-account API also avoids ambiguity for providers with multiple saved
 credentials. A first credential normally belongs to `default`; use the
 provider's account ID for credentials already associated with an identity.
+
+For Kimi API, Kimi K2, MiniMax, OpenRouter, and zAI API keys, lookup precedence
+is the saved account credential, then that account's token-cache entry, then
+the server environment variable. A cached `default` account key therefore
+takes precedence over the corresponding environment variable.
