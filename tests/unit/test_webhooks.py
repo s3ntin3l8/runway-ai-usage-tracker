@@ -587,3 +587,31 @@ async def test_scope_default_label_email_matches_email_card(session):
         await check_and_fire([card], session)
 
         assert mock_client.post.called
+
+
+# --- _scope_matches (shared by check_and_fire and credential_alerts) --------
+
+
+def test_scope_matches_wildcard_matches_any_provider():
+    from app.services.webhooks import _scope_matches
+
+    global_cfg = WebhookConfig(
+        provider_id="*", account_id=None, threshold_pct=90.0, url="u", channel="discord"
+    )
+    assert _scope_matches(global_cfg, "anthropic", "alice@example.com", None)
+    assert _scope_matches(global_cfg, "openai", "bob@example.com", None)
+
+
+def test_scope_matches_account_scoped_config():
+    from app.services.webhooks import _scope_matches
+
+    scoped_cfg = WebhookConfig(
+        provider_id="anthropic",
+        account_id="alice@example.com",
+        threshold_pct=90.0,
+        url="u",
+        channel="discord",
+    )
+    assert _scope_matches(scoped_cfg, "anthropic", "alice@example.com", None)
+    assert not _scope_matches(scoped_cfg, "anthropic", "bob@example.com", None)
+    assert not _scope_matches(scoped_cfg, "openai", "alice@example.com", None)

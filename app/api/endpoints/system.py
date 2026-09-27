@@ -27,6 +27,7 @@ from app.models.db import (
     SidecarRegistry,
     SystemConfig,
     WebhookConfig,
+    WebhookCredentialAlert,
 )
 from app.models.schemas import LimitCard, SidecarDownloadsResponse
 from app.services import audit_log, auth_failures
@@ -651,6 +652,7 @@ class _WebhookCreate(BaseModel):
     url: str
     channel: Literal["discord", "slack"]
     active: bool = True
+    credential_alerts: bool = True
 
 
 class _WebhookUpdate(BaseModel):
@@ -658,6 +660,7 @@ class _WebhookUpdate(BaseModel):
     url: str | None = None
     active: bool | None = None
     account_id: str | None = None  # explicit null clears back to "all accounts"
+    credential_alerts: bool | None = None
 
 
 def _validate_webhook_account(session: Session, provider_id: str, account_id: str | None) -> None:
@@ -741,6 +744,7 @@ async def list_webhooks(
                 "url": c.url,
                 "channel": c.channel,
                 "active": c.active,
+                "credential_alerts": c.credential_alerts,
                 "last_fired_at": iso_utc(c.last_fired_at),
             }
             for c in configs
@@ -814,6 +818,19 @@ async def update_webhook(
         new_url = updates.get("url", config.url)
         _validate_webhook_account(session, new_provider, new_account)
         _assert_webhook_unique(session, new_provider, new_account, new_url, exclude_id=webhook_id)
+    # A changed account scope or a disabled toggle invalidates any existing
+    # credential-alert dedup rows — otherwise a webhook re-scoped to a
+    # different account could stay silently "already alerted" for an
+    # identity it no longer covers. Compare against the stored value, not
+    # just whether the field was sent — a PATCH that merely echoes the
+    # current account_id must not wipe an active alert's dedup state.
+    account_changed = account_touched and body.account_id != config.account_id
+    credential_alerts_turned_off = updates.get("credential_alerts") is False
+    if account_changed or credential_alerts_turned_off:
+        for alert in session.exec(
+            select(WebhookCredentialAlert).where(WebhookCredentialAlert.webhook_id == webhook_id)
+        ).all():
+            session.delete(alert)
     for key, value in updates.items():
         setattr(config, key, value)
     session.add(config)
@@ -840,6 +857,10 @@ async def delete_webhook(
     config = session.get(WebhookConfig, webhook_id)
     if not config:
         raise HTTPException(status_code=404, detail="Webhook not found")
+    for alert in session.exec(
+        select(WebhookCredentialAlert).where(WebhookCredentialAlert.webhook_id == webhook_id)
+    ).all():
+        session.delete(alert)
     session.delete(config)
     session.commit()
 

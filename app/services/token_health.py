@@ -80,8 +80,18 @@ def _is_synthetic(account_id: str) -> bool:
     return account_id == "server" or account_id.startswith(("config:", "config-cookie:"))
 
 
-def _apply_invalid(rows: list[dict[str, Any]]) -> None:
-    """Flip healthy-looking rows to ``invalid`` when a collector's credential was rejected.
+def _build_accounts_by_provider(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
+    accounts_by_provider: dict[str, set[str]] = {}
+    for r in rows:
+        accounts_by_provider.setdefault(r["provider"], set()).add(
+            canonical_account_id(_underlying_account(r["account_id"]))
+        )
+    return accounts_by_provider
+
+
+def is_flagged(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]) -> bool:
+    """True when *row*'s identity currently has a rejected credential flagged
+    in `auth_failures` — same matching rules as `_apply_invalid`.
 
     Matching is by *identity*, not by the borrowing rule: two different
     opaque/fingerprint-keyed accounts of one provider must not flag each
@@ -94,23 +104,32 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
     hash-keyed row is never linked to a flagged email: under-flag rather than
     show a healthy credential as rejected.
 
-    Runs after every row exists so statuses are final before redundancy is
-    computed.
+    Exposed (not `_`-prefixed) so `app.services.credential_alerts` can reuse
+    it directly on already-``expired`` rows, which `_apply_invalid` itself
+    skips (see its docstring) — an auth-rejected credential whose access
+    token also happens to be expired must still be detectable as rejected.
     """
-    accounts_by_provider: dict[str, set[str]] = {}
-    for r in rows:
-        accounts_by_provider.setdefault(r["provider"], set()).add(
-            canonical_account_id(_underlying_account(r["account_id"]))
-        )
+    flagged = auth_failures.flagged_accounts(row["provider"])
+    if not flagged:
+        return False
+    row_id = canonical_account_id(_underlying_account(row["account_id"]))
+    sole_account = accounts_by_provider.get(row["provider"]) == {row_id}
+    return row_id in flagged or ("default" in flagged and (row_id == "default" or sole_account))
+
+
+def _apply_invalid(rows: list[dict[str, Any]]) -> None:
+    """Flip healthy-looking rows to ``invalid`` when a collector's credential was rejected.
+
+    Runs after every row exists so statuses are final before redundancy is
+    computed. Only ``valid``/``unknown`` rows are promoted — an already
+    ``expired`` row keeps that status here (see `credential_alerts.py` for
+    why a rejection still needs to be detectable on those too).
+    """
+    accounts_by_provider = _build_accounts_by_provider(rows)
     for r in rows:
         if r["status"] not in ("valid", "unknown"):
             continue
-        flagged = auth_failures.flagged_accounts(r["provider"])
-        if not flagged:
-            continue
-        row_id = canonical_account_id(_underlying_account(r["account_id"]))
-        sole_account = accounts_by_provider[r["provider"]] == {row_id}
-        if row_id in flagged or ("default" in flagged and (row_id == "default" or sole_account)):
+        if is_flagged(r, accounts_by_provider):
             r["status"] = "invalid"
 
 

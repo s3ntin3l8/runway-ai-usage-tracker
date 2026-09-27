@@ -52,7 +52,7 @@ const SECTIONS: Section[] = [
   {
     slug: 'webhooks',
     label: 'Alerts',
-    description: 'Discord / Slack threshold webhooks',
+    description: 'Discord / Slack threshold & credential alerts',
     icon: WebhookIcon,
     element: <WebhooksSection />,
   },

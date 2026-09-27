@@ -51,7 +51,8 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 | `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
 | `provider_configs` | Per-provider user config — API keys, session cookies (Fernet-encrypted), account labels, poll intervals, per-strategy enable toggles. Unique on `(provider_id, account_id)`. |
 | `sidecar_registry` | Known sidecars with hostname, custom name, tags, last-seen, version, OS, recent log lines, and a `collection_enabled` pause flag. |
-| `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `account_id` (NULL = all accounts), `threshold_pct`, `url`, `channel`, last-fired timestamp. |
+| `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `account_id` (NULL = all accounts), `threshold_pct`, `url`, `channel`, last-fired timestamp, `credential_alerts` (opt-in, default on, for the credential-health alerts below). |
+| `webhook_credential_alerts` | Dedup/re-arm state for credential-health alerts (`app/services/credential_alerts.py`): one row per `(webhook_id, provider_id, account_id)` bad episode, with a `healthy_since` hysteresis timestamp so a single healthy Token Health observation doesn't immediately re-arm. |
 | `system_config` | Single-row global config — browser preference, default poll interval, dashboard layout JSON, user timezone. |
 | `audit_log` | Append-only record of admin mutations (sidecar pause/resume/delete/patch, etc.). Diagnostic, not legal-grade. |
 | `sidecar_pairing_codes` | One-time, short-lived (`PAIRING_CODE_TTL_SECONDS`) sidecar pairing codes, stored as SHA-256 only. Minted by admins (`POST /fleet/pairing-codes`, a `runway-sidecar://pair` deep link), redeemed once by a new sidecar (`POST /fleet/pair` → `api_url` + ingest key). See `app/services/pairing.py`, `docs/SECURITY.md`. |
