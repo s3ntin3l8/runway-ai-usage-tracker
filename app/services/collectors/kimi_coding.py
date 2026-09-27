@@ -306,7 +306,10 @@ class KimiCodingCollector(BaseCollector):
         # Sidecar-pushed token cache.
         try:
             cache_data = await token_cache.get_with_metadata(
-                "kimi_coding", account_id=self.account_id or "default"
+                "kimi_coding",
+                account_id=(
+                    getattr(self, "credential_account_id", None) or self.account_id or "default"
+                ),
             )
             if cache_data:
                 value, meta = cache_data

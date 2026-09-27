@@ -2999,6 +2999,30 @@ class TestKimiCodingCollector:
         assert len(result) == 2  # vestigial monthly "code" pool suppressed
 
     @pytest.mark.asyncio
+    async def test_cli_sidecar_lookup_uses_credential_account_id(self):
+        collector = KimiCodingCollector(account_id="alice@example.com")
+        collector.credential_account_id = "default"
+        future = datetime.now(UTC).timestamp() + 3600
+        credential_patcher = self._patch_credentials()
+        settings_patcher = self._mock_settings()
+        try:
+            with patch(
+                "app.services.collectors.kimi_coding.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"cli_access_token": "cli-sidecar-token", "cli_expires_at": future},
+                    {"source": "sidecar"},
+                ),
+            ) as get_with_metadata:
+                resolved = await collector._resolve_cli_token()
+        finally:
+            credential_patcher.stop()
+            settings_patcher.stop()
+
+        assert resolved == ("cli-sidecar-token", "sidecar")
+        get_with_metadata.assert_awaited_once_with("kimi_coding", account_id="default")
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("cache_source", "expected_input_source"),
         [

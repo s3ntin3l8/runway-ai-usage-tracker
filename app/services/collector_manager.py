@@ -207,13 +207,21 @@ class CollectorManager:
                 if p_id in self.collector_registry:
                     default_key = f"{p_id}:default"
                     default_collector = self.smart_collectors.get(default_key)
-                    # A default collector can carry a durable display identity.
-                    # Skip only the cache entry representing that same account;
-                    # other named accounts must run alongside it.
-                    if acc_id == "default" or (
-                        default_collector is not None
-                        and default_collector.collector.account_id == acc_id
-                    ):
+                    # Skip only the cache entry whose slot the default collector
+                    # actually reads. Its display identity can differ from that
+                    # credential slot when LatestUsage restores a durable id.
+                    default_credential_account_id = None
+                    if default_collector is not None:
+                        default_credential_account_id = (
+                            getattr(
+                                default_collector.collector,
+                                "credential_account_id",
+                                None,
+                            )
+                            or default_collector.collector.account_id
+                            or "default"
+                        )
+                    if default_collector is not None and acc_id == default_credential_account_id:
                         continue
                     cls, name, ttl = self.collector_registry[p_id]
 

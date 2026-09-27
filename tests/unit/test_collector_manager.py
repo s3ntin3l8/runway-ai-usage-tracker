@@ -199,6 +199,34 @@ class TestCollectorManagerInitialization:
         get_token.assert_awaited_once_with("xai", "xai_access", account_id="alice@example.com")
 
     @pytest.mark.asyncio
+    async def test_durable_identity_does_not_hide_named_credential_slot(self, manager):
+        manager.smart_collectors = {}
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+                return_value=[("kimi_coding", "alice@example.com", "Alice")],
+            ),
+            patch("sqlmodel.Session") as session_cls,
+        ):
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [
+                [],  # ProviderConfig rows
+                [("kimi_coding", "alice@example.com")],  # durable LatestUsage identity
+            ]
+            inner.exec.return_value.first.return_value = None
+            session_cls.return_value.__enter__.return_value = inner
+
+            await manager._sync_collectors(force=True)
+
+        default_collector = manager.smart_collectors["kimi_coding:default"].collector
+        assert default_collector.account_id == "alice@example.com"
+        assert default_collector.credential_account_id == "default"
+        # The default collector reads the `default` credential slot; the named
+        # sidecar credentials must stay available to the account-keyed collector.
+        assert "kimi_coding:alice@example.com" in manager.smart_collectors
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_prunes_stale_dynamic_collectors(self, manager):
         """Test that collectors for missing accounts are removed."""
         # Add a fake dynamic collector
