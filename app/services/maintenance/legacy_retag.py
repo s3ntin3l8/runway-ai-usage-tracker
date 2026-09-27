@@ -16,12 +16,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlmodel import Session, col, delete, select
+from sqlalchemy import func
+from sqlmodel import Session, col, select
 
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
+from app.services.maintenance._chunked_sql import chunked_delete, chunked_update
 from app.services.maintenance.legacy_providers import LEGACY_PROVIDER_MAP
 from app.services.maintenance.rollups import rebuild_rollups_for_providers
 from app.services.maintenance.windows import rebuild_windows_for_providers
+
+_COLLISION_BATCH = 500
 
 
 def pick_winner(a: UsageEvent, b: UsageEvent) -> tuple[UsageEvent, UsageEvent]:
@@ -103,29 +107,48 @@ def apply_legacy_retag(session: Session, legacy_provider_id: str) -> RetagResult
     provider, resolving any (post-retag) collision via `pick_winner`,
     preserving a source-reported cost that would otherwise only have been
     recognized via the legacy id's provider-prefix check, and rebuilding
-    rollups/windows for both providers. Commits.
+    rollups/windows for both providers.
+
+    Every write is chunked (`_chunked_sql`) and committed per batch — a
+    legacy id like `opencode-openrouter` can carry tens of thousands of
+    events, and this fixer must never hold SQLite's writer lock for one
+    giant transaction. Resumable: interrupting mid-run and calling again
+    picks up wherever the last committed batch left off.
     """
     canonical = _canonical_for(legacy_provider_id)
     result = RetagResult(canonical_provider_id=canonical)
 
-    collision_ids = _collision_event_ids(session, legacy_provider_id, canonical)
-    for event_id in collision_ids:
-        legacy_row = session.exec(
-            select(UsageEvent).where(
-                UsageEvent.provider_id == legacy_provider_id, UsageEvent.event_id == event_id
+    collision_ids = sorted(_collision_event_ids(session, legacy_provider_id, canonical))
+    for start in range(0, len(collision_ids), _COLLISION_BATCH):
+        batch = collision_ids[start : start + _COLLISION_BATCH]
+        legacy_rows = {
+            ev.event_id: ev
+            for ev in session.exec(
+                select(UsageEvent).where(
+                    col(UsageEvent.provider_id) == legacy_provider_id,
+                    col(UsageEvent.event_id).in_(batch),
+                )
             )
-        ).first()
-        canonical_row = session.exec(
-            select(UsageEvent).where(
-                UsageEvent.provider_id == canonical, UsageEvent.event_id == event_id
+        }
+        canonical_rows = {
+            ev.event_id: ev
+            for ev in session.exec(
+                select(UsageEvent).where(
+                    col(UsageEvent.provider_id) == canonical,
+                    col(UsageEvent.event_id).in_(batch),
+                )
             )
-        ).first()
-        if legacy_row is None or canonical_row is None:
-            continue  # raced away between the plan query and here — skip, next scan picks it up
-        _winner, loser = pick_winner(legacy_row, canonical_row)
-        session.delete(loser)
-        result.collisions_resolved += 1
-    session.commit()
+        }
+        for event_id in batch:
+            legacy_row = legacy_rows.get(event_id)
+            canonical_row = canonical_rows.get(event_id)
+            if legacy_row is None or canonical_row is None:
+                continue  # raced away between the plan query and here — skip, next scan picks it up
+            _winner, loser = pick_winner(legacy_row, canonical_row)
+            session.delete(loser)
+            result.collisions_resolved += 1
+        session.commit()
+        session.expunge_all()
 
     # Every remaining legacy-provider row (survivors of a collision, plus
     # every row that never collided) retags onto the canonical provider_id.
@@ -135,30 +158,24 @@ def apply_legacy_retag(session: Session, legacy_provider_id: str) -> RetagResult
     # cost — but that check is keyed on the *current* provider_id, so it
     # stops recognizing this event the moment it's retagged. Backfill
     # cost_reported_usd here so that recognition survives the rename.
-    remaining = session.exec(
-        select(UsageEvent).where(UsageEvent.provider_id == legacy_provider_id)
-    ).all()
-    for ev in remaining:
-        if ev.cost_reported_usd is None:
-            ev.cost_reported_usd = ev.cost_usd
-        ev.provider_id = canonical
-        session.add(ev)
-    result.retagged = len(remaining)
-    session.commit()
+    result.retagged = chunked_update(
+        session,
+        UsageEvent,
+        [col(UsageEvent.provider_id) == legacy_provider_id],
+        {
+            "provider_id": canonical,
+            "cost_reported_usd": func.coalesce(UsageEvent.cost_reported_usd, UsageEvent.cost_usd),
+        },
+    )
 
     # The legacy id's own dashboard card/history no longer applies — the
-    # canonical provider's card is authoritative going forward. Bulk SQL
-    # (rowcount, no hydration) rather than a per-row loop — a stray
-    # provider's quota_snapshots history can run into many rows.
-    latest_result = session.exec(
-        delete(LatestUsage).where(col(LatestUsage.provider_id) == legacy_provider_id)
+    # canonical provider's card is authoritative going forward.
+    result.latest_usage_dropped = chunked_delete(
+        session, LatestUsage, [col(LatestUsage.provider_id) == legacy_provider_id]
     )
-    snapshots_result = session.exec(
-        delete(QuotaSnapshot).where(col(QuotaSnapshot.provider_id) == legacy_provider_id)
+    result.quota_snapshots_dropped = chunked_delete(
+        session, QuotaSnapshot, [col(QuotaSnapshot.provider_id) == legacy_provider_id]
     )
-    session.commit()
-    result.latest_usage_dropped = latest_result.rowcount or 0  # type: ignore[attr-defined]
-    result.quota_snapshots_dropped = snapshots_result.rowcount or 0  # type: ignore[attr-defined]
 
     touched = [legacy_provider_id, canonical]
     result.rollups_rebuilt_pairs = rebuild_rollups_for_providers(session, touched)

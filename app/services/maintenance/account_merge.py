@@ -15,14 +15,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from sqlmodel import Session, col, delete, select, text
+from sqlmodel import Session, col, select, text
 
 from app.models.db import LatestUsage, QuotaSnapshot
 from app.services.accumulator import merge_card_json
+from app.services.maintenance._chunked_sql import chunked_delete
 
 # Identity fields carried inside card_json that must NOT leak from the
 # source card into the target card during a quota merge.
 _IDENTITY_KEYS = ("account_id", "account_label")
+
+_SNAPSHOT_BATCH = 5000
 
 
 def _grain(row: LatestUsage | QuotaSnapshot) -> tuple:
@@ -129,27 +132,76 @@ def merge_gauge_series(
             session.add(src)
             result.retagged += 1
 
-    # Bulk retag; SQLite silently skips a row whose (provider_id, account_id,
-    # window_type, variant, model_id, ts) would collide with an existing
-    # target row (the unique constraint), leaving it still under `source`.
-    update_result = session.execute(
-        text(
-            "UPDATE OR IGNORE quota_snapshots SET account_id = :target "
-            "WHERE provider_id = :p AND account_id = :source"
-        ),
-        {"target": target, "p": provider_id, "source": source},
-    )
-    result.snapshots_retagged = update_result.rowcount or 0  # type: ignore[attr-defined]
-    # Whatever's left at (provider_id, source) is exactly the collisions —
-    # a genuine duplicate observation, safe to drop.
-    delete_result = session.execute(
-        text("DELETE FROM quota_snapshots WHERE provider_id = :p AND account_id = :source"),
-        {"p": provider_id, "source": source},
-    )
-    result.snapshots_collided = delete_result.rowcount or 0  # type: ignore[attr-defined]
-
     session.commit()
+
+    retagged, collided = _chunked_retag_snapshots(session, provider_id, source, target)
+    result.snapshots_retagged = retagged
+    result.snapshots_collided = collided
     return result
+
+
+def _chunked_retag_snapshots(
+    session: Session,
+    provider_id: str,
+    source: str,
+    target: str,
+    *,
+    batch_size: int = _SNAPSHOT_BATCH,
+) -> tuple[int, int]:
+    """Bulk-retag `quota_snapshots` from `source` to `target`, `batch_size`
+    rows at a time by an `id` cursor — a stray account's snapshot history can
+    run into the tens of thousands of rows, and this must never hold
+    SQLite's writer lock for one giant transaction.
+
+    Advances by `id` rather than re-querying `WHERE account_id = :source`
+    each batch: `UPDATE OR IGNORE` can leave a colliding row's account_id
+    unchanged, and re-selecting the same WHERE would re-match — and retry
+    forever — the exact rows a batch just failed to move.
+    """
+    retagged = 0
+    collided = 0
+    cursor = 0
+    while True:
+        ids = [
+            row[0]
+            for row in session.execute(
+                text(
+                    "SELECT id FROM quota_snapshots WHERE provider_id = :p "
+                    "AND account_id = :source AND id > :cursor ORDER BY id LIMIT :n"
+                ),
+                {"p": provider_id, "source": source, "cursor": cursor, "n": batch_size},
+            )
+        ]
+        if not ids:
+            break
+        placeholders = ", ".join(f":id{i}" for i in range(len(ids)))
+        id_params = {f"id{i}": v for i, v in enumerate(ids)}
+
+        # A colliding row's (provider_id, account_id, window_type, variant,
+        # model_id, ts) already exists under target — OR IGNORE leaves it
+        # untouched under source, still 1:1 with this batch's ids.
+        # placeholders is a fixed list of bound-parameter names (:id0, :id1,
+        # ...), never row data — id_params below binds the real values.
+        update_sql = f"UPDATE OR IGNORE quota_snapshots SET account_id = :target WHERE id IN ({placeholders})"  # noqa: S608
+        update_result = session.execute(text(update_sql), {**id_params, "target": target})
+        session.commit()
+        moved = update_result.rowcount or 0  # type: ignore[attr-defined]
+        retagged += moved
+
+        if moved < len(ids):
+            # Whatever's still under `source` in this batch is exactly the
+            # collisions — a genuine duplicate observation, safe to drop.
+            delete_sql = (
+                f"DELETE FROM quota_snapshots WHERE account_id = :source AND id IN ({placeholders})"  # noqa: S608
+            )
+            delete_result = session.execute(text(delete_sql), {**id_params, "source": source})
+            session.commit()
+            collided += delete_result.rowcount or 0  # type: ignore[attr-defined]
+
+        cursor = ids[-1]
+        if len(ids) < batch_size:
+            break
+    return retagged, collided
 
 
 @dataclass
@@ -161,23 +213,24 @@ class DeleteResult:
 def delete_gauge_series(session: Session, *, provider_id: str, account_id: str) -> DeleteResult:
     """Drop every latest_usage/quota_snapshots row for (provider_id,
     account_id) outright — the Data Health `orphan_gauge_series` fixer's
-    "delete" action, for a series with no plausible merge target. Bulk
-    SQL, not a per-row loop — a stray account's quota_snapshots history can
-    run into the tens of thousands of rows. Commits.
+    "delete" action, for a series with no plausible merge target. Chunked
+    (`_chunked_sql`) — a stray account's quota_snapshots history can run
+    into the tens of thousands of rows.
     """
-    latest_result = session.exec(
-        delete(LatestUsage).where(
-            col(LatestUsage.provider_id) == provider_id, col(LatestUsage.account_id) == account_id
-        )
+    latest_deleted = chunked_delete(
+        session,
+        LatestUsage,
+        [col(LatestUsage.provider_id) == provider_id, col(LatestUsage.account_id) == account_id],
     )
-    snapshots_result = session.exec(
-        delete(QuotaSnapshot).where(
+    snapshots_deleted = chunked_delete(
+        session,
+        QuotaSnapshot,
+        [
             col(QuotaSnapshot.provider_id) == provider_id,
             col(QuotaSnapshot.account_id) == account_id,
-        )
+        ],
     )
-    session.commit()
     return DeleteResult(
-        latest_usage_deleted=latest_result.rowcount or 0,  # type: ignore[attr-defined]
-        snapshots_deleted=snapshots_result.rowcount or 0,  # type: ignore[attr-defined]
+        latest_usage_deleted=latest_deleted,
+        snapshots_deleted=snapshots_deleted,
     )
