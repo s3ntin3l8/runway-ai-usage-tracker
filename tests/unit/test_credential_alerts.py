@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.models.db import ProviderConfig, WebhookConfig, WebhookCredentialAlert
+from app.models.db import ProviderConfig, SystemConfig, WebhookConfig, WebhookCredentialAlert
 from app.services import auth_failures
 
 
@@ -219,7 +219,7 @@ async def test_rearms_after_window_then_fires_again(session):
     _config(session)
     await _run(session, [_row(status="invalid")])
 
-    with patch("app.services.credential_alerts._REARM_SECONDS", 0):
+    with patch("app.services.credential_alerts._rearm_window_seconds", return_value=0):
         client = await _run(session, [_row(status="valid")])
         assert not client.post.called
         alerts = session.exec(select(WebhookCredentialAlert)).all()
@@ -232,6 +232,20 @@ async def test_rearms_after_window_then_fires_again(session):
 
     client = await _run(session, [_row(status="invalid")])
     assert client.post.called
+
+
+def test_rearm_window_scales_with_configured_poll_interval(session):
+    """The 1800s floor only holds at the 900s poller default — a longer
+    configured interval must still require at least two of *its* cycles,
+    or a single healthy observation could re-arm after a much longer gap
+    than intended."""
+    from app.services.credential_alerts import _rearm_window_seconds
+
+    assert _rearm_window_seconds(session) == 1800  # no SystemConfig row: default floor
+
+    session.add(SystemConfig(default_poll_interval_seconds=1200))
+    session.commit()
+    assert _rearm_window_seconds(session) == 2400  # 2x the configured interval
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ Token Health (`app.services.token_health`) is computed fresh on every call
 and never persisted; its ``invalid`` status comes from the in-memory
 ``auth_failures`` registry, which *any* successful collect clears. A single
 healthy observation is therefore not proof the credential is actually
-fixed — see ``_REARM_SECONDS`` / ``WebhookCredentialAlert.healthy_since``.
+fixed — see ``_rearm_window_seconds`` / ``WebhookCredentialAlert.healthy_since``.
 """
 
 import logging
@@ -16,7 +16,7 @@ import httpx
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.models.db import ProviderConfig, WebhookConfig, WebhookCredentialAlert
+from app.models.db import ProviderConfig, SystemConfig, WebhookConfig, WebhookCredentialAlert
 from app.services.account_identity import resolve_account_id
 from app.services.token_health import (
     _build_accounts_by_provider,
@@ -35,9 +35,28 @@ logger = logging.getLogger(__name__)
 
 # A single healthy Token Health observation must not re-arm an alert (see
 # module docstring) — hold healthy for at least two poll cycles before
-# clearing. BackgroundPoller's default interval is 900s; this is a fixed
-# floor independent of any per-deployment override.
-_REARM_SECONDS = 1800
+# clearing. BackgroundPoller's own default interval, used when no
+# system_config override is set.
+_DEFAULT_POLL_INTERVAL_SECONDS = 900
+# Absolute floor regardless of how short the configured poll interval is.
+_REARM_FLOOR_SECONDS = 1800
+
+
+def _rearm_window_seconds(session: Session) -> int:
+    """At least two poll cycles, so one good tick can't re-arm by itself.
+
+    Mirrors `BackgroundPoller._compute_effective_interval`'s global-default
+    lookup — a per-provider `poll_interval_seconds` override only shortens
+    that provider's own re-fetch cadence, not the cycle `poll_now()` (and
+    thus this check) runs on, so it isn't part of this estimate.
+    """
+    sys_cfg = session.exec(select(SystemConfig)).first()
+    interval = (
+        sys_cfg.default_poll_interval_seconds
+        if sys_cfg and sys_cfg.default_poll_interval_seconds
+        else _DEFAULT_POLL_INTERVAL_SECONDS
+    )
+    return max(_REARM_FLOOR_SECONDS, 2 * interval)
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -151,7 +170,7 @@ async def check_credential_alerts(session: Session) -> None:
         return
 
     now = datetime.now(UTC)
-    rearm_cutoff = now - timedelta(seconds=_REARM_SECONDS)
+    rearm_cutoff = now - timedelta(seconds=_rearm_window_seconds(session))
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         for (provider, account_id), state in keys.items():
