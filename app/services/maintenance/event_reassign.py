@@ -17,9 +17,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlmodel import Session, col, select, update
+from sqlalchemy import ColumnElement, func
+from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
+from app.services.maintenance._chunked_sql import chunked_update
 from app.services.maintenance.windows import rebuild_windows_overlapping
 from app.services.period_rollups import rebuild_rollups_for_pairs
 
@@ -39,13 +41,14 @@ class ReassignResult:
     windows_rebuilt: int = 0
 
 
-def _scope(provider_id: str, source: str, event_ids: list[str] | None):
-    stmt = select(UsageEvent).where(
-        UsageEvent.provider_id == provider_id, UsageEvent.account_id == source
-    )
+def _where(provider_id: str, source: str, event_ids: list[str] | None) -> list[ColumnElement[bool]]:
+    clauses: list[ColumnElement[bool]] = [
+        col(UsageEvent.provider_id) == provider_id,
+        col(UsageEvent.account_id) == source,
+    ]
     if event_ids:
-        stmt = stmt.where(UsageEvent.event_id.in_(event_ids))  # type: ignore[attr-defined]
-    return stmt
+        clauses.append(col(UsageEvent.event_id).in_(event_ids))
+    return clauses
 
 
 def plan_reassign_default(
@@ -60,22 +63,32 @@ def plan_reassign_default(
     """Read-only preview. Raises ValueError if `event_ids` names an id that
     doesn't currently exist under `source` for this provider (matches
     `assign_default_events.py`'s original validation).
+
+    Aggregates in SQL rather than hydrating every matching row — a stale
+    account can carry tens of thousands of events, and this preview backs
+    the Data Health UI's "before you apply" check, so it needs to stay cheap
+    regardless of scope size.
     """
-    events = list(session.exec(_scope(provider_id, source, event_ids)))
-    if event_ids and len(events) != len(set(event_ids)):
-        found = {e.event_id for e in events}
+    where = _where(provider_id, source, event_ids)
+    if event_ids:
+        found = {r[0] for r in session.execute(select(UsageEvent.event_id).where(*where))}
         missing = sorted(set(event_ids) - found)
-        raise ValueError(
-            f"{len(missing)} event id(s) not found under {provider_id}/{source}: {missing}"
-        )
-    if not events:
+        if missing:
+            raise ValueError(
+                f"{len(missing)} event id(s) not found under {provider_id}/{source}: {missing}"
+            )
+
+    count, ts_min, ts_max = session.execute(
+        select(func.count(), func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(*where)
+    ).one()
+    if not count:
         return ReassignPlan()
-    return ReassignPlan(
-        count=len(events),
-        ts_min=min(e.ts for e in events),
-        ts_max=max(e.ts for e in events),
-        samples=events[:sample_size],
+    samples = list(
+        session.exec(
+            select(UsageEvent).where(*where).order_by(col(UsageEvent.ts)).limit(sample_size)
+        )
     )
+    return ReassignPlan(count=count, ts_min=ts_min, ts_max=ts_max, samples=samples)
 
 
 def apply_reassign_default(
@@ -89,7 +102,11 @@ def apply_reassign_default(
     """Retag events from `source` to `target`, then rebuild both accounts'
     rollups (full recompute — cheap and unconditionally correct, unlike
     replaying a subtract/re-add per event) and any closed windows overlapping
-    the moved events' timestamp range for either account. Commits.
+    the moved events' timestamp range for either account.
+
+    The retag itself is chunked (`_chunked_sql`) — a stale account like
+    minimax's `default` can carry ~19.5k events, and this must never hold
+    SQLite's writer lock for one giant transaction.
 
     Assumes `app/services/event_identity_migration.py` has already collapsed
     any cross-account duplicate events at startup — same precondition
@@ -102,15 +119,12 @@ def apply_reassign_default(
     if plan.count == 0:
         return ReassignResult()
 
-    stmt = (
-        update(UsageEvent)
-        .where(col(UsageEvent.provider_id) == provider_id, col(UsageEvent.account_id) == source)
-        .values(account_id=target, attribution_source="tag")
+    chunked_update(
+        session,
+        UsageEvent,
+        _where(provider_id, source, event_ids),
+        {"account_id": target, "attribution_source": "tag"},
     )
-    if event_ids:
-        stmt = stmt.where(UsageEvent.event_id.in_(event_ids))  # type: ignore[attr-defined]
-    session.exec(stmt)  # type: ignore[call-overload]
-    session.commit()
 
     rebuild_rollups_for_pairs(session, {(provider_id, source), (provider_id, target)})
     session.commit()

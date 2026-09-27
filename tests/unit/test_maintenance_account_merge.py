@@ -10,6 +10,7 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import LatestUsage, QuotaSnapshot
 from app.services.maintenance.account_merge import (
+    _chunked_retag_snapshots,
     delete_gauge_series,
     merge_gauge_series,
     plan_merge_gauge_series,
@@ -186,3 +187,27 @@ def test_delete_gauge_series_no_op_when_nothing_matches():
     result = delete_gauge_series(session, provider_id="gemini", account_id="default")
     assert result.latest_usage_deleted == 0
     assert result.snapshots_deleted == 0
+
+
+def test_chunked_retag_snapshots_spans_multiple_batches_with_collisions():
+    """A batch containing both a movable row and a colliding row must
+    resolve each correctly and never loop forever re-matching a row an
+    `OR IGNORE` batch failed to move (the same class of bug the id-cursor
+    design in _chunked_sql.py guards against)."""
+    session = _session()
+    for i in range(9):
+        _snapshot(session, "default", datetime(2026, 9, 1 + i, tzinfo=UTC))
+    # A collision for the 5th source row (index 4, 0-based ts day 5).
+    _snapshot(session, "alice@example.com", datetime(2026, 9, 5, tzinfo=UTC))
+
+    retagged, collided = _chunked_retag_snapshots(
+        session, "gemini", "default", "alice@example.com", batch_size=3
+    )
+
+    assert retagged == 8
+    assert collided == 1
+    remaining = list(session.exec(select(QuotaSnapshot)))
+    assert (
+        len(remaining) == 9
+    )  # 8 retagged + the pre-existing target row; the collision was dropped
+    assert all(r.account_id == "alice@example.com" for r in remaining)
