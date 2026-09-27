@@ -28,6 +28,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/usage/global-stats` | Global cross-provider snapshot: lifetime totals, session economics, cache-hit ratio, busiest day/hour |
 | `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM |
 | `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean |
+| `GET` | `/api/v1/usage/archived-providers` | Lifetime stats for archived providers, kept out of the main fleet view |
 | `POST` | `/api/v1/usage/reset/{provider}` | Clear terminal failure state for a provider |
 | `POST` | `/api/v1/usage/collect/{provider}` | Force immediate re-collection for one provider |
 
@@ -43,7 +44,16 @@ All API routes are under `/api/v1/`.
 | `POST` | `/api/v1/fleet/sidecars/{id}/pause` | Pause collection on a sidecar (admin) |
 | `POST` | `/api/v1/fleet/sidecars/{id}/resume` | Resume collection on a sidecar (admin) |
 | `POST` | `/api/v1/fleet/sidecars/{id}/update` | Queue a one-shot self-update for the sidecar; applies on its next heartbeat (admin) |
-| `GET` | `/api/v1/fleet/config` | Active collection config the sidecar should poll |
+| `GET` | `/api/v1/fleet/config` | Active collection config the sidecar should poll; unsigned/non-loopback callers get only the `enabled`/`strategies` view, no account data |
+| `POST` | `/api/v1/fleet/pairing-codes` | Mint a one-time pairing code + `runway-sidecar://pair` deep link for a new sidecar (admin) |
+| `POST` | `/api/v1/fleet/pair` | Unauthenticated one-time-code redeem: exchanges a pairing code for `api_url` + ingest key (10/min/IP) |
+| `POST` | `/api/v1/fleet/credentials/manifest` | Sidecar reports the credential origins it found this cycle |
+| `GET` | `/api/v1/fleet/credentials/tags` | List every resolved credential tag (deployment-wide and per-sidecar scopes) |
+| `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin) |
+| `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
+| `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution |
+| `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |
+| `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to a configured account, promoting them into `usage_events` (admin) |
 
 ## System
 
@@ -63,8 +73,10 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/system/debug/raw/{provider_id}` | Run collector and return raw HTTP exchanges (debug; secrets redacted best-effort, admin) |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts; optional `account_id` scopes an alert to one account; `credential_alerts` (default true) also fires the same webhook when a matching credential's Token Health goes expired/invalid (admin) |
 | `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints |
+| `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
+| `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|edge` (public) |
 
 ## Auth
 
@@ -150,6 +162,11 @@ interface LimitCard {
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp
   metadata?: Record<string, unknown>;  // Free-form, provider-specific extras
+
+  // Added by /usage/fleet's critical-card view, not stored on the card itself
+  fetched_at?: string;      // ISO 8601 timestamp of the collector's last successful poll
+  next_poll_at?: string;    // ISO 8601 timestamp of the next scheduled poll (fetched_at + cache_ttl_seconds)
+  cache_ttl_seconds?: number; // The collector's cache TTL used to derive next_poll_at
 }
 ```
 
