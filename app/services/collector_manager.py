@@ -168,14 +168,12 @@ class CollectorManager:
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
                     collector_instance = cls(account_id=durable_aid, account_label=db_label)
-                    # The default collector can carry a durable (or runtime-resolved)
-                    # identity for its cards while its credentials remain scoped to
-                    # the default ProviderConfig / server row. Pin that for every
-                    # default collector — OpenCode/Ollama read it for credential
-                    # lookup; auth-failure flagging uses it for the rest so a
-                    # rejected default key is attributed to `default`, not to the
-                    # identity the collector resolved.
-                    collector_instance.credential_account_id = "default"
+                    if not collector_instance.CREDENTIALS_KEYED_BY_ACCOUNT_ID:
+                        # The default collector can carry a durable (or runtime-resolved)
+                        # identity for its cards while its credentials remain scoped to
+                        # the default ProviderConfig / server row. Auth-failure flagging
+                        # also attributes rejected default credentials to `default`.
+                        collector_instance.credential_account_id = "default"
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
                         collector_instance.apply_strategy_config(db_cfg.strategies)
@@ -206,10 +204,22 @@ class CollectorManager:
             for p_id, acc_id, acc_name in active_accounts:
                 if p_id in self.collector_registry:
                     default_key = f"{p_id}:default"
-                    if default_key in self.smart_collectors:
-                        logger.debug(
-                            f"Skipping dynamic collector for {p_id}, default already running"
+                    default_collector = self.smart_collectors.get(default_key)
+                    # Skip only the cache entry whose slot the default collector
+                    # actually reads. Its display identity can differ from that
+                    # credential slot when LatestUsage restores a durable id.
+                    default_credential_account_id = None
+                    if default_collector is not None:
+                        default_credential_account_id = (
+                            getattr(
+                                default_collector.collector,
+                                "credential_account_id",
+                                None,
+                            )
+                            or default_collector.collector.account_id
+                            or "default"
                         )
+                    if default_collector is not None and acc_id == default_credential_account_id:
                         continue
                     cls, name, ttl = self.collector_registry[p_id]
 
@@ -311,7 +321,17 @@ class CollectorManager:
             else:
                 all_tokens["oauth_token"] = token_val
                 # These collectors read the credential from the api_key slot.
-                if r.provider_id in ("opencode", "ollama", "minimax", "kimi_coding", "deepseek"):
+                if r.provider_id in (
+                    "opencode",
+                    "ollama",
+                    "minimax",
+                    "kimi_coding",
+                    "deepseek",
+                    "openrouter",
+                    "zai",
+                    "kimi_api",
+                    "kimi_k2",
+                ):
                     all_tokens["api_key"] = token_val
             if r.provider_id == "chatgpt":
                 acc_id = IdentityExtractor.get_openai_account_id_from_jwt(token_val)

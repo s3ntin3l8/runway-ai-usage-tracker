@@ -89,6 +89,9 @@ class BaseCollector(ABC):
     # Subclasses override these to auto-populate Phase 0B fields on every card.
     PROVIDER_ID: str = "unknown"
     DEFAULT_WINDOW_TYPE: str = "unknown"
+    # True when cache credentials are stored by the collector's resolved
+    # account identity instead of the shared `default` credential slot.
+    CREDENTIALS_KEYED_BY_ACCOUNT_ID: bool = False
 
     @property
     def successful_empty_result(self) -> bool:

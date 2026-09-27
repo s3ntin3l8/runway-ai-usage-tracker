@@ -106,6 +106,27 @@ class TestCollectorManagerInitialization:
         }
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider_id", ["openrouter", "zai", "kimi_api", "kimi_k2"])
+    async def test_manual_api_provider_keys_are_mirrored_for_collectors(self, manager, provider_id):
+        row = MagicMock(
+            provider_id=provider_id,
+            api_key="sk-test-key",  # pragma: allowlist secret
+            session_cookie=None,
+            oai_sc_cookie=None,
+            account_id="alice@example.com",
+        )
+        with patch(
+            "app.services.collector_manager.token_cache.store", new_callable=AsyncMock
+        ) as store:
+            await manager._sync_manual_config_to_cache(row)
+
+        assert store.call_args.args[1] == {
+            "oauth_token": "sk-test-key",  # pragma: allowlist secret
+            "api_key": "sk-test-key",  # pragma: allowlist secret
+        }
+        assert store.call_args.kwargs["account_id"] == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_sync_collectors_default(self, manager):
         """Test that default collectors are spawned."""
         # Clean state
@@ -128,6 +149,83 @@ class TestCollectorManagerInitialization:
         for key in ("anthropic:default", "gemini:default", "github:default"):
             if key in manager.smart_collectors:
                 assert manager.smart_collectors[key].collector.credential_account_id == "default"
+
+    @pytest.mark.asyncio
+    async def test_named_accounts_run_alongside_default_collector(self, manager):
+        manager.smart_collectors = {}
+        with patch(
+            "app.services.collector_manager.token_cache.get_all_active_accounts",
+            new_callable=AsyncMock,
+            return_value=[("anthropic", "alice@example.com", "Alice")],
+        ):
+            await manager._sync_collectors(force=True)
+
+        assert "anthropic:default" in manager.smart_collectors
+        assert "anthropic:alice@example.com" in manager.smart_collectors
+
+    @pytest.mark.asyncio
+    async def test_durable_xai_identity_keeps_its_identity_scoped_token(self, manager):
+        manager.smart_collectors = {}
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+                return_value=[("xai", "alice@example.com", "Alice")],
+            ),
+            patch("sqlmodel.Session") as session_cls,
+        ):
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [
+                [],  # ProviderConfig rows
+                [("xai", "alice@example.com")],  # durable LatestUsage identity
+            ]
+            inner.exec.return_value.first.return_value = None
+            session_cls.return_value.__enter__.return_value = inner
+
+            await manager._sync_collectors(force=True)
+
+        xai_default = manager.smart_collectors["xai:default"].collector
+        assert xai_default.account_id == "alice@example.com"
+        assert xai_default.CREDENTIALS_KEYED_BY_ACCOUNT_ID
+        assert not hasattr(xai_default, "credential_account_id")
+        # The default collector reads this same email-keyed cache slot, so the
+        # dynamic twin is correctly skipped without losing the credential.
+        assert "xai:alice@example.com" not in manager.smart_collectors
+        with patch(
+            "app.services.collectors.xai.token_cache.get_token",
+            new_callable=AsyncMock,
+            return_value="alice-access-token",  # pragma: allowlist secret
+        ) as get_token:
+            assert await xai_default.is_configured()
+        get_token.assert_awaited_once_with("xai", "xai_access", account_id="alice@example.com")
+
+    @pytest.mark.asyncio
+    async def test_durable_identity_does_not_hide_named_credential_slot(self, manager):
+        manager.smart_collectors = {}
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+                return_value=[("kimi_coding", "alice@example.com", "Alice")],
+            ),
+            patch("sqlmodel.Session") as session_cls,
+        ):
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [
+                [],  # ProviderConfig rows
+                [("kimi_coding", "alice@example.com")],  # durable LatestUsage identity
+            ]
+            inner.exec.return_value.first.return_value = None
+            session_cls.return_value.__enter__.return_value = inner
+
+            await manager._sync_collectors(force=True)
+
+        default_collector = manager.smart_collectors["kimi_coding:default"].collector
+        assert default_collector.account_id == "alice@example.com"
+        assert default_collector.credential_account_id == "default"
+        # The default collector reads the `default` credential slot; the named
+        # sidecar credentials must stay available to the account-keyed collector.
+        assert "kimi_coding:alice@example.com" in manager.smart_collectors
 
     @pytest.mark.asyncio
     async def test_sync_collectors_prunes_stale_dynamic_collectors(self, manager):

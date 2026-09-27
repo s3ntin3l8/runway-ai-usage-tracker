@@ -260,9 +260,7 @@ export interface ProviderConfigUpdate {
   billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
 }
 
-// Multi-account canonical PUT (#281). accountId is required in the URL —
-// see #281 for the legacy shortcut that resolves to account_id="default"
-// only when exactly one row exists.
+// Multi-account PUT. accountId is required in the URL.
 export const putProviderConfig = (providerId: string, accountId: string, body: ProviderConfigUpdate) =>
   api<{ status: string }>(
     `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
@@ -271,22 +269,6 @@ export const putProviderConfig = (providerId: string, accountId: string, body: P
       body: JSON.stringify(body),
     },
   );
-
-// Legacy single-account PUT — kept permanently for non-webapp callers
-// (operator scripts, the sidecar helper). The backend resolves the target
-// row from the existing rows for this provider:
-//   - 0 rows → creates one with account_id="default"
-//   - 1 row  → updates that row in place (account_id preserved)
-//   - 2+ rows → 409 Conflict, the caller must disambiguate via the
-//                per-account endpoint above.
-// The legacy edit dialog uses this route so saving an email-keyed
-// single-row install updates the existing account rather than creating a
-// second `default` row.
-export const putProviderConfigLegacy = (providerId: string, body: ProviderConfigUpdate) =>
-  api<{ status: string }>(`/api/v1/system/provider-config/${encodeURIComponent(providerId)}`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
 
 export const deleteProviderConfig = (providerId: string, accountId: string) =>
   api<{ status: string }>(
