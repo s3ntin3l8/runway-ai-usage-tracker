@@ -155,6 +155,16 @@ describe('PendingUsageEventsCard', () => {
     expect(screen.queryByRole('option', { name: /\(default\)/ })).not.toBeInTheDocument();
   });
 
+  it('renders without the warning while provider configs are still loading', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/still stored under the shared default identity/i),
+    ).not.toBeInTheDocument();
+  });
+
   it('anchors the card so Data health can link directly to it', async () => {
     renderWithProviders(<PendingUsageEventsCard />);
     expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
