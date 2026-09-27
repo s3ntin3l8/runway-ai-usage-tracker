@@ -10,12 +10,20 @@ one writer. Three passes are run in sequence:
   Phase C — delete and rebuild usage_period_rollup for the affected providers.
   Phase D — delete and rebuild usage_windows for the affected providers.
 
-Source-reported OpenCode amounts are migrated into cost_reported_usd and kept
-separate from calculated token value. Account billing_type selects the shown
-total: subscriptions use estimates, pay-as-you-go accounts use reported
-amounts when available, and unknown OpenCode accounts retain their prior total
-until the operator selects a billing type. Other unknown accounts use estimates.
-Error events are skipped.
+This is a thin CLI wrapper — the actual logic lives in
+app/services/maintenance/{event_cost,recost,windows}.py and
+app/services/period_rollups.py, shared with the in-app Data Health
+`unpriced_models` fixer so a host-run script and an in-app fix can never
+drift apart.
+
+Source-reported amounts are migrated into cost_reported_usd and kept separate
+from calculated token value. Account billing_type selects the shown total:
+subscriptions and any account whose model has a resolvable price row use the
+computed estimate; pay-as-you-go accounts, and any account whose model has no
+resolvable price row at all, use the reported amount when available — see
+app/services/maintenance/event_cost.py for the full rule (this replaces an
+older, OpenCode-specific "unknown billing type" carve-out with one general
+rule that applies to every provider). Error events are skipped.
 
 Note on effective_from: cost_calculator only applies a pricing row when
 effective_from <= event.ts.date(). If the new seed rows are dated today,
@@ -43,37 +51,23 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from sqlmodel import Session, delete, select  # noqa: E402
+from sqlmodel import Session, func, select  # noqa: E402
 
 from app.core.db import engine  # noqa: E402
-from app.models.db import ProviderConfig, UsageEvent, UsagePeriodRollup, UsageWindow  # noqa: E402
-from app.services.cost_calculator import compute_event_cost_breakdown  # noqa: E402
-from app.services.period_rollups import update_rollups_for_event  # noqa: E402
-from app.services.window_closer import close_window  # noqa: E402
-
-# Phase D commits and expunges every _WINDOW_BATCH window rebuilds. close_window()
-# loads events and writes window rows into the session, so without periodic
-# expunge_all() the identity map accumulates the whole event + window set and
-# every select()'s autoflush degrades to O(n) — quadratic over the run, which
-# hangs on large providers (anthropic: ~90k events / ~11k windows) while
-# finishing fine on small ones. Recycling the map keeps each batch flat.
-_WINDOW_BATCH = 200
-
-
-def _event_scope(stmt, providers: list[str] | None, since: date | None):
-    stmt = stmt.where(UsageEvent.kind == "message")
-    if providers:
-        stmt = stmt.where(UsageEvent.provider_id.in_(providers))  # type: ignore[attr-defined]
-    if since:
-        stmt = stmt.where(UsageEvent.ts >= datetime(since.year, since.month, since.day))
-    return stmt
+from app.models.db import UsageEvent  # noqa: E402
+from app.services.maintenance.recost import apply_recost, plan_recost  # noqa: E402
+from app.services.maintenance.rollups import rebuild_rollups_for_providers  # noqa: E402
+from app.services.maintenance.windows import (  # noqa: E402
+    count_windows_for_providers,
+    rebuild_windows_for_providers,
+)
 
 
 def phase_b_recost(
@@ -82,74 +76,26 @@ def phase_b_recost(
     since: date | None,
     dry_run: bool,
 ) -> tuple[int, int, int]:
-    """Recompute cost_usd on usage_events. Returns (updated, unchanged, zeroed)."""
-    stmt = _event_scope(select(UsageEvent).order_by(UsageEvent.ts), providers, since)
-    events = session.exec(stmt).all()
-    print(f"Phase B — examining {len(events):,} event(s)…", flush=True)
+    """Recompute cost_usd on usage_events. Returns (updated, unchanged, zeroed).
 
-    updated = unchanged = zeroed = 0
-    for i, ev in enumerate(events, 1):
-        breakdown = compute_event_cost_breakdown(
-            session,
-            provider_id=ev.provider_id,
-            model_id=ev.model_id,
-            ts=ev.ts,
-            tokens_input=ev.tokens_input,
-            tokens_output=ev.tokens_output,
-            tokens_cache_read=ev.tokens_cache_read,
-            tokens_cache_create=ev.tokens_cache_create,
-            tokens_reasoning=ev.tokens_reasoning,
+    This CLI never passes `only_zero_cost=True` (that's the Data Health
+    `unpriced_models` fixer's contract, not this script's), so the printed
+    total never has a `skipped_still_unpriced` count to exclude — it would
+    always be 0 here.
+    """
+    if dry_run:
+        plan = plan_recost(session, providers, since=since, sample_size=0)
+        print(
+            f"Phase B — examining {plan.updated + plan.unchanged + plan.zeroed:,} event(s)…",
+            flush=True,
         )
-        config = session.exec(
-            select(ProviderConfig).where(
-                ProviderConfig.provider_id == ev.provider_id,
-                ProviderConfig.account_id == ev.account_id,
-            )
-        ).first()
-        reported_cost = ev.cost_reported_usd
-        if reported_cost is None and ev.provider_id.startswith("opencode"):
-            # Legacy OpenCode backend events stored the logged message amount
-            # in cost_usd. Canonical-mapped events intentionally cleared it.
-            reported_cost = ev.cost_usd
-        billing_type = config.billing_type if config else "unknown"
-        if billing_type == "pay_as_you_go" and reported_cost is not None:
-            new_cost = reported_cost
-        elif billing_type == "unknown" and ev.provider_id.startswith("opencode"):
-            # Preserve the legacy source total for accounts whose billing
-            # type has not been selected. Operators can choose subscription
-            # or PAYG later and rerun recost without losing that original.
-            new_cost = ev.cost_usd
-        else:
-            new_cost = breakdown.total
-        if (
-            abs(new_cost - ev.cost_usd) > 1e-9
-            or abs(breakdown.total - ev.cost_estimated_usd) > 1e-9
-            or reported_cost != ev.cost_reported_usd
-        ):
-            if new_cost == 0.0:
-                zeroed += 1
-            else:
-                updated += 1
-            if not dry_run:
-                ev.cost_usd = new_cost
-                ev.cost_reported_usd = reported_cost
-                ev.cost_estimated_usd = breakdown.total
-                ev.cost_input = breakdown.input
-                ev.cost_output = breakdown.output
-                ev.cost_cache_read = breakdown.cache_read
-                ev.cost_cache_create = breakdown.cache_create
-                session.add(ev)
-        else:
-            unchanged += 1
-
-        if i % 1000 == 0:
-            if not dry_run:
-                session.commit()
-            print(f"  …{i:,}", flush=True)
-
-    if not dry_run:
-        session.commit()
-    return updated, unchanged, zeroed
+        return plan.updated, plan.unchanged, plan.zeroed
+    result = apply_recost(session, providers, since=since, skip_rollups=True, skip_windows=True)
+    print(
+        f"Phase B — examined {result.updated + result.unchanged + result.zeroed:,} event(s)…",
+        flush=True,
+    )
+    return result.updated, result.unchanged, result.zeroed
 
 
 def phase_c_rollups(
@@ -158,36 +104,14 @@ def phase_c_rollups(
     dry_run: bool,
 ) -> int:
     """Rebuild usage_period_rollup for the affected providers. Returns events processed."""
+    stmt = select(func.count()).select_from(UsageEvent).where(UsageEvent.kind == "message")
     if providers:
-        del_stmt = delete(UsagePeriodRollup).where(
-            UsagePeriodRollup.provider_id.in_(providers)  # type: ignore[attr-defined]
-        )
-        ev_stmt = (
-            select(UsageEvent)
-            .where(UsageEvent.kind == "message")
-            .where(UsageEvent.provider_id.in_(providers))  # type: ignore[attr-defined]
-            .order_by(UsageEvent.ts)
-        )
-    else:
-        del_stmt = delete(UsagePeriodRollup)
-        ev_stmt = select(UsageEvent).where(UsageEvent.kind == "message").order_by(UsageEvent.ts)
-
-    events = session.exec(ev_stmt).all()
-    print(f"Phase C — rebuilding rollups from {len(events):,} event(s)…", flush=True)
-
+        stmt = stmt.where(UsageEvent.provider_id.in_(providers))  # type: ignore[attr-defined]
+    n_events = session.exec(stmt).one()
+    print(f"Phase C — rebuilding rollups from {n_events:,} event(s)…", flush=True)
     if not dry_run:
-        session.exec(del_stmt)
-        session.commit()
-        for i, ev in enumerate(events, 1):
-            update_rollups_for_event(session, ev)
-            if i % 1000 == 0:
-                session.commit()
-                print(f"  …{i:,}", flush=True)
-        # Own the commit: update_rollups_for_event leaves the last partial batch
-        # pending, and a prior version relied on Phase D's commit to flush it —
-        # so --skip-windows silently dropped the rebuild.
-        session.commit()
-    return len(events)
+        rebuild_rollups_for_providers(session, providers)
+    return n_events
 
 
 def phase_d_windows(
@@ -196,54 +120,13 @@ def phase_d_windows(
     dry_run: bool,
 ) -> int:
     """Rebuild usage_windows for the affected providers. Returns window-identities rebuilt."""
-    if providers:
-        existing = session.exec(
-            select(UsageWindow).where(UsageWindow.provider_id.in_(providers))  # type: ignore[attr-defined]
-        ).all()
-    else:
-        existing = session.exec(select(UsageWindow)).all()
-
-    # Group by the 5-tuple window identity; prefer the all-grains row for limit/pct.
-    window_index: dict[tuple, tuple[float | None, float | None]] = {}
-    for w in existing:
-        key = (w.provider_id, w.account_id, w.window_type, w.window_start, w.window_end)
-        if w.model_id == "" and w.sidecar_id == "":
-            window_index[key] = (w.limit_value, w.pct_used)
-        else:
-            window_index.setdefault(key, (w.limit_value, w.pct_used))
-
-    print(f"Phase D — rebuilding {len(window_index):,} window(s)…", flush=True)
-
-    if not dry_run:
-        if providers:
-            session.exec(
-                delete(UsageWindow).where(UsageWindow.provider_id.in_(providers))  # type: ignore[attr-defined]
-            )
-        else:
-            session.exec(delete(UsageWindow))
-        session.commit()
-        # Drop any rows the earlier phases loaded so the rebuild map starts empty.
-        session.expunge_all()
-
-        for i, ((pid, aid, wtype, start, end), (lv, pu)) in enumerate(window_index.items(), 1):
-            close_window(
-                session,
-                provider_id=pid,
-                account_id=aid,
-                window_type=wtype,
-                window_start=start,
-                window_end=end,
-                limit_value=lv,
-                pct_used=pu,
-            )
-            if i % _WINDOW_BATCH == 0:
-                session.commit()
-                session.expunge_all()  # bound the identity map — see _WINDOW_BATCH
-                print(f"  …{i:,}/{len(window_index):,}", flush=True)
-        session.commit()
-        session.expunge_all()
-
-    return len(window_index)
+    if dry_run:
+        n_windows = count_windows_for_providers(session, providers)
+        print(f"Phase D — rebuilding {n_windows:,} window(s)…", flush=True)
+        return n_windows
+    n_windows = rebuild_windows_for_providers(session, providers)
+    print(f"Phase D — rebuilt {n_windows:,} window(s)…", flush=True)
+    return n_windows
 
 
 def run(

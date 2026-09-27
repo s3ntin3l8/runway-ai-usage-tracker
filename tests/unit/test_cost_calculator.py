@@ -6,7 +6,11 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderPricing
-from app.services.cost_calculator import compute_event_cost, compute_event_cost_breakdown
+from app.services.cost_calculator import (
+    compute_event_cost,
+    compute_event_cost_breakdown,
+    resolve_price_row,
+)
 from app.services.pricing_seed import seed_pricing_table
 
 
@@ -958,3 +962,49 @@ def test_xai_grok4_mini_bills_at_grok4_family_rate(caplog):
     # grok-4 family rate: $3.00 + $15.00.
     assert cost == 18.00
     assert any("billing at the 'grok-4' family rate" in record.message for record in caplog.records)
+
+
+# ── resolve_price_row: distinguishing "no seeded row" from "seeded at zero" ──
+
+
+def test_resolve_price_row_finds_the_exact_seeded_row():
+    s = _seeded_session()
+    row = resolve_price_row(s, "anthropic", "sonnet", datetime.now(UTC))
+    assert row is not None
+    assert row.provider_id == "anthropic"
+    assert row.model_id == "sonnet"
+
+
+def test_resolve_price_row_none_for_a_never_seeded_model():
+    """An unseeded model returns None here — distinct from
+    compute_event_cost_breakdown's $0.0 total, which can't tell "no row"
+    from "a row exists and legitimately bills nothing"."""
+    s = _seeded_session()
+    row = resolve_price_row(s, "anthropic", "some-model-nobody-seeded", datetime.now(UTC))
+    assert row is None
+    breakdown = compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="some-model-nobody-seeded",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+    )
+    assert breakdown.total == 0.0
+
+
+def test_resolve_price_row_none_for_falsy_model_id():
+    s = _seeded_session()
+    assert resolve_price_row(s, "anthropic", None, datetime.now(UTC)) is None
+    assert resolve_price_row(s, "anthropic", "", datetime.now(UTC)) is None
+
+
+def test_resolve_price_row_follows_the_same_fallback_chain():
+    """A versioned id with no dedicated row still resolves via the same
+    family-rate fallback compute_event_cost_breakdown itself uses."""
+    s = _seeded_session()
+    row = resolve_price_row(s, "anthropic", "opus-4.8", datetime.now(UTC))
+    assert row is not None
+    assert row.model_id == "opus"

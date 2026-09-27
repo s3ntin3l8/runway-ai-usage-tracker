@@ -61,44 +61,17 @@ def _price_row_ci(
     ).first()
 
 
-def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced token dimension
-    session: Session,
-    *,
-    provider_id: str,
-    model_id: str | None,
-    ts: datetime,
-    tokens_input: int,
-    tokens_output: int,
-    tokens_cache_read: int,
-    tokens_cache_create: int,
-    tokens_reasoning: int = 0,
-    tokens_cache_create_1h: int = 0,
-    tokens_cache_create_5m: int = 0,
-) -> CostBreakdown:
-    """Per-component USD cost for an event using the price row in effect at `ts`.
-
-    Pricing is keyed on **UTC date** (`ts.date()`): two events 60 seconds apart
-    that span midnight UTC may pick different price rows if a new
-    `effective_from` falls on the second day. The provider_pricing table is
-    designed for date-level price changes, not intraday — this is intentional.
-    Aware datetimes in non-UTC timezones are NOT converted before the date
-    extraction; callers pass UTC-aware timestamps (event ingestion stores
-    `ts` in UTC, and `query_*` helpers preserve tz-awareness).
-
-    All components are 0.0 when no pricing row matches. Reasoning tokens are
-    billed at the output rate (Anthropic / OpenAI convention).
-
-    Cache writes: `tokens_cache_create` is priced in full at `cache_create_per_mtok`
-    (the 5-minute-TTL rate) UNLESS the caller also breaks it down into
-    `tokens_cache_create_1h`/`_5m` (Anthropic only, from JSONL `cache_creation.
-    ephemeral_*_input_tokens`), in which case the 1h portion bills at
-    `cache_create_1h_per_mtok` instead — falling back to the 5m rate if no
-    dedicated 1h rate is seeded. When both split params are 0 (every other
-    provider, and any event predating this split), behavior is unchanged from
-    before this split existed.
+def resolve_price_row(
+    session: Session, provider_id: str, model_id: str | None, ts: datetime
+) -> ProviderPricing | None:
+    """The price row `compute_event_cost_breakdown` would bill at, or `None`
+    if nothing matches (including a falsy `model_id`) — the fallback chain as
+    its own primitive so a caller can distinguish "no seeded row" (an
+    unpriced model — see the Data Health `unpriced_models` check) from "a row
+    exists and its rate is legitimately zero."
     """
     if not model_id:
-        return CostBreakdown(0.0, 0.0, 0.0, 0.0)
+        return None
     row = _price_row(session, provider_id, model_id, ts)
     if row is None:
         # Versioned ids ("opus-4.8") have no dedicated pricing row, so strip
@@ -143,6 +116,47 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
         # Last resort: case-insensitive match on the exact id. One extra query,
         # only hit when all prior lookups miss.
         row = _price_row_ci(session, provider_id, model_id, ts)
+    return row
+
+
+def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced token dimension
+    session: Session,
+    *,
+    provider_id: str,
+    model_id: str | None,
+    ts: datetime,
+    tokens_input: int,
+    tokens_output: int,
+    tokens_cache_read: int,
+    tokens_cache_create: int,
+    tokens_reasoning: int = 0,
+    tokens_cache_create_1h: int = 0,
+    tokens_cache_create_5m: int = 0,
+) -> CostBreakdown:
+    """Per-component USD cost for an event using the price row in effect at `ts`.
+
+    Pricing is keyed on **UTC date** (`ts.date()`): two events 60 seconds apart
+    that span midnight UTC may pick different price rows if a new
+    `effective_from` falls on the second day. The provider_pricing table is
+    designed for date-level price changes, not intraday — this is intentional.
+    Aware datetimes in non-UTC timezones are NOT converted before the date
+    extraction; callers pass UTC-aware timestamps (event ingestion stores
+    `ts` in UTC, and `query_*` helpers preserve tz-awareness).
+
+    All components are 0.0 when no pricing row matches (see `resolve_price_row`
+    to distinguish that from a legitimately-zero rate). Reasoning tokens are
+    billed at the output rate (Anthropic / OpenAI convention).
+
+    Cache writes: `tokens_cache_create` is priced in full at `cache_create_per_mtok`
+    (the 5-minute-TTL rate) UNLESS the caller also breaks it down into
+    `tokens_cache_create_1h`/`_5m` (Anthropic only, from JSONL `cache_creation.
+    ephemeral_*_input_tokens`), in which case the 1h portion bills at
+    `cache_create_1h_per_mtok` instead — falling back to the 5m rate if no
+    dedicated 1h rate is seeded. When both split params are 0 (every other
+    provider, and any event predating this split), behavior is unchanged from
+    before this split existed.
+    """
+    row = resolve_price_row(session, provider_id, model_id, ts)
     if row is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
 
