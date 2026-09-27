@@ -29,7 +29,7 @@ from sqlmodel import Session
 
 from app.core.db import engine
 from app.services import audit_log
-from app.services.data_health.base import AsyncHook, CheckReport, FixResult
+from app.services.data_health.base import AsyncHook, Check, CheckReport, FixResult
 from app.services.data_health.registry import REGISTRY, get_check
 
 logger = logging.getLogger(__name__)
@@ -169,7 +169,7 @@ class DataHealthJobs:
         return job_id
 
     async def _run_apply(
-        self, record: JobRecord, check: Any, actor: str, actor_ip: str | None
+        self, record: JobRecord, check: Check, actor: str, actor_ip: str | None
     ) -> None:
         try:
             result, hooks = await asyncio.to_thread(
@@ -208,7 +208,7 @@ class DataHealthJobs:
 
     @staticmethod
     def _apply_sync(
-        check: Any, group_key: str, params: dict[str, Any]
+        check: Check, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
         with Session(engine) as session:
             return check.apply(session, group_key, params)

@@ -167,7 +167,7 @@ async def test_apply_before_any_scan_returns_400(session):
     assert response.status_code == 400
 
 
-async def test_full_apply_flow_via_job_polling(session, jobs):
+async def test_full_apply_flow_rescan_apply_job_status(session, jobs):
     make_config(
         session, provider_id="minimax", account_id="default", account_label="alice@example.com"
     )
