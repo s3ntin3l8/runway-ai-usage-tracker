@@ -276,4 +276,7 @@ if __name__ == "__main__":
     logger.info(f"Starting Runway on http://{settings.APP_HOST}:{settings.APP_PORT}")
     if settings.APP_HOST == "0.0.0.0":
         logger.warning("Server bound to 0.0.0.0 - accessible from all network interfaces!")
+    # Single process, no `workers=` — app/services/data_health/jobs.py's
+    # in-process asyncio.Lock job registry depends on this; a multi-worker
+    # deployment would need a cross-process lock instead.
     uvicorn.run(app, host=settings.APP_HOST, port=settings.APP_PORT)
