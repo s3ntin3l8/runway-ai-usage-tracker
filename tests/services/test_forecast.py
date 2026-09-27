@@ -104,6 +104,29 @@ def test_forecast_with_no_snapshots_returns_insufficient(db_session):
     assert result.samples_used == 0
 
 
+def test_forecast_percent_card_with_no_limit_value_does_not_crash(db_session):
+    """Regression for a card with a derivable pct_used but no limit_value.
+
+    kimi_coding's monthly "total" card reports pct_used with limit_value=None
+    (no fixed quota ceiling). ForecastEntry.limit_value is a required float,
+    so passing the raw (None) card.limit_value through crashed pydantic
+    validation and turned every /usage/forecast call into a 500 whenever any
+    card was in this shape. The service must fall back to the locally
+    derived limit (LIMIT_PCT) instead.
+    """
+    card = _make_card(
+        unit_type="percent",
+        unit="percent",
+        used_value=51.4,
+        limit_value=None,
+        pct_used=51.4,
+    )
+    result = compute_forecast(card, db_session)
+    assert result is not None
+    assert result.status == "insufficient_data"
+    assert result.limit_value == 100.0
+
+
 def test_forecast_extrapolates_linear_growth(db_session):
     """Snapshots growing linearly over 4 hourly buckets → ok status, projected > now."""
     now = datetime.now(UTC)

@@ -126,6 +126,7 @@ def init_db() -> None:
     with engine.connect() as conn:
         _add_columns_if_missing(conn)
         _add_indexes_if_missing(conn)
+        _rebuild_quota_snapshot_table_for_variant(conn)
         _rebuild_quota_snapshot_indexes(conn)
         _backfill_quota_snapshot_variant(conn)
         _migrate_webhook_uniqueness(conn)
@@ -236,6 +237,95 @@ def _add_indexes_if_missing(conn: Any) -> None:
     for name, table, cols in _DEFERRED_INDEXES:
         conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})"))
         conn.commit()
+
+
+def _quota_snapshot_table_constraint_covers_variant(conn: Any) -> bool:
+    """Whether quota_snapshots' table-level UNIQUE constraint includes variant.
+
+    Checked structurally via PRAGMA rather than matching an exact DDL
+    substring: a table-level ``UniqueConstraint`` always materializes as an
+    ``origin='u'`` index (SQLite doesn't honor the constraint's own name for
+    it — it's always ``sqlite_autoindex_*``), distinct from any *explicitly*
+    ``CREATE INDEX``-ed index sharing the same name (``origin='c'``, e.g.
+    ``_rebuild_quota_snapshot_indexes``'s own ``uq_quota_snapshots_identity``
+    below). Returns ``True`` (nothing to do) if the table doesn't exist yet,
+    or has no such constraint at all — either is create_all()'s job, not
+    this migration's.
+    """
+    from sqlalchemy import text
+
+    row = conn.execute(
+        text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quota_snapshots'")
+    ).first()
+    if row is None:
+        return True  # table doesn't exist yet (created fresh by create_all right after)
+
+    for index_row in conn.execute(text("PRAGMA index_list(quota_snapshots)")):
+        # index_list columns: seq, name, unique, origin, partial
+        if index_row[3] != "u":
+            continue
+        index_name = index_row[1]
+        cols = {
+            info_row[2] for info_row in conn.execute(text(f"PRAGMA index_info('{index_name}')"))
+        }
+        return "variant" in cols
+    return True  # no UNIQUE constraint on the table at all — nothing to rebuild
+
+
+def _rebuild_quota_snapshot_table_for_variant(conn: Any) -> None:
+    """Rebuild quota_snapshots so its table-level identity constraint covers variant.
+
+    ``uq_quota_snapshots_identity`` predates the ``variant`` column: on a
+    long-lived database the constraint is still baked into CREATE TABLE as
+    ``UNIQUE (provider_id, account_id, window_type, model_id, ts)`` (no
+    ``variant``), backed by an un-droppable ``sqlite_autoindex_*`` — SQLite
+    can't ALTER a table constraint in place, and dropping/recreating the
+    *named* index of the same name in ``_rebuild_quota_snapshot_indexes``
+    below only adds a second, wider index alongside it. The old 5-column
+    autoindex still silently rejects a second variant sharing every other
+    key at the same timestamp (e.g. two Antigravity quota gauges polled in
+    the same minute) — the row is dropped rather than stored.
+
+    The table is rebuilt with the model's current DDL (this bakes in the
+    6-column constraint as a fresh, correctly-scoped autoindex), and rows
+    are copied across. Idempotent: a fresh database's inline constraint
+    already covers variant from create_all(), and an already-migrated
+    database's does too, so both skip.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from app.models.db import QuotaSnapshot
+
+    if _quota_snapshot_table_constraint_covers_variant(conn):
+        return  # fresh DB (final shape) or already migrated
+
+    dialect = conn.engine.dialect
+    create_sql = str(CreateTable(QuotaSnapshot.__table__).compile(dialect=dialect)).strip()  # type: ignore[attr-defined]
+    create_sql = create_sql.replace(
+        "CREATE TABLE quota_snapshots", "CREATE TABLE quota_snapshots_new", 1
+    )
+    conn.execute(text(create_sql))
+    conn.execute(
+        text(
+            "INSERT INTO quota_snapshots_new "
+            "(id, provider_id, account_id, window_type, variant, model_id, ts, pct_used, reset_at) "
+            "SELECT id, provider_id, account_id, window_type, variant, model_id, ts, pct_used, reset_at "
+            "FROM quota_snapshots"
+        )
+    )
+    conn.execute(text("DROP TABLE quota_snapshots"))
+    conn.execute(text("ALTER TABLE quota_snapshots_new RENAME TO quota_snapshots"))
+    # DROP TABLE took every index the old table had (including the plain,
+    # non-unique ones) down with it — recreate them from the model so
+    # ix_quota_snapshots_lookup / _ts survive the rebuild. The rebuild below
+    # (_rebuild_quota_snapshot_indexes) separately (re)creates the explicit
+    # named uq_quota_snapshots_identity / ix_quota_snapshots_series_ts.
+    for index in QuotaSnapshot.__table__.indexes:  # type: ignore[attr-defined]
+        index_sql = str(CreateIndex(index).compile(dialect=dialect)).strip()
+        conn.execute(text(index_sql))
+    conn.commit()
+    logger.info("Migrated: rebuilt quota_snapshots so uq_quota_snapshots_identity covers variant")
 
 
 def _rebuild_quota_snapshot_indexes(conn: Any) -> None:

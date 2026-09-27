@@ -107,31 +107,90 @@ def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1)
             session.execute(stmt)
 
 
+# (period_type, SQLite strftime format-or-literal) — mirrors _period_keys
+# above exactly (same names, same formats) so a rebuilt rollup and a
+# per-event-replayed one produce identical period_key strings.
+_PERIOD_KEY_SQL: tuple[tuple[str, str], ...] = (
+    ("hour", "strftime('%Y-%m-%dT%H', ts)"),
+    ("day", "strftime('%Y-%m-%d', ts)"),
+    ("month", "strftime('%Y-%m', ts)"),
+    ("year", "strftime('%Y', ts)"),
+    ("lifetime", "'all'"),
+)
+
+# (model_id expression, sidecar_id expression, extra WHERE clause or None) —
+# mirrors update_rollups_for_event's grain-matrix dedupe: the (model_id, '')
+# and ('', sidecar_id) grains only add a row distinct from ('', '') when
+# that field is actually non-empty, and (model_id, sidecar_id) only when
+# both are. Without these guards a bulk rebuild would insert duplicate rows
+# for every event whose model_id or sidecar_id happens to be empty.
+_GRAINS: tuple[tuple[str, str, str | None], ...] = (
+    ("''", "''", None),
+    ("COALESCE(model_id, '')", "''", "COALESCE(model_id, '') <> ''"),
+    ("''", "COALESCE(sidecar_id, '')", "COALESCE(sidecar_id, '') <> ''"),
+    (
+        "COALESCE(model_id, '')",
+        "COALESCE(sidecar_id, '')",
+        "COALESCE(model_id, '') <> '' AND COALESCE(sidecar_id, '') <> ''",
+    ),
+)
+
+_SUM_SELECT = ", ".join(f"COALESCE({f}, 0) AS {f}" for f in _SUM_FIELDS)
+_SUM_AGG = ", ".join(f"SUM({f})" for f in _SUM_FIELDS)
+
+
 def rebuild_rollups_for_pairs(session: Session, pairs: set[tuple[str, str]]) -> None:
     """Recompute rollups for ``(provider_id, account_id)`` pairs from events.
 
     Events are the source of truth; this drops the pairs' rollup rows and
-    replays their message events. Caller owns the transaction.
+    replaces them with a set-based re-aggregation — the same grains and
+    period keys ``update_rollups_for_event`` would produce by replaying every
+    event, but as one ``GROUP BY`` per grain instead of ~20 upserts per
+    event. On a pair with tens of thousands of events, replaying was minutes
+    of round trips; this is a handful of aggregate queries. Caller owns the
+    transaction.
     """
-    from sqlmodel import col, delete, select
+    from sqlalchemy import bindparam, text
 
-    from app.models.db import UsagePeriodRollup
+    # Bound explicitly through the column's own DateTime type rather than
+    # left to the DBAPI driver's default adapter for a bare tz-aware
+    # datetime — that adapter (used only when a raw text() bind carries no
+    # declared type) keeps the "+00:00" offset, while every other write path
+    # to this table goes through the ORM and stores a naive UTC string. A
+    # mixed column made loading + comparing rows across pairs unreliable.
+    now_col_type = UsagePeriodRollup.__table__.c.last_updated.type  # type: ignore[attr-defined]
+    now = bindparam("now", datetime.now(UTC), type_=now_col_type)
 
     for provider_id, account_id in sorted(pairs):
-        session.exec(
-            delete(UsagePeriodRollup).where(
-                col(UsagePeriodRollup.provider_id) == provider_id,
-                col(UsagePeriodRollup.account_id) == account_id,
-            )
+        session.execute(
+            text("DELETE FROM usage_period_rollup WHERE provider_id = :p AND account_id = :a"),
+            {"p": provider_id, "a": account_id},
         )
-        events = session.exec(
-            select(UsageEvent)
-            .where(
-                UsageEvent.provider_id == provider_id,
-                UsageEvent.account_id == account_id,
-                UsageEvent.kind == "message",
+        for model_expr, sidecar_expr, extra_where in _GRAINS:
+            where = "provider_id = :p AND account_id = :a AND kind = 'message'"
+            if extra_where:
+                where = f"{where} AND {extra_where}"
+            # Interpolates only fixed column names and the module-level
+            # _PERIOD_KEY_SQL/_GRAINS/_SUM_FIELDS constants above — never
+            # request input. provider_id/account_id are bound parameters.
+            union = " UNION ALL ".join(
+                f"SELECT provider_id, account_id, '{period_type}' AS period_type, "  # noqa: S608
+                f"{period_key_sql} AS period_key, {model_expr} AS model_id, "
+                f"{sidecar_expr} AS sidecar_id, {_SUM_SELECT} "
+                f"FROM usage_events WHERE {where}"
+                for period_type, period_key_sql in _PERIOD_KEY_SQL
             )
-            .order_by(col(UsageEvent.ts))
-        ).all()
-        for ev in events:
-            update_rollups_for_event(session, ev)
+            session.execute(
+                text(
+                    "INSERT INTO usage_period_rollup "  # noqa: S608
+                    "(provider_id, account_id, period_type, period_key, model_id, sidecar_id, "
+                    "msgs, tokens_input, tokens_output, tokens_cache_read, tokens_cache_create, "
+                    "tokens_reasoning, cost_usd, cost_input, cost_output, cost_cache_read, "
+                    "cost_cache_create, last_updated) "
+                    "SELECT provider_id, account_id, period_type, period_key, model_id, "
+                    f"sidecar_id, COUNT(*), {_SUM_AGG}, :now "
+                    f"FROM ({union}) "
+                    "GROUP BY provider_id, account_id, period_type, period_key, model_id, sidecar_id"
+                ).bindparams(now),
+                {"p": provider_id, "a": account_id},
+            )

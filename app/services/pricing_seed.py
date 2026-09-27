@@ -164,6 +164,26 @@ PRICING_SEED: list[dict] = [
     },
     {
         "provider_id": "chatgpt",
+        "model_id": "gpt-6-sol",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-6 Sol (rates per developers.openai.com/api/docs/pricing, checked 2026-09-27)",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-6-luna",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 0.10,
+        "output_per_mtok": 0.50,
+        "cache_read_per_mtok": 0.01,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-6 Luna (rates per developers.openai.com/api/docs/pricing, checked 2026-09-27)",
+    },
+    {
+        "provider_id": "chatgpt",
         "model_id": "gpt-5.6-sol",
         "effective_from": "2026-09-01",
         "input_per_mtok": 4.00,
@@ -174,6 +194,21 @@ PRICING_SEED: list[dict] = [
             "GPT-5.6 Sol — promotional pricing, published as valid at least "
             "through 2026-11-21; recheck and version a new effective_from row "
             "after that date"
+        ),
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.6",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.40,
+        "cache_create_per_mtok": 0.0,
+        "notes": (
+            "Bare gpt-5.6 — events from before the extractor started "
+            "preserving the codename suffix (see the 2026-09-09 note above); "
+            "rate inherited from gpt-5.6-sol, the generation's standard tier "
+            "(not separately published, same convention as gpt-5-codex below)"
         ),
     },
     {
