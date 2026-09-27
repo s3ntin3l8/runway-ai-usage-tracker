@@ -173,7 +173,8 @@ def test_delete_webhook_clears_credential_alert_rows(client, session):
     session.commit()
 
     assert client.delete(f"/api/v1/system/webhooks/{webhook_id}").status_code == 204
-    assert session.exec(select(WebhookCredentialAlert)).all() == []
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert alerts == []
 
 
 def test_patch_account_id_clears_credential_alert_rows(client, session):
@@ -194,7 +195,8 @@ def test_patch_account_id_clears_credential_alert_rows(client, session):
         f"/api/v1/system/webhooks/{webhook_id}", json={"account_id": "work@example.com"}
     )
     assert patch_resp.status_code == 200
-    assert session.exec(select(WebhookCredentialAlert)).all() == []
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert alerts == []
 
 
 def test_patch_unchanged_account_id_preserves_credential_alert_rows(client, session):
@@ -220,7 +222,8 @@ def test_patch_unchanged_account_id_preserves_credential_alert_rows(client, sess
         json={"account_id": "work@example.com", "threshold_pct": 95.0},
     )
     assert patch_resp.status_code == 200
-    assert len(session.exec(select(WebhookCredentialAlert)).all()) == 1
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert len(alerts) == 1
 
 
 def test_patch_credential_alerts_off_clears_alert_rows(client, session):
@@ -240,7 +243,8 @@ def test_patch_credential_alerts_off_clears_alert_rows(client, session):
         f"/api/v1/system/webhooks/{webhook_id}", json={"credential_alerts": False}
     )
     assert patch_resp.status_code == 200
-    assert session.exec(select(WebhookCredentialAlert)).all() == []
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert alerts == []
 
 
 def test_patch_nonexistent_webhook(client):

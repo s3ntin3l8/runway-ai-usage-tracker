@@ -104,7 +104,8 @@ async def test_fires_on_invalid(session):
     _config(session)
     client = await _run(session, [_row(status="invalid")])
     assert client.post.called
-    assert session.exec(select(WebhookCredentialAlert)).one().status == "invalid"
+    alert = session.exec(select(WebhookCredentialAlert)).one()
+    assert alert.status == "invalid"
 
 
 @pytest.mark.asyncio
@@ -176,7 +177,8 @@ async def test_no_refire_on_next_run_including_escalation(session):
     client2 = await _run(session, [_row(status="invalid")])
     assert not client2.post.called
     # the dedup row escalates its recorded status for informational value
-    assert session.exec(select(WebhookCredentialAlert)).one().status == "invalid"
+    alert = session.exec(select(WebhookCredentialAlert)).one()
+    assert alert.status == "invalid"
 
 
 @pytest.mark.asyncio
@@ -188,7 +190,8 @@ async def test_missing_key_keeps_state(session):
 
     client = await _run(session, [_row(account_id="someone-else@example.com", status="valid")])
     assert not client.post.called
-    assert len(session.exec(select(WebhookCredentialAlert)).all()) == 1
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert len(alerts) == 1
 
 
 @pytest.mark.asyncio
@@ -219,11 +222,13 @@ async def test_rearms_after_window_then_fires_again(session):
     with patch("app.services.credential_alerts._REARM_SECONDS", 0):
         client = await _run(session, [_row(status="valid")])
         assert not client.post.called
-        assert len(session.exec(select(WebhookCredentialAlert)).all()) == 1
+        alerts = session.exec(select(WebhookCredentialAlert)).all()
+        assert len(alerts) == 1
 
         client = await _run(session, [_row(status="valid")])
         assert not client.post.called
-        assert session.exec(select(WebhookCredentialAlert)).all() == []
+        alerts = session.exec(select(WebhookCredentialAlert)).all()
+        assert alerts == []
 
     client = await _run(session, [_row(status="invalid")])
     assert client.post.called
@@ -297,11 +302,13 @@ async def test_failed_delivery_retries_next_run(session):
     _config(session)
     failing_client = _mock_client(post=AsyncMock(side_effect=Exception("boom")))
     await _run(session, [_row(status="invalid")], client=failing_client)
-    assert session.exec(select(WebhookCredentialAlert)).all() == []
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert alerts == []
 
     client2 = await _run(session, [_row(status="invalid")])
     assert client2.post.called
-    assert len(session.exec(select(WebhookCredentialAlert)).all()) == 1
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert len(alerts) == 1
 
 
 @pytest.mark.asyncio
@@ -347,7 +354,8 @@ def test_commit_step_recovers_from_a_dedup_race(session):
         )
     )
     session.commit()
-    assert len(session.exec(select(WebhookCredentialAlert)).all()) == 2
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert len(alerts) == 2
 
 
 def test_credential_discord_payload_shape():
@@ -396,4 +404,5 @@ async def test_healthy_key_with_no_prior_alert_is_a_noop(session):
     _config(session)
     client = await _run(session, [_row(status="valid")])
     assert not client.post.called
-    assert session.exec(select(WebhookCredentialAlert)).all() == []
+    alerts = session.exec(select(WebhookCredentialAlert)).all()
+    assert alerts == []
