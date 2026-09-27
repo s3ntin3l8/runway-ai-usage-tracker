@@ -172,7 +172,8 @@ def test_delete_webhook_clears_credential_alert_rows(client, session):
     )
     session.commit()
 
-    assert client.delete(f"/api/v1/system/webhooks/{webhook_id}").status_code == 204
+    del_resp = client.delete(f"/api/v1/system/webhooks/{webhook_id}")
+    assert del_resp.status_code == 204
     alerts = session.exec(select(WebhookCredentialAlert)).all()
     assert alerts == []
 
