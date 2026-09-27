@@ -152,7 +152,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 
 ## Supported Providers
 
-**14 providers** — 13 collected by the server, 1 sidecar-only.
+**15 providers** — 14 collected by the server, 1 sidecar-only.
 
 | Provider | Collection Method | Cards | Env Var | Docs |
 |----------|------------------|-------|---------|------|
@@ -169,6 +169,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 | **Kimi API** | REST API (Balance) | 1 | `KIMI_API_KEY` | [📖](docs/collectors/kimi_api.md) |
 | **Kimi Coding** | REST API (IDE Quotas) | 2-4 | `KIMI_CODE_API_KEY` / CLI auto / `KIMI_AUTH_TOKEN` (legacy) | [📖](docs/collectors/kimi_coding.md) |
 | **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
+| **xAI (Grok)** | CLI chat proxy (subscription + on-demand) | 1-2 | `GROK_OAUTH_TOKEN` (opt) | [📖](docs/collectors/xai.md) |
 
 ### Sidecar-only providers
 

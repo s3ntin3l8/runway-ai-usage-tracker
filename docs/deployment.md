@@ -187,6 +187,7 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | **GitHub Copilot** | No | `GITHUB_TOKEN` API works everywhere |
 | **ChatGPT** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CHATGPT_OAUTH_TOKEN` works server-only |
 | **OpenRouter** | No | `OPENROUTER_API_KEY` works everywhere |
+| **DeepSeek** | No | `DEEPSEEK_API_KEY` works everywhere |
 | **MiniMax** | No | `MINIMAX_API_KEY` works everywhere |
 | **Ollama** | ⚠️ Yes | Cookie extraction needs host access |
 | **OpenCode** | Optional | Web API preferred, sidecar provides local DB fallback |
@@ -194,6 +195,7 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | **Kimi API** | No | `KIMI_API_KEY` works everywhere |
 | **Kimi Coding** | No | `KIMI_CODE_API_KEY` works everywhere; sidecar adds the browser cookie / CLI credential for enrichment |
 | **Kimi K2** | No | API key works everywhere |
+| **xAI (Grok)** | Optional | A pasted bearer in Settings works server-only; sidecar adds auto-discovery from OpenCode/Grok CLI credentials |
 | **Antigravity** | ⚠️ Yes | Sidecar-only — reads local IDE JSON file |
 
 **Legend:** ⚠️ Yes = sidecar required for full coverage. "No" means the server-side API path is enough, though a sidecar adds enrichment (token breakdowns, session counts, per-message events).
@@ -207,6 +209,7 @@ The relevant env vars apply to both runtimes:
 | `INGEST_API_KEY` | ✅ for remote sidecars (recommended for all) | HMAC-signing secret shared between server and sidecars |
 | `GITHUB_TOKEN` | optional | GitHub Copilot API |
 | `OPENROUTER_API_KEY` | optional | OpenRouter API |
+| `DEEPSEEK_API_KEY` | optional | DeepSeek API |
 | `MINIMAX_API_KEY` | optional | MiniMax API |
 | `KIMI_API_KEY` | optional | Kimi API |
 | `KIMI_CODE_API_KEY` | optional | Kimi Coding (Kimi For Coding) |

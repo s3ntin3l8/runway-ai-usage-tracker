@@ -93,4 +93,81 @@ describe('PendingUsageEventsCard', () => {
     await waitFor(() => expect(api.fetchPendingUsageEvents).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('labels a default-keyed account option and warns about it', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'xai',
+          name: 'xAI',
+          accounts: [
+            {
+              account_id: 'default',
+              account_label: 's3ntin3l8@gmail.com',
+              source: 'config',
+              enabled: true,
+            },
+          ],
+          account_count: 1,
+        },
+      ],
+    });
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(
+      screen.getByText(/still stored under the shared default identity/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: 's3ntin3l8@gmail.com (default)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not show the default-keyed warning when no account is keyed default', async () => {
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/still stored under the shared default identity/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not warn for a default-keyed account that is discovered-only or disabled', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'xai',
+          name: 'xAI',
+          accounts: [
+            { account_id: 'default', source: 'discovered', enabled: true },
+            { account_id: 'default', account_label: 'Bob', source: 'config', enabled: false },
+          ],
+          account_count: 2,
+        },
+      ],
+    });
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/still stored under the shared default identity/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /\(default\)/ })).not.toBeInTheDocument();
+  });
+
+  it('renders without the warning while provider configs are still loading', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/still stored under the shared default identity/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('anchors the card so Data health can link directly to it', async () => {
+    renderWithProviders(<PendingUsageEventsCard />);
+    expect(await screen.findByText('Unassigned usage · 101 events')).toBeInTheDocument();
+    expect(document.getElementById('pending-events')).toBeInTheDocument();
+  });
 });

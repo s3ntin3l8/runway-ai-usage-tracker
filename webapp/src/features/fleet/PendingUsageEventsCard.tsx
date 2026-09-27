@@ -39,8 +39,19 @@ export function PendingUsageEventsCard() {
   }
   if (!pending.data?.total) return null;
 
+  // Some providers still carry a config row keyed account_id="default" with
+  // a real-looking label (e.g. an email) — the label is cosmetic, but
+  // selecting that option here still assigns the event onto the shared
+  // "default" bucket, not a per-account row. Surfaced explicitly below and
+  // on the option itself so assigning to it is a deliberate choice, not a
+  // trap. See docs/migration-v3.md — re-key the config in Fleet first if
+  // that's not what's wanted.
+  const hasDefaultKeyedOption = (configs.data?.providers ?? []).some((p) =>
+    p.accounts.some((a) => a.account_id === 'default' && a.source !== 'discovered' && a.enabled !== false),
+  );
+
   return (
-    <Card className="mb-3 border-warning/40 bg-warning-muted p-3">
+    <Card id="pending-events" className="mb-3 border-warning/40 bg-warning-muted p-3">
       <h2 className="text-sm font-semibold">Unassigned usage · {pending.data.total} events</h2>
       <p className="mt-1 text-xs text-fg-muted">
         These events are stored safely and excluded from account totals until assigned.
@@ -48,6 +59,13 @@ export function PendingUsageEventsCard() {
       <p className="mt-1 text-xs text-fg-muted">
         Assigning also maps future default-identity events from that provider on this machine to the selected account.
       </p>
+      {hasDefaultKeyedOption && (
+        <p className="mt-1 text-xs text-fg-muted">
+          An account labeled "(default)" below is still stored under the shared default identity, not its own
+          account — assigning there keeps it shared. Re-key its config in Fleet first if you want it on its own
+          account instead.
+        </p>
+      )}
       <div className="mt-3 flex max-h-[32rem] flex-col gap-2 overflow-y-auto">
         {pending.data.items.map((event) => {
           const providerId = event.provider_id;
@@ -66,11 +84,14 @@ export function PendingUsageEventsCard() {
                 onChange={(change) => setAccounts((old) => ({ ...old, [String(event.id)]: change.target.value }))}
               >
                 <option value="">Choose account…</option>
-                {options.map((account) => (
-                  <option key={account.account_id} value={account.account_id}>
-                    {account.account_label || account.account_id}
-                  </option>
-                ))}
+                {options.map((account) => {
+                  const label = account.account_label || account.account_id;
+                  return (
+                    <option key={account.account_id} value={account.account_id}>
+                      {account.account_id === 'default' ? `${label} (default)` : label}
+                    </option>
+                  );
+                })}
               </select>
               <Button
                 size="sm"
