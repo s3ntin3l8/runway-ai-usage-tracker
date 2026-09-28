@@ -103,8 +103,10 @@ Once TLS is in place, layer a forward-auth identity provider (Authentik, Autheli
 
 Runway publishes no host port in this topology — `:8765` lives only on the internal `proxy` network. Sidecars reach the server through the **public URL**; `/api/v1/fleet/ingest` is just another path under the `Host()` router, so it rides through Traefik on `:443`:
 
+Set `INGEST_API_KEY` on the sidecar host to the same shared key configured on the server.
+
 ```bash
-RUNWAY_API_URL=https://runway.example.com RUNWAY_API_KEY='your-shared-ingest-key' python3 scripts/sidecar.py
+RUNWAY_API_URL=https://runway.example.com RUNWAY_API_KEY="$INGEST_API_KEY" python3 scripts/sidecar.py
 ```
 
 This applies to **remote and same-host sidecars alike** — the sidecar always runs natively (it needs host keychains/cookies/files) and talks to the server over the network. Going through Traefik is the preferred path: it's TLS-encrypted, which matters because ingest payloads carry OAuth tokens and cookies (HMAC protects integrity, not confidentiality). The sidecar needs only outbound HTTPS — no inbound ports.
@@ -160,7 +162,7 @@ Each workstation runs its own sidecar pointed at the server:
 
 ```bash
 RUNWAY_API_URL=https://runway.example.com \
-RUNWAY_API_KEY='your-shared-ingest-key' \
+RUNWAY_API_KEY="$INGEST_API_KEY" \
 python3 scripts/sidecar.py
 ```
 
