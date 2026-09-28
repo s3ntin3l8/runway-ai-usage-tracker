@@ -192,6 +192,11 @@ export function ProviderDetailDialog({
                             {accountSubtitle(account)}
                           </p>
                         ) : null}
+                        {account.credential_source_labels?.length ? (
+                          <p className="mt-0.5 truncate text-[11px] text-fg-subtle">
+                            Discovered: {account.credential_source_labels.join(', ')}
+                          </p>
+                        ) : null}
                         {account.is_orphaned ? (
                           <p className="mt-0.5 text-[11px] text-warning">
                             No usage data — safe to remove

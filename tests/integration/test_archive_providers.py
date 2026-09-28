@@ -296,7 +296,8 @@ class TestArchiveSideEffects:
         # so changing the seed's account_id would create a fresh row instead.
         listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
         openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
-        assert openrouter["account_count"] == 1
+        assert openrouter["account_count"] == 0
+        assert openrouter["archived_count"] == 1
 
         row = session.exec(
             select(ProviderConfig).where(
@@ -326,6 +327,7 @@ class TestArchiveSideEffects:
         listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
         openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
         assert openrouter["account_count"] == 1
+        assert openrouter["archived_count"] == 0
 
         row = session.exec(
             select(ProviderConfig).where(
@@ -355,7 +357,8 @@ class TestArchiveSideEffects:
 
         listing = _client().get("/api/v1/system/provider-configs").json()["providers"]
         openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
-        assert openrouter["account_count"] == 1
+        assert openrouter["account_count"] == 0
+        assert openrouter["archived_count"] == 1
 
         row = session.exec(
             select(ProviderConfig).where(
