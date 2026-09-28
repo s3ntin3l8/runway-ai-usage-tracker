@@ -390,6 +390,8 @@ class DataHealthReportResponse(BaseModel):
 
     scanning: bool
     checks: list[DataHealthCheckReport] = Field(default_factory=list)
+    scan_error: str | None = None
+    last_scanned_at: str | None = None
 
 
 class DataHealthFixRequest(BaseModel):
@@ -409,6 +411,7 @@ class DataHealthFixPlanResponse(BaseModel):
     summary: str
     counts: dict[str, Any] = Field(default_factory=dict)
     samples: list[DataHealthFinding] = Field(default_factory=list)
+    confirmation_text: str | None = None
 
 
 class DataHealthJobStartedResponse(BaseModel):

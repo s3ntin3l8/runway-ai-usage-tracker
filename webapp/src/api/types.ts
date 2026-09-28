@@ -950,6 +950,8 @@ export interface DataHealthCheckReport {
 export interface DataHealthReport {
   scanning: boolean;
   checks: DataHealthCheckReport[];
+  scan_error?: string | null;
+  last_scanned_at?: string | null;
 }
 
 export interface DataHealthFixPlan {
@@ -958,6 +960,7 @@ export interface DataHealthFixPlan {
   summary: string;
   counts: Record<string, unknown>;
   samples: DataHealthFinding[];
+  confirmation_text?: string | null;
 }
 
 export interface DataHealthFixResult {

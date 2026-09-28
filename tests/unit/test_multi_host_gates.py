@@ -1,6 +1,7 @@
 """Multi-host deployment safety gates.
 
-These tests cover the audit's S3 / S4 / S5 findings:
+These tests cover the audit's S3 / S4 / S5 findings, plus the newer
+ADMIN_API_KEY-or-TRUSTED_PROXY_IPS gate:
 
 * Refuse to start when bound to a non-localhost interface without an
   explicit TLS termination assertion. Sidecar payloads carry OAuth tokens
@@ -8,8 +9,15 @@ These tests cover the audit's S3 / S4 / S5 findings:
 * Refuse to start when bound to a non-localhost interface without an
   explicit CORS_ORIGINS env var. The legacy fallback to `["*"]` combined
   with `allow_credentials=True` is rejected by every browser.
+* Refuse to start when bound to a non-localhost interface with neither
+  ADMIN_API_KEY nor TRUSTED_PROXY_IPS set — `resolve_auth` would otherwise
+  treat every caller as admin.
 * Standard security headers (CSP, X-Content-Type-Options, Referrer-Policy)
   on every response.
+
+Every "rejects" test below sets an ADMIN_API_KEY so it exercises only the
+one precondition it names — the ADMIN_API_KEY-or-proxy gate has its own
+tests further down.
 """
 
 from __future__ import annotations
@@ -43,7 +51,7 @@ def test_validator_rejects_non_localhost_without_db_encryption(monkeypatch):
     _restore(
         monkeypatch,
         APP_HOST="0.0.0.0",
-        ADMIN_API_KEY=None,
+        ADMIN_API_KEY="admin-secret",  # pragma: allowlist secret
         DB_ENCRYPTION_KEY=None,
         TLS_TERMINATED=True,
     )
@@ -62,7 +70,7 @@ def test_validator_rejects_non_localhost_without_tls_termination(monkeypatch):
     _restore(
         monkeypatch,
         APP_HOST="0.0.0.0",
-        ADMIN_API_KEY=None,
+        ADMIN_API_KEY="admin-secret",  # pragma: allowlist secret
         DB_ENCRYPTION_KEY="fernet-key-placeholder",
         TLS_TERMINATED=False,
     )
@@ -78,7 +86,7 @@ def test_validator_rejects_non_localhost_without_explicit_cors_origins(monkeypat
     _restore(
         monkeypatch,
         APP_HOST="0.0.0.0",
-        ADMIN_API_KEY=None,
+        ADMIN_API_KEY="admin-secret",  # pragma: allowlist secret
         DB_ENCRYPTION_KEY="fernet-key-placeholder",
         TLS_TERMINATED=True,
     )
@@ -91,7 +99,40 @@ def test_validator_accepts_fully_configured_non_localhost(monkeypatch):
     _restore(
         monkeypatch,
         APP_HOST="0.0.0.0",
+        ADMIN_API_KEY="admin-secret",  # pragma: allowlist secret
+        DB_ENCRYPTION_KEY="fernet-key-placeholder",
+        TLS_TERMINATED=True,
+    )
+    monkeypatch.setenv("CORS_ORIGINS", "https://runway.example.com")
+    _validate_security_invariants(settings)  # no raise
+
+
+def test_validator_rejects_non_localhost_with_no_key_and_no_proxy(monkeypatch):
+    """The new S1 gate: on a non-localhost bind, `resolve_auth`'s
+    "no ADMIN_API_KEY configured" branch would otherwise treat every caller
+    as admin. Refuse to start unless there's a key to check, or a forward
+    proxy is the intended gate instead."""
+    _restore(
+        monkeypatch,
+        APP_HOST="0.0.0.0",
         ADMIN_API_KEY=None,
+        TRUSTED_PROXY_IPS="",
+        DB_ENCRYPTION_KEY="fernet-key-placeholder",
+        TLS_TERMINATED=True,
+    )
+    monkeypatch.setenv("CORS_ORIGINS", "https://runway.example.com")
+    with pytest.raises(RuntimeError, match="ADMIN_API_KEY"):
+        _validate_security_invariants(settings)
+
+
+def test_validator_accepts_non_localhost_with_trusted_proxy_and_no_key(monkeypatch):
+    """A forward-auth deployment doesn't need its own ADMIN_API_KEY — the
+    proxy is the gate, per docs/SECURITY.md and docs/forward-auth.md."""
+    _restore(
+        monkeypatch,
+        APP_HOST="0.0.0.0",
+        ADMIN_API_KEY=None,
+        TRUSTED_PROXY_IPS="10.0.0.5",
         DB_ENCRYPTION_KEY="fernet-key-placeholder",
         TLS_TERMINATED=True,
     )

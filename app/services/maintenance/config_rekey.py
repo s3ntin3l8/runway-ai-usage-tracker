@@ -203,19 +203,21 @@ def apply_rekey_config(
     )
 
     hooks: list[AsyncHook] = [
-        _make_token_cache_move_hook(provider_id, old_account_id, new_account_id)
+        _make_token_cache_move_hook(
+            provider_id, old_account_id, new_account_id, archive_source=target_config is not None
+        )
     ]
     return result, hooks
 
 
 def _make_token_cache_move_hook(
-    provider_id: str, old_account_id: str, new_account_id: str
+    provider_id: str, old_account_id: str, new_account_id: str, *, archive_source: bool = False
 ) -> AsyncHook:
     async def _move() -> None:
         from app.services.token_cache import token_cache
 
         existing = await token_cache.get_with_metadata(provider_id, old_account_id)
-        if existing is not None:
+        if existing is not None and not archive_source:
             tokens, metadata = existing
             await token_cache.store(
                 provider_id,
@@ -224,6 +226,10 @@ def _make_token_cache_move_hook(
                 account_label=metadata.get("account_label"),
                 source=metadata.get("source"),
             )
+            await token_cache.remove(provider_id, old_account_id)
+        elif archive_source:
+            # The target has its own identity and cache; never overwrite it
+            # with the default-keyed source credentials when archiving.
             await token_cache.remove(provider_id, old_account_id)
 
         from app.services import auth_failures
