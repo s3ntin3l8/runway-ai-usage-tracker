@@ -76,15 +76,6 @@ firing when a credential they watch goes `expired` or `invalid` — a new
 just newly created ones. Turn it off per webhook in Settings → Webhooks if
 you only want the original threshold alerts.
 
-## Known issue: credential alerts can double-fire
-
-Overlapping poll cycles (e.g. a manual `POST /force-collect` landing while a
-scheduled poll is already running) can occasionally deliver the same
-credential-health alert to a webhook twice. Tracked in
-[#366](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/366); not
-a regression from this release, and not something that loses or
-double-counts usage data — only a possible duplicate notification.
-
 ## `/fleet/config` returns less to unsigned callers
 
 On a non-loopback bind, `GET /api/v1/fleet/config` now returns only the

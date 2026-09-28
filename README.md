@@ -148,7 +148,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 
 ## Supported Providers
 
-**15 providers** — 14 collected by the server, 1 sidecar-only.
+**15 providers** with server-side quota collectors. A sidecar supplies host-local credentials and per-message events where needed.
 
 | Provider | Collection Method | Cards | Env Var | Docs |
 |----------|------------------|-------|---------|------|
@@ -166,14 +166,9 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 | **Kimi Coding** | REST API (IDE Quotas) | 2-4 | `KIMI_CODE_API_KEY` / CLI auto / `KIMI_AUTH_TOKEN` (legacy) | [📖](docs/collectors/kimi_coding.md) |
 | **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
 | **xAI (Grok)** | CLI chat proxy (subscription + on-demand) | 1-2 | `GROK_OAUTH_TOKEN` (opt) | [📖](docs/collectors/xai.md) |
+| **Antigravity** | Cloud Code Assist API; local conversation events via sidecar | 4 | — (agy OAuth token) | [📖](docs/collectors/antigravity.md) |
 
-### Sidecar-only providers
-
-These providers can only be collected from the workstation where the IDE/CLI runs, so they require a [sidecar](docs/sidecar.md) on each host. The server container has no path to them.
-
-| Provider | Collection Method | Cards | Env Var | Docs |
-|----------|------------------|-------|---------|------|
-| **Antigravity** | Local JSON file (sidecar only) | 1-3 | — (IDE running) | [📖](docs/collectors/antigravity.md) |
+For Antigravity on a remote host, the sidecar sends the agy OAuth token to the server for quota collection and extracts local conversation events. On the same host, the server can read the token file directly.
 
 **Env Var Legend:** (opt) = Optional, has fallback | — = Detected automatically
 
