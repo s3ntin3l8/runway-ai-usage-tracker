@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlmodel import select
 
-from app.models.db import ProviderConfig
+from app.models.db import ProviderConfig, UsageEvent
 from app.services.data_health.checks.config_default_keyed import ConfigDefaultKeyedCheck
 from tests.unit.data_health.conftest import make_config
 
@@ -81,6 +83,30 @@ def test_apply_rekeys_the_config_and_clears_the_finding(session):
     assert _check().detect(session).total_count == 0
 
 
+def test_apply_moves_default_event_history_and_rebuilds_derived_data(session):
+    make_config(
+        session, provider_id="minimax", account_id="default", account_label="alice@example.com"
+    )
+    session.add(
+        UsageEvent(
+            provider_id="minimax",
+            account_id="default",
+            sidecar_id="test-sidecar",
+            event_id="event-1",
+            ts=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    )
+    session.commit()
+
+    result, _hooks = _check().apply(session, "minimax", {})
+
+    event = session.exec(select(UsageEvent)).one()
+    assert event.account_id == "alice@example.com"
+    assert result.counts["usage_events_moved"] == 1
+    assert result.counts["event_rollups_rebuilt_pairs"] == 2
+    assert result.counts["event_windows_rebuilt"] >= 0
+
+
 def test_apply_honors_an_explicit_new_account_id_override(session):
     make_config(session, provider_id="minimax", account_id="default", account_label="stale-label")
 
@@ -139,4 +165,5 @@ def test_collision_preview_shows_both_identities_and_requires_attestation(sessio
         "minimax/default (source)",
         "minimax/alice@example.com (target)",
     ]
+    assert plan.counts["usage_events_to_move"] == 0
     assert plan.counts["usage_events_retained_on_default"] == 0

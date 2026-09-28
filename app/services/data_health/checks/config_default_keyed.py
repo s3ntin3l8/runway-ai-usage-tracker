@@ -30,6 +30,10 @@ from app.services.maintenance.config_rekey import (
     apply_rekey_config,
     plan_rekey_config,
 )
+from app.services.maintenance.event_reassign import (
+    apply_reassign_default,
+    plan_reassign_default,
+)
 
 _NOT_A_REAL_LABEL = {"default", ""}
 
@@ -138,6 +142,12 @@ class ConfigDefaultKeyedCheck(Check):
             raise ValueError(
                 "Target account already exists. Preview the archive option and confirm the identities match."
             )
+        event_plan = plan_reassign_default(
+            session,
+            provider_id=provider_id,
+            source="default",
+            target=target,
+        )
         source = _find_row(session, provider_id)
         target_row = _find_target_row(session, provider_id, target)
         if target_row is not None and target_row.archived:
@@ -183,7 +193,8 @@ class ConfigDefaultKeyedCheck(Check):
                             or target_row.oai_sc_cookie_encrypted
                         ),
                         "recent_usage_events_30d": recent,
-                        "note": "Source credentials are retained in the archived row; usage events stay under default.",
+                        "usage_events_to_move": event_plan.count,
+                        "note": "Source credentials are retained in the archived row; usage history moves to the selected account.",
                     },
                 )
             )
@@ -216,14 +227,10 @@ class ConfigDefaultKeyedCheck(Check):
             "webhook_configs_dropped_duplicate": rekey_plan.webhook_configs_dropped_duplicate,
             "gauge_series_merged": rekey_plan.gauge_series.merged,
             "gauge_series_retagged": rekey_plan.gauge_series.retagged,
-            "usage_events_retained_on_default": session.execute(
-                select(func.count())
-                .select_from(UsageEvent)
-                .where(
-                    col(UsageEvent.provider_id) == provider_id,
-                    col(UsageEvent.account_id) == "default",
-                )
-            ).scalar_one(),
+            "usage_events_to_move": event_plan.count,
+            # Deprecated response key retained for data-health API consumers.
+            # These events are now moved by the repair, so none remain under default.
+            "usage_events_retained_on_default": 0,
         }
         return FixPlan(
             check_id=self.id,
@@ -266,6 +273,12 @@ class ConfigDefaultKeyedCheck(Check):
             )
         except RekeyCollisionError as exc:
             raise ValueError(str(exc)) from exc
+        event_result = apply_reassign_default(
+            session,
+            provider_id=provider_id,
+            source="default",
+            target=target,
+        )
         return (
             FixResult(
                 check_id=self.id,
@@ -281,6 +294,9 @@ class ConfigDefaultKeyedCheck(Check):
                     "webhook_configs_dropped_duplicate": result.webhook_configs_dropped_duplicate,
                     "gauge_series_merged": result.gauge_series.merged,
                     "gauge_series_retagged": result.gauge_series.retagged,
+                    "usage_events_moved": event_result.moved,
+                    "event_rollups_rebuilt_pairs": event_result.rollups_rebuilt_pairs,
+                    "event_windows_rebuilt": event_result.windows_rebuilt,
                 },
             ),
             hooks,

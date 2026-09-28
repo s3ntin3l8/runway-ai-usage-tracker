@@ -449,7 +449,7 @@
       "icon": "\ud83e\udd16",
       "description": "Monitor xAI credits and subscription tier through the CLI chat proxy.",
       "api_key_label": "xAI OAuth Access Token (api)",
-      "api_key_help": "Sidecar discovers OAuth access and refresh tokens from OpenCode auth.json or ~/.grok/auth.json (honors GROK_HOME). Set GROK_OAUTH_TOKEN or paste an xAI access bearer when needed.",
+      "api_key_help": "For consumer Grok, paste the sign-in value from the Grok CLI or set GROK_OAUTH_TOKEN for headless use. The separate xAI developer product does not work here. Runway can also discover this value from OpenCode or Grok CLI files.",
       "rules": [
         {
           "type": "file",

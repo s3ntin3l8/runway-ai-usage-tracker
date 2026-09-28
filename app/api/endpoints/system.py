@@ -1069,8 +1069,13 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         provider_rows = rows_by_provider.get(p_id, [])
         db = _canonical_row(provider_rows)
         rules = provider_def.get("rules", [])
+        # The xAI OAuth bearer is mirrored into the `xai_access` slot so the
+        # existing manual API-key field can configure the Grok collector.
         supports_api_key = any(
-            any(k in rule.get("mapping", {}).values() for k in ("api_key", "oauth_token"))
+            any(
+                k in rule.get("mapping", {}).values()
+                for k in ("api_key", "oauth_token", "xai_access")
+            )
             for rule in rules
             if rule.get("type") in ("env", "file", "keychain")
         )
