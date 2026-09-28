@@ -116,6 +116,10 @@ class Check(ABC):
     `Session` and `params` arguments, never on `self`."""
 
     id: str
+    title: str
+    description: str
+    impact: str
+    recommended_action: str
     severity: Severity
     # check ids whose *unresolved* findings must be fixed before this
     # check's own fixer is allowed to run — enforced by jobs.py, not here.

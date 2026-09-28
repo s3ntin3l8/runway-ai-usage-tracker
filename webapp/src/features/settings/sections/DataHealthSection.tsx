@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { timeAgo } from '@/lib/format';
 import { CheckRow } from './dataHealth/CheckRow';
 import { useDataHealthReport, useRescanDataHealth } from './dataHealth/queries';
 
@@ -20,6 +21,15 @@ export function DataHealthSection() {
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
   );
   const allClean = checks.length > 0 && checks.every((c) => c.total_count === 0);
+  const checkNames = Object.fromEntries(checks.map((check) => [check.check_id, check.title]));
+  const itemCount = checks.reduce((sum, check) => sum + check.total_count, 0);
+  const findingCategories = checks.filter((check) => check.total_count > 0).length;
+  const fixableCount = checks.reduce((sum, check) => sum + check.fixable_count, 0);
+  const blockedCount = checks.filter((check) => check.blocked).length;
+  const summary =
+    itemCount === 0
+      ? `No findings · all ${checks.length} ${checks.length === 1 ? 'check' : 'checks'} clean`
+      : `${itemCount.toLocaleString()} ${itemCount === 1 ? 'finding' : 'findings'} across ${findingCategories} ${findingCategories === 1 ? 'category' : 'categories'} · ${fixableCount.toLocaleString()} fixable · ${blockedCount} waiting`;
 
   return (
     <div className="flex max-w-2xl flex-col gap-3">
@@ -27,8 +37,8 @@ export function DataHealthSection() {
         <p className="text-[12px] text-fg-subtle">
           {report.data?.scanning
             ? 'Scanning…'
-            : report.data
-              ? 'Last scan complete'
+            : report.data?.last_scanned_at
+              ? `Last scanned ${timeAgo(report.data.last_scanned_at)}`
               : 'No scan yet'}
         </p>
         <Button
@@ -64,6 +74,12 @@ export function DataHealthSection() {
         />
       )}
 
+      {report.data && checks.length > 0 && (
+        <p className="text-[12px] text-fg-subtle" aria-live="polite">
+          {summary}
+        </p>
+      )}
+
       {report.isPending ? (
         <Skeleton className="h-24" />
       ) : report.isError ? (
@@ -88,6 +104,7 @@ export function DataHealthSection() {
           <CheckRow
             key={check.check_id}
             check={check}
+            checkNames={checkNames}
             stale={Boolean(report.data?.scan_error || report.data?.scanning)}
           />
         ))

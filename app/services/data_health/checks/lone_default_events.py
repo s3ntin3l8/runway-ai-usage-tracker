@@ -34,6 +34,10 @@ from app.services.maintenance.event_reassign import apply_reassign_default, plan
 
 class LoneDefaultEventsCheck(Check):
     id = "lone_default_events"
+    title = "Usage is assigned to a generic account"
+    description = "Events remain under the “default” account even though a specific account is configured for this provider."
+    impact = "Usage may be missing from the account that actually generated it."
+    recommended_action = "Reassign events to the suggested configured account. If there is no unambiguous target, review the account setup first."
     severity = Severity.ERROR
     blocked_by = ("config_default_keyed",)
 

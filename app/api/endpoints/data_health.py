@@ -66,8 +66,13 @@ def _group_schema(group: FindingGroup) -> DataHealthFindingGroup:
 
 
 def _report_schema(report: CheckReport) -> DataHealthCheckReport:
+    check = get_check(report.check_id)
     return DataHealthCheckReport(
         check_id=report.check_id,
+        title=check.title,
+        description=check.description,
+        impact=check.impact,
+        recommended_action=check.recommended_action,
         severity=report.severity.value,
         total_count=report.total_count,
         fixable_count=report.fixable_count,

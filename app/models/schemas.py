@@ -380,6 +380,10 @@ class DataHealthCheckReport(BaseModel):
     """One check's live findings, as of the last scan."""
 
     check_id: str
+    title: str
+    description: str
+    impact: str
+    recommended_action: str
     severity: str  # "error" | "warn" | "info"
     total_count: int
     fixable_count: int

@@ -121,6 +121,10 @@ async def test_rescan_then_get_report_returns_findings(session, jobs):
     assert not report["scanning"]
     check = next(c for c in report["checks"] if c["check_id"] == "config_default_keyed")
     assert check["total_count"] == 1
+    assert check["title"] == "Provider account uses a generic ID"
+    assert check["description"]
+    assert check["impact"]
+    assert check["recommended_action"]
 
 
 async def test_preview_a_fixable_group(session):

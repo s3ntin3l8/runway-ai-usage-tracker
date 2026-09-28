@@ -78,6 +78,25 @@ def test_detect_treats_a_missing_rollup_row_as_full_drift(session):
     assert report.groups[0].detail["rollup_msgs"] == 0
 
 
+def test_detect_finds_stale_rollup_when_events_are_gone(session):
+    _lifetime_rollup(session, msgs=8, cost_usd=2.5)
+
+    report = _check().detect(session)
+
+    assert report.total_count == 8
+    assert report.groups[0].detail["actual_msgs"] == 0
+    assert report.groups[0].detail["rollup_msgs"] == 8
+
+
+def test_apply_removes_rollup_rows_when_events_are_gone(session):
+    _lifetime_rollup(session, msgs=8, cost_usd=2.5)
+
+    _check().apply(session, "minimax::alice@example.com", {})
+
+    assert session.exec(select(UsagePeriodRollup)).all() == []
+    assert _check().detect(session).total_count == 0
+
+
 def test_plan_is_read_only(session):
     make_event(
         session, event_id="1", provider_id="minimax", account_id="alice@example.com", cost_usd=1.0

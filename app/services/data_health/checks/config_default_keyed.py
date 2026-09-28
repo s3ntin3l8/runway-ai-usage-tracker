@@ -57,6 +57,10 @@ def _find_row(session: Session, provider_id: str) -> ProviderConfig | None:
 
 class ConfigDefaultKeyedCheck(Check):
     id = "config_default_keyed"
+    title = "Provider account uses a generic ID"
+    description = "A saved provider configuration is keyed as “default” even though its label identifies a specific account."
+    impact = "Credentials and usage can be split across identities, and pending event assignment may be blocked."
+    recommended_action = "Re-key the configuration to the identified account. Review any existing target config in the preview before confirming."
     severity = Severity.ERROR
 
     def detect(self, session: Session) -> CheckReport:

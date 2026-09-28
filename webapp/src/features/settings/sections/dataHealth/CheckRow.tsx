@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router';
 import type {
   DataHealthCheckReport,
   DataHealthFindingGroup,
@@ -28,7 +29,15 @@ const SEVERITY_BADGE: Record<DataHealthSeverity, SeverityBadgeInfo> = {
   info: { variant: 'neutral', label: 'Info' },
 };
 
-export function CheckRow({ check, stale = false }: { check: DataHealthCheckReport; stale?: boolean }) {
+export function CheckRow({
+  check,
+  checkNames = {},
+  stale = false,
+}: {
+  check: DataHealthCheckReport;
+  checkNames?: Record<string, string>;
+  stale?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const severity = SEVERITY_BADGE[check.severity];
 
@@ -47,29 +56,41 @@ export function CheckRow({ check, stale = false }: { check: DataHealthCheckRepor
         )}
         <Badge variant={severity.variant}>{severity.label}</Badge>
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">
-          {check.check_id}
+          {check.title}
         </span>
-        {check.blocked ? (
-          <Badge variant="outline" title={`Blocked by: ${check.blocked_by.join(', ')}`}>
-            Blocked
-          </Badge>
-        ) : null}
+        {check.blocked ? <Badge variant="outline">Blocked</Badge> : null}
         <span className="text-[12px] tabular text-fg-subtle">
-          {check.total_count === 0 ? 'clean' : `${check.total_count} finding(s)`}
+          {check.total_count === 0
+            ? 'clean'
+            : `${check.total_count.toLocaleString()} ${check.total_count === 1 ? 'finding' : 'findings'}`}
         </span>
       </button>
+      <p className="pl-6 text-[12px] text-fg-subtle">{check.description}</p>
 
-      {expanded && check.groups.length > 0 && (
+      {expanded && (
         <div className="flex flex-col gap-2 border-t border-edge pt-2 pl-6">
-          {check.groups.map((group) => (
-            <GroupRow key={group.key} checkId={check.check_id} group={group} blocked={check.blocked || stale} />
-          ))}
+          <p className="text-[12px] text-fg-subtle">{check.impact}</p>
+          <p className="text-[12px] text-fg">
+            <span className="font-medium">Next step:</span> {check.recommended_action}
+          </p>
+          {check.blocked_by.length > 0 && (
+            <p className="text-[12px] text-warning">
+              Fix first: {check.blocked_by.map((id) => checkNames[id] ?? id).join(', ')}.
+            </p>
+          )}
+          {check.groups.length > 0 ? (
+            check.groups.map((group) => (
+              <GroupRow
+                key={group.key}
+                checkId={check.check_id}
+                group={group}
+                blocked={check.blocked || stale}
+              />
+            ))
+          ) : (
+            <p className="text-[12px] text-fg-subtle">No findings — this check is clean.</p>
+          )}
         </div>
-      )}
-      {expanded && check.groups.length === 0 && (
-        <p className="border-t border-edge pt-2 pl-6 text-[12px] text-fg-subtle">
-          No findings — this check is clean.
-        </p>
       )}
     </Card>
   );
@@ -86,6 +107,7 @@ function GroupRow({
 }) {
   const [showSamples, setShowSamples] = useState(false);
   const [fixing, setFixing] = useState(false);
+  const link = typeof group.detail.link === 'string' ? group.detail.link : null;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -101,11 +123,18 @@ function GroupRow({
             Fix
           </Button>
         ) : (
-          <span
-            className={cn('text-[11px] text-fg-subtle', 'max-w-64 truncate')}
-            title={group.not_fixable_reason ?? undefined}
-          >
-            {group.not_fixable_reason ?? 'not fixable'}
+          <span className="flex items-center gap-2">
+            <span
+              className={cn('text-[11px] text-fg-subtle', 'max-w-64 truncate')}
+              title={group.not_fixable_reason ?? undefined}
+            >
+              {group.not_fixable_reason ?? 'not fixable'}
+            </span>
+            {link && (
+              <Link className="text-[11px] font-medium text-accent underline" to={link}>
+                Open Fleet
+              </Link>
+            )}
           </span>
         )}
       </div>

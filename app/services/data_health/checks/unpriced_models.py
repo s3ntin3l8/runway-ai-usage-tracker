@@ -140,6 +140,10 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
 
 class UnpricedModelsCheck(Check):
     id = "unpriced_models"
+    title = "Some token usage has no reliable cost"
+    description = "Token-bearing events have a zero stored cost. Some are fixable, while configured free rates or source-reported zeros may only need review."
+    impact = "Usage totals may understate spend when no applicable price is available."
+    recommended_action = "Review the per-model evidence. Recompute cost when a rate is available, or add a pricing seed for models with no rate."
     severity = Severity.WARN
     blocked_by = ("legacy_provider_ids",)
 

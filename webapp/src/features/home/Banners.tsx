@@ -91,7 +91,7 @@ export function Banners({ tokens, anomalies, fleet, dataHealth }: BannersProps) 
         <Banner tone="warning" icon={<HeartPulse className="size-4 shrink-0" aria-hidden />}>
           <span>
             {dataHealthErrors.length === 1
-              ? `Data health found an issue: ${dataHealthErrors[0].check_id}.`
+              ? `Data health found an issue: ${dataHealthErrors[0].title}.`
               : `Data health found issues in ${dataHealthErrors.length} checks.`}{' '}
             <Link
               to="/settings/data-health"

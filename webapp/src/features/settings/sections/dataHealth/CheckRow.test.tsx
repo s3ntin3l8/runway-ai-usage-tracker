@@ -21,6 +21,10 @@ const group = (o: Partial<DataHealthFindingGroup> = {}): DataHealthFindingGroup 
 
 const check = (o: Partial<DataHealthCheckReport> = {}): DataHealthCheckReport => ({
   check_id: 'config_default_keyed',
+  title: 'Provider account uses a generic ID',
+  description: 'A saved provider configuration uses a generic account ID.',
+  impact: 'Usage can be split across identities.',
+  recommended_action: 'Re-key the configuration.',
   severity: 'error',
   total_count: 1,
   fixable_count: 1,
@@ -39,13 +43,13 @@ describe('CheckRow', () => {
 
   it('shows the finding count when there are findings', () => {
     renderWithProviders(<CheckRow check={check()} />);
-    expect(screen.getByText('1 finding(s)')).toBeInTheDocument();
+    expect(screen.getByText('1 finding')).toBeInTheDocument();
   });
 
   it('expands to show groups on click', async () => {
     renderWithProviders(<CheckRow check={check()} />);
     expect(screen.queryByText(group().label)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     expect(screen.getByText(group().label)).toBeInTheDocument();
   });
 
@@ -57,22 +61,51 @@ describe('CheckRow', () => {
         })}
       />,
     );
-    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     expect(screen.getByText('no configured account')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^fix$/i })).not.toBeInTheDocument();
   });
 
   it('opens the FixDialog when Fix is clicked', async () => {
     renderWithProviders(<CheckRow check={check()} />);
-    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     await userEvent.click(screen.getByRole('button', { name: /^fix$/i }));
     expect(screen.getByText('Fixing minimax')).toBeInTheDocument();
   });
 
   it('disables Fix when the check is blocked', async () => {
-    renderWithProviders(<CheckRow check={check({ blocked: true, blocked_by: ['other_check'] })} />);
-    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    renderWithProviders(
+      <CheckRow
+        check={check({ blocked: true, blocked_by: ['other_check'] })}
+        checkNames={{ other_check: 'Prerequisite check' }}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     expect(screen.getByRole('button', { name: /^fix$/i })).toBeDisabled();
+    expect(screen.getByText('Fix first: Prerequisite check.')).toBeInTheDocument();
+  });
+
+  it('links non-fixable pending work to Fleet', async () => {
+    renderWithProviders(
+      <CheckRow
+        check={check({
+          check_id: 'pending_events',
+          title: 'Events need account assignment',
+          groups: [
+            group({
+              fixable: false,
+              not_fixable_reason: 'Assign each event in Fleet',
+              detail: { link: '/fleet#pending-events' },
+            }),
+          ],
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /events need account assignment/i }));
+    expect(screen.getByRole('link', { name: /open fleet/i })).toHaveAttribute(
+      'href',
+      '/fleet#pending-events',
+    );
   });
 
   it('shows samples when Show samples is clicked', async () => {
@@ -83,7 +116,7 @@ describe('CheckRow', () => {
         })}
       />,
     );
-    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     await userEvent.click(screen.getByRole('button', { name: /show samples/i }));
     expect(screen.getByText('account_id:')).toBeInTheDocument();
     expect(screen.getByText('default')).toBeInTheDocument();

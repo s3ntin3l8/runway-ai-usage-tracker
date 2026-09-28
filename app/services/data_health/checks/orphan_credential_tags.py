@@ -57,6 +57,10 @@ def _orphaned_tags(session: Session, provider_id: str) -> list[CredentialTag]:
 
 class OrphanCredentialTagsCheck(Check):
     id = "orphan_credential_tags"
+    title = "Credential tags point to a missing account"
+    description = "A credential tag still refers to the provider’s “default” account after that configuration was re-keyed or removed."
+    impact = "Sidecars may keep attributing credentials to an account that no longer exists."
+    recommended_action = "Delete the stale tag or repoint it to a configured account."
     severity = Severity.WARN
     blocked_by = ("config_default_keyed",)
 
