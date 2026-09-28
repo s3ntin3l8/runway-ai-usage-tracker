@@ -38,6 +38,7 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 
 logger = logging.getLogger("runway.sidecar.hermes")
 
+# TODO: Hoist shared provider mappings to scripts/sidecar_pkg/canonical_providers.py
 # Upstream billing_provider -> (canonical provider_id, explicit account override or None).
 _HERMES_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     "kimi-coding": ("kimi_coding", None),
@@ -113,20 +114,27 @@ def _load_hermes_watermark(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        content = path.read_text(encoding="utf-8").strip()
+        if not content:
+            logger.warning("Hermes watermark file %s is empty, ignoring", path)
+            return {}
+        data = json.loads(content)
         if isinstance(data, dict):
             return data
+        logger.warning("Hermes watermark at %s did not contain a JSON object", path)
     except Exception as exc:
-        logger.debug("Failed to read Hermes watermark state from %s: %s", path, exc)
+        logger.warning("Failed to read Hermes watermark state from %s: %s", path, exc)
     return {}
 
 
 def _save_hermes_watermark(path: Path, state: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp_path = path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp_path, path)
     except Exception as exc:
-        logger.debug("Failed to save Hermes watermark state to %s: %s", path, exc)
+        logger.warning("Failed to save Hermes watermark state to %s: %s", path, exc)
 
 
 def parse_hermes_events(
@@ -276,9 +284,6 @@ def parse_hermes_events(
                 elif canonical_hints:
                     provider_hints = canonical_hints.get(canonical_provider_id, {})
                     canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
-                    if not canonical_hint and provider_hints:
-                        canonical_hint = next(iter(provider_hints.values()), None)
-
                     if canonical_hint:
                         event_account_id = canonical_hint
                         event_account_source = "tag"
@@ -295,9 +300,10 @@ def parse_hermes_events(
                 event_account_id = account_id
                 event_account_source = None
 
-            # Monotonic event ID incorporating slice call count
+            # Monotonic event ID incorporating slice call count and emission sequence
+            emission_seq = int(prev.get("emission_seq", 0)) + 1
             task_slug = task if task else "main"
-            event_id = f"hermes|{profile_name}|{session_id}|{model}|{task_slug}|{curr_calls}"
+            event_id = f"hermes|{profile_name}|{session_id}|{model}|{task_slug}|c{curr_calls}s{emission_seq}"
 
             cost_usd: float | None = delta_cost if delta_cost > 0.0 else None
 
@@ -324,16 +330,17 @@ def parse_hermes_events(
                 )
             )
 
-            # Update tracked watermark
+            # Update tracked watermark monotonically
             watermark_state[state_key] = {
-                "input_tokens": curr_in,
-                "output_tokens": curr_out,
-                "cache_read_tokens": curr_cache_read,
-                "cache_write_tokens": curr_cache_write,
-                "reasoning_tokens": curr_reasoning,
-                "cost_usd": curr_cost,
-                "api_call_count": curr_calls,
-                "last_seen": last_seen,
+                "input_tokens": max(curr_in, prev_in),
+                "output_tokens": max(curr_out, prev_out),
+                "cache_read_tokens": max(curr_cache_read, prev_cache_read),
+                "cache_write_tokens": max(curr_cache_write, prev_cache_write),
+                "reasoning_tokens": max(curr_reasoning, prev_reasoning),
+                "cost_usd": max(curr_cost, prev_cost),
+                "api_call_count": max(curr_calls, prev_calls),
+                "emission_seq": emission_seq,
+                "last_seen": max(last_seen, float(prev.get("last_seen", 0.0))),
             }
             state_modified = True
 

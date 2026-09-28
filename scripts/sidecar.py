@@ -2121,6 +2121,21 @@ def _extract_events_for_provider(
     return failures
 
 
+# Lazy loaders for canonical provider maps used when retargeting events.
+_CANONICAL_MAP_LOADERS: dict[str, Callable[[], dict[str, tuple[str, str | None]]]] = {
+    "opencode": lambda: (
+        __import__(
+            "scripts.sidecar_pkg.event_extractors.opencode", fromlist=["_OC_CANONICAL_MAP"]
+        )._OC_CANONICAL_MAP
+    ),
+    "hermes": lambda: (
+        __import__(
+            "scripts.sidecar_pkg.event_extractors.hermes", fromlist=["_HERMES_CANONICAL_MAP"]
+        )._HERMES_CANONICAL_MAP
+    ),
+}
+
+
 def _build_canonical_hints_for_provider(
     provider_id: str,
     server_account_tag_hints: dict[str, dict[str, str]] | None,
@@ -2147,17 +2162,10 @@ def _build_canonical_hints_for_provider(
 
     Returns ``None`` for providers without canonical retag concept.
     """
-    if provider_id == "opencode":
-        # Lazy import: only loaded on the events branch, not on the token-card branch.
-        from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP
-
-        canonical_map = _OC_CANONICAL_MAP
-    elif provider_id == "hermes":
-        from scripts.sidecar_pkg.event_extractors.hermes import _HERMES_CANONICAL_MAP
-
-        canonical_map = _HERMES_CANONICAL_MAP
-    else:
+    loader = _CANONICAL_MAP_LOADERS.get(provider_id)
+    if loader is None:
         return None
+    canonical_map = loader()
 
     canonical_hints: dict[str, dict[str, str]] = {}
     for canonical_provider_id, _ in canonical_map.values():

@@ -286,7 +286,132 @@ def test_incremental_deltas_watermark(tmp_path):
         assert delta_ev.provider_id == "kimi_coding"
         assert delta_ev.tokens_input == 5000
         assert delta_ev.tokens_output == 300
-        assert delta_ev.event_id.endswith("|11")
+        assert delta_ev.event_id.endswith("|c11s2")
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_watermark_counters_decrease_resilience(tmp_path):
+    """If session_model_usage counters decrease (e.g. session rollback or edit),
+    the watermark must not regress. When counters later exceed the previous
+    high-water mark, only the genuine net-new delta is emitted without double-counting.
+    """
+    db_path, _ = _make_db()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        # Initial run: Kimi has 50,000 input tokens, 10 calls
+        first_events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(first_events) == 2
+
+        # Simulate a counter decrease / rollback in the SQLite database
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            UPDATE session_model_usage
+            SET input_tokens = 40000,
+                api_call_count = 8
+            WHERE session_id = 'api-sess-kimi-01'
+        """)
+        conn.commit()
+        conn.close()
+
+        # Run again: should NOT emit events and should NOT regress watermark
+        second_events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(second_events) == 0
+
+        # Simulate recovery past the previous high-water mark: 52,000 tokens (was 50,000), 11 calls
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            UPDATE session_model_usage
+            SET input_tokens = 52000,
+                api_call_count = 11,
+                last_seen = 1780000700.0
+            WHERE session_id = 'api-sess-kimi-01'
+        """)
+        conn.commit()
+        conn.close()
+
+        # Third run: delta must be computed against the 50,000 baseline (+2000), NOT 40,000 (+12000)
+        third_events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(third_events) == 1
+        delta_ev = third_events[0]
+        assert delta_ev.provider_id == "kimi_coding"
+        assert delta_ev.tokens_input == 2000
+        assert delta_ev.event_id.endswith("|c11s2")
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_late_cost_correction_emits_distinct_event_id(tmp_path):
+    """When a late cost update arrives with identical tokens and api_call_count,
+    it must emit a new event with the cost delta and a unique event_id that
+    won't be deduped by the server.
+    """
+    db_path, _ = _make_db()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        # Initial run: MiniMax has 80,000 input, 5 calls, $0.05 cost
+        first_events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        mm_ev1 = next(e for e in first_events if e.model_id == "MiniMax-M3")
+        assert mm_ev1.cost_usd == pytest.approx(0.05)
+        assert mm_ev1.event_id.endswith("|c5s1")
+
+        # Simulate late cost correction from provider invoice: $0.05 -> $0.08
+        # Call count and token counts remain unchanged.
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            UPDATE session_model_usage
+            SET actual_cost_usd = 0.08,
+                last_seen = 1780001600.0
+            WHERE session_id = 'api-sess-minimax-02'
+        """)
+        conn.commit()
+        conn.close()
+
+        # Second run: should emit only the $0.03 cost delta with distinct event_id
+        second_events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(second_events) == 1
+        mm_ev2 = second_events[0]
+        assert mm_ev2.provider_id == "minimax"
+        assert mm_ev2.cost_usd == pytest.approx(0.03)
+        assert mm_ev2.tokens_input == 0
+        assert mm_ev2.event_id.endswith("|c5s2")
+        assert mm_ev2.event_id != mm_ev1.event_id
+
+        # Third run without changes: 0 events
+        third_events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(third_events) == 0
     finally:
         db_path.unlink(missing_ok=True)
 

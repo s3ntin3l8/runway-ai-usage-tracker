@@ -45,9 +45,9 @@ On each sidecar poll:
 - Only positive deltas (`delta_in`, `delta_out`, `delta_cost`, etc.) are emitted.
 - Monotonic event IDs are generated:
   ```
-  hermes|<profile>|<session_id>|<model>|<task>|<api_call_count>
+  hermes|<profile>|<session_id>|<model>|<task>|c<api_call_count>s<emission_seq>
   ```
-- Stable event IDs ensure that discrete tasks and ongoing sessions never trigger duplicate-event drops or double-counting in Runway's `EventIngestor`.
+- Stable event IDs ensure that discrete tasks, ongoing sessions, and late cost updates never trigger duplicate-event drops or double-counting in Runway's `EventIngestor`.
 
 ## Canonical Provider Mapping
 
