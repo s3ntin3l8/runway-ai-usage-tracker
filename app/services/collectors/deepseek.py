@@ -26,6 +26,7 @@ class DeepSeekCollector(BaseCollector):
     """
 
     PROVIDER_ID = "deepseek"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "rolling"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):

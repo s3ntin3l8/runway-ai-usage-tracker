@@ -1,6 +1,7 @@
 # app/services/accumulator.py
 import json
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -158,6 +159,29 @@ def _is_error_card(card_json: str | None) -> bool:
     )
 
 
+def _latest_usage_sidecar_id(contributions: Iterable[Any], *, provider_id: str) -> str:
+    """Select the materialized owner from contributions ordered oldest first."""
+    latest_owner = "local"
+    latest_fresh_sidecar_id: str | None = None
+    has_fresh_server_source = False
+
+    for contribution in contributions:
+        source_kind, source_scope, source_provider = _parse_source_id(contribution.source_id)
+        if source_provider != provider_id:
+            continue
+        latest_owner = source_scope if source_kind == "sidecar" else "local"
+        if json.loads(contribution.card_json or "{}").get("stale") is True:
+            continue
+        if source_kind == "server":
+            has_fresh_server_source = True
+        elif source_kind == "sidecar":
+            latest_fresh_sidecar_id = source_scope
+
+    if has_fresh_server_source:
+        return "local"
+    return latest_fresh_sidecar_id or latest_owner
+
+
 def _rebuild_latest_usage_slot(
     session: Session,
     *,
@@ -200,32 +224,13 @@ def _rebuild_latest_usage_slot(
 
     merged: str | None = None
     stale = True
-    sidecar_id = "local"
     latest_at = None
-    latest_sidecar_at = None
-    latest_source_sidecar_id = "local"
-    has_fresh_server_source = False
     for contribution in contributions:
         payload = json.loads(contribution.card_json or "{}")
         merged = merge_card_json(merged, payload)
         stale = stale and payload.get("stale") is True
         latest_at = contribution.updated_at
-        source_kind, source_scope, source_provider = _parse_source_id(contribution.source_id)
-        if source_provider != provider_id:
-            continue
-        latest_source_sidecar_id = source_scope if source_kind == "sidecar" else "local"
-        if payload.get("stale") is not True:
-            if source_kind == "server":
-                has_fresh_server_source = True
-            elif latest_sidecar_at is None or contribution.updated_at >= latest_sidecar_at:
-                sidecar_id = source_scope
-                latest_sidecar_at = contribution.updated_at
-    if has_fresh_server_source:
-        # Fresh server data keeps local ownership even when sidecars enrich it.
-        sidecar_id = "local"
-    elif latest_sidecar_at is None:
-        # When every source is stale, preserve the newest contribution's owner.
-        sidecar_id = latest_source_sidecar_id
+    sidecar_id = _latest_usage_sidecar_id(contributions, provider_id=provider_id)
     data = json.loads(merged or "{}")
     if stale:
         data["stale"] = True
@@ -404,17 +409,23 @@ def mark_latest_usage_source_stale(
     *,
     provider_id: str,
     source_id: str,
+    account_id: str | None = None,
     stale_after_seconds: int = 3600,
 ) -> int:
-    """Mark last-good source cards stale after sustained collection failure."""
+    """Mark last-good source cards stale after sustained collection failure.
+
+    ``account_id`` scopes the operation when a server account is no longer
+    active, while ``None`` preserves the provider-wide failure behavior.
+    """
     from app.models.db import LatestUsageContribution
 
-    rows = session.exec(
-        select(LatestUsageContribution).where(
-            LatestUsageContribution.provider_id == provider_id,
-            LatestUsageContribution.source_id == source_id,
-        )
-    ).all()
+    statement = select(LatestUsageContribution).where(
+        LatestUsageContribution.provider_id == provider_id,
+        LatestUsageContribution.source_id == source_id,
+    )
+    if account_id is not None:
+        statement = statement.where(LatestUsageContribution.account_id == account_id)
+    rows = session.exec(statement).all()
     touched = set()
     now = datetime.now(UTC)
     for row in rows:
@@ -431,11 +442,11 @@ def mark_latest_usage_source_stale(
             data["detail"] = f"⚠ Collection failing — {detail}"
         row.card_json = json.dumps(data)
         touched.add((row.account_id, row.window_type, row.variant, row.model_id))
-    for account_id, window_type, variant, model_id in touched:
+    for touched_account_id, window_type, variant, model_id in touched:
         _rebuild_latest_usage_slot(
             session,
             provider_id=provider_id,
-            account_id=account_id,
+            account_id=touched_account_id,
             window_type=window_type,
             variant=variant,
             model_id=model_id,

@@ -226,7 +226,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
 
     # Store local data cards directly into LatestUsage (unified with server-scraped cards)
-    if local_cards or payload.completed_providers is not None:
+    if local_cards or payload.completed_providers:
         # Track (provider_id, canonical_account_id) → set of
         # (window_type, variant, model_id) for the prune step.
         batch_keys: dict[tuple[str, str], set[tuple[str, str, str]]] = {}

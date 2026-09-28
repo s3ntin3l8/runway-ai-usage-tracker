@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 class GitHubCollector(BaseCollector):
     PROVIDER_ID = "github"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "monthly"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):

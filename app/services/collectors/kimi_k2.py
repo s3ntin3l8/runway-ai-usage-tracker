@@ -38,6 +38,7 @@ class KimiK2Collector(BaseCollector):
     """Collector for Kimi K2 credits (coding agent product)."""
 
     PROVIDER_ID = "kimi_k2"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "monthly"
 
     def _fallback_strategies(self) -> list[Any]:

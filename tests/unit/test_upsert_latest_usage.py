@@ -175,6 +175,34 @@ def test_real_failure_marks_last_good_source_stale(session: Session):
     assert card["collection_failing"] is True
 
 
+def test_missing_server_account_can_be_marked_stale_without_touching_siblings(session: Session):
+    upsert_latest_usage(
+        session, _success_card(account_id="alice@example.com"), source_id="server:chatgpt"
+    )
+    upsert_latest_usage(
+        session,
+        _success_card(account_id="bob@example.com", account_label="bob@example.com"),
+        source_id="server:chatgpt",
+    )
+    session.commit()
+
+    changed = mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        account_id="alice@example.com",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    cards = {
+        row.account_id: json.loads(row.card_json) for row in session.exec(select(LatestUsage)).all()
+    }
+    assert changed == 1
+    assert cards["alice@example.com"]["stale"] is True
+    assert cards["bob@example.com"].get("stale") is not True
+
+
 def test_fresh_non_quota_card_clears_source_staleness(session: Session):
     card = _success_card()
     upsert_latest_usage(session, card, source_id="server:chatgpt")

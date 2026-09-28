@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.collector_manager import CollectorManager
+from app.services.collectors.base import BaseCollector
 
 
 @pytest.fixture
@@ -24,6 +25,11 @@ class TestCollectorManagerInitialization:
         assert "xai" in manager.collector_registry
         assert "deepseek" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
+
+    def test_registered_collectors_explicitly_opt_into_complete_snapshots(self, manager):
+        assert BaseCollector.COMPLETE_SNAPSHOT is False
+        for provider_id, (collector_class, _name, _ttl) in manager.collector_registry.items():
+            assert collector_class.__dict__.get("COMPLETE_SNAPSHOT") is True, provider_id
 
     @pytest.mark.asyncio
     async def test_manual_xai_bearer_is_stored_only_as_access_token(self, manager):

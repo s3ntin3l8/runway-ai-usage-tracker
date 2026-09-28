@@ -110,6 +110,28 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
     assert card_data["used_value"] == 20.0
 
 
+def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(session):
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "test-host-heartbeat",
+        "metrics": [],
+        "events": [],
+        "completed_providers": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet.prune_stale_latest_usage") as prune,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        result = _ingest(TestClient(app), payload)
+
+    assert result["metrics_stored"] == 0
+    prune.assert_not_called()
+
+
 def test_complete_empty_provider_snapshot_retires_sidecar_card(session):
     payload = {
         "provider": "anthropic-sidecar",

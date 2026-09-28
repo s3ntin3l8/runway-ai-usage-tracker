@@ -94,6 +94,28 @@ async def test_cached_cards_excluded_from_sleep_tracking():
 
 
 @pytest.mark.asyncio
+async def test_accounts_missing_from_server_outcomes_are_aged_to_stale():
+    p = BackgroundPoller(interval_seconds=900)
+    with (
+        patch("app.services.poller.manager") as mock_mgr,
+        patch("app.services.poller.Session") as mock_session,
+        patch("app.services.accumulator.mark_latest_usage_source_stale") as mark_stale,
+    ):
+        mock_mgr.collect_all = AsyncMock(return_value=[])
+        db_session = mock_session.return_value.__enter__.return_value
+        db_session.exec.return_value.all.return_value = [("anthropic", "former-account")]
+
+        await p.poll_now()
+
+    mark_stale.assert_called_once_with(
+        db_session,
+        provider_id="anthropic",
+        source_id="server:anthropic",
+        account_id="former-account",
+    )
+
+
+@pytest.mark.asyncio
 async def test_wake_resets_interval_and_sets_event():
     """wake() resets interval to base and sets the wake event."""
     p = BackgroundPoller(interval_seconds=900)

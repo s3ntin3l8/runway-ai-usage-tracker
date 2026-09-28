@@ -33,6 +33,7 @@ class AnthropicCollector(
     """
 
     PROVIDER_ID = "anthropic"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "weekly"  # Free tier; Pro/paid windows are tagged per-card
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

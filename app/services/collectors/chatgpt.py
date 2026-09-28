@@ -33,6 +33,7 @@ class ChatGPTCollector(
     """
 
     PROVIDER_ID = "chatgpt"
+    COMPLETE_SNAPSHOT = True
     # Dead in practice: base.py only injects this when a card omits window_type,
     # and every card built in chatgpt_web.py sets it explicitly (session/daily/
     # weekly/monthly, derived from limit_window_seconds).

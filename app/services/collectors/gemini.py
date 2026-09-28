@@ -35,6 +35,7 @@ class GeminiCollector(
     """
 
     PROVIDER_ID = "gemini"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "daily"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

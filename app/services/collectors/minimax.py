@@ -33,6 +33,7 @@ class MiniMaxCollector(BaseCollector):
     """
 
     PROVIDER_ID = "minimax"
+    COMPLETE_SNAPSHOT = True
     # No single canonical cadence — the plan has a 5h rolling window and a
     # weekly window, both stamped explicitly per card. Never "monthly".
     DEFAULT_WINDOW_TYPE = "unknown"

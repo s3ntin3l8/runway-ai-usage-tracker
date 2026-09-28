@@ -219,9 +219,7 @@ class SmartCollector:
 
     def _snapshot_state(self, result: list[dict[str, Any]]) -> str:
         """Return whether a fresh result represents a complete provider snapshot."""
-        if not isinstance(self.collector, BaseCollector) or self.collector.complete_snapshot(
-            result
-        ):
+        if isinstance(self.collector, BaseCollector) and self.collector.complete_snapshot(result):
             return "complete"
         return "partial"
 
