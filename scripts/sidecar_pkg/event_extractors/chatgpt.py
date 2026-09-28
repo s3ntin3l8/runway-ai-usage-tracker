@@ -140,12 +140,17 @@ def parse_chatgpt_events(
                         continue
 
                     # Use last_token_usage for per-turn deltas (not cumulative totals).
-                    # OpenAI Responses API: input_tokens is inclusive of cached_input_tokens
-                    # — subtract for fresh-only input to match Anthropic's column semantics.
+                    # OpenAI Responses API: input_tokens is inclusive of both
+                    # cached_input_tokens and cache_write_input_tokens — subtract both
+                    # for fresh-only input, matching Anthropic's column semantics.
+                    # (codex-rs/codex-api/src/sse/responses.rs's
+                    # parses_cache_write_token_usage test confirms this inclusive
+                    # accounting upstream.)
                     last_usage = info.get("last_token_usage") or {}
                     raw_input = int(last_usage.get("input_tokens", 0))
                     tokens_cache_read = int(last_usage.get("cached_input_tokens", 0))
-                    tokens_input = max(0, raw_input - tokens_cache_read)
+                    tokens_cache_write = int(last_usage.get("cache_write_input_tokens", 0))
+                    tokens_input = max(0, raw_input - tokens_cache_read - tokens_cache_write)
                     tokens_output = int(last_usage.get("output_tokens", 0))
                     tokens_reasoning = int(last_usage.get("reasoning_output_tokens", 0))
 
@@ -169,7 +174,11 @@ def parse_chatgpt_events(
                             tokens_input=tokens_input,
                             tokens_output=tokens_output,
                             tokens_cache_read=tokens_cache_read,
-                            tokens_cache_create=0,  # OpenAI doesn't bill cache creation
+                            # input_tokens includes cache_write_input_tokens (same
+                            # inclusive accounting as cached_input_tokens, subtracted
+                            # above) — gpt-5.6/gpt-6 now have a published cache-write
+                            # rate in pricing_seed.py, so forward it instead of zeroing.
+                            tokens_cache_create=tokens_cache_write,
                             tokens_reasoning=tokens_reasoning,
                             stop_reason=None,  # not surfaced in token_count events
                             tool_calls=0,
