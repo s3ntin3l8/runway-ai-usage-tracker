@@ -640,3 +640,26 @@ def test_hermes_entrypoint_distinguishes_source(tmp_path):
     # Default api_server sessions have entrypoint="hermes"
     api_ev = next(e for e in events if e.session_id == "api-sess-kimi-01")
     assert api_ev.entrypoint == "hermes"
+
+
+def test_watermark_state_key_scoped_by_account_id(tmp_path):
+    """Watermark state keys are scoped by account_id so multiple accounts
+    iterating through scoped_accounts do not advance each other's watermarks."""
+    db_path, _ = _make_db()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    events1 = parse_hermes_events(
+        [db_path], "account1", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+    )
+    assert len(events1) == 2
+
+    # Second account run against same DB still emits events because its watermark is independent
+    events2 = parse_hermes_events(
+        [db_path], "account2", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+    )
+    assert len(events2) == 2
+
+    data = json.loads(state_file.read_text(encoding="utf-8"))
+    keys = list(data.keys())
+    assert any(k.startswith("account1|") for k in keys)
+    assert any(k.startswith("account2|") for k in keys)

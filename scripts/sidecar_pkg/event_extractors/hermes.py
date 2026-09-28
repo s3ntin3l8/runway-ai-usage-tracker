@@ -166,16 +166,9 @@ def parse_hermes_events(
         canonical_hints: Optional {canonical_provider_id: {origin: account_id}} map.
         state_file: Optional path to JSON file tracking slice token watermarks.
     """
-    # TODO(multi-account): The slice-level watermark (hermes_watermark.json) is
-    # currently shared across all accounts on the host. Today Hermes has a single host
-    # identity (HERMES_ACCOUNT_LABEL), but if multi-account Hermes support is added
-    # (e.g. server's scoped_accounts loop iterating multiple accounts per cycle),
-    # callers should supply an account-scoped state_file or include account_id in
-    # state_key so later accounts do not find the watermark already advanced.
-    #
-    # Watermark bounding note: hermes_watermark.json stores token and call high-water
-    # marks for each (resolved_db_path, profile, session, model, provider, task) slice.
-    # Growth is small (~50 bytes per key, <1 MB for 10,000 sessions). Each slice records
+    # Note on watermark scoping & bounding: hermes_watermark.json stores token and call
+    # high-water marks scoped per account_id and (resolved_db_path, profile, session, model, provider, task) slice.
+    # Footprint is small (~50 bytes per key, <1 MB for 10,000 sessions). Each slice records
     # 'last_seen', enabling a future TTL-compaction pass (e.g. dropping slices older than
     # 90 days matching the sidecar's retention window) when necessary.
     state_path = state_file or _default_watermark_state_path()
@@ -278,12 +271,11 @@ def parse_hermes_events(
 
             actual_cost = row["actual_cost_usd"]
             est_cost = row["estimated_cost_usd"]
+            # Provider-supplied actual_cost_usd is authoritative; estimated fallback only when NULL
             curr_cost = float(actual_cost if actual_cost is not None else (est_cost or 0.0))
 
-            # Watermark key uniquely identifies this slice within the DB; resolve path to avoid collisions across roots
-            state_key = (
-                f"{db_path.resolve()}|{profile_name}|{session_id}|{model}|{billing_provider}|{task}"
-            )
+            # Watermark key uniquely identifies this slice within the DB per account; resolve path to avoid collisions across roots
+            state_key = f"{account_id}|{db_path.resolve()}|{profile_name}|{session_id}|{model}|{billing_provider}|{task}"
             prev = watermark_state.get(state_key, {})
 
             prev_in = int(prev.get("input_tokens", 0))

@@ -2259,13 +2259,9 @@ def _make_account_extractor_hermes(parser: Any, state_file: Path | None = None) 
     """Bind Hermes parser to discovery callable, forwarding state_file and canonical hints.
 
     Deduplicates events by event_id across discovered databases as defense-in-depth
-    against overlapping discovery paths (mirroring _make_account_extractor).
-
-    TODO(multi-account): The slice-level watermark (hermes_watermark.json) is
-    currently shared across all accounts on the host. If scoped_accounts ever loops
-    over multiple accounts for Hermes, pass an account-scoped state_file or include
-    account_id in slice state_key to prevent earlier accounts from advancing the
-    watermark ahead of later accounts in the same cycle.
+    against overlapping discovery paths (mirroring _make_account_extractor). Note that
+    slice watermarks in hermes.py are account-scoped via state_key to prevent cross-account
+    interference when scoped_accounts iterates multiple accounts.
     """
 
     def _extract(
@@ -2288,6 +2284,8 @@ def _make_account_extractor_hermes(parser: Any, state_file: Path | None = None) 
             canonical_hints=canonical_hints,
             state_file=state_file,
         )
+        # Defense-in-depth against future overlapping discovery paths (today each
+        # parse_hermes_events slice emits unique event_ids).
         seen: set[str] = set()
         deduped = []
         for ev in all_evts:
