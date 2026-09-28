@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -100,6 +101,44 @@ def test_apply_recost_writes_the_new_cost_and_rebuilds_rollups():
     ).one()
     assert lifetime.cost_usd == 2.0
     assert result.rollups_rebuilt_pairs == 1
+
+
+def test_apply_recost_preloads_pricing_once_across_batch_commits():
+    session = _session()
+    _price(session, "chatgpt", "gpt-6-sol", rate=2.0)
+    session.add_all(
+        [
+            UsageEvent(
+                provider_id="chatgpt",
+                account_id="alice@example.com",
+                sidecar_id="dev-01",
+                event_id=f"bulk-{i}",
+                ts=datetime(2026, 9, 1, tzinfo=UTC),
+                kind="message",
+                model_id="gpt-6-sol",
+                tokens_input=1_000_000,
+                tokens_output=0,
+                cost_usd=0.0,
+            )
+            for i in range(1001)
+        ]
+    )
+    session.commit()
+    pricing_queries: list[str] = []
+
+    def count_pricing_query(conn, cursor, statement, parameters, context, executemany):
+        if "provider_pricing" in statement.lower():
+            pricing_queries.append(statement)
+
+    bind = session.get_bind()
+    event.listen(bind, "before_cursor_execute", count_pricing_query)
+    try:
+        result = apply_recost(session, ["chatgpt"], skip_rollups=True, skip_windows=True)
+    finally:
+        event.remove(bind, "before_cursor_execute", count_pricing_query)
+
+    assert result.updated == 1001
+    assert len(pricing_queries) == 1
 
 
 def test_only_zero_cost_never_lowers_an_existing_cost():

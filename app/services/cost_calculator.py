@@ -1,8 +1,12 @@
 """Compute cost_usd for a usage event using provider_pricing."""
 
+from __future__ import annotations
+
 import logging
 import re
-from datetime import datetime
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime
 from typing import NamedTuple
 
 from sqlmodel import Session, func, select
@@ -27,6 +31,75 @@ class CostBreakdown(NamedTuple):
     @property
     def total(self) -> float:
         return round(self.input + self.output + self.cache_read + self.cache_create, 6)
+
+
+@dataclass(frozen=True, slots=True)
+class PricingRowSnapshot:
+    """Immutable pricing values safe to retain across session commits."""
+
+    provider_id: str
+    model_id: str
+    effective_from: date
+    input_per_mtok: float
+    output_per_mtok: float
+    cache_read_per_mtok: float
+    cache_create_per_mtok: float
+    cache_create_1h_per_mtok: float
+
+
+class PricingIndex:
+    """Preloaded provider pricing rows for bulk event consumers."""
+
+    def __init__(self, rows: list[PricingRowSnapshot]) -> None:
+        exact: dict[tuple[str, str], list[PricingRowSnapshot]] = defaultdict(list)
+        insensitive: dict[tuple[str, str], list[PricingRowSnapshot]] = defaultdict(list)
+        for row in rows:
+            exact[(row.provider_id, row.model_id)].append(row)
+            insensitive[(row.provider_id, row.model_id.lower())].append(row)
+        self._exact = exact
+        self._insensitive = insensitive
+
+    @classmethod
+    def load(cls, session: Session, providers: list[str] | None = None) -> PricingIndex:
+        columns = (
+            ProviderPricing.provider_id,
+            ProviderPricing.model_id,
+            ProviderPricing.effective_from,
+            ProviderPricing.input_per_mtok,
+            ProviderPricing.output_per_mtok,
+            ProviderPricing.cache_read_per_mtok,
+            ProviderPricing.cache_create_per_mtok,
+            ProviderPricing.cache_create_1h_per_mtok,
+        )
+        statement = select(*columns)  # type: ignore[call-overload]
+        if providers:
+            statement = statement.where(ProviderPricing.provider_id.in_(providers))  # type: ignore[attr-defined]
+        statement = statement.order_by(ProviderPricing.effective_from.desc())  # type: ignore[attr-defined]
+        rows = [PricingRowSnapshot(*values) for values in session.execute(statement).all()]
+        return cls(rows)
+
+    @staticmethod
+    def _at_or_before(
+        rows: list[PricingRowSnapshot] | None, effective_on: date
+    ) -> PricingRowSnapshot | None:
+        if rows:
+            return next((row for row in rows if row.effective_from <= effective_on), None)
+        return None
+
+    def exact(
+        self, provider_id: str, model_id: str, effective_on: date
+    ) -> PricingRowSnapshot | None:
+        return self._at_or_before(self._exact.get((provider_id, model_id)), effective_on)
+
+    def case_insensitive(
+        self, provider_id: str, model_id: str, effective_on: date
+    ) -> PricingRowSnapshot | None:
+        return self._at_or_before(
+            self._insensitive.get((provider_id, model_id.lower())), effective_on
+        )
+
+
+PricingRow = ProviderPricing | PricingRowSnapshot
 
 
 def _price_row(
@@ -62,8 +135,13 @@ def _price_row_ci(
 
 
 def resolve_price_row(
-    session: Session, provider_id: str, model_id: str | None, ts: datetime
-) -> ProviderPricing | None:
+    session: Session,
+    provider_id: str,
+    model_id: str | None,
+    ts: datetime,
+    *,
+    index: PricingIndex | None = None,
+) -> PricingRow | None:
     """The price row `compute_event_cost_breakdown` would bill at, or `None`
     if nothing matches (including a falsy `model_id`) — the fallback chain as
     its own primitive so a caller can distinguish "no seeded row" (an
@@ -72,7 +150,18 @@ def resolve_price_row(
     """
     if not model_id:
         return None
-    row = _price_row(session, provider_id, model_id, ts)
+
+    def exact_lookup(candidate: str) -> PricingRow | None:
+        if index is not None:
+            return index.exact(provider_id, candidate, ts.date())
+        return _price_row(session, provider_id, candidate, ts)
+
+    def insensitive_lookup(candidate: str) -> PricingRow | None:
+        if index is not None:
+            return index.case_insensitive(provider_id, candidate, ts.date())
+        return _price_row_ci(session, provider_id, candidate, ts)
+
+    row = exact_lookup(model_id)
     if row is None:
         # Versioned ids ("opus-4.8") have no dedicated pricing row, so strip
         # the version suffix and bill at the family rate ("opus"). Providers
@@ -80,7 +169,7 @@ def resolve_price_row(
         # match exactly above and never reach this fallback.
         family = _VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
-            row = _price_row(session, provider_id, family, ts)
+            row = exact_lookup(family)
     if row is None:
         # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
         # digit, so _VERSION_SUFFIX above never fires. Progressively
@@ -99,7 +188,7 @@ def resolve_price_row(
         while row is None and len(segments) > 1:
             segments.pop()
             trimmed = "-".join(segments)
-            row = _price_row(session, provider_id, trimmed, ts)
+            row = exact_lookup(trimmed)
             if row is not None:
                 # This is the discoverability gap the fallback itself creates:
                 # once a family row exists, every unseeded sibling silently
@@ -115,7 +204,7 @@ def resolve_price_row(
     if row is None:
         # Last resort: case-insensitive match on the exact id. One extra query,
         # only hit when all prior lookups miss.
-        row = _price_row_ci(session, provider_id, model_id, ts)
+        row = insensitive_lookup(model_id)
     return row
 
 
@@ -132,7 +221,7 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
     tokens_reasoning: int = 0,
     tokens_cache_create_1h: int = 0,
     tokens_cache_create_5m: int = 0,
-    _resolved_price_row: ProviderPricing | None = None,
+    _resolved_price_row: PricingRow | None = None,
     _price_row_resolved: bool = False,
 ) -> CostBreakdown:
     """Per-component USD cost for an event using the price row in effect at `ts`.

@@ -15,7 +15,7 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
-from app.services.cost_calculator import resolve_price_row
+from app.services.cost_calculator import PricingIndex, resolve_price_row
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -46,6 +46,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
         ).all()
     }
     result: dict[tuple[str, str], dict[str, int]] = {}
+    pricing_index = PricingIndex.load(session)
     price_rows = {}
     events = session.execute(
         select(  # type: ignore[call-overload]
@@ -99,7 +100,9 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
         )
         cache_key = (provider_id, model_id, ts.date())
         if cache_key not in price_rows:
-            price_rows[cache_key] = resolve_price_row(session, provider_id, model_id, ts)
+            price_rows[cache_key] = resolve_price_row(
+                session, provider_id, model_id, ts, index=pricing_index
+            )
         price = price_rows[cache_key]
         resolved = resolve_event_cost(
             session,

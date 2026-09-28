@@ -26,6 +26,27 @@ def test_detect_classifies_a_priced_zero_cost_event_as_recost_fixes_it(session):
     assert group.detail["by_model"][0]["classification"] == "recost_fixes_it"
 
 
+def test_detect_preloads_pricing_once_for_many_models(session, query_counter):
+    for i in range(12):
+        make_event(
+            session,
+            event_id=f"unpriced-{i}",
+            provider_id="chatgpt",
+            model_id=f"unpriced-model-{i}",
+            cost_usd=0.0,
+        )
+
+    query_counter.reset()
+    _check().detect(session)
+
+    pricing_queries = [
+        statement
+        for statement in query_counter.statements
+        if "provider_pricing" in statement.lower()
+    ]
+    assert len(pricing_queries) == 1
+
+
 def test_payg_reported_cost_overrides_a_zero_rate_and_is_recostable(session):
     make_config(session, provider_id="chatgpt", account_id="acct", billing_type="pay_as_you_go")
     make_event(
