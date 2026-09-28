@@ -118,6 +118,9 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             resolved_price_row=price,
             price_row_resolved=True,
         )
+        # The scan selects events whose stored cost is zero. A positive
+        # resolved cost (including a PAYG-reported amount) will therefore
+        # increase the stored cost under apply_recost's only_zero_cost guard.
         if resolved.cost_usd > 0:
             category = "recost_fixes_it"
         elif price is not None and resolved.cost_estimated_usd == 0:
@@ -160,6 +163,26 @@ class UnpricedModelsCheck(Check):
             has_actionable = has_actionable or actionable > 0
             any_fixable = any(m["recost_fixes_it"] > 0 for m in models)
             informational = sum(m["verified_zero"] + m["source_reported"] for m in models)
+            actionable_models = [
+                {
+                    **model,
+                    "count": model["recost_fixes_it"] + model["needs_seed_row"],
+                    "verified_zero": 0,
+                    "source_reported": 0,
+                }
+                for model in models
+                if model["recost_fixes_it"] + model["needs_seed_row"] > 0
+            ]
+            informational_models = [
+                {
+                    **model,
+                    "count": model["verified_zero"] + model["source_reported"],
+                    "recost_fixes_it": 0,
+                    "needs_seed_row": 0,
+                }
+                for model in models
+                if model["verified_zero"] + model["source_reported"] > 0
+            ]
             if actionable:
                 groups.append(
                     FindingGroup(
@@ -175,9 +198,9 @@ class UnpricedModelsCheck(Check):
                         ),
                         samples=[
                             Finding(label=f"{provider_id}/{m['model_id']}", detail=m)
-                            for m in models[:10]
+                            for m in actionable_models[:10]
                         ],
-                        detail={"by_model": models},
+                        detail={"by_model": actionable_models},
                     )
                 )
             if informational:
@@ -190,9 +213,9 @@ class UnpricedModelsCheck(Check):
                         not_fixable_reason="Zero-rate price rows are configured as $0; source-reported $0 is informative, not independently verified.",
                         samples=[
                             Finding(label=f"{provider_id}/{m['model_id']}", detail=m)
-                            for m in models[:10]
+                            for m in informational_models[:10]
                         ],
-                        detail={"by_model": models},
+                        detail={"by_model": informational_models},
                     )
                 )
         return CheckReport(

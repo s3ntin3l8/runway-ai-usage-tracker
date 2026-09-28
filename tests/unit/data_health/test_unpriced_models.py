@@ -25,6 +25,30 @@ def test_detect_classifies_a_priced_zero_cost_event_as_recost_fixes_it(session):
     assert group.detail["by_model"][0]["classification"] == "recost_fixes_it"
 
 
+def test_payg_reported_cost_overrides_a_zero_rate_and_is_recostable(session):
+    make_config(session, provider_id="chatgpt", account_id="acct", billing_type="pay_as_you_go")
+    make_event(
+        session,
+        event_id="payg-reported",
+        provider_id="chatgpt",
+        account_id="acct",
+        model_id="gpt-zero-rate",
+        cost_usd=0.0,
+        cost_reported_usd=0.25,
+        tokens_input=1_000,
+        tokens_output=0,
+    )
+    make_price(session, provider_id="chatgpt", model_id="gpt-zero-rate", rate=0.0)
+
+    report = _check().detect(session)
+
+    assert report.groups[0].fixable is True
+    model = report.groups[0].detail["by_model"][0]
+    assert model["classification"] == "recost_fixes_it"
+    assert model["recost_fixes_it"] == 1
+    assert model["verified_zero"] == 0
+
+
 def test_detect_classifies_an_unseeded_model_as_needs_seed_row(session):
     make_event(session, event_id="1", provider_id="chatgpt", model_id="gpt-6-luna", cost_usd=0.0)
 
@@ -62,6 +86,40 @@ def test_detect_reports_a_configured_zero_rate_as_informational(session):
 
     assert report.severity.value == "info"
     assert report.groups[0].detail["by_model"][0]["classification"] == "verified_zero"
+
+
+def test_mixed_model_evidence_is_split_between_actionable_and_info_groups(session):
+    make_config(session, provider_id="chatgpt", account_id="reported", billing_type="pay_as_you_go")
+    make_event(
+        session,
+        event_id="priced-zero",
+        provider_id="chatgpt",
+        account_id="metered",
+        model_id="gpt-6-sol",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="source-reported-zero",
+        provider_id="chatgpt",
+        account_id="reported",
+        model_id="gpt-6-sol",
+        cost_usd=0.0,
+        cost_reported_usd=0.0,
+    )
+    make_price(session, provider_id="chatgpt", model_id="gpt-6-sol", rate=2.0)
+
+    report = _check().detect(session)
+
+    actionable, informational = report.groups
+    actionable_model = actionable.detail["by_model"][0]
+    informational_model = informational.detail["by_model"][0]
+    assert actionable_model["count"] == 1
+    assert actionable_model["recost_fixes_it"] == 1
+    assert actionable_model["source_reported"] == 0
+    assert informational_model["count"] == 1
+    assert informational_model["source_reported"] == 1
+    assert informational_model["recost_fixes_it"] == 0
 
 
 def test_source_reported_zero_with_positive_estimate_is_not_called_verified(session):

@@ -42,6 +42,22 @@ def test_detect_ignores_recent_gauge_activity_without_usage_events(session):
     assert _check().detect(session).total_count == 0
 
 
+def test_smaller_diagnostic_threshold_does_not_make_recent_series_fixable(session):
+    make_latest_usage(
+        session,
+        provider_id="minimax",
+        account_id="default",
+        updated_at=datetime.now(UTC) - timedelta(days=10),
+    )
+
+    report = _check().detect(session, stale_days=7)
+
+    assert report.total_count == 1
+    assert report.groups[0].fixable is False
+    reason = report.groups[0].not_fixable_reason
+    assert reason is not None and "30-day" in reason
+
+
 def test_detect_ignores_a_series_with_a_configured_account(session):
     make_config(session, provider_id="minimax", account_id="default")
     make_latest_usage(session, provider_id="minimax", account_id="default")
@@ -87,15 +103,7 @@ def test_detect_flags_a_series_whose_events_are_all_old(session):
 
 
 def test_detect_query_count_is_roughly_constant_regardless_of_pair_count(session, query_counter):
-    """detect() must issue a small, bounded number of queries whether
-    there's 1 orphaned pair or 10 — the whole point of #375's rewrite. The
-    old per-pair implementation issued 2 + 5*N queries (2 for the pair set,
-    then _has_config + _last_event_ts + _count_latest + _count_snapshots +
-    candidate_targets per pair). The new one issues 4 fixed grouped queries
-    plus exactly one candidate_targets call per *distinct provider_id*
-    among the orphaned pairs (memoized, not per pair) — so growth tracks
-    the number of providers, never the number of pairs.
-    """
+    """detect() must issue a fixed number of queries as orphan pairs grow."""
     stale_ts = datetime.now(UTC) - timedelta(days=90)
     make_latest_usage(session, provider_id="minimax", account_id="solo")
     make_event(session, event_id="baseline", provider_id="minimax", account_id="solo", ts=stale_ts)
@@ -103,8 +111,7 @@ def test_detect_query_count_is_roughly_constant_regardless_of_pair_count(session
     _check().detect(session)
     baseline_count = query_counter.count
 
-    # 10 orphaned pairs across 2 distinct providers, to exercise the
-    # candidate_targets memoization (one call per provider, not per pair).
+    # 10 orphaned pairs across 2 providers exercise grouped query behavior.
     for i in range(10):
         provider_id = "minimax" if i % 2 == 0 else "chatgpt"
         account_id = f"account{i}"
@@ -120,8 +127,7 @@ def test_detect_query_count_is_roughly_constant_regardless_of_pair_count(session
     _check().detect(session)
     ten_pair_count = query_counter.count
 
-    # Query cost stays constant as the number of pairs and providers grows;
-    # all per-pair counts, config checks, and activity timestamps are grouped.
+    # Pair count and provider count do not add per-account queries.
     assert baseline_count == 6
     assert ten_pair_count == 6
 

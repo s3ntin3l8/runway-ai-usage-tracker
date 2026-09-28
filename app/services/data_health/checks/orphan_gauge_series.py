@@ -4,7 +4,9 @@ no recent event or gauge activity (D9 in the v3.0.0 prod-cleanup audit: a stray
 `minimax/default` card, a `github noreply` card). Not every unconfigured
 account is orphaned — one that's still posting fresh events or cards just hasn't
 been configured *yet*, so `stale_days` gates on recency, not just on a
-missing config row.
+missing config row. The 30-day default is the minimum age required for a fix;
+a smaller diagnostic threshold can surface a non-fixable finding, but cannot
+make recent data eligible for deletion or merge.
 """
 
 from __future__ import annotations
@@ -133,6 +135,7 @@ class OrphanGaugeSeriesCheck(Check):
 
     def detect(self, session: Session, *, stale_days: int = _STALE_DAYS_DEFAULT) -> CheckReport:
         cutoff = datetime.now(UTC) - timedelta(days=stale_days)
+        safe_fix_cutoff = datetime.now(UTC) - timedelta(days=_STALE_DAYS_DEFAULT)
 
         # Grouped counts replace the per-pair _count_latest/_count_snapshots
         # queries; the union of their keys replaces _pairs_with_gauge_series.
@@ -221,6 +224,7 @@ class OrphanGaugeSeriesCheck(Check):
             )
             if activity_ts is not None and activity_ts >= cutoff:
                 continue  # recent events or sidecar writes mean this account is live
+            safe_to_fix = activity_ts is None or activity_ts < safe_fix_cutoff
             if provider_id not in candidates_by_provider:
                 candidates_by_provider[provider_id] = candidate_targets(session, provider_id)
             candidates = [a for a in candidates_by_provider[provider_id] if a != account_id]
@@ -231,7 +235,12 @@ class OrphanGaugeSeriesCheck(Check):
                     key=_key(provider_id, account_id),
                     label=f"{provider_id}/{account_id}: orphan gauge series",
                     count=latest_count + snap_count,
-                    fixable=True,
+                    fixable=safe_to_fix,
+                    not_fixable_reason=(
+                        None
+                        if safe_to_fix
+                        else "activity is newer than the minimum 30-day cleanup threshold"
+                    ),
                     params=[
                         ParamSpec(name="action", label="Action", options=["delete", "merge"]),
                         ParamSpec(
