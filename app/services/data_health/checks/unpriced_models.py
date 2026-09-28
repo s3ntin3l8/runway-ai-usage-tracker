@@ -99,7 +99,7 @@ class UnpricedModelsCheck(Check):
         for provider_id, model_id, count, ts_max, reported in rows:
             if _is_excluded(provider_id, model_id):
                 continue
-            classification = _classify(session, provider_id, model_id, count, reported or 0, ts_max)
+            classification = _classify(session, provider_id, model_id, count, reported, ts_max)
             by_provider.setdefault(provider_id, []).append(
                 {"model_id": model_id, "count": count, "classification": classification}
             )

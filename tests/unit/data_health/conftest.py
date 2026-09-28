@@ -27,7 +27,10 @@ from app.models.db import (
 @dataclass
 class QueryCounter:
     """Counts SQL statements issued through a given engine, via
-    `before_cursor_execute`. Reset per test by the `query_counter` fixture."""
+    `before_cursor_execute`. Reset per test by the `query_counter` fixture.
+    Fires for every statement, including implicit ones (savepoints, ORM
+    autoflush, eager loads) — quiet on the current StaticPool SQLite setup,
+    but a future fixture that triggers autoflush could inflate the count."""
 
     count: int = 0
     statements: list[str] = field(default_factory=list)
