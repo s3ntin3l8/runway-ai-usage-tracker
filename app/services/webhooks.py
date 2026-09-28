@@ -1,4 +1,5 @@
 # app/services/webhooks.py
+import asyncio
 import ipaddress
 import logging
 from datetime import UTC, datetime
@@ -14,6 +15,14 @@ from app.services.account_identity import resolve_account_id
 logger = logging.getLogger(__name__)
 
 _HYSTERESIS = 0.85  # reset alert when usage drops below threshold * 0.85
+
+# The server is guaranteed single-process (see app/main.py's `uvicorn.run`
+# comment), so every overlapping `poll_now()` call — a scheduled tick racing
+# a `POST /force-collect` — runs on the same event loop. This lock fully
+# serializes `check_and_fire` cycles, closing the post-then-record race on
+# `WebhookConfig.last_fired_at` (two overlapping cycles could otherwise both
+# observe `last_fired_at is None` and both deliver).
+_fire_lock = asyncio.Lock()
 
 
 class WebhookURLError(ValueError):
@@ -92,89 +101,107 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     label is a resolved email canonicalises to that email — same as cards
     stamped default + email label. account_id NULL matches any account
     (per-provider alert, current behavior).
+
+    Holds `_fire_lock` for the entire body — the `last_fired_at` read and the
+    webhook POST + write that gates on it must be atomic with respect to any
+    other overlapping cycle, or two concurrent cycles can both observe
+    `last_fired_at is None` and both deliver.
+
+    Unlike `credential_alerts.check_credential_alerts` (which narrows its
+    lock to just the dedup-row critical section), this lock stays scoped to
+    the whole function: `config.last_fired_at` is read once, into each
+    config's in-memory ORM attribute, via the `configs = session.exec(...)`
+    query below — not re-queried per loop iteration — so narrowing the lock
+    to start after that query would let two overlapping cycles both load a
+    stale `last_fired_at` before either reaches the (now-narrower) critical
+    section, reopening the exact race this lock exists to close. Doing this
+    safely would need an explicit `session.refresh(config)` per iteration
+    plus a per-config commit (rather than the one final `session.commit()`
+    below) — a bigger structural change than this fix's scope covers.
     """
-    configs = session.exec(
-        select(WebhookConfig).where(WebhookConfig.active == True)  # noqa: E712
-    ).all()
-    if not configs:
-        return
+    async with _fire_lock:
+        configs = session.exec(
+            select(WebhookConfig).where(WebhookConfig.active == True)  # noqa: E712
+        ).all()
+        if not configs:
+            return
 
-    # (provider_id, account_id) → account_label for scope canonicalisation.
-    scope_labels = {
-        (r.provider_id, r.account_id): r.account_label
-        for r in session.exec(select(ProviderConfig)).all()
-    }
+        # (provider_id, account_id) → account_label for scope canonicalisation.
+        scope_labels = {
+            (r.provider_id, r.account_id): r.account_label
+            for r in session.exec(select(ProviderConfig)).all()
+        }
 
-    # Build provider → cards lookup
-    card_by_provider: dict[str, list[LimitCard]] = {}
-    for card in cards:
-        if card.provider_id:
-            card_by_provider.setdefault(card.provider_id, []).append(card)
+        # Build provider → cards lookup
+        card_by_provider: dict[str, list[LimitCard]] = {}
+        for card in cards:
+            if card.provider_id:
+                card_by_provider.setdefault(card.provider_id, []).append(card)
 
-    # Evaluate specific providers first, wildcards last
-    sorted_configs = sorted(configs, key=lambda c: (c.provider_id == "*", c.id))
+        # Evaluate specific providers first, wildcards last
+        sorted_configs = sorted(configs, key=lambda c: (c.provider_id == "*", c.id))
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for config in sorted_configs:
-            if config.provider_id == "*":
-                matched = [c for cards_list in card_by_provider.values() for c in cards_list]
-            else:
-                matched = card_by_provider.get(config.provider_id, [])
-            if config.account_id is not None:
-                # Compare canonical ids: collectors stamp raw identity
-                # (`account_id or "default"`), cards also carry account_label
-                # which often holds the resolved email — same resolver the
-                # accumulator/fleet write paths use. Scope side pulls the
-                # provider_configs label so `default` + email label resolves
-                # to the email (pins case-folding and the default→email path).
-                scope_label = scope_labels.get((config.provider_id, config.account_id))
-                matched = [
-                    c
-                    for c in matched
-                    if _scope_matches(
-                        config,
-                        config.provider_id,
-                        resolve_account_id(config.provider_id, c.account_id, c.account_label),
-                        scope_label,
-                    )
-                ]
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for config in sorted_configs:
+                if config.provider_id == "*":
+                    matched = [c for cards_list in card_by_provider.values() for c in cards_list]
+                else:
+                    matched = card_by_provider.get(config.provider_id, [])
+                if config.account_id is not None:
+                    # Compare canonical ids: collectors stamp raw identity
+                    # (`account_id or "default"`), cards also carry account_label
+                    # which often holds the resolved email — same resolver the
+                    # accumulator/fleet write paths use. Scope side pulls the
+                    # provider_configs label so `default` + email label resolves
+                    # to the email (pins case-folding and the default→email path).
+                    scope_label = scope_labels.get((config.provider_id, config.account_id))
+                    matched = [
+                        c
+                        for c in matched
+                        if _scope_matches(
+                            config,
+                            config.provider_id,
+                            resolve_account_id(config.provider_id, c.account_id, c.account_label),
+                            scope_label,
+                        )
+                    ]
 
-            # Two-pass: categorise all cards before mutating state
-            breaching: list[tuple[LimitCard, float]] = []
-            all_recovered = True  # true until we find a card above hysteresis
-            saw_usable = False  # true once any matched card yielded a usable pct
+                # Two-pass: categorise all cards before mutating state
+                breaching: list[tuple[LimitCard, float]] = []
+                all_recovered = True  # true until we find a card above hysteresis
+                saw_usable = False  # true once any matched card yielded a usable pct
 
-            for card in matched:
-                if card.used_value is None or card.limit_value is None or card.limit_value == 0:
-                    continue
+                for card in matched:
+                    if card.used_value is None or card.limit_value is None or card.limit_value == 0:
+                        continue
 
-                saw_usable = True
-                used_pct = (card.used_value / card.limit_value) * 100.0
+                    saw_usable = True
+                    used_pct = (card.used_value / card.limit_value) * 100.0
 
-                if used_pct >= config.threshold_pct:
-                    breaching.append((card, used_pct))
-                    all_recovered = False
-                elif used_pct >= config.threshold_pct * _HYSTERESIS:
-                    # Dead zone: above hysteresis but below threshold — hold state
-                    all_recovered = False
+                    if used_pct >= config.threshold_pct:
+                        breaching.append((card, used_pct))
+                        all_recovered = False
+                    elif used_pct >= config.threshold_pct * _HYSTERESIS:
+                        # Dead zone: above hysteresis but below threshold — hold state
+                        all_recovered = False
 
-            # Reset: every usable card has recovered below hysteresis.
-            # Without saw_usable, an empty/error-only matched list would vacuously
-            # clear last_fired_at and re-arm a scoped alert that never recovered.
-            if saw_usable and all_recovered and config.last_fired_at is not None:
-                config.last_fired_at = None
-                session.add(config)
-            # Fire: at least one card is breaching and no active breach recorded
-            elif breaching and config.last_fired_at is None:
-                card, used_pct = max(breaching, key=lambda x: x[1])
-                try:
-                    await _fire_webhook(client, config, card, used_pct)
-                    config.last_fired_at = datetime.now(UTC)
+                # Reset: every usable card has recovered below hysteresis.
+                # Without saw_usable, an empty/error-only matched list would vacuously
+                # clear last_fired_at and re-arm a scoped alert that never recovered.
+                if saw_usable and all_recovered and config.last_fired_at is not None:
+                    config.last_fired_at = None
                     session.add(config)
-                except Exception as e:
-                    logger.error(f"Webhook delivery failed for config {config.id}: {e}")
+                # Fire: at least one card is breaching and no active breach recorded
+                elif breaching and config.last_fired_at is None:
+                    card, used_pct = max(breaching, key=lambda x: x[1])
+                    try:
+                        await _fire_webhook(client, config, card, used_pct)
+                        config.last_fired_at = datetime.now(UTC)
+                        session.add(config)
+                    except Exception as e:
+                        logger.error(f"Webhook delivery failed for config {config.id}: {e}")
 
-    session.commit()
+        session.commit()
 
 
 def _scope_matches(

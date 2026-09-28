@@ -236,15 +236,19 @@ def main() -> int:
             n_updated = n_unchanged = 0
         else:
             print(f"{prefix}Phase C — re-costing events for '{_PROVIDER}'…", flush=True)
-            n_updated, n_unchanged, n_zeroed = phase_b_recost(session, [_PROVIDER], None, dry_run)
+            n_updated, n_unchanged, n_zeroed, affected_pairs = phase_b_recost(
+                session, [_PROVIDER], None, dry_run
+            )
             print(
                 f"{prefix}Phase C-events: {n_updated + n_unchanged + n_zeroed:,} total — "
                 f"{n_updated} updated, {n_unchanged} unchanged, {n_zeroed} newly-zeroed.",
                 flush=True,
             )
-            n_ev = phase_c_rollups(session, [_PROVIDER], dry_run)
+            # Narrow to the accounts Phase B actually changed something for,
+            # same as recost_events.py's run() — see that script for why.
+            n_ev = phase_c_rollups(session, [_PROVIDER], dry_run, pairs=affected_pairs)
             print(f"{prefix}Phase C-rollups: rebuilt from {n_ev:,} event(s).", flush=True)
-            n_win = phase_d_windows(session, [_PROVIDER], dry_run)
+            n_win = phase_d_windows(session, [_PROVIDER], dry_run, pairs=affected_pairs)
             print(f"{prefix}Phase C-windows: {n_win:,} window(s) rebuilt.", flush=True)
 
     print(f"\n{prefix}Summary for '{_PROVIDER}' → {email}:")

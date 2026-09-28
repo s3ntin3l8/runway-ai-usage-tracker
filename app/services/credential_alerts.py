@@ -8,6 +8,7 @@ healthy observation is therefore not proof the credential is actually
 fixed — see ``_rearm_window_seconds`` / ``WebhookCredentialAlert.healthy_since``.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,6 +41,14 @@ logger = logging.getLogger(__name__)
 _DEFAULT_POLL_INTERVAL_SECONDS = 900
 # Absolute floor regardless of how short the configured poll interval is.
 _REARM_FLOOR_SECONDS = 1800
+
+# The server is guaranteed single-process (see app/main.py's `uvicorn.run`
+# comment), so every overlapping `poll_now()` call — a scheduled tick racing
+# a `POST /force-collect` — runs on the same event loop. This lock serializes
+# the dedup-row read-then-write critical section of `check_credential_alerts`
+# (see that function's docstring for its exact scope), closing the race
+# described in `_commit_step`'s docstring.
+_check_lock = asyncio.Lock()
 
 
 def _rearm_window_seconds(session: Session) -> int:
@@ -75,14 +84,16 @@ def _commit_step(session: Session, context: str) -> None:
     """Commit one webhook's dedup-row change immediately, rather than batching
     the whole cycle into one commit.
 
-    `poll_now()` isn't reentrancy-guarded (force-collect can overlap a
-    scheduled tick), so two cycles can race to insert the same
-    `(webhook_id, provider_id, account_id)` dedup row. Committing per step
-    means a losing `IntegrityError` here only discards *this* row's change,
-    not every other insert/update already made this cycle. It also keeps any
-    single write from staying open across the next iteration's `httpx` await
-    (SQLAlchemy autoflush would otherwise upgrade the connection to a held
-    write lock for the duration of that request).
+    `_check_lock` now serializes overlapping `check_credential_alerts` cycles
+    (force-collect racing a scheduled tick), so the same-process race that
+    used to let two cycles insert the same `(webhook_id, provider_id,
+    account_id)` dedup row can no longer happen — the `IntegrityError` catch
+    below is defense-in-depth, not the primary guard. Per-step commits are
+    still worth keeping regardless: they keep a losing write's blast radius
+    to *this* row rather than the whole cycle, and they keep any single write
+    from staying open across the next iteration's `httpx` await (SQLAlchemy
+    autoflush would otherwise upgrade the connection to a held write lock for
+    the duration of that request).
     """
     try:
         session.commit()
@@ -117,7 +128,27 @@ def _is_alert_bad(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]
 
 
 async def check_credential_alerts(session: Session) -> None:
-    """Evaluate Token Health and fire/re-arm credential-health webhooks."""
+    """Evaluate Token Health and fire/re-arm credential-health webhooks.
+
+    `_check_lock` is scoped to the dedup-row critical section only — the
+    `for (provider, account_id) ... for config in configs:` double loop
+    below and everything inside it — not the whole function. Everything
+    above that point (the `configs`/`scope_labels` queries, the Token
+    Health fetch, and the `keys` classification built from it) is read-only
+    with respect to `WebhookCredentialAlert` — the table the race actually
+    threatens — and doesn't need to serialize against another cycle. The
+    one row that *is* racy, `alert = session.exec(...)` below, is queried
+    fresh on every loop iteration, strictly after the lock is acquired, so
+    narrowing the lock to start here doesn't reopen the read-then-write gap
+    it exists to close.
+
+    (Contrast `webhooks.check_and_fire`: there, the racy
+    `WebhookConfig.last_fired_at` is loaded once *before* its loop, not
+    re-queried per iteration, so narrowing that lock the same way would
+    require an explicit per-iteration `session.refresh()` to stay correct —
+    a bigger structural change. It keeps the coarser whole-body lock
+    instead.)
+    """
     configs = session.exec(
         select(WebhookConfig).where(
             WebhookConfig.active == True,  # noqa: E712
@@ -137,32 +168,35 @@ async def check_credential_alerts(session: Session) -> None:
         return
     accounts_by_provider = _build_accounts_by_provider(rows)
 
-    # (provider, resolved_account_id) -> classification state built up across
-    # every Token Health row that maps to that identity.
+    # (provider, resolved_account_id) -> classification state built up
+    # across every Token Health row that maps to that identity.
     keys: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         provider = row["provider"]
         underlying = _underlying_account(row["account_id"])
-        # Synthetic rows the service builds itself (`server`, in particular)
-        # carry no account_label of their own — fall back to the same
-        # provider_configs label `scope_labels` uses, so a `default`-scoped
-        # webhook whose account has an email label still matches a
-        # server-discovered credential for that account, the same way it
-        # already matches cards for it (see `_scope_matches`'s docstring).
+        # Synthetic rows the service builds itself (`server`, in
+        # particular) carry no account_label of their own — fall back to
+        # the same provider_configs label `scope_labels` uses, so a
+        # `default`-scoped webhook whose account has an email label still
+        # matches a server-discovered credential for that account, the
+        # same way it already matches cards for it (see
+        # `_scope_matches`'s docstring).
         label = row.get("account_label") or scope_labels.get((provider, underlying))
         resolved = resolve_account_id(provider, underlying, label)
         state = keys.setdefault(
-            (provider, resolved), {"bad": False, "healthy": False, "status": None, "detail": None}
+            (provider, resolved),
+            {"bad": False, "healthy": False, "status": None, "detail": None},
         )
         if _is_alert_bad(row, accounts_by_provider):
             state["bad"] = True
             state["status"] = _worst_status(state["status"], row["status"])
             if state["detail"] is None or row["status"] == "invalid":
                 state["detail"] = row
-        # Deliberately broader than token_health's own redundancy math, which
-        # excludes "_assumed" (config/env, no real expiry) rows as evidence —
-        # here, any non-bad valid/expiring sibling is enough to hold off an
-        # alert, since the goal is "don't page while collection still works."
+        # Deliberately broader than token_health's own redundancy math,
+        # which excludes "_assumed" (config/env, no real expiry) rows as
+        # evidence — here, any non-bad valid/expiring sibling is enough
+        # to hold off an alert, since the goal is "don't page while
+        # collection still works."
         if row["status"] in ("valid", "expiring"):
             state["healthy"] = True
 
@@ -172,13 +206,14 @@ async def check_credential_alerts(session: Session) -> None:
     now = datetime.now(UTC)
     rearm_cutoff = now - timedelta(seconds=_rearm_window_seconds(session))
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with _check_lock, httpx.AsyncClient(timeout=5.0) as client:
         for (provider, account_id), state in keys.items():
-            # bad+healthy both true (a working credential alongside a stale
-            # one) and neither true (only unknown/redundant/rollable rows)
-            # are both left alone: a healthy sibling means collection still
-            # works for this account, so a stale/rejected credential beside
-            # it isn't blocking anything and shouldn't page.
+            # bad+healthy both true (a working credential alongside a
+            # stale one) and neither true (only unknown/redundant/
+            # rollable rows) are both left alone: a healthy sibling means
+            # collection still works for this account, so a stale/
+            # rejected credential beside it isn't blocking anything and
+            # shouldn't page.
             if state["bad"] and not state["healthy"]:
                 classification = "bad"
             elif state["healthy"] and not state["bad"]:
