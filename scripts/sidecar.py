@@ -1987,7 +1987,7 @@ _CREDENTIAL_CACHE: Any = None
 # provider has never produced usage events. Keep this scan independent from
 # the normal collection schedule and throttle it to avoid repeatedly walking
 # credential files on every heartbeat.
-_LAST_CREDENTIAL_DISCOVERY_SCAN = 0.0
+_CREDENTIAL_DISCOVERY_STATE = {"last_scan": 0.0}
 
 
 def _get_credential_cache() -> Any:
@@ -3498,9 +3498,8 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     registry_providers = __REGISTRY__.get("providers", {})
     bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
 
-    global _LAST_CREDENTIAL_DISCOVERY_SCAN
     now = time.monotonic()
-    if credential_scan_only and now - _LAST_CREDENTIAL_DISCOVERY_SCAN >= 600:
+    if credential_scan_only and now - _CREDENTIAL_DISCOVERY_STATE["last_scan"] >= 600:
         for discover_pid, discover_config in registry_providers.items():
             try:
                 _discovered, blocked = GenericCollector.collect_provider(
@@ -3522,7 +3521,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 completed_providers_this_cycle.append(discover_pid)
             except Exception as exc:
                 logging.debug("credential discovery failed for %s: %s", discover_pid, exc)
-        _LAST_CREDENTIAL_DISCOVERY_SCAN = now
+        _CREDENTIAL_DISCOVERY_STATE["last_scan"] = now
 
     for provider_id, provider_config in registry_providers.items():
         if credential_scan_only or (

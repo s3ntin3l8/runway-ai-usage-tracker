@@ -1263,7 +1263,7 @@ def test_run_collection_heartbeat_discovers_credentials_without_polling(monkeypa
     }
     quota = {"service_name": "OpenRouter local quota", "remaining": "$2", "unit": "USD"}
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", Cache())
-    monkeypatch.setattr(sc, "_LAST_CREDENTIAL_DISCOVERY_SCAN", 0)
+    monkeypatch.setitem(sc._CREDENTIAL_DISCOVERY_STATE, "last_scan", 0)
     monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
     monkeypatch.setattr(sc, "__REGISTRY__", {"providers": {"openrouter": {"name": "OpenRouter"}}})
     monkeypatch.setattr(
