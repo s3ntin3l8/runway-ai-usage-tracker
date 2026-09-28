@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
 import type { DataHealthCheckReport, DataHealthReport } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
@@ -52,6 +53,18 @@ describe('DataHealthSection', () => {
     expect(await screen.findByText(/showing the previous scan/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
     expect(screen.getByRole('button', { name: /^fix$/i })).toBeDisabled();
+  });
+
+  it('reports a failed retry scan', async () => {
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
+      report({ scan_error: 'database unavailable' }),
+    );
+    vi.mocked(api.rescanDataHealth).mockRejectedValue(new Error('retry failed'));
+    renderWithProviders(<DataHealthSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /retry scan/i }));
+
+    expect(toast.error).toHaveBeenCalledWith('retry failed');
   });
 
   it('renders one row per check when findings exist', async () => {

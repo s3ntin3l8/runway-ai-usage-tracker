@@ -19,9 +19,9 @@ const group = (o: Partial<DataHealthFindingGroup> = {}): DataHealthFindingGroup 
   ...o,
 });
 
-function renderDialog(g: DataHealthFindingGroup = group()) {
+function renderDialog(g: DataHealthFindingGroup = group(), onOpenChange = () => {}) {
   return renderWithProviders(
-    <FixDialog open onOpenChange={() => {}} checkId="config_default_keyed" group={g} />,
+    <FixDialog open onOpenChange={onOpenChange} checkId="config_default_keyed" group={g} />,
   );
 }
 
@@ -37,6 +37,39 @@ describe('FixDialog', () => {
       }),
     );
     expect(screen.getByText('Target account')).toBeInTheDocument();
+  });
+
+  it('clears the preview and confirmation when an option changes', async () => {
+    vi.mocked(api.previewDataHealthFix).mockResolvedValue({
+      check_id: 'config_default_keyed',
+      group_key: 'minimax',
+      summary: 'Previewed fix',
+      counts: {},
+      samples: [],
+    });
+    renderDialog(
+      group({
+        params: [
+          {
+            name: 'target',
+            label: 'Target account',
+            required: false,
+            options: ['alice@example.com', 'archive_default'],
+          },
+        ],
+      }),
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await screen.findByText('Previewed fix');
+    await userEvent.click(screen.getByRole('switch'));
+    expect(screen.getByRole('button', { name: /apply fix/i })).not.toBeDisabled();
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(screen.getByRole('option', { name: /archive default config/i }));
+
+    expect(screen.queryByText('Previewed fix')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /apply fix/i })).toBeDisabled();
   });
 
   it('renders a text input for a param with no options', () => {
@@ -199,9 +232,26 @@ describe('FixDialog', () => {
       samples: [],
     });
     vi.mocked(api.applyDataHealthFix).mockResolvedValue({ job_id: 'job-1' });
-    vi.mocked(api.fetchDataHealthJob).mockRejectedValue(new Error('network error'));
+    vi.mocked(api.fetchDataHealthJob)
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce({
+        id: 'job-1',
+        check_id: 'config_default_keyed',
+        group_key: 'minimax',
+        status: 'succeeded',
+        result: {
+          check_id: 'config_default_keyed',
+          group_key: 'minimax',
+          summary: 'Rekeyed minimax/default',
+          counts: {},
+        },
+        error: null,
+        started_at: '2026-09-28T00:00:00Z',
+        finished_at: '2026-09-28T00:00:01Z',
+      });
 
-    renderDialog();
+    const onOpenChange = vi.fn();
+    renderDialog(group(), onOpenChange);
     await userEvent.click(screen.getByRole('button', { name: /preview/i }));
     await screen.findByText('Rekey it');
     await userEvent.click(screen.getByRole('switch'));
@@ -211,5 +261,10 @@ describe('FixDialog', () => {
     expect(screen.getByText(/status is unknown/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry status/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /retry status/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /close/i }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(api.fetchDataHealthJob).toHaveBeenCalledTimes(3);
   });
 });
