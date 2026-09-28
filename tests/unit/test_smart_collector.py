@@ -74,6 +74,18 @@ class TestSmartCollectorCaching:
         assert smart.last_collection_state == "partial"
 
     @pytest.mark.asyncio
+    async def test_valid_empty_result_uses_snapshot_completeness(self, mock_collector, mock_client):
+        mock_collector.collect.return_value = []
+        mock_collector.successful_empty_result = True
+        mock_collector.complete_snapshot.return_value = False
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
+
+        result = await smart.collect(mock_client)
+
+        assert result == []
+        assert smart.last_collection_state == "partial"
+
+    @pytest.mark.asyncio
     async def test_cache_expiration_triggers_fresh_fetch(self, mock_collector, mock_client):
         """Test that expired cache triggers fresh fetch."""
         cached_data = [{"service_name": "Test", "remaining": "100%"}]

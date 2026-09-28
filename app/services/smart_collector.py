@@ -217,6 +217,14 @@ class SmartCollector:
         self.last_collection_state = state
         self.last_collection_reason = reason
 
+    def _snapshot_state(self, result: list[dict[str, Any]]) -> str:
+        """Return whether a fresh result represents a complete provider snapshot."""
+        if not isinstance(self.collector, BaseCollector) or self.collector.complete_snapshot(
+            result
+        ):
+            return "complete"
+        return "partial"
+
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
         Intelligently fetch data with differential fetching strategy.
@@ -334,12 +342,7 @@ class SmartCollector:
                     # Success: clear any 429 backoff
                     self._clear_429()
                     self._mark_success(result, now)
-                    state = (
-                        "complete"
-                        if not isinstance(self.collector, BaseCollector)
-                        or self.collector.complete_snapshot(result)
-                        else "partial"
-                    )
+                    state = self._snapshot_state(result)
                     self._set_collection_state(state, "fresh provider response")
                     return copy.deepcopy(result)
 
@@ -351,12 +354,7 @@ class SmartCollector:
                 ):
                     self._clear_429()
                     self._mark_success(result, now)
-                    state = (
-                        "complete"
-                        if not isinstance(self.collector, BaseCollector)
-                        or self.collector.complete_snapshot(result)
-                        else "partial"
-                    )
+                    state = self._snapshot_state(result)
                     self._set_collection_state(state, "provider confirmed a valid empty result")
                     return []
 

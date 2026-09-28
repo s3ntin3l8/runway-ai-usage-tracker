@@ -179,7 +179,10 @@ def _rebuild_latest_usage_slot(
             LatestUsageContribution.variant == variant,
             LatestUsageContribution.model_id == model_id,
         )
-        .order_by(col(LatestUsageContribution.updated_at))
+        .order_by(
+            col(LatestUsageContribution.updated_at),
+            col(LatestUsageContribution.source_id),
+        )
     ).all()
     row = session.exec(
         select(LatestUsage).where(
@@ -200,7 +203,8 @@ def _rebuild_latest_usage_slot(
     sidecar_id = "local"
     latest_at = None
     latest_sidecar_at = None
-    has_server_source = False
+    latest_source_sidecar_id = "local"
+    has_fresh_server_source = False
     for contribution in contributions:
         payload = json.loads(contribution.card_json or "{}")
         merged = merge_card_json(merged, payload)
@@ -209,15 +213,19 @@ def _rebuild_latest_usage_slot(
         source_kind, source_scope, source_provider = _parse_source_id(contribution.source_id)
         if source_provider != provider_id:
             continue
-        if source_kind == "server":
-            has_server_source = True
-        elif latest_sidecar_at is None or contribution.updated_at >= latest_sidecar_at:
-            sidecar_id = source_scope
-            latest_sidecar_at = contribution.updated_at
-    if has_server_source:
-        # Stable ownership: server-scraped quota remains local even when a
-        # sidecar enrichment for the same logical card arrives later.
+        latest_source_sidecar_id = source_scope if source_kind == "sidecar" else "local"
+        if payload.get("stale") is not True:
+            if source_kind == "server":
+                has_fresh_server_source = True
+            elif latest_sidecar_at is None or contribution.updated_at >= latest_sidecar_at:
+                sidecar_id = source_scope
+                latest_sidecar_at = contribution.updated_at
+    if has_fresh_server_source:
+        # Fresh server data keeps local ownership even when sidecars enrich it.
         sidecar_id = "local"
+    elif latest_sidecar_at is None:
+        # When every source is stale, preserve the newest contribution's owner.
+        sidecar_id = latest_source_sidecar_id
     data = json.loads(merged or "{}")
     if stale:
         data["stale"] = True

@@ -178,8 +178,6 @@ class BackgroundPoller:
         # Update dormancy state before DB write
         self._update_sleep_state(cards)
 
-        if not cards and not outcomes:
-            logger.debug("No metrics collected during background poll.")
         if cards or outcomes:
             with Session(engine) as session:
                 for card_dict in cards:
@@ -237,6 +235,8 @@ class BackgroundPoller:
 
                 session.commit()
                 logger.info(f"Background poll complete. Snapshotted {len(cards)} metrics.")
+        else:
+            logger.debug("No metrics collected during background poll.")
 
         # Fire webhook alerts for any threshold breaches
         try:

@@ -3294,6 +3294,8 @@ def _post_credential_manifest(
 
 @dataclass
 class CollectionResult:
+    """Structured result from one collection cycle."""
+
     metrics: list[dict[str, Any]]
     events: list[dict[str, Any]]
     error_count: int
@@ -3303,8 +3305,8 @@ class CollectionResult:
 def run_collection(config: dict[str, Any], providers: list[str] | None = None) -> CollectionResult:
     """Run collection for specified or enabled providers.
 
-    Returns a result that supports the existing three-value unpacking
-    contract and also carries completed provider snapshots for the wire.
+    Returns collected metrics, extracted events, errors, and completed provider
+    snapshots for the ingest payload.
     """
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
@@ -3795,14 +3797,10 @@ class DaemonRunner:
                 logging.info(f"Starting targeted collection for: {providers}...")
 
             collection_result = run_collection(self._config, providers=providers)
-            if isinstance(collection_result, CollectionResult):
-                metrics = collection_result.metrics
-                events = collection_result.events
-                collection_errors = collection_result.error_count
-                completed_providers = collection_result.completed_providers
-            else:  # compatibility for older integrations/test doubles
-                metrics, events, collection_errors = collection_result
-                completed_providers = []
+            metrics = collection_result.metrics
+            events = collection_result.events
+            collection_errors = collection_result.error_count
+            completed_providers = collection_result.completed_providers
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version") or _SIDECAR_VERSION

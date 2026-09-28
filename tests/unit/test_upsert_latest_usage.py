@@ -1,6 +1,7 @@
 """Tests for upsert_latest_usage error-suppression and orphan-eviction logic."""
 
 import json
+import logging
 import os
 import tempfile
 
@@ -220,6 +221,89 @@ def test_server_source_keeps_local_sidecar_id_when_sidecar_writes_later(session:
 
     row = session.exec(select(LatestUsage)).one()
     assert row.sidecar_id == "local"
+
+
+def test_fresh_sidecar_owns_card_when_server_contribution_is_stale(session: Session):
+    server_card = _success_card()
+    sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    card = json.loads(row.card_json)
+    assert row.sidecar_id == "host-a"
+    assert card.get("stale") is not True
+    assert card.get("collection_failing") is not True
+
+
+def test_stale_only_server_card_keeps_local_owner(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    assert row.sidecar_id == "local"
+
+
+def test_when_all_sources_are_stale_latest_sidecar_owns_card(session: Session):
+    server_card = _success_card()
+    sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="sidecar:host-a:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    assert row.sidecar_id == "host-a"
+    assert json.loads(row.card_json)["stale"] is True
+
+
+def test_contribution_write_failure_is_logged(session: Session, monkeypatch, caplog):
+    import app.services.accumulator as accumulator
+
+    def fail_contribution_write(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(accumulator, "_upsert_contribution", fail_contribution_write)
+    with caplog.at_level(logging.WARNING, logger="app.services.accumulator"):
+        upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+
+    assert "LatestUsage contribution write failed" in caplog.text
+    assert "chatgpt/alice@example.com/weekly" in caplog.text
+    assert "database unavailable" in caplog.text
 
 
 def test_source_id_parser_extracts_producer_and_provider():
