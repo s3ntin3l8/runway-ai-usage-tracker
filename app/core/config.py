@@ -318,6 +318,14 @@ def _validate_security_invariants(s: Settings) -> None:
     Also: DB_ENCRYPTION_KEY is required whenever ADMIN_API_KEY is set, since
     the admin endpoints mutate state secured by that key.
 
+    4. ADMIN_API_KEY or TRUSTED_PROXY_IPS must be set. `resolve_auth`
+       treats an unset ADMIN_API_KEY as "every caller is admin" — fine on a
+       developer's laptop, but on a network-reachable bind it means anyone
+       who can reach the server can mint a sidecar pairing code, read
+       `/system/debug/raw`, or make any other admin mutation. A forward-auth
+       deployment (TRUSTED_PROXY_IPS configured) is exempt from needing its
+       own ADMIN_API_KEY too — the proxy is the gate there.
+
     Raises RuntimeError when any precondition fails. Localhost binds are
     exempt by design — Runway's primary topology is "developer's laptop"
     and the gates would block that flow.
@@ -350,6 +358,16 @@ def _validate_security_invariants(s: Settings) -> None:
             "CORS_ORIGINS must be set to an explicit comma-separated origin list when "
             "binding to non-localhost interfaces. The default ['*'] is rejected by "
             "browsers in combination with credentialed requests."
+        )
+    if not s.ADMIN_API_KEY and not s.forward_auth_enabled:
+        logger.error(
+            "SECURITY ERROR: Server bound to non-localhost with no ADMIN_API_KEY and no "
+            "TRUSTED_PROXY_IPS — every request would be treated as admin."
+        )
+        raise RuntimeError(
+            "ADMIN_API_KEY (or TRUSTED_PROXY_IPS for a forward-auth deployment) must be "
+            "set when binding to non-localhost interfaces. Unset, resolve_auth() treats "
+            "every caller as admin — see docs/SECURITY.md."
         )
 
 

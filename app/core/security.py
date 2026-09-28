@@ -41,6 +41,11 @@ SESSION_COOKIE = "runway_session"
 # (X-authentik-username / -email / -groups) work with no proxy-side renaming.
 _REMOTE_USER_FALLBACK_HEADER = "Remote-User"
 
+# Mirrors Settings.FORWARD_AUTH_USER_HEADER's default in app/core/config.py —
+# the Remote-User fallback above only fires when the operator hasn't pointed
+# FORWARD_AUTH_USER_HEADER at something else.
+_DEFAULT_FORWARD_AUTH_USER_HEADER = "X-Forwarded-User"
+
 # Some proxies (Authentik) delimit multi-valued group headers with "|"
 # rather than ",", since group names may themselves contain commas.
 _GROUP_SPLIT_RE = re.compile(r"[,|\s]+")
@@ -115,12 +120,30 @@ def resolve_auth(
 ) -> AuthResult:
     """Evaluate the bypass ladder for a request. Pure aside from `verify_session`.
 
-    Order: no-key-configured → localhost trust → reverse-proxy trust →
-    session cookie → X-Admin-Key header.
+    Order: no-key-configured (loopback bind only) → localhost trust →
+    reverse-proxy trust → session cookie → X-Admin-Key header.
     """
     # Falsy (None, or a blank string that slipped past config normalization)
-    # means no admin key is configured — never treat "" as a comparable key.
-    if not settings.ADMIN_API_KEY:
+    # means no admin key is configured. Only a bare bypass when the server
+    # itself is loopback-only — `_validate_security_invariants` refuses to
+    # start a non-loopback bind with no key and no TRUSTED_PROXY_IPS, so
+    # reaching this branch on a network bind would mean that gate was
+    # skipped (e.g. a monkeypatched Settings in a test); still worth an
+    # explicit check rather than trusting the invariant blindly here too.
+    #
+    # Deliberately NOT `is_loopback_bind()` here: that helper does a late
+    # `from app.core.config import settings as _settings` specifically so
+    # `/fleet/config` always reads the live module after a test's
+    # `importlib.reload(app.core.config)` (PR #297 / issue #291). This
+    # function already reads the *bound* `settings` name captured at this
+    # module's own import time — mixing the two inside one function would
+    # split-brain: after a reload elsewhere in the same test session, this
+    # bound `settings` and `is_loopback_bind()`'s freshly-imported one could
+    # disagree, since a test patching this module's `settings` (the
+    # convention every other check below and every existing auth test uses)
+    # wouldn't reach the other. Match `settings.APP_HOST` on the same bound
+    # object step 1 below already reads.
+    if not settings.ADMIN_API_KEY and settings.APP_HOST in ("127.0.0.1", "localhost", "::1"):
         return AuthResult(True, "none")
 
     client_host = request.client.host if request.client else None
@@ -139,9 +162,17 @@ def resolve_auth(
     # allowlist layered on top. Header names are configurable (defaults
     # match the previous X-Forwarded-User/Remote-User hardcoding) so an
     # Authentik outpost's native X-authentik-* headers work directly.
-    proxy_user = request.headers.get(settings.FORWARD_AUTH_USER_HEADER) or request.headers.get(
-        _REMOTE_USER_FALLBACK_HEADER
-    )
+    #
+    # The Remote-User fallback only applies when FORWARD_AUTH_USER_HEADER is
+    # left at its default. Once an operator points it at a proxy-specific
+    # header (e.g. X-authentik-username), Remote-User is no longer a header
+    # that proxy is known to strip on its own bypass/unauthenticated routes
+    # (docs/forward-auth.md §5) — honoring it there would let a request that
+    # reaches the app without going through the configured header still
+    # forge an identity via the CGI-convention fallback name.
+    proxy_user = request.headers.get(settings.FORWARD_AUTH_USER_HEADER)
+    if not proxy_user and settings.FORWARD_AUTH_USER_HEADER == _DEFAULT_FORWARD_AUTH_USER_HEADER:
+        proxy_user = request.headers.get(_REMOTE_USER_FALLBACK_HEADER)
     trusted = settings.trusted_proxy_ips
     if trusted and client_host in trusted and proxy_user and _proxy_authorized(request, proxy_user):
         return AuthResult(True, "proxy", actor_id=proxy_user, actor_meta=_proxy_meta(request))
@@ -151,7 +182,16 @@ def resolve_auth(
         return AuthResult(True, "session")
 
     # 4. Standard API key — constant-time compare to prevent a timing oracle.
-    if x_admin_key is not None and hmac.compare_digest(x_admin_key, settings.ADMIN_API_KEY):
+    # Guard on a configured key too: an unset ADMIN_API_KEY here means we're
+    # on a non-loopback bind with no key configured (reachable only if the
+    # startup gate above was bypassed, e.g. a test monkeypatching Settings
+    # after import) — compare_digest against "" must never accept an empty
+    # X-Admin-Key header as a match.
+    if (
+        settings.ADMIN_API_KEY
+        and x_admin_key is not None
+        and hmac.compare_digest(x_admin_key, settings.ADMIN_API_KEY)
+    ):
         return AuthResult(True, "api-key")
 
     return AuthResult(False, "none")

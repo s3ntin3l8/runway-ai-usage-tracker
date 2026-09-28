@@ -104,6 +104,31 @@ step is needed to reach v3.0.0: download and run the new installer once
 self-update resumes — this release also fixes the updater to correctly
 find stable-channel release assets, which it previously couldn't.
 
+## Non-localhost binds now require an admin gate
+
+Previously, leaving `ADMIN_API_KEY` unset made every caller admin —
+including on a bind reachable from the network. Runway now refuses to
+start on a non-localhost `APP_HOST` unless **either** `ADMIN_API_KEY` **or**
+`TRUSTED_PROXY_IPS` is set (localhost binds are unaffected). A forward-auth
+deployment that already sets `TRUSTED_PROXY_IPS` needs no changes. A plain
+network deployment with neither set must add `ADMIN_API_KEY` before
+upgrading, or the server exits at startup with a `RuntimeError` naming this
+gate. See [SECURITY.md → Multi-Host Startup Gates](SECURITY.md).
+
+Separately, a forward-auth deployment that has pointed `FORWARD_AUTH_USER_HEADER`
+at something other than the default `X-Forwarded-User` (e.g. Authentik's
+`X-authentik-username`) no longer falls back to a bare `Remote-User` header.
+If your proxy only ever sends the configured header, this changes nothing;
+if you were relying on `Remote-User` as a fallback alongside a custom
+header name, switch to sending the configured header instead.
+
+`POST /api/v1/usage/reset/{provider}`, `POST /api/v1/usage/collect/{provider}`,
+and the GitHub device-flow endpoints (`/api/v1/auth/github/{init,poll,logout}`)
+now require the admin gate too — they were unauthenticated before. The
+dashboard is unaffected (it always sends credentials); a script or
+integration calling these directly needs to add `X-Admin-Key` or run from
+loopback.
+
 ## Provider setup and configuration
 
 The provider settings page now uses the multi-account provider grid by default.

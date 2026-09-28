@@ -47,6 +47,9 @@ services:
 
 #  Required in `.env` for a non-localhost bind (server refuses to start otherwise):
 #    APP_HOST=0.0.0.0  TLS_TERMINATED=1  CORS_ORIGINS=…  DB_ENCRYPTION_KEY=…
+#    …plus one of ADMIN_API_KEY=… or TRUSTED_PROXY_IPS=… (an existing Traefik
+#    setup is forward-auth-shaped, so TRUSTED_PROXY_IPS is usually the fit —
+#    see docs/SECURITY.md).
 #  Leave RUNWAY_CONFIG_DIR UNSET so the container uses its default config dir
 #  (= the HOME bind-mount above).
 

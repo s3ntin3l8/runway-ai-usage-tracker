@@ -25,13 +25,41 @@ def _resolve(req: Request, **kw):
     return security.resolve_auth(req, **base)
 
 
-def test_no_admin_key_is_open(monkeypatch):
+def test_no_admin_key_is_open_on_loopback_bind(monkeypatch):
+    """The bare "no key configured" bypass only fires when the server itself
+    is bound to loopback — the primary "developer's laptop" topology.
+    `_validate_security_invariants` refuses to even start a non-loopback
+    bind with no key and no TRUSTED_PROXY_IPS, so pinning APP_HOST here
+    makes the precondition this branch actually depends on explicit."""
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+    monkeypatch.setattr(settings, "APP_HOST", "127.0.0.1")
     res = _resolve(_req())
     assert res.authenticated
     assert res.actor_type == "none"
     # Legacy display string preserved for audit-log readers.
     assert res.actor == "no-admin-key-configured"
+
+
+def test_no_admin_key_is_denied_on_non_loopback_bind(monkeypatch):
+    """S1: reaching resolve_auth with no key configured on a non-loopback
+    bind (only possible if the startup gate was bypassed, e.g. a test or a
+    monkeypatched Settings) must not silently grant admin."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    res = _resolve(_req("9.9.9.9"))
+    assert not res.authenticated
+
+
+def test_no_admin_key_on_non_loopback_bind_still_honors_proxy_trust(monkeypatch):
+    """A forward-auth-only deployment (no ADMIN_API_KEY, TRUSTED_PROXY_IPS
+    set) must still authenticate a request from the trusted proxy even
+    though the "no key configured" bypass no longer applies off-loopback."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    res = _resolve(_req("10.0.0.5", headers={"X-Forwarded-User": "alice"}))
+    assert res.authenticated
+    assert res.actor_type == "proxy"
 
 
 def test_localhost_trust(monkeypatch):
@@ -103,6 +131,21 @@ def test_configurable_header_names_support_authentik(monkeypatch):
     assert res.actor_type == "proxy"
     assert res.actor_id == "carol"
     assert res.actor_meta == {"email": "carol@example.com", "groups": "runway-admins|everyone"}
+
+
+def test_remote_user_fallback_not_honored_with_custom_header(monkeypatch):
+    """S3: once FORWARD_AUTH_USER_HEADER points at a proxy-specific header
+    (e.g. Authentik's X-authentik-username), the CGI-convention Remote-User
+    fallback must NOT still be honored — otherwise a request that reaches
+    the app through a path that doesn't set X-authentik-username (e.g. an
+    ingest/asset bypass router that only strips the configured header) could
+    still forge an identity via Remote-User."""
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_IPS", "10.0.0.5")
+    monkeypatch.setattr(settings, "FORWARD_AUTH_USER_HEADER", "X-authentik-username")
+    res = _resolve(_req("10.0.0.5", headers={"Remote-User": "mallory"}))
+    assert not res.authenticated
 
 
 def test_allowed_groups_match_grants_proxy_trust(monkeypatch):
