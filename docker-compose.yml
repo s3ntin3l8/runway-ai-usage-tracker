@@ -20,7 +20,9 @@
 #                                      # use docker-compose.traefik.yml
 #                                      # instead if you want real TLS.
 #         CORS_ORIGINS=http://<this-host>:8765
-#         ADMIN_API_KEY=<strong secret>   # or TRUSTED_PROXY_IPS for forward-auth
+#         Set at least one admin gate:
+#         ADMIN_API_KEY=<strong secret>
+#         TRUSTED_PROXY_IPS=<proxy IP>  # alternative with forward-auth
 #    3. docker compose pull && docker compose up -d
 #    4. Access dashboard at http://localhost:8765
 #

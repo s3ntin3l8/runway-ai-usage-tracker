@@ -44,45 +44,36 @@ Defaults: server binds `127.0.0.1:8765`. Set `APP_HOST=0.0.0.0` in `.env` for LA
 
 ### Docker
 
-For servers, headless environments, or team dashboards:
+For servers, headless environments, or team dashboards, use the shipped
+[`docker-compose.yml`](../docker-compose.yml) or the
+[`docker-compose.traefik.yml`](../docker-compose.traefik.yml) stack below.
+Copy the matching example env file to `.env` and fill in the required
+security settings before starting. A raw `docker run` needs the same env
+settings and a TLS-terminating proxy; see the startup gates below.
+
+For the base Compose file, first configure a TLS proxy, then:
 
 ```bash
-docker run -d \
-  --name runway \
-  -p 8765:8765 \
-  -e INGEST_API_KEY=your-secret-key \
-  ghcr.io/s3ntin3l8/runway:latest
+cp .env.example .env
+# Edit .env with the required settings below.
+docker compose up -d
 ```
 
-Compose example:
-
-```yaml
-services:
-  runway:
-    image: ghcr.io/s3ntin3l8/runway:latest
-    ports:
-      - "8765:8765"
-    env_file:
-      - .env
-    volumes:
-      - ./data:/home/runway/.config/runway
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8765/api/v1/system/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-```
+Restrict direct access to the published port `8765`; if the proxy runs on
+the same host, change the Compose port mapping to `127.0.0.1:8765:8765`.
 
 > [!IMPORTANT]
 > **Docker runs the server, not the sidecar.** Containers have no access to native desktop keychains or browser cookies. Every cookie-/local-file-backed collector (Claude, ChatGPT, Ollama, Kimi Coding, OpenCode, Antigravity, …) needs a sidecar running on the host where those credentials live.
 
-When `APP_HOST != 127.0.0.1`, the server refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, and an explicit `CORS_ORIGINS` allow-list. See [SECURITY.md](SECURITY.md).
+Docker binds the app to `0.0.0.0` inside the container, so the server refuses
+to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, an explicit
+`CORS_ORIGINS` allow-list, and either `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`
+with forward-auth. Set `TLS_TERMINATED=1` only when a proxy actually provides
+TLS. See [SECURITY.md](SECURITY.md) and the [v3 migration guide](migration-v3.md).
 
 ### Docker behind Traefik
 
-For a public-facing dashboard, front Runway with a reverse proxy that terminates TLS. This crosses the multi-host gate above, so `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=true`, and `CORS_ORIGINS` become mandatory — the container fails fast on startup without them.
+For a public-facing dashboard, front Runway with a reverse proxy that terminates TLS. This crosses the multi-host gate above, so `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=true`, `CORS_ORIGINS`, and an admin gate become mandatory — the container fails fast on startup without them.
 
 [`docker-compose.traefik.yml`](../docker-compose.traefik.yml) is a self-contained Traefik + Runway stack with automatic HTTPS via Let's Encrypt. Runway publishes no host ports; traffic enters only through Traefik on `:443`.
 
@@ -96,9 +87,8 @@ DB_ENCRYPTION_KEY=<fernet key>            # generate below
 INGEST_API_KEY=<strong secret>            # for sidecar ingestion
 RUNWAY_HOST=runway.example.com            # public DNS name (Host rule)
 ACME_EMAIL=you@example.com                # Let's Encrypt contact
-# Optional but recommended for a public deployment:
-ADMIN_API_KEY=<strong secret>             # protect admin/config endpoints
-TRUSTED_PROXY_IPS=<traefik container IP>  # per-client ingest rate limiting (see below)
+ADMIN_API_KEY=<strong secret>             # required unless forward-auth uses TRUSTED_PROXY_IPS
+TRUSTED_PROXY_IPS=<traefik container IP>  # optional for per-client rate limiting (see below)
 
 # Generate the Fernet key:
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -114,7 +104,7 @@ Once TLS is in place, layer a forward-auth identity provider (Authentik, Autheli
 Runway publishes no host port in this topology — `:8765` lives only on the internal `proxy` network. Sidecars reach the server through the **public URL**; `/api/v1/fleet/ingest` is just another path under the `Host()` router, so it rides through Traefik on `:443`:
 
 ```bash
-python3 scripts/sidecar.py --api-url https://runway.example.com --api-key <INGEST_API_KEY>
+RUNWAY_API_URL=https://runway.example.com RUNWAY_API_KEY='your-shared-ingest-key' python3 scripts/sidecar.py
 ```
 
 This applies to **remote and same-host sidecars alike** — the sidecar always runs natively (it needs host keychains/cookies/files) and talks to the server over the network. Going through Traefik is the preferred path: it's TLS-encrypted, which matters because ingest payloads carry OAuth tokens and cookies (HMAC protects integrity, not confidentiality). The sidecar needs only outbound HTTPS — no inbound ports.
@@ -169,9 +159,9 @@ make sidecar
 Each workstation runs its own sidecar pointed at the server:
 
 ```bash
-python3 scripts/sidecar.py \
-  --api-url http://runway-server:8765 \
-  --api-key <strong-shared-secret>
+RUNWAY_API_URL=https://runway.example.com \
+RUNWAY_API_KEY='your-shared-ingest-key' \
+python3 scripts/sidecar.py
 ```
 
 Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and payload format.
@@ -217,11 +207,11 @@ The relevant env vars apply to both runtimes:
 | `DB_ENCRYPTION_KEY` | ✅ when `APP_HOST != 127.0.0.1` | Fernet key for sensitive metadata at rest |
 | `TLS_TERMINATED` | ✅ when `APP_HOST != 127.0.0.1` | Operator assertion that an upstream proxy terminates TLS |
 | `CORS_ORIGINS` | ✅ when `APP_HOST != 127.0.0.1` | Comma-separated origin allow-list |
-| `ADMIN_API_KEY` | optional | Protects dashboard + admin endpoints from non-localhost callers |
+| `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` | ✅ when `APP_HOST != 127.0.0.1` | Admin key or trusted forward-auth proxy for network binds |
 | `SESSION_LIFETIME_HOURS` | optional (default `12`) | Admin session-cookie lifetime for a normal login |
 | `SESSION_REMEMBER_DAYS` | optional (default `30`) | Session lifetime when the login uses "remember me" |
 
-For local single-host development the only mandatory variable is `INGEST_API_KEY` (default `sidecar-default-secret` ships in `.env.example`). For any multi-host or Docker deployment the three security gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`) become hard requirements; the server fails fast on startup otherwise.
+For local single-host development the only mandatory variable is `INGEST_API_KEY` (default `sidecar-default-secret` ships in `.env.example`). For any multi-host or Docker deployment, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and an admin gate (`ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` with forward-auth) become hard requirements; the server fails fast on startup otherwise.
 
 ## Data Collection & Caching
 

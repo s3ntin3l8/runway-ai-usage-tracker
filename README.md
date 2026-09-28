@@ -65,7 +65,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 - **Installable PWA**: Add Runway to your home screen — app manifest, service worker, offline state banner, and a theme-color that follows the active theme
 - **Display Settings**: Compact mode, 2-column layout, soft chrome — configurable per browser
 - **Resilient Rendering**: Individual API failures show "Error Cards" instead of breaking the dashboard
-- **Docker Ready**: Headless-first architecture for containerized environments with fail-fast multi-host startup gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`)
+- **Docker Ready**: Headless-first architecture for containerized environments with fail-fast multi-host startup gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`)
 
 ## Quick Start
 
@@ -111,11 +111,7 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 
 ### Docker (Server Runtime)
 
-```bash
-docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/s3ntin3l8/runway:latest
-```
-
-Prefer Compose? A ready-to-use [`docker-compose.yml`](docker-compose.yml) ships in the repo root — `docker compose up -d` after copying `.env.example` → `.env`. The full Compose example with healthcheck and persistent volume is in the [Deployment Guide](docs/deployment.md#docker).
+Use the shipped [`docker-compose.yml`](docker-compose.yml) or the [Traefik stack](docs/deployment.md#docker-behind-traefik). Before starting, copy `.env.example` to `.env` and configure `DB_ENCRYPTION_KEY`, `CORS_ORIGINS`, and either `ADMIN_API_KEY` or a forward-auth proxy with `TRUSTED_PROXY_IPS`. Set `TLS_TERMINATED=1` only when a proxy actually terminates TLS. The [v3 migration guide](docs/migration-v3.md) explains why Docker now requires these settings; the [Deployment Guide](docs/deployment.md#docker) has the startup steps.
 
 > [!IMPORTANT]
 > **Docker runs the server; cookie/local-file collectors still require a sidecar on each workstation.** Containerized environments have no access to native desktop keychains.
