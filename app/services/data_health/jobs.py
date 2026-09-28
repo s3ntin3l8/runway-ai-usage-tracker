@@ -50,6 +50,10 @@ class NoScanYetError(RuntimeError):
     """Raised when an apply is requested before any scan has completed."""
 
 
+class ScanFailedError(RuntimeError):
+    """Raised when the latest scan failed and the cached findings are stale."""
+
+
 @dataclass
 class JobRecord:
     id: str
@@ -80,6 +84,8 @@ class DataHealthJobs:
     def __init__(self) -> None:
         self._apply_lock = asyncio.Lock()
         self._report_cache: dict[str, CheckReport] | None = None
+        self.scan_error: str | None = None
+        self.last_scanned_at: datetime | None = None
         self._scan_task: asyncio.Task[None] | None = None
         self._jobs: dict[str, JobRecord] = {}
         self._job_tasks: dict[str, asyncio.Task[None]] = {}
@@ -122,12 +128,20 @@ class DataHealthJobs:
 
     async def _run_scan(self) -> None:
         async with self._apply_lock:  # never overlaps a running apply
-            self._report_cache = await asyncio.to_thread(_scan_sync)
+            try:
+                self._report_cache = await asyncio.to_thread(_scan_sync)
+                self.last_scanned_at = datetime.now(UTC)
+                self.scan_error = None
+            except Exception as exc:  # noqa: BLE001 — retain stale report, surface scan failure
+                self.scan_error = str(exc)
+                logger.exception("Data Health scan failed")
 
     async def wait_for_scan(self) -> dict[str, CheckReport]:
         self.trigger_rescan()
         assert self._scan_task is not None
         await self._scan_task
+        if self.scan_error:
+            raise RuntimeError(self.scan_error)
         assert self._report_cache is not None
         return self._report_cache
 
@@ -146,6 +160,10 @@ class DataHealthJobs:
         without starting anything.
         """
         check = get_check(check_id)  # KeyError if unknown — caller maps to 404
+        if self.scan_error:
+            raise ScanFailedError(f"latest Data Health scan failed: {self.scan_error}")
+        if self.scanning and self._report_cache is not None:
+            raise JobAlreadyRunningError("a Data Health scan is still running")
         if self._report_cache is None:
             raise NoScanYetError("no Data Health scan has completed yet — call rescan first")
         report = self._report_cache.get(check_id)

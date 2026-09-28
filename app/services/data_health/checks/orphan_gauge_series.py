@@ -1,8 +1,8 @@
 """Data Health `orphan_gauge_series` check — a `latest_usage`/
 `quota_snapshots` series for an account with no `provider_configs` row and
-no recent event activity (D9 in the v3.0.0 prod-cleanup audit: a stray
+no recent event or gauge activity (D9 in the v3.0.0 prod-cleanup audit: a stray
 `minimax/default` card, a `github noreply` card). Not every unconfigured
-account is orphaned — one that's still posting fresh events just hasn't
+account is orphaned — one that's still posting fresh events or cards just hasn't
 been configured *yet*, so `stale_days` gates on recency, not just on a
 missing config row.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, union_all
 from sqlmodel import Session, col, select
 
 from app.models.db import LatestUsage, ProviderConfig, QuotaSnapshot, UsageEvent
@@ -67,6 +67,26 @@ def _last_event_ts(session: Session, provider_id: str, account_id: str) -> datet
     ).scalar_one()
 
 
+def _last_activity_ts(session: Session, provider_id: str, account_id: str) -> datetime | None:
+    """Latest event or gauge write; recent card pushes also prove the
+    account is live when the sidecar does not emit usage events."""
+    activity_rows = union_all(
+        select(func.max(UsageEvent.ts).label("activity_ts")).where(
+            col(UsageEvent.provider_id) == provider_id,
+            col(UsageEvent.account_id) == account_id,
+        ),
+        select(func.max(LatestUsage.updated_at).label("activity_ts")).where(
+            col(LatestUsage.provider_id) == provider_id,
+            col(LatestUsage.account_id) == account_id,
+        ),
+        select(func.max(QuotaSnapshot.ts).label("activity_ts")).where(
+            col(QuotaSnapshot.provider_id) == provider_id,
+            col(QuotaSnapshot.account_id) == account_id,
+        ),
+    ).subquery()
+    return session.execute(select(func.max(activity_rows.c.activity_ts))).scalar_one()
+
+
 def _count_latest(session: Session, provider_id: str, account_id: str) -> int:
     return session.execute(
         select(func.count())
@@ -86,6 +106,25 @@ def _count_snapshots(session: Session, provider_id: str, account_id: str) -> int
             col(QuotaSnapshot.account_id) == account_id,
         )
     ).scalar_one()
+
+
+def _assert_orphan(session: Session, provider_id: str, account_id: str) -> None:
+    cutoff = datetime.now(UTC) - timedelta(days=_STALE_DAYS_DEFAULT)
+    if _has_config(session, provider_id, account_id):
+        raise ValueError(f"{provider_id}/{account_id} now has a provider config")
+    last_ts = _last_activity_ts(session, provider_id, account_id)
+    if last_ts and last_ts.tzinfo is None:
+        last_ts = last_ts.replace(tzinfo=UTC)
+    if last_ts is not None and last_ts >= cutoff:
+        raise ValueError(
+            f"{provider_id}/{account_id} has recent activity and is no longer orphaned"
+        )
+    if (
+        _count_latest(session, provider_id, account_id)
+        + _count_snapshots(session, provider_id, account_id)
+        == 0
+    ):
+        raise ValueError(f"{provider_id}/{account_id} no longer has gauge data")
 
 
 class OrphanGaugeSeriesCheck(Check):
@@ -135,6 +174,29 @@ class OrphanGaugeSeriesCheck(Check):
             )
         }
 
+        # Recent sidecar card writes are activity even when they have not
+        # produced UsageEvents. Keep these grouped to avoid per-account scans.
+        latest_ts_by_pair = {
+            (row[0], row[1]): row[2]
+            for row in session.execute(
+                select(
+                    LatestUsage.provider_id,
+                    LatestUsage.account_id,
+                    func.max(LatestUsage.updated_at),
+                ).group_by(LatestUsage.provider_id, LatestUsage.account_id)
+            )
+        }
+        snapshot_ts_by_pair = {
+            (row[0], row[1]): row[2]
+            for row in session.execute(
+                select(
+                    QuotaSnapshot.provider_id,
+                    QuotaSnapshot.account_id,
+                    func.max(QuotaSnapshot.ts),
+                ).group_by(QuotaSnapshot.provider_id, QuotaSnapshot.account_id)
+            )
+        }
+
         # candidate_targets only varies per provider_id, not per pair —
         # memoize it locally instead of re-querying for every orphan.
         candidates_by_provider: dict[str, list[str]] = {}
@@ -144,11 +206,21 @@ class OrphanGaugeSeriesCheck(Check):
             if (provider_id, account_id) in configured_pairs:
                 continue
             last_ts = last_ts_by_pair.get((provider_id, account_id))
-            last_ts_naive = (
-                last_ts.replace(tzinfo=UTC) if last_ts and last_ts.tzinfo is None else last_ts
+            activity_candidates = [
+                ts
+                for ts in (
+                    last_ts,
+                    latest_ts_by_pair.get((provider_id, account_id)),
+                    snapshot_ts_by_pair.get((provider_id, account_id)),
+                )
+                if ts is not None
+            ]
+            activity_ts = max(
+                (ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts for ts in activity_candidates),
+                default=None,
             )
-            if last_ts_naive is not None and last_ts_naive >= cutoff:
-                continue  # still posting events — not configured yet, not orphaned
+            if activity_ts is not None and activity_ts >= cutoff:
+                continue  # recent events or sidecar writes mean this account is live
             if provider_id not in candidates_by_provider:
                 candidates_by_provider[provider_id] = candidate_targets(session, provider_id)
             candidates = [a for a in candidates_by_provider[provider_id] if a != account_id]
@@ -178,12 +250,16 @@ class OrphanGaugeSeriesCheck(Check):
                                 "latest_usage_rows": latest_count,
                                 "quota_snapshots_rows": snap_count,
                                 "last_event_ts": last_ts.isoformat() if last_ts else None,
+                                "last_activity_ts": activity_ts.isoformat()
+                                if activity_ts
+                                else None,
                             },
                         )
                     ],
                     detail={
                         "candidates": candidates,
                         "last_event_ts": last_ts.isoformat() if last_ts else None,
+                        "last_activity_ts": activity_ts.isoformat() if activity_ts else None,
                     },
                 )
             )
@@ -205,6 +281,7 @@ class OrphanGaugeSeriesCheck(Check):
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
         provider_id, account_id = _parse_key(group_key)
+        _assert_orphan(session, provider_id, account_id)
         action = params.get("action", "delete")
         if action == "merge":
             target = self._resolve_merge_target(session, provider_id, account_id, params)
@@ -238,6 +315,7 @@ class OrphanGaugeSeriesCheck(Check):
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
         provider_id, account_id = _parse_key(group_key)
+        _assert_orphan(session, provider_id, account_id)
         action = params.get("action", "delete")
         if action == "merge":
             target = self._resolve_merge_target(session, provider_id, account_id, params)

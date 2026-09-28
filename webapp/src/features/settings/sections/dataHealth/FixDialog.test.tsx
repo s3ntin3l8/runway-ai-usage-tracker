@@ -80,6 +80,25 @@ describe('FixDialog', () => {
     expect(screen.getByRole('button', { name: /apply fix/i })).not.toBeDisabled();
   });
 
+  it('requires same-account attestation after showing the collision preview', async () => {
+    vi.mocked(api.previewDataHealthFix).mockResolvedValue({
+      check_id: 'config_default_keyed',
+      group_key: 'minimax',
+      summary: 'Archive minimax/default and keep alice@example.com',
+      counts: { usage_events_retained_on_default: 3 },
+      samples: [{ label: 'minimax/alice@example.com (target)', detail: { account_label: 'alice@example.com' } }],
+      confirmation_text: 'I confirm minimax/default and minimax/alice@example.com are the same provider account.',
+    });
+    renderDialog();
+    await userEvent.click(screen.getByRole('button', { name: /preview/i }));
+    expect(await screen.findByText(/same provider account/i)).toBeInTheDocument();
+    expect(screen.getByText('minimax/alice@example.com (target)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch'));
+    expect(screen.getByRole('button', { name: /apply fix/i })).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByRole('button', { name: /apply fix/i })).not.toBeDisabled();
+  });
+
   it('re-locks Apply if a param changes after preview', async () => {
     vi.mocked(api.previewDataHealthFix).mockResolvedValue({
       check_id: 'config_default_keyed',
@@ -171,7 +190,7 @@ describe('FixDialog', () => {
     expect(await screen.findByText('target is not a configured account')).toBeInTheDocument();
   });
 
-  it('shows an error and a Close button if polling the job status fails', async () => {
+  it('keeps a job open with unknown status and offers a retry if polling fails', async () => {
     vi.mocked(api.previewDataHealthFix).mockResolvedValue({
       check_id: 'config_default_keyed',
       group_key: 'minimax',
@@ -188,7 +207,9 @@ describe('FixDialog', () => {
     await userEvent.click(screen.getByRole('switch'));
     await userEvent.click(screen.getByRole('button', { name: /apply fix/i }));
 
-    expect(await screen.findByText('network error')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
+    expect(await screen.findByText(/network error/)).toBeInTheDocument();
+    expect(screen.getByText(/status is unknown/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry status/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument();
   });
 });

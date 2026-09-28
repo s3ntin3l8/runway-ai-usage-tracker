@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.models.db import UsageEvent
+from app.models.db import ProviderConfig, UsageEvent
 from app.services.data_health._provider_accounts import candidate_targets
 from app.services.data_health.base import (
     AsyncHook,
@@ -38,6 +38,14 @@ class LoneDefaultEventsCheck(Check):
     blocked_by = ("config_default_keyed",)
 
     def detect(self, session: Session) -> CheckReport:
+        active_defaults = set(
+            session.exec(
+                select(ProviderConfig.provider_id).where(
+                    col(ProviderConfig.account_id) == "default",
+                    col(ProviderConfig.archived).is_(False),
+                )
+            ).all()
+        )
         counts = session.execute(
             select(UsageEvent.provider_id, UsageEvent.kind, func.count())
             .where(col(UsageEvent.account_id) == "default")
@@ -45,6 +53,8 @@ class LoneDefaultEventsCheck(Check):
         ).all()
         by_provider: dict[str, dict[str, int]] = {}
         for provider_id, kind, n in counts:
+            if provider_id in active_defaults:
+                continue
             by_provider.setdefault(provider_id, {})[kind] = n
 
         groups: list[FindingGroup] = []
@@ -98,6 +108,15 @@ class LoneDefaultEventsCheck(Check):
         )
 
     def _resolve_target(self, session: Session, provider_id: str, params: dict[str, Any]) -> str:
+        active_default = session.exec(
+            select(ProviderConfig).where(
+                col(ProviderConfig.provider_id) == provider_id,
+                col(ProviderConfig.account_id) == "default",
+                col(ProviderConfig.archived).is_(False),
+            )
+        ).first()
+        if active_default is not None:
+            raise ValueError(f"{provider_id!r} still has an active default config; rekey it first")
         candidates = candidate_targets(session, provider_id)
         target = params.get("target")
         if not target:

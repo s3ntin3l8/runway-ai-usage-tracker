@@ -36,6 +36,24 @@ describe('DataHealthSection', () => {
     expect(await screen.findByText(/all checks clean/i)).toBeInTheDocument();
   });
 
+  it('shows scan errors as stale and disables fixes from the prior report', async () => {
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
+      report({
+        scan_error: 'database unavailable',
+        last_scanned_at: '2026-09-27T10:00:00Z',
+        checks: [check({
+          total_count: 1,
+          fixable_count: 1,
+          groups: [{ key: 'g', label: 'One finding', count: 1, fixable: true, params: [], samples: [], detail: {} }],
+        })],
+      }),
+    );
+    renderWithProviders(<DataHealthSection />);
+    expect(await screen.findByText(/showing the previous scan/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    expect(screen.getByRole('button', { name: /^fix$/i })).toBeDisabled();
+  });
+
   it('renders one row per check when findings exist', async () => {
     vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
       report({ checks: [check({ total_count: 3 }), check({ check_id: 'rollup_drift', severity: 'warn' })] }),

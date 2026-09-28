@@ -6,7 +6,7 @@ from sqlmodel import select
 
 from app.models.db import UsageEvent
 from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
-from tests.unit.data_health.conftest import make_event, make_price
+from tests.unit.data_health.conftest import make_config, make_event, make_price
 
 
 def _check() -> UnpricedModelsCheck:
@@ -48,9 +48,43 @@ def test_detect_classifies_a_reported_zero_cost_as_source_reported(session):
 
     report = _check().detect(session)
 
-    group = report.groups[0]
-    assert group.fixable is False
-    assert group.detail["by_model"][0]["classification"] == "source_reported"
+    # Reported $0 is evidence from the source, not independent proof; it is
+    # visible as informational, not raised as a warning.
+    assert report.severity.value == "info"
+    assert report.groups[0].detail["by_model"][0]["classification"] == "source_reported"
+
+
+def test_detect_reports_a_configured_zero_rate_as_informational(session):
+    make_event(session, event_id="zero", provider_id="chatgpt", model_id="gpt-free", cost_usd=0.0)
+    make_price(session, provider_id="chatgpt", model_id="gpt-free", rate=0.0)
+
+    report = _check().detect(session)
+
+    assert report.severity.value == "info"
+    assert report.groups[0].detail["by_model"][0]["classification"] == "verified_zero"
+
+
+def test_source_reported_zero_with_positive_estimate_is_not_called_verified(session):
+    make_config(session, provider_id="chatgpt", account_id="acct", billing_type="pay_as_you_go")
+    make_event(
+        session,
+        event_id="reported-zero",
+        provider_id="chatgpt",
+        account_id="acct",
+        model_id="gpt-6-sol",
+        cost_usd=0.0,
+        cost_reported_usd=0.0,
+        tokens_input=1_000_000,
+        tokens_output=0,
+    )
+    make_price(session, provider_id="chatgpt", model_id="gpt-6-sol", rate=2.0)
+
+    report = _check().detect(session)
+
+    assert report.severity.value == "info"
+    model = report.groups[0].detail["by_model"][0]
+    assert model["classification"] == "source_reported"
+    assert model["source_reported"] == 1
 
 
 def test_detect_classifies_source_reported_despite_extra_zero_token_events(session):
@@ -148,6 +182,24 @@ def test_detect_excludes_events_with_no_tokens(session):
     report = _check().detect(session)
 
     assert report.total_count == 0
+
+
+def test_detect_includes_events_with_reasoning_tokens_only(session):
+    make_event(
+        session,
+        event_id="reasoning",
+        provider_id="chatgpt",
+        model_id="gpt-6-sol",
+        cost_usd=0.0,
+        tokens_input=0,
+        tokens_output=0,
+        tokens_reasoning=100,
+    )
+
+    report = _check().detect(session)
+
+    assert report.total_count == 1
+    assert report.groups[0].fixable is False
 
 
 def test_detect_excludes_events_already_priced_nonzero(session):

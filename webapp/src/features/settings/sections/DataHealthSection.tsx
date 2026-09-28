@@ -46,6 +46,24 @@ export function DataHealthSection() {
         </Button>
       </div>
 
+      {report.data?.scan_error && (
+        <EmptyState
+          icon={ShieldCheck}
+          title="Latest scan failed"
+          description={`${report.data.last_scanned_at ? 'Showing the previous scan. ' : ''}${report.data.scan_error}`}
+          action={
+            <Button
+              size="sm"
+              disabled={report.data.scanning}
+              onClick={() => rescan.mutate(undefined, { onError: (err) => toast.error(err.message) })}
+              loading={rescan.isPending}
+            >
+              Retry scan
+            </Button>
+          }
+        />
+      )}
+
       {report.isPending ? (
         <Skeleton className="h-24" />
       ) : report.isError ? (
@@ -59,14 +77,20 @@ export function DataHealthSection() {
             </Button>
           }
         />
-      ) : allClean ? (
+      ) : allClean && !report.data?.scan_error ? (
         <EmptyState
           icon={ShieldCheck}
           title="All checks clean"
           description="No data-quality issues found in the last scan."
         />
       ) : (
-        checks.map((check) => <CheckRow key={check.check_id} check={check} />)
+        checks.map((check) => (
+          <CheckRow
+            key={check.check_id}
+            check={check}
+            stale={Boolean(report.data?.scan_error || report.data?.scanning)}
+          />
+        ))
       )}
     </div>
   );
