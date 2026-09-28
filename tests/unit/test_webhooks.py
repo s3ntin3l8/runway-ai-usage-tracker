@@ -1,8 +1,9 @@
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import WebhookConfig
@@ -19,6 +20,19 @@ def session_fixture():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
+
+
+@pytest.fixture(name="engine")
+def engine_fixture():
+    """A shared StaticPool in-memory engine two independent Sessions can both
+    bind to — used by the overlapping-poll race test below."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    return engine
 
 
 def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1", label=None):
@@ -587,6 +601,49 @@ async def test_scope_default_label_email_matches_email_card(session):
         await check_and_fire([card], session)
 
         assert mock_client.post.called
+
+
+@pytest.mark.asyncio
+async def test_overlapping_polls_do_not_double_fire(engine):
+    """`poll_now()` isn't reentrancy-guarded — a scheduled tick and a
+    `POST /force-collect` can both call `check_and_fire` concurrently on the
+    same event loop. Without `_fire_lock`, both cycles can read
+    `last_fired_at` as None before either writes it, and both deliver the
+    webhook. Two independent Sessions on a shared engine + `asyncio.gather`
+    reproduces the real interleaving; mocking `_post_payload` to actually
+    `await asyncio.sleep(0)` opens the same race window a real HTTP POST
+    would.
+    """
+    from app.services.webhooks import check_and_fire
+
+    with Session(engine) as session_a, Session(engine) as session_b:
+        _config(session_a)  # threshold=90%, last_fired=None
+
+        cards = [_card(used=950.0, limit=1000.0)]  # 95% > 90%
+
+        async def _slow_post(*_args, **_kwargs) -> None:
+            await asyncio.sleep(0)
+
+        post_mock = AsyncMock(side_effect=_slow_post)
+
+        with patch("app.services.webhooks._post_payload", new=post_mock):
+            await asyncio.gather(
+                check_and_fire(cards, session_a),
+                check_and_fire(cards, session_b),
+            )
+
+        assert post_mock.call_count == 1
+        fired = session_a.exec(
+            select(WebhookConfig).where(WebhookConfig.last_fired_at.is_not(None))
+        ).all()
+        assert len(fired) == 1
+        # Pin the StaticPool-shared-connection assumption this test relies
+        # on: session_b must see the same committed write session_a does,
+        # not a second, independent one from an unserialized write.
+        fired_from_b = session_b.exec(
+            select(WebhookConfig).where(WebhookConfig.last_fired_at.is_not(None))
+        ).all()
+        assert len(fired_from_b) == 1
 
 
 # --- _scope_matches (shared by check_and_fire and credential_alerts) --------
