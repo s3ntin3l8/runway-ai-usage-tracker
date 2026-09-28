@@ -99,6 +99,7 @@ class FixPlan:
     summary: str
     counts: dict[str, Any] = field(default_factory=dict)
     samples: list[Finding] = field(default_factory=list)
+    confirmation_text: str | None = None
 
 
 @dataclass

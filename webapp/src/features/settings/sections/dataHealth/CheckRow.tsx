@@ -28,7 +28,7 @@ const SEVERITY_BADGE: Record<DataHealthSeverity, SeverityBadgeInfo> = {
   info: { variant: 'neutral', label: 'Info' },
 };
 
-export function CheckRow({ check }: { check: DataHealthCheckReport }) {
+export function CheckRow({ check, stale = false }: { check: DataHealthCheckReport; stale?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const severity = SEVERITY_BADGE[check.severity];
 
@@ -62,7 +62,7 @@ export function CheckRow({ check }: { check: DataHealthCheckReport }) {
       {expanded && check.groups.length > 0 && (
         <div className="flex flex-col gap-2 border-t border-edge pt-2 pl-6">
           {check.groups.map((group) => (
-            <GroupRow key={group.key} checkId={check.check_id} group={group} blocked={check.blocked} />
+            <GroupRow key={group.key} checkId={check.check_id} group={group} blocked={check.blocked || stale} />
           ))}
         </div>
       )}

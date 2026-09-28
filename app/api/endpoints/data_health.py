@@ -33,6 +33,7 @@ from app.services.data_health.jobs import (
     CheckBlockedError,
     JobAlreadyRunningError,
     NoScanYetError,
+    ScanFailedError,
     jobs,
 )
 from app.services.data_health.registry import get_check
@@ -85,11 +86,20 @@ async def get_report(
     """The cached report. Starts a scan in the background on the first call
     if none has completed yet, rather than blocking this request on it."""
     cached = jobs.cached_report()
-    if cached is None:
+    if cached is None and jobs.scan_error is None:
         jobs.trigger_rescan()
-        return DataHealthReportResponse(scanning=True, checks=[])
+    if cached is None:
+        return DataHealthReportResponse(
+            scanning=jobs.scanning,
+            checks=[],
+            scan_error=jobs.scan_error,
+            last_scanned_at=jobs.last_scanned_at.isoformat() if jobs.last_scanned_at else None,
+        )
     return DataHealthReportResponse(
-        scanning=jobs.scanning, checks=[_report_schema(r) for r in cached.values()]
+        scanning=jobs.scanning,
+        checks=[_report_schema(r) for r in cached.values()],
+        scan_error=jobs.scan_error,
+        last_scanned_at=jobs.last_scanned_at.isoformat() if jobs.last_scanned_at else None,
     )
 
 
@@ -126,6 +136,7 @@ async def preview_fix(
         summary=plan.summary,
         counts=plan.counts,
         samples=[_finding_schema(s) for s in plan.samples],
+        confirmation_text=plan.confirmation_text,
     )
 
 
@@ -156,6 +167,8 @@ async def apply_fix(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except NoScanYetError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ScanFailedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (CheckBlockedError, JobAlreadyRunningError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -170,7 +183,7 @@ async def apply_fix(
 
 
 @router.get("/jobs/{job_id}", response_model=DataHealthJobStatusResponse)
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def get_job_status(
     job_id: str,
     request: Request,

@@ -30,18 +30,23 @@ applied until it's fixed — the dependency order below reflects that.
 
 | Check | Severity | Finds | Fix |
 |---|---|---|---|
-| `config_default_keyed` | Error | A provider's config is still keyed `account_id="default"` even though its label already carries a real identity | Re-key the config (and its credential tags, webhooks, and gauge series) onto the real account id |
+| `config_default_keyed` | Error | A provider's config is still keyed `account_id="default"` even though its label already carries a real identity | Re-key onto the label. If that account already has a config, preview both identities and effects, then explicitly confirm they are the same account before archiving the default config. The archived row is disabled and retained with its credentials; usage-event history stays keyed `default`, while tags, webhooks, and gauge series move or merge. |
 | `legacy_provider_ids` | Error | Events under an OpenCode-sibling provider id Runway now folds into a canonical provider (e.g. `opencode-xai` → `xai`) | Retag onto the canonical provider, resolving any collision by keeping the richer event |
-| `lone_default_events` | Error | Events sitting alone under a stale `default` account for a provider that has since been configured under a real one | Reassign to the provider's other configured account — not fixable in-app if there's no unambiguous target (surfaces the reason why) |
+| `lone_default_events` | Error | Events sitting under `default` when there is another configured account and no active default config | Reassign to the provider's other configured account — not fixable in-app if there's no unambiguous target. The active-default check is repeated before planning and applying. |
 | `orphan_credential_tags` | Warning | A credential tag still points at `default` after that provider's `default` config was rekeyed or removed | Delete the tag, or repoint it onto a configured account |
-| `orphan_gauge_series` | Warning | A dashboard card / quota-history series for an account with no config and no recent events | Merge into a configured account, or delete the stale series |
-| `unpriced_models` | Warning | Token-bearing events priced at $0.00 | Recompute cost for the provider (never lowers an already-nonzero cost); reports whether a seed pricing row is what's actually missing |
+| `orphan_gauge_series` | Warning | A dashboard card / quota-history series for an account with no config and no event or gauge activity in the last 30 days | Merge into a configured account, or delete the stale series. Config and activity recency are checked again before preview and apply. |
+| `unpriced_models` | Warning / Info | Token-bearing events with zero cost | Positive recomputed cost is fixable; a configured price that computes to zero is shown as verified by the configured rate; source-reported zero without independent price evidence is informational, not claimed as verified; no price and no source report needs a pricing seed. Recost never lowers an already-nonzero cost. |
 | `rollup_drift` | Warning | `usage_period_rollup`'s cached lifetime totals no longer match a straight aggregate of `usage_events` | Rebuild rollups for the affected `(provider, account)` pair from events |
 | `pending_events` | Info | Events awaiting evidence-backed or manual account assignment | Not fixed here — links to the Fleet page, where each event gets a per-event decision |
 
 `config_default_keyed` blocks `lone_default_events` and `orphan_credential_tags`;
 `legacy_provider_ids` blocks `unpriced_models` and `rollup_drift` — fix the
 blocking check first if you see a **Blocked** badge.
+
+If a scan fails, the page reports the failure and marks any previous report as
+stale. Fixes stay disabled until an explicit re-scan succeeds. A job-status
+polling failure is shown as unknown and retried; it is not treated as a failed
+repair.
 
 ## Safety
 
