@@ -77,7 +77,7 @@ def _parse_sqlite_dt(value: object) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         s = value.replace("T", " ")
         # SQLite occasionally tacks on trailing whitespace or timezone hints.
@@ -86,7 +86,7 @@ def _parse_sqlite_dt(value: object) -> datetime | None:
             parsed = datetime.fromisoformat(s)
         except ValueError:
             return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return None
 
 
