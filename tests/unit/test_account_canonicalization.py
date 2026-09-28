@@ -382,8 +382,13 @@ class TestSidecarIdentityPrecedence:
                 },
             )
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert [c["account_id"] for c in token_cards] == ["me@example.com"]
-        assert blocked == []
+        assert token_cards == []
+        assert blocked == [
+            {
+                "provider_id": "antigravity",
+                "credential_origin": "path:" + str(tmp_path / "antigravity-oauth-token"),
+            }
+        ]
 
     def test_anthropic_cli_token_card_stamped_with_cli_email(self, tmp_path, monkeypatch):
         import scripts.sidecar as sidecar

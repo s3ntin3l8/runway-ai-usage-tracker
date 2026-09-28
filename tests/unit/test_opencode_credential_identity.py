@@ -340,8 +340,8 @@ class TestProviderWideHintGate:
     @pytest.mark.parametrize(
         ("active_key", "expected_cards"),
         [
-            (None, ["alice@example.com"]),  # no account.json at all → unknown
-            (KEY_A, ["alice@example.com"]),  # active record agrees → single
+            (None, []),  # provider-wide hints do not establish credential identity
+            (KEY_A, []),  # a CLI's active key does not verify the Runway account id
         ],
         ids=["no-local-state", "local-state-agrees"],
     )
@@ -358,8 +358,8 @@ class TestProviderWideHintGate:
             account_label_hints=self._auto_hint(),
         )
 
-        assert blocked == []
         assert [c["account_id"] for c in cards] == expected_cards
+        assert len(blocked) == 1
 
     def test_auto_hint_withheld_when_local_state_disagrees(
         self,

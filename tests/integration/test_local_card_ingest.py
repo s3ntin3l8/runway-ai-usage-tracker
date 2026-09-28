@@ -89,6 +89,7 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock()
+        mock_tc.store.return_value = "a@example.com"
         client = TestClient(app)
         resp = _ingest(client, payload)
 

@@ -672,6 +672,18 @@ export interface CollectionStrategy {
   [key: string]: unknown;
 }
 
+export interface CredentialSourceSummary {
+  source_id: string;
+  source_type: 'config' | 'sidecar' | 'env' | 'file' | 'server' | string;
+  source_label: string;
+  sidecar_id?: string | null;
+  enabled: boolean;
+  priority: number;
+  last_seen?: string | null;
+  health: 'healthy' | 'auth_failed' | 'unavailable' | string;
+  available: boolean;
+}
+
 /** Per-account row in a provider's ``accounts`` list. Multi-account
  *  providers expose N of these under a ``ProviderConfig`` envelope. */
 export interface ProviderAccount {
@@ -700,6 +712,7 @@ export interface ProviderAccount {
   source?: 'config' | 'discovered';
   /** Non-secret source descriptions backed by matching sidecar token metadata. */
   credential_source_labels?: string[];
+  credential_sources?: CredentialSourceSummary[];
 }
 
 // Provider envelope returned by GET /api/v1/system/provider-configs. The

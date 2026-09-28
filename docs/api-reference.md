@@ -73,6 +73,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/system/debug/raw/{provider_id}` | Run collector and return raw HTTP exchanges (debug; secrets redacted best-effort, admin) |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts; optional `account_id` scopes an alert to one account; `credential_alerts` (default true) also fires the same webhook when a matching credential's Token Health goes expired/invalid (admin) |
 | `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints |
+| `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Set attached sources enabled state and priority (admin); optional `all_machines` applies matching sidecar origins across hosts; values are never returned |
 | `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |

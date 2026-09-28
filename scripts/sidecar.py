@@ -2940,6 +2940,7 @@ class GenericCollector:
                 )
 
                 local_account_id = tokens.get("account_id")
+                source_identity_strong = bool(local_account_id and local_account_id != "default")
                 accepts_legacy_provider_hint = provider_id not in {"chatgpt", "anthropic"} or (
                     candidate_kind in {"file", "keychain"}
                 )
@@ -2963,14 +2964,18 @@ class GenericCollector:
                 # Anything still unresolved blocks and surfaces as Untagged.
                 base_origin, fingerprint = split_keyed_origin(origin)
                 hint_account_id = provider_hints.get(origin)
+                if hint_account_id is not None:
+                    source_identity_strong = True
                 if hint_account_id is None and fingerprint is not None:
                     hint_account_id = provider_hints.get(
                         keyed_credential_origin(
                             credential_origin_for_provider(provider_id), fingerprint
                         )
                     )
+                    source_identity_strong = source_identity_strong or hint_account_id is not None
                 if hint_account_id is None and fingerprint is not None:
                     hint_account_id = provider_hints.get(base_origin)
+                    source_identity_strong = source_identity_strong or hint_account_id is not None
                 if hint_account_id is None and accepts_legacy_provider_hint:
                     provider_hint = provider_hints.get(credential_origin_for_provider(provider_id))
                     if provider_hint is not None:
@@ -3013,10 +3018,10 @@ class GenericCollector:
                     )
                 else:
                     resolved_account_id = None
-                if resolved_account_id is None:
+                if resolved_account_id is None or not source_identity_strong:
                     logging.warning(
                         f"  [{provider_id}] token card blocked (origin={origin}) — "
-                        "no account_id resolved (local discovery + server hint both empty); "
+                        "no strong account identity resolved; "
                         "not shipping. Operator will see this in the fleet view's "
                         "Untagged Credentials panel."
                     )
@@ -3037,7 +3042,11 @@ class GenericCollector:
                             "data_source": data_source,
                             "account_id": resolved_account_id,
                             "account_label": tokens.get("account_label"),
-                            "metadata": {**tokens, "provider_id": provider_id},
+                            "metadata": {
+                                **tokens,
+                                "provider_id": provider_id,
+                                "credential_origin": origin,
+                            },
                         }
                     )
 

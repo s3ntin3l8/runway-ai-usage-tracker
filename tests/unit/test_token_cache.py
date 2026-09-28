@@ -54,6 +54,54 @@ async def test_multi_account_isolation(cache):
 
 
 @pytest.mark.asyncio
+async def test_same_type_credentials_remain_separate_sources(cache):
+    await cache.store(
+        "openrouter",
+        {"api_key": "first"},  # pragma: allowlist secret — fake credential for cache test
+        account_id="alice@example.com",
+        source_id="sidecar:first",
+        source_metadata={"priority": 1},
+    )
+    await cache.store(
+        "openrouter",
+        {"api_key": "second"},  # pragma: allowlist secret — fake credential for cache test
+        account_id="alice@example.com",
+        source_id="sidecar:second",
+        source_metadata={"priority": 0},
+    )
+
+    candidates = await cache.get_source_candidates("openrouter", "alice@example.com")
+    assert [entry["source_id"] for entry in candidates] == ["sidecar:second", "sidecar:first"]
+    async with cache.using_source("openrouter", "alice@example.com", "sidecar:first"):
+        assert await cache.get_token("openrouter", "api_key", "alice@example.com") == "first"
+    async with cache.using_source("openrouter", "alice@example.com", "sidecar:second"):
+        assert await cache.get_token("openrouter", "api_key", "alice@example.com") == "second"
+
+
+@pytest.mark.asyncio
+async def test_source_bundles_expire_independently(cache):
+    short_cache = TokenCache(ttl_seconds=0)
+    await short_cache.store(
+        "openrouter",
+        {"api_key": "temporary"},  # pragma: allowlist secret — fake credential for expiry test
+        account_id="default",
+        source_id="env:one",
+    )
+    time.sleep(0.01)
+    assert await short_cache.get_source_candidates("openrouter", "default") == []
+
+
+@pytest.mark.asyncio
+async def test_401_response_marks_only_active_source_attempt(cache):
+    class Response:
+        status_code = 401
+
+    async with cache.using_source("openrouter", "default", "env:one") as attempt:
+        await cache.observe_response(Response())
+        assert attempt["auth_failed"] is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", ["opencode", "ollama"])
 async def test_remove_tokens_preserves_other_credential_family(cache, provider_id):
     await cache.store(

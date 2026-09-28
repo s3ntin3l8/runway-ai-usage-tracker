@@ -116,7 +116,7 @@ class CollectorManager:
 
                         # Sync manual tokens to cache to survive reloads/restarts
                         if r.enabled and (r.api_key or r.session_cookie):
-                            await self._sync_manual_config_to_cache(r)
+                            await self._sync_manual_config_to_cache(r, _s)
 
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
@@ -133,6 +133,8 @@ class CollectorManager:
                         .order_by(col(LatestUsage.updated_at).desc())
                     ).all():
                         durable_identities.setdefault(pid, aid)
+
+                    _s.commit()
 
             except Exception as e:
                 logger.debug(f"Could not load provider configs from DB: {e}")
@@ -294,7 +296,9 @@ class CollectorManager:
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create a persistent httpx client."""
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=30.0)
+            self._client = httpx.AsyncClient(
+                timeout=30.0, event_hooks={"response": [token_cache.observe_response]}
+            )
         return self._client
 
     async def close(self):
@@ -303,7 +307,7 @@ class CollectorManager:
             await self._client.aclose()
             self._client = None
 
-    async def _sync_manual_config_to_cache(self, r):
+    async def _sync_manual_config_to_cache(self, r, session=None):
         """Helper to push a single ProviderConfig into the token cache."""
         from app.core.utils import IdentityExtractor
 
@@ -365,7 +369,24 @@ class CollectorManager:
                 all_tokens,
                 account_id=r.account_id or "default",
                 source="config",
+                source_id=f"config:{r.provider_id}:{r.account_id or 'default'}",
+                source_metadata={
+                    "source_type": "config",
+                    "source_label": "Manual configuration",
+                    "priority": 0,
+                },
             )
+            if session is not None:
+                from app.services.credential_sources import touch_source
+
+                touch_source(
+                    session,
+                    provider_id=r.provider_id,
+                    account_id=r.account_id or "default",
+                    source_id=f"config:{r.provider_id}:{r.account_id or 'default'}",
+                    source_type="config",
+                    source_label="Manual configuration",
+                )
 
     async def collect_all(self) -> list[dict[str, Any]]:
         """
@@ -476,7 +497,91 @@ class CollectorManager:
     ) -> list[dict[str, Any]]:
         """Run a single collector with semaphore/timeout protection."""
         async with self._semaphore:
-            return await asyncio.wait_for(self.smart_collectors[key].collect(client), timeout=25.0)
+            smart = self.smart_collectors[key]
+            collector = smart.collector
+            provider_id = getattr(collector, "PROVIDER_ID", None)
+            account_id = (
+                getattr(collector, "credential_account_id", None)
+                or getattr(collector, "account_id", None)
+                or "default"
+            )
+            candidates = (
+                await token_cache.get_source_candidates(provider_id, account_id)
+                if isinstance(provider_id, str) and isinstance(account_id, str)
+                else []
+            )
+            if not candidates:
+                return await asyncio.wait_for(smart.collect(client), timeout=25.0)
+            if not isinstance(provider_id, str):
+                return await asyncio.wait_for(smart.collect(client), timeout=25.0)
+
+            from sqlmodel import Session
+            from sqlmodel import select as sqlselect
+
+            from app.core.db import engine
+            from app.models.db import CredentialSource
+
+            with Session(engine) as session:
+                preferences = {
+                    row.source_id: row
+                    for row in session.exec(
+                        sqlselect(CredentialSource).where(
+                            CredentialSource.provider_id == provider_id,
+                            CredentialSource.account_id == account_id,
+                        )
+                    ).all()
+                }
+            candidates = [
+                candidate
+                for candidate in candidates
+                if (
+                    preferences[candidate["source_id"]].enabled
+                    if candidate["source_id"] in preferences
+                    else candidate.get("enabled", True)
+                )
+            ]
+            candidates.sort(
+                key=lambda candidate: (
+                    preferences[candidate["source_id"]].priority
+                    if candidate["source_id"] in preferences
+                    else candidate.get("priority", 0),
+                    candidate["source_id"],
+                )
+            )
+            if not candidates:
+                return []
+
+            result: list[dict[str, Any]] = []
+            for index, candidate in enumerate(candidates):
+                if index:
+                    await smart.reset()
+                async with token_cache.using_source(
+                    provider_id, account_id, candidate["source_id"]
+                ) as attempt:
+                    result = await asyncio.wait_for(smart.collect(client), timeout=25.0)
+                if attempt["auth_failed"]:
+                    self._record_source_health(
+                        provider_id, account_id, candidate["source_id"], "auth_failed"
+                    )
+                    continue
+                self._record_source_health(
+                    provider_id, account_id, candidate["source_id"], "healthy"
+                )
+                return result
+            return result
+
+    @staticmethod
+    def _record_source_health(
+        provider_id: str, account_id: str, source_id: str, health: str
+    ) -> None:
+        from sqlmodel import Session
+
+        from app.core.db import engine
+        from app.services.credential_sources import record_source_health
+
+        with Session(engine) as session:
+            record_source_health(session, provider_id, account_id, source_id, health)
+            session.commit()
 
     def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""
@@ -495,7 +600,7 @@ class CollectorManager:
                 if account_id is None or key == f"{provider_id}:{account_id}":
                     await sc.reset()
                     try:
-                        res = await sc.collect(client)
+                        res = await self._collect_with_semaphore(key, client)
                         if isinstance(res, list):
                             results.extend(res)
                     except Exception as e:

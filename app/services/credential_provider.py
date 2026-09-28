@@ -246,7 +246,25 @@ class CredentialProvider:
                 :func:`_resolve_provider_config` directly — it raises
                 :class:`AmbiguousProviderAccountError` for the same condition.
         """
-        results: dict[str, str] = {}
+        from app.services.token_cache import token_cache
+
+        selected = token_cache.current_source_tokens(provider_id, account_id or "default")
+        if selected is not None:
+            results = dict(selected)
+            if "api_key" not in results:
+                for key in ("oauth_token", "xai_access", "cli_access_token"):
+                    if results.get(key):
+                        results["api_key"] = results[key]
+                        break
+            if "oauth_token" in results:
+                results.setdefault("access_token", results["oauth_token"])
+            metadata = (
+                token_cache.current_source_metadata(provider_id, account_id or "default") or {}
+            )
+            kind = metadata.get("source_type") or metadata.get("source") or "server"
+            return CredentialMap(results, sources=dict.fromkeys(results, kind))
+
+        discovered: dict[str, str] = {}
         sources: dict[str, str] = {}
         runway_config_dir = get_platform_config_dir("runway")
 
@@ -263,7 +281,7 @@ class CredentialProvider:
                 # row when the default row is missing or disabled.
                 _cfg = _resolve_legacy_provider_config(provider_id, require_enabled=True)
             if _cfg and _cfg.api_key:
-                results["api_key"] = _cfg.api_key
+                discovered["api_key"] = _cfg.api_key
                 sources["api_key"] = "config"
         except AmbiguousProviderAccountError:
             # Surface strict multi-account ambiguity from the explicit-account
@@ -285,10 +303,10 @@ class CredentialProvider:
             # 1. Environment Variables
             if rule_type == "env":
                 target_key = mapping.get("value", "token")
-                if target_key not in results:
+                if target_key not in discovered:
                     val = os.getenv(rule.get("variable"))
                     if val:
-                        results[target_key] = val
+                        discovered[target_key] = val
                         if target_key not in sources:
                             sources[target_key] = "server"
 
@@ -304,13 +322,13 @@ class CredentialProvider:
                                 data = json.load(f)
 
                         for key_path_str, target in mapping.items():
-                            if target not in results:
+                            if target not in discovered:
                                 # Strategy: Try to find the value by traversing the path.
                                 # We handle keys that might contain dots (like "github.com")
                                 # by checking if the prefix is a valid key.
                                 val = CredentialProvider._resolve_mapping_value(data, key_path_str)
                                 if val:
-                                    results[target] = val
+                                    discovered[target] = val
                                     if target not in sources:
                                         # If the file is in our own internal config dir, it's UI-managed -> config.
                                         # Otherwise it's discovered in the wild -> server.
@@ -325,7 +343,7 @@ class CredentialProvider:
             # Keychain access has moved to the sidecar; rule_type == "keychain"
             # is silently ignored here.
 
-        return CredentialMap(results, sources=sources)
+        return CredentialMap(discovered, sources=sources)
 
     @staticmethod
     def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:
@@ -427,6 +445,14 @@ class CredentialProvider:
                 :class:`AmbiguousProviderAccountError` only when an explicit
                 account_id is requested but does not exist.
         """
+        from app.services.token_cache import token_cache
+
+        selected = token_cache.current_source_tokens(provider_id, account_id or "default")
+        if selected is not None:
+            for key in ("api_key", "oauth_token", "xai_access", "cli_access_token"):
+                if selected.get(key):
+                    return selected[key]
+            return None
         try:
             cfg: ProviderConfig | None
             if account_id is not None:
@@ -461,6 +487,20 @@ class CredentialProvider:
         Used by cookie-based collectors as a manual override that bypasses browser
         cookie extraction. See :meth:`get_provider_api_key` for ``account_id`` semantics.
         """
+        from app.services.token_cache import token_cache
+
+        selected = token_cache.current_source_tokens(provider_id, account_id or "default")
+        if selected is not None:
+            for key in (
+                "session_cookie",
+                "cookie_session",
+                "cookie_sessionKey",
+                "cookie___Secure-next-auth.session-token",
+                "cookie_oai-sc",
+            ):
+                if selected.get(key):
+                    return selected[key]
+            return None
         try:
             cfg: ProviderConfig | None
             if account_id is not None:

@@ -12,12 +12,21 @@ import asyncio
 import hashlib
 import logging
 import time
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from app.core.utils import IdentityExtractor, scrub_log
 from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)
+
+_active_source: ContextVar[tuple[str, str, str] | None] = ContextVar(
+    "active_credential_source", default=None
+)
+_active_attempt: ContextVar[dict[str, bool] | None] = ContextVar(
+    "active_credential_attempt", default=None
+)
 
 _OAUTH_CREDENTIAL_KEYS = {
     "oauth_token",
@@ -67,6 +76,11 @@ class TokenCache:
         # send one card per origin, so refreshing a CLI token must not keep a
         # removed browser cookie alive forever (or vice versa).
         self._token_timestamps: dict[str, dict[str, dict[str, float]]] = {}
+        # Credential bundles stay separate here even though the legacy account
+        # cache below remains merged for backwards-compatible consumers.
+        self._source_cache: dict[
+            str, dict[str, dict[str, tuple[dict[str, str], dict[str, Any], float]]]
+        ] = {}
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
 
@@ -106,6 +120,8 @@ class TokenCache:
         account_id: str | None = None,
         account_label: str | None = None,
         source: str | None = None,
+        source_id: str | None = None,
+        source_metadata: dict[str, Any] | None = None,
     ) -> str:
         """
         Store tokens for a provider and account.
@@ -120,6 +136,10 @@ class TokenCache:
         Returns:
             str: The account_id used for storage
         """
+        selection = _active_source.get()
+        if source_id is None and selection and selection[0] == provider:
+            source_id = selection[2]
+
         if not account_label and tokens.get("id_token"):
             payload = IdentityExtractor.extract_jwt_payload(tokens["id_token"])
             email = payload.get("email")
@@ -131,6 +151,29 @@ class TokenCache:
         # Key by the canonical form so a sidecar-pushed ``Alice@X.com`` and
         # the collector's ``alice@x.com`` share one cache slot.
         account_id = canonical_account_id(account_id)
+
+        # Store each source as a self-contained credential bundle. The merged
+        # cache below is preserved until all existing callers migrate to the
+        # source-aware read path.
+        if source_id:
+            async with self._lock:
+                source_accounts = self._source_cache.setdefault(provider, {}).setdefault(
+                    account_id, {}
+                )
+                previous = source_accounts.get(source_id)
+                stored_tokens = dict(previous[0]) if previous else {}
+                if previous and self._is_staler(tokens, stored_tokens):
+                    for key, value in tokens.items():
+                        if key not in _OAUTH_CREDENTIAL_KEYS and key not in stored_tokens:
+                            stored_tokens[key] = value
+                    if tokens.get("refresh_token"):
+                        stored_tokens["refresh_token"] = tokens["refresh_token"]
+                else:
+                    stored_tokens.update(tokens)
+                metadata = dict(previous[1]) if previous else {}
+                metadata.update(source_metadata or {})
+                metadata.update({"source_id": source_id, "source": source})
+                source_accounts[source_id] = (stored_tokens, metadata, time.time())
 
         async with self._lock:
             if provider not in self._cache:
@@ -248,6 +291,22 @@ class TokenCache:
         async with self._lock:
             self._clear_expired_unlocked()
 
+            selection = _active_source.get()
+            if selection and selection[0] == provider:
+                account_id, source_id = selection[1], selection[2]
+                entry = self._source_cache.get(provider, {}).get(account_id, {}).get(source_id)
+                if entry:
+                    tokens, metadata, timestamp = entry
+                    return [
+                        {
+                            "account_id": account_id,
+                            "tokens": tokens,
+                            "account_label": metadata.get("account_label"),
+                            "source": metadata.get("source"),
+                            "age": time.time() - timestamp,
+                        }
+                    ]
+
             if provider not in self._cache:
                 return []
 
@@ -272,6 +331,18 @@ class TokenCache:
         account_id = canonical_account_id(account_id) if account_id else None
         async with self._lock:
             self._clear_expired_unlocked()
+
+            selection = _active_source.get()
+            if selection and selection[0] == provider:
+                selected_account = selection[1] if account_id in (None, "default") else account_id
+                selected = (
+                    self._source_cache.get(provider, {}).get(selected_account, {}).get(selection[2])
+                )
+                if selected is None and selected_account != "default":
+                    selected = (
+                        self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
+                    )
+                return selected[0] if selected else None
 
             if provider not in self._cache or not self._cache[provider]:
                 return None
@@ -305,6 +376,18 @@ class TokenCache:
         async with self._lock:
             self._clear_expired_unlocked()
 
+            selection = _active_source.get()
+            if selection and selection[0] == provider:
+                selected_account = selection[1] if account_id in (None, "default") else account_id
+                selected = (
+                    self._source_cache.get(provider, {}).get(selected_account, {}).get(selection[2])
+                )
+                if selected is None and selected_account != "default":
+                    selected = (
+                        self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
+                    )
+                return (selected[0], selected[1]) if selected else None
+
             if provider not in self._cache or not self._cache[provider]:
                 return None
 
@@ -333,9 +416,106 @@ class TokenCache:
         tokens = await self.get(provider, account_id)
         return tokens.get(token_type) if tokens else None
 
+    @asynccontextmanager
+    async def using_source(self, provider: str, account_id: str, source_id: str):
+        """Route cache reads in the current async task to one credential bundle."""
+        token = _active_source.set((provider, canonical_account_id(account_id), source_id))
+        attempt: dict[str, bool] = {"auth_failed": False}
+        attempt_token = _active_attempt.set(attempt)
+        try:
+            yield attempt
+        finally:
+            _active_attempt.reset(attempt_token)
+            _active_source.reset(token)
+
+    async def observe_response(self, response: Any) -> None:
+        """Mark the active bundle rejected when a provider answers HTTP 401."""
+        attempt = _active_attempt.get()
+        if attempt is not None and getattr(response, "status_code", None) == 401:
+            attempt["auth_failed"] = True
+
+    async def get_source_candidates(self, provider: str, account_id: str) -> list[dict[str, Any]]:
+        """Return live source bundles in configured priority order."""
+        account_id = canonical_account_id(account_id)
+        async with self._lock:
+            self._clear_expired_unlocked()
+            rows = self._source_cache.get(provider, {}).get(account_id, {})
+            candidates = [
+                {"source_id": source_id, "tokens": tokens, **metadata}
+                for source_id, (tokens, metadata, _timestamp) in rows.items()
+            ]
+            return sorted(
+                candidates,
+                key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
+            )
+
+    def current_source_tokens(self, provider: str, account_id: str) -> dict[str, str] | None:
+        """Synchronous lookup used by legacy credential-provider helpers."""
+        selection = _active_source.get()
+        if not selection or selection[0] != provider:
+            return None
+        requested = canonical_account_id(account_id) if account_id else selection[1]
+        account_id = selection[1] if requested == "default" else requested
+        entry = self._source_cache.get(provider, {}).get(account_id, {}).get(selection[2])
+        if entry is None and account_id != "default":
+            entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
+        return entry[0] if entry else None
+
+    def current_source_metadata(self, provider: str, account_id: str) -> dict[str, Any] | None:
+        selection = _active_source.get()
+        if not selection or selection[0] != provider:
+            return None
+        requested = canonical_account_id(account_id) if account_id else selection[1]
+        account_id = selection[1] if requested == "default" else requested
+        entry = self._source_cache.get(provider, {}).get(account_id, {}).get(selection[2])
+        if entry is None and account_id != "default":
+            entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
+        return entry[1] if entry else None
+
+    async def remove_source(self, provider: str, account_id: str, source_id: str) -> bool:
+        """Remove one live secret bundle while preserving its durable metadata."""
+        account_id = canonical_account_id(account_id)
+        async with self._lock:
+            sources = self._source_cache.get(provider, {}).get(account_id)
+            if not sources or source_id not in sources:
+                return False
+            del sources[source_id]
+            if not sources:
+                self._source_cache[provider].pop(account_id, None)
+            if not self._source_cache.get(provider):
+                self._source_cache.pop(provider, None)
+            return True
+
+    async def remove_source_tokens(
+        self, provider: str, account_id: str, source_id: str, token_types: set[str]
+    ) -> None:
+        account_id = canonical_account_id(account_id)
+        async with self._lock:
+            sources = self._source_cache.get(provider, {}).get(account_id, {})
+            entry = sources.get(source_id)
+            if not entry:
+                return
+            tokens, metadata, timestamp = entry
+            for token_type in token_types:
+                tokens.pop(token_type, None)
+            if tokens:
+                sources[source_id] = (tokens, metadata, timestamp)
+            else:
+                sources.pop(source_id, None)
+
     def _clear_expired_unlocked(self) -> None:
         """Clear all expired accounts across all providers."""
         now = time.time()
+        for provider in list(self._source_cache):
+            for account_id in list(self._source_cache[provider]):
+                sources = self._source_cache[provider][account_id]
+                for source_id, (_tokens, _metadata, timestamp) in list(sources.items()):
+                    if now - timestamp > self._ttl:
+                        del sources[source_id]
+                if not sources:
+                    del self._source_cache[provider][account_id]
+            if not self._source_cache[provider]:
+                del self._source_cache[provider]
         providers_to_clean = list(self._cache.keys())
 
         for provider in providers_to_clean:
@@ -452,6 +632,7 @@ class TokenCache:
             if provider in self._cache and account_id in self._cache[provider]:
                 del self._cache[provider][account_id]
                 self._token_timestamps.get(provider, {}).pop(account_id, None)
+                self._source_cache.get(provider, {}).pop(account_id, None)
                 logger.info(
                     f"Manually removed {scrub_log(provider)} account {scrub_log(account_id)} from cache"
                 )
@@ -512,6 +693,7 @@ class TokenCache:
         async with self._lock:
             self._cache.clear()
             self._token_timestamps.clear()
+            self._source_cache.clear()
 
     async def get_all_active_accounts(self) -> list[tuple[str, str, str | None]]:
         """

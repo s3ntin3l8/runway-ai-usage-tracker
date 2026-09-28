@@ -22,10 +22,14 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical } from 'lucide-react';
+import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
-import { putProviderConfig, type ProviderConfigUpdate } from '@/api/endpoints';
-import type { CollectionStrategy, ProviderConfig } from '@/api/types';
+import {
+  patchCredentialSources,
+  putProviderConfig,
+  type ProviderConfigUpdate,
+} from '@/api/endpoints';
+import type { CollectionStrategy, CredentialSourceSummary, ProviderConfig } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { HelperText, Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
@@ -132,9 +136,26 @@ function ProviderAccountForm({
   const [strategies, setStrategies] = useState<StrategyEntry[]>(() =>
     initStrategies(provider, account),
   );
+  const [credentialSources, setCredentialSources] = useState<CredentialSourceSummary[]>(() =>
+    [...(account.credential_sources ?? [])].sort((a, b) => a.priority - b.priority),
+  );
+  const [allMachines, setAllMachines] = useState(false);
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      if (credentialSources.length > 0) {
+        await patchCredentialSources(
+          provider.provider_id,
+          account.account_id,
+          credentialSources.map((source, priority) => ({
+            source_id: source.source_id,
+            enabled: source.enabled,
+            priority,
+          })),
+          allMachines,
+        );
+      }
+      if (account.source === 'discovered') return { status: 'saved' };
       const body: ProviderConfigUpdate = {
         enabled,
         // Empty string means "clear" server-side (mirrors the provider account form's
@@ -191,6 +212,14 @@ function ProviderAccountForm({
       }}
       className="flex flex-col gap-4"
     >
+      <CredentialSourcesEditor
+        sources={credentialSources}
+        onChange={setCredentialSources}
+        allMachines={allMachines}
+        onAllMachinesChange={setAllMachines}
+      />
+
+      {account.source === 'discovered' ? null : <>
       <div className="flex items-center justify-between">
         <Label htmlFor="acct-enabled">Collection enabled</Label>
         <Switch id="acct-enabled" checked={enabled} onCheckedChange={setEnabled} />
@@ -376,6 +405,7 @@ function ProviderAccountForm({
           </DndContext>
         </fieldset>
       ) : null}
+      </>}
 
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel} type="button">
@@ -409,6 +439,102 @@ function initStrategies(provider: ProviderConfig, account: ProviderConfig['accou
     enabled: s.enabled,
     label: (s as { label?: string }).label ?? s.id,
   }));
+}
+
+function CredentialSourcesEditor({
+  sources,
+  onChange,
+  allMachines,
+  onAllMachinesChange,
+}: {
+  sources: CredentialSourceSummary[];
+  onChange: (sources: CredentialSourceSummary[]) => void;
+  allMachines: boolean;
+  onAllMachinesChange: (value: boolean) => void;
+}) {
+  const move = (index: number, delta: number) => {
+    const nextIndex = index + delta;
+    if (nextIndex < 0 || nextIndex >= sources.length) return;
+    const next = [...sources];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    onChange(next);
+  };
+
+  return (
+    <fieldset className="flex flex-col gap-2 rounded-sm border border-edge p-3">
+      <legend className="px-1 text-xs font-medium text-fg-muted">Credential sources</legend>
+      <p className="text-[11px] text-fg-subtle">
+        Enabled sources are tried in order. Secrets are never shown here.
+      </p>
+      {sources.some((source) => source.sidecar_id) ? (
+        <label className="flex items-center gap-2 text-[11px] text-fg-muted">
+          <input
+            type="checkbox"
+            checked={allMachines}
+            onChange={(event) => onAllMachinesChange(event.target.checked)}
+          />
+          Apply matching credential origins across all machines
+        </label>
+      ) : null}
+      {sources.length === 0 ? (
+        <p className="text-[12px] text-fg-muted">Sources will appear after the next credential scan.</p>
+      ) : (
+        <ul className="divide-y divide-border" aria-label="Credential sources">
+          {sources.map((source, index) => (
+            <li key={source.source_id} className="flex items-center gap-2 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12px] font-medium">
+                  {source.source_label || source.source_type}
+                  {source.sidecar_id ? (
+                    <span className="ml-1 font-normal text-fg-subtle">· {source.sidecar_id}</span>
+                  ) : null}
+                </p>
+                <p className="text-[11px] text-fg-subtle">
+                  {source.available
+                    ? source.health === 'auth_failed'
+                      ? 'Authentication failed'
+                      : 'Available'
+                    : 'Unavailable · awaiting refresh'}
+                  {source.last_seen ? ` · seen ${new Date(source.last_seen).toLocaleString()}` : ''}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Move ${source.source_label} earlier`}
+                disabled={index === 0}
+                onClick={() => move(index, -1)}
+              >
+                <ArrowUp className="size-3.5" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Move ${source.source_label} later`}
+                disabled={index === sources.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                <ArrowDown className="size-3.5" aria-hidden />
+              </Button>
+              <Switch
+                checked={source.enabled}
+                onCheckedChange={(enabled) =>
+                  onChange(
+                    sources.map((item) =>
+                      item.source_id === source.source_id ? { ...item, enabled } : item,
+                    ),
+                  )
+                }
+                aria-label={`Enable ${source.source_label}`}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </fieldset>
+  );
 }
 
 function SortableStrategyRow({

@@ -125,6 +125,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 )
 
                 provider_tokens = {}
+                credential_origin = (
+                    card.metadata.get("credential_origin") if card.metadata else None
+                )
                 if card.metadata:
                     for key, val in card.metadata.items():
                         # Store tokens but skip the provider/account identifiers
@@ -132,6 +135,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                             "provider_id",
                             "account_id",
                             "account_label",
+                            "credential_origin",
                         ) and (
                             key
                             in (
@@ -165,7 +169,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     }
 
                 if provider_tokens:
-                    tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_label))
+                    tokens_to_store.append(
+                        (provider_id, provider_tokens, acc_id, acc_label, credential_origin)
+                    )
                     logger.debug(
                         f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {payload.provider}"
                     )
@@ -216,14 +222,49 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
     # Store tokens in cache for each identified account
     tokens_received_count = 0
-    for p_id, p_tokens, a_id, a_name in tokens_to_store:
-        actual_acc_id = await token_cache.store(
-            p_id, p_tokens, a_id, a_name, source=payload.sidecar_id
+    for p_id, p_tokens, a_id, a_name, origin in tokens_to_store:
+        sidecar_id = payload.sidecar_id or "local"
+        from app.services.credential_sources import (
+            describe_origin,
+            sidecar_source_id,
+            touch_source,
         )
+
+        source_type, source_label = describe_origin(origin)
+        source_id = sidecar_source_id(sidecar_id, origin)
+        actual_acc_id = await token_cache.store(
+            p_id,
+            p_tokens,
+            a_id,
+            a_name,
+            source=payload.sidecar_id,
+            source_id=source_id,
+            source_metadata={
+                "source_type": source_type,
+                "source_label": source_label,
+                "credential_origin": origin,
+                "sidecar_id": payload.sidecar_id,
+            },
+        )
+        if not isinstance(actual_acc_id, str):
+            actual_acc_id = a_id or "default"
+        if payload.sidecar_id:
+            touch_source(
+                session,
+                provider_id=p_id,
+                account_id=actual_acc_id,
+                source_id=source_id,
+                source_type=source_type,
+                source_label=source_label,
+                credential_origin=origin,
+                sidecar_id=payload.sidecar_id,
+            )
         tokens_received_count += len(p_tokens)
         logger.info(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"
         )
+    if tokens_to_store:
+        session.commit()
 
     # Store local data cards directly into LatestUsage (unified with server-scraped cards)
     if local_cards or payload.completed_providers:
