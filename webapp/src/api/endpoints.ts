@@ -288,11 +288,13 @@ export const patchCredentialSources = (
   accountId: string,
   sources: { source_id: string; enabled: boolean; priority: number }[],
   allMachines = false,
-) =>
-  api<{ status: string }>(
-    `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}/credential-sources`,
-    { method: 'PATCH', body: JSON.stringify({ sources, all_machines: allMachines }) },
-  );
+) => {
+  const endpoint = `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}/credential-sources`;
+  return api<{ status: string }>(endpoint, {
+    method: 'PATCH',
+    body: JSON.stringify({ sources, all_machines: allMachines }),
+  });
+};
 
 export const deleteProviderConfig = (providerId: string, accountId: string) =>
   api<{ status: string }>(

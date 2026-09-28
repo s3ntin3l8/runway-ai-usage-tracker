@@ -6,6 +6,7 @@ import {
   fetchPendingUsageEvents,
   fetchPendingUsageSessions,
   fetchProviderConfigs,
+  patchCredentialSources,
   fetchSidecars,
   fetchStatus,
   fetchTokenHealth,
@@ -108,6 +109,26 @@ describe('endpoints', () => {
     const data = await fetchProviderConfigs();
     expect(data).toEqual(payload);
     expect(lastCall()[0]).toBe('/api/v1/system/provider-configs');
+  });
+
+  it('patchCredentialSources sends source order, toggles, and machine scope', async () => {
+    mockFetch().mockImplementation(() => Promise.resolve(jsonResponse({ status: 'ok' })));
+    const source = { source_id: 'sidecar:browser', enabled: true, priority: 0 };
+
+    await expect(patchCredentialSources('open/router', 'alice@example.com', [source], true)).resolves.toEqual({
+      status: 'ok',
+    });
+    let [path, init] = lastCall();
+    expect(path).toBe(
+      '/api/v1/system/provider-config/open%2Frouter/alice%40example.com/credential-sources',
+    );
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(String(init.body))).toEqual({ sources: [source], all_machines: true });
+
+    await patchCredentialSources('openrouter', 'default', [source]);
+    [path, init] = mockFetch().mock.calls.at(-1) as [string, RequestInit];
+    expect(path).toContain('/openrouter/default/credential-sources');
+    expect(JSON.parse(String(init.body))).toEqual({ sources: [source], all_machines: false });
   });
 
   it('getDashboardLayout hits the dashboard-layout path', async () => {
