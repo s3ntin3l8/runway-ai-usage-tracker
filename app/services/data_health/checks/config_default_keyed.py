@@ -30,6 +30,10 @@ from app.services.maintenance.config_rekey import (
     apply_rekey_config,
     plan_rekey_config,
 )
+from app.services.maintenance.event_reassign import (
+    apply_reassign_default,
+    plan_reassign_default,
+)
 
 _NOT_A_REAL_LABEL = {"default", ""}
 
@@ -131,6 +135,12 @@ class ConfigDefaultKeyedCheck(Check):
         rekey_plan = plan_rekey_config(
             session, provider_id=provider_id, old_account_id="default", new_account_id=target
         )
+        event_plan = plan_reassign_default(
+            session,
+            provider_id=provider_id,
+            source="default",
+            target=target,
+        )
         if (
             rekey_plan.provider_config_exists_at_target
             and params.get("on_collision") != "archive_default"
@@ -183,7 +193,8 @@ class ConfigDefaultKeyedCheck(Check):
                             or target_row.oai_sc_cookie_encrypted
                         ),
                         "recent_usage_events_30d": recent,
-                        "note": "Source credentials are retained in the archived row; usage events stay under default.",
+                        "usage_events_to_move": event_plan.count,
+                        "note": "Source credentials are retained in the archived row; usage history moves to the selected account.",
                     },
                 )
             )
@@ -216,14 +227,7 @@ class ConfigDefaultKeyedCheck(Check):
             "webhook_configs_dropped_duplicate": rekey_plan.webhook_configs_dropped_duplicate,
             "gauge_series_merged": rekey_plan.gauge_series.merged,
             "gauge_series_retagged": rekey_plan.gauge_series.retagged,
-            "usage_events_retained_on_default": session.execute(
-                select(func.count())
-                .select_from(UsageEvent)
-                .where(
-                    col(UsageEvent.provider_id) == provider_id,
-                    col(UsageEvent.account_id) == "default",
-                )
-            ).scalar_one(),
+            "usage_events_to_move": event_plan.count,
         }
         return FixPlan(
             check_id=self.id,
@@ -266,6 +270,12 @@ class ConfigDefaultKeyedCheck(Check):
             )
         except RekeyCollisionError as exc:
             raise ValueError(str(exc)) from exc
+        event_result = apply_reassign_default(
+            session,
+            provider_id=provider_id,
+            source="default",
+            target=target,
+        )
         return (
             FixResult(
                 check_id=self.id,
@@ -281,6 +291,9 @@ class ConfigDefaultKeyedCheck(Check):
                     "webhook_configs_dropped_duplicate": result.webhook_configs_dropped_duplicate,
                     "gauge_series_merged": result.gauge_series.merged,
                     "gauge_series_retagged": result.gauge_series.retagged,
+                    "usage_events_moved": event_result.moved,
+                    "event_rollups_rebuilt_pairs": event_result.rollups_rebuilt_pairs,
+                    "event_windows_rebuilt": event_result.windows_rebuilt,
                 },
             ),
             hooks,

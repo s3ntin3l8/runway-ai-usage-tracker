@@ -1070,9 +1070,12 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         db = _canonical_row(provider_rows)
         rules = provider_def.get("rules", [])
         supports_api_key = any(
-            any(k in rule.get("mapping", {}).values() for k in ("api_key", "oauth_token"))
+            any(
+                k in rule.get("mapping", {}).values()
+                for k in ("api_key", "oauth_token", "xai_access")
+            )
             for rule in rules
-            if rule.get("type") in ("env", "file", "keychain")
+            if rule.get("type") in ("env", "file", "keychain", "xai_grok_cli_auth")
         )
         supports_session_cookie = any(
             any(

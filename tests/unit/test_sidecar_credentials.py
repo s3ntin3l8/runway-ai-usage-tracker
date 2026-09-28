@@ -1241,6 +1241,45 @@ def test_extract_events_no_accounts_no_calls(monkeypatch):
     assert out == []
 
 
+def test_run_collection_heartbeat_discovers_credentials_without_polling(monkeypatch):
+    """An empty quota poll still discovers token cards from providers."""
+    import scripts.sidecar as sc
+
+    class Cache:
+        def is_fresh(self):
+            return True
+
+        def provider_accounts(self):
+            return {}
+
+        def provider_tag_hints(self):
+            return {}
+
+    token = {
+        "service_name": "OpenRouter",
+        "remaining": "Token",
+        "unit": "api_key",
+        "metadata": {"provider_id": "openrouter", "api_key": "sk-test"},
+    }
+    quota = {"service_name": "OpenRouter local quota", "remaining": "$2", "unit": "USD"}
+    monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", Cache())
+    monkeypatch.setattr(sc, "_LAST_CREDENTIAL_DISCOVERY_SCAN", 0)
+    monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
+    monkeypatch.setattr(sc, "__REGISTRY__", {"providers": {"openrouter": {"name": "OpenRouter"}}})
+    monkeypatch.setattr(
+        sc.GenericCollector,
+        "collect_provider",
+        staticmethod(lambda *args, **kwargs: ([token, quota], [])),
+    )
+    monkeypatch.setattr(sc, "_post_credential_manifest", lambda **kwargs: None)
+
+    metrics, events, errors = sc.run_collection(config={}, providers=[])
+
+    assert metrics == [token]
+    assert events == []
+    assert errors == 0
+
+
 def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch, tmp_path):
     """End-to-end: ``run_collection`` reads the cached per-account list,
     intersects it with the locally-discovered ``account_id``, and emits

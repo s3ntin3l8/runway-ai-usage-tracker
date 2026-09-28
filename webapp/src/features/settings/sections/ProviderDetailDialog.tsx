@@ -216,8 +216,7 @@ export function ProviderDetailDialog({
                           </Badge>
                         )}
                       </div>
-                      {account.source === 'discovered' ? null : (
-                        <div className="relative">
+                      <div className="relative">
                           <Button
                             size="icon-sm"
                             variant="ghost"
@@ -250,22 +249,23 @@ export function ProviderDetailDialog({
                                 <Pencil className="size-3.5 text-fg-muted" />
                                 Edit
                               </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  setPendingDelete(account);
-                                }}
-                              >
-                                <Trash2 className="size-3.5" />
-                                Remove
-                              </button>
+                              {account.source !== 'discovered' ? (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    setPendingDelete(account);
+                                  }}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                  Remove
+                                </button>
+                              ) : null}
                             </div>
                           ) : null}
-                        </div>
-                      )}
+                      </div>
                     </li>
                   );
                 })}

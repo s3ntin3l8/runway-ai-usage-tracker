@@ -1983,6 +1983,11 @@ _GLOBAL_RESET_ANCHORS: dict[str, dict[str, str]] = {}
 # Lives at module scope so ``run_collection`` (which is the only writer)
 # can share it with the ``DaemonRunner``-level fetch in the heartbeat path.
 _CREDENTIAL_CACHE: Any = None
+# Credential discovery is useful even when quota polling is disabled or the
+# provider has never produced usage events. Keep this scan independent from
+# the normal collection schedule and throttle it to avoid repeatedly walking
+# credential files on every heartbeat.
+_LAST_CREDENTIAL_DISCOVERY_SCAN = 0.0
 
 
 def _get_credential_cache() -> Any:
@@ -3479,21 +3484,50 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     _IDENTITY_REPORT.clear()
     error_count = 0
 
+    credential_scan_only = providers == []
     if providers is None:
         # No instructions yet (cold start) — collect everything enabled in config
         enabled_providers = config.get("providers", ["all"])
     elif not providers:
-        # Empty list = pure heartbeat. Skip collection; the caller still pushes
-        # an empty payload to /fleet/ingest so the server can deliver triggers.
-        return CollectionResult([], [], 0, [])
+        # Empty list is a heartbeat. It still gets the independent credential
+        # discovery pass below, while quota and event collection remain idle.
+        enabled_providers = []
     else:
         enabled_providers = providers
 
     registry_providers = __REGISTRY__.get("providers", {})
     bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
 
+    global _LAST_CREDENTIAL_DISCOVERY_SCAN
+    now = time.monotonic()
+    if credential_scan_only and now - _LAST_CREDENTIAL_DISCOVERY_SCAN >= 600:
+        for discover_pid, discover_config in registry_providers.items():
+            try:
+                _discovered, blocked = GenericCollector.collect_provider(
+                    discover_pid,
+                    discover_config,
+                    account_label_hints=server_account_tag_hints,
+                )
+                # Ship credential cards so the server can expose known
+                # identities even when this provider has no events and is not
+                # part of the current quota poll. Never ship local quota cards
+                # from this discovery-only pass.
+                all_metrics.extend(
+                    card
+                    for card in _discovered
+                    if card.get("remaining") == "Token"
+                    and card.get("unit") in ("oauth", "api_key", "cookie")
+                )
+                blocked_origins_this_cycle.extend(blocked)
+                completed_providers_this_cycle.append(discover_pid)
+            except Exception as exc:
+                logging.debug("credential discovery failed for %s: %s", discover_pid, exc)
+        _LAST_CREDENTIAL_DISCOVERY_SCAN = now
+
     for provider_id, provider_config in registry_providers.items():
-        if "all" not in enabled_providers and provider_id not in enabled_providers:
+        if credential_scan_only or (
+            "all" not in enabled_providers and provider_id not in enabled_providers
+        ):
             continue
         provider_cycle_complete = False
         provider_manifest_complete = True

@@ -234,7 +234,7 @@ describe('ProviderDetailDialog — master enabled toggle', () => {
 describe('ProviderDetailDialog — account list + menu', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('hides the actions menu for discovered accounts (Hermes #309)', async () => {
+  it('allows editing discovered accounts and omits Remove until they are configured', async () => {
     const discoveredOnly: ProviderConfig = {
       ...singleAccount,
       accounts: [{ ...alice, source: 'discovered' }],
@@ -242,9 +242,9 @@ describe('ProviderDetailDialog — account list + menu', () => {
     };
     renderDialog(discoveredOnly);
     expect(await screen.findByLabelText('Provider accounts')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /actions for alice/i }),
-    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /actions for alice/i }));
+    expect(screen.getByRole('menuitem', { name: /edit/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /remove/i })).not.toBeInTheDocument();
     expect(screen.getByText('auto')).toBeInTheDocument();
   });
 

@@ -63,6 +63,8 @@ def test_get_provider_configs_empty_accounts_field(client: TestClient):
     assert r.status_code == 200
     providers = r.json()["providers"]
     assert providers  # registry has at least one entry
+    xai = next(p for p in providers if p["provider_id"] == "xai")
+    assert xai["supports_api_key"] is True
     for p in providers:
         assert p["accounts"] == []
         assert p["account_count"] == 0
