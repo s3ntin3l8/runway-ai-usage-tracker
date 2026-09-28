@@ -76,27 +76,34 @@ def map_hermes_provider_id(billing_provider: str) -> str:
 
 
 def _discover_hermes_db_paths() -> list[Path]:
-    """Discover all Hermes state.db files: default profile and named profiles."""
+    """Discover all Hermes state.db files: default profile and named profiles.
+
+    Canonicalizes paths with resolve() so symlinks or overlapping roots (e.g.
+    HERMES_HOME pointing to ~/.hermes) are deduplicated at discovery.
+    """
     paths: list[Path] = []
+    seen_canonical: set[Path] = set()
+
+    def _add_if_valid(p: Path) -> None:
+        if p.exists():
+            resolved = p.resolve()
+            if resolved not in seen_canonical:
+                seen_canonical.add(resolved)
+                paths.append(p)
 
     # 1. HERMES_HOME env override
     hermes_home = os.getenv("HERMES_HOME")
     if hermes_home:
-        p = Path(hermes_home).expanduser() / "state.db"
-        if p.exists():
-            paths.append(p)
+        _add_if_valid(Path(hermes_home).expanduser() / "state.db")
 
     # 2. Standard default profile
-    default_db = Path(os.path.expanduser("~/.hermes/state.db"))
-    if default_db.exists() and default_db not in paths:
-        paths.append(default_db)
+    _add_if_valid(Path(os.path.expanduser("~/.hermes/state.db")))
 
     # 3. Named profiles in ~/.hermes/profiles/*/state.db
     profiles_dir = Path(os.path.expanduser("~/.hermes/profiles"))
     if profiles_dir.is_dir():
         for prof_db in sorted(profiles_dir.glob("*/state.db")):
-            if prof_db.exists() and prof_db not in paths:
-                paths.append(prof_db)
+            _add_if_valid(prof_db)
 
     return paths
 
@@ -159,6 +166,12 @@ def parse_hermes_events(
     # (e.g. server's scoped_accounts loop iterating multiple accounts per cycle),
     # callers should supply an account-scoped state_file or include account_id in
     # state_key so later accounts do not find the watermark already advanced.
+    #
+    # Watermark bounding note: hermes_watermark.json stores token and call high-water
+    # marks for each (resolved_db_path, profile, session, model, provider, task) slice.
+    # Growth is small (~50 bytes per key, <1 MB for 10,000 sessions). Each slice records
+    # 'last_seen', enabling a future TTL-compaction pass (e.g. dropping slices older than
+    # 90 days matching the sidecar's retention window) when necessary.
     state_path = state_file or _default_watermark_state_path()
     watermark_state = _load_hermes_watermark(state_path)
     state_modified = False
@@ -344,7 +357,11 @@ def parse_hermes_events(
                     tokens_cache_create=delta_cache_write,
                     tokens_reasoning=delta_reasoning,
                     cost_usd=cost_usd,
-                    entrypoint="hermes",
+                    entrypoint=(
+                        f"hermes-{row['source']}"
+                        if row["source"] and row["source"] != "api_server"
+                        else "hermes"
+                    ),
                     kind="message",
                 )
             )

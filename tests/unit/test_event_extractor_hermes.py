@@ -507,3 +507,110 @@ def test_missing_both_timestamps_skips_and_warns(tmp_path, caplog):
         )
     assert not any(e.session_id == "sess-null-ts" for e in events)
     assert any("has both last_seen and first_seen NULL" in r.message for r in caplog.records)
+
+
+def test_watermark_mixed_counter_regression_preserves_high_watermark(tmp_path):
+    """If a new turn occurs (api_call_count increases), but input_tokens in the DB
+    is lower than the prior high-water mark (e.g. session truncation / partial context reset),
+    max(curr_in, prev_in) prevents input_tokens from regressing to the lower value.
+    """
+    db_path, _ = _make_db()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        # Run 1: baseline Kimi has 50,000 input, 10 calls
+        first_events = parse_hermes_events(
+            [db_path], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+        )
+        assert len(first_events) == 2
+
+        # Run 2: api_call_count increases 10 -> 11, but input_tokens dropped to 45,000
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            UPDATE session_model_usage
+            SET input_tokens = 45000,
+                api_call_count = 11,
+                last_seen = 1780000750.0
+            WHERE session_id = 'api-sess-kimi-01'
+        """)
+        conn.commit()
+        conn.close()
+
+        second_events = parse_hermes_events(
+            [db_path], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+        )
+        assert len(second_events) == 1
+        assert second_events[0].tokens_input == 0
+
+        # Verify that state_file retained 50,000 as high-water mark via max(), NOT 45,000
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        kimi_slice = next(v for k, v in data.items() if "kimi-for-coding" in k)
+        assert kimi_slice["input_tokens"] == 50000
+        assert kimi_slice["api_call_count"] == 11
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch):
+    """If HERMES_HOME points to a symlink of ~/.hermes, discovery canonicalizes with
+    resolve() and returns the database only once."""
+    real_dir = tmp_path / "real_hermes"
+    real_dir.mkdir()
+    real_db = real_dir / "state.db"
+    real_db.touch()
+
+    symlink_dir = tmp_path / "symlink_hermes"
+    symlink_dir.symlink_to(real_dir)
+
+    monkeypatch.setenv("HERMES_HOME", str(symlink_dir))
+    monkeypatch.setattr(
+        Path, "expanduser", lambda p: real_dir if "~/.hermes" in str(p) else Path(p)
+    )
+
+    discovered = _discover_hermes_db_paths()
+    assert len(discovered) == 1
+    assert discovered[0].resolve() == real_db.resolve()
+
+
+def test_hermes_entrypoint_distinguishes_source(tmp_path):
+    """Sessions with non-api_server source (e.g. discord, cron) propagate
+    as hermes-<source> entrypoint."""
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-discord-01', 'discord', 'default', 'local-llm',
+            'custom', 'http://localhost:8000', '/home', 'main',
+            1780003000.0, 1780003500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-discord-01', 'local-llm', 'custom', 'http://localhost:8000', '',
+            '', 1, 100, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none', 1780003000.0, 1780003500.0
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "discord_state.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    events = parse_hermes_events([db_path], "default", datetime(2020, 1, 1, tzinfo=UTC))
+    discord_ev = next(e for e in events if e.session_id == "sess-discord-01")
+    assert discord_ev.entrypoint == "hermes-discord"
+
+    # Default api_server sessions have entrypoint="hermes"
+    api_ev = next(e for e in events if e.session_id == "api-sess-kimi-01")
+    assert api_ev.entrypoint == "hermes"

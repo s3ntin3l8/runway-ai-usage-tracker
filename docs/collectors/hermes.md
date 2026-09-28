@@ -48,6 +48,8 @@ On each sidecar poll:
   hermes|<profile>|<session_id>|<model>|<task>|c<api_call_count>s<emission_seq>
   ```
 - Stable event IDs ensure that discrete tasks, ongoing sessions, and late cost updates never trigger duplicate-event drops or double-counting in Runway's `EventIngestor`.
+- **Watermark Lifecycle & Bounding:** High-water marks are keyed by `(resolved_db_path, profile, session, model, billing_provider, task)`. Storage overhead is bounded (~50 bytes per key, <1 MB for 10,000 sessions) and recorded with a `last_seen` timestamp to enable TTL compaction if needed.
+- **Entrypoint Propagation:** Sessions preserve their runtime origin in Runway's `entrypoint` field: default API sessions set `entrypoint="hermes"`, while sessions originating from specific platforms set `entrypoint="hermes-<source>"` (e.g. `hermes-discord`, `hermes-cron`, `hermes-webui`).
 
 ## Canonical Provider Mapping
 
