@@ -30,7 +30,7 @@ applied until it's fixed — the dependency order below reflects that.
 
 | Check | Severity | Finds | Fix |
 |---|---|---|---|
-| `config_default_keyed` | Error | A provider's config is still keyed `account_id="default"` even though its label already carries a real identity | Re-key onto the label. If that account already has a config, preview both identities and effects, then explicitly confirm they are the same account before archiving the default config. The archived row is disabled and retained with its credentials; usage-event history stays keyed `default`, while tags, webhooks, and gauge series move or merge. |
+| `config_default_keyed` | Error | A provider's config is still keyed `account_id="default"` even though its label already carries a real identity | Re-key onto the label. If that account already has a config, preview both identities and effects, then explicitly confirm they are the same account before archiving the default config. The archived row is disabled and retained with its credentials; usage events, tags, webhooks, and gauge series move or merge onto the selected account. |
 | `legacy_provider_ids` | Error | Events under an OpenCode-sibling provider id Runway now folds into a canonical provider (e.g. `opencode-xai` → `xai`) | Retag onto the canonical provider, resolving any collision by keeping the richer event |
 | `lone_default_events` | Error | Events sitting under `default` when there is another configured account and no active default config | Reassign to the provider's other configured account — not fixable in-app if there's no unambiguous target. The active-default check is repeated before planning and applying. |
 | `orphan_credential_tags` | Warning | A credential tag still points at `default` after that provider's `default` config was rekeyed or removed | Delete the tag, or repoint it onto a configured account |
@@ -42,6 +42,11 @@ applied until it's fixed — the dependency order below reflects that.
 `config_default_keyed` blocks `lone_default_events` and `orphan_credential_tags`;
 `legacy_provider_ids` blocks `unpriced_models` and `rollup_drift` — fix the
 blocking check first if you see a **Blocked** badge.
+
+The `config_default_keyed` preview exposes `counts.usage_events_to_move`.
+The former `counts.usage_events_retained_on_default` field remains as a
+deprecated compatibility key and reports the predicted remaining count (zero)
+because the repair now moves that history.
 
 If a scan fails, the page reports the failure and marks any previous report as
 stale. Fixes stay disabled until an explicit re-scan succeeds. A job-status

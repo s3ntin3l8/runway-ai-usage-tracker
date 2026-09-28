@@ -103,6 +103,8 @@ def test_apply_moves_default_event_history_and_rebuilds_derived_data(session):
     event = session.exec(select(UsageEvent)).one()
     assert event.account_id == "alice@example.com"
     assert result.counts["usage_events_moved"] == 1
+    assert result.counts["event_rollups_rebuilt_pairs"] == 2
+    assert result.counts["event_windows_rebuilt"] >= 0
 
 
 def test_apply_honors_an_explicit_new_account_id_override(session):
@@ -164,3 +166,4 @@ def test_collision_preview_shows_both_identities_and_requires_attestation(sessio
         "minimax/alice@example.com (target)",
     ]
     assert plan.counts["usage_events_to_move"] == 0
+    assert plan.counts["usage_events_retained_on_default"] == 0

@@ -135,12 +135,6 @@ class ConfigDefaultKeyedCheck(Check):
         rekey_plan = plan_rekey_config(
             session, provider_id=provider_id, old_account_id="default", new_account_id=target
         )
-        event_plan = plan_reassign_default(
-            session,
-            provider_id=provider_id,
-            source="default",
-            target=target,
-        )
         if (
             rekey_plan.provider_config_exists_at_target
             and params.get("on_collision") != "archive_default"
@@ -148,6 +142,12 @@ class ConfigDefaultKeyedCheck(Check):
             raise ValueError(
                 "Target account already exists. Preview the archive option and confirm the identities match."
             )
+        event_plan = plan_reassign_default(
+            session,
+            provider_id=provider_id,
+            source="default",
+            target=target,
+        )
         source = _find_row(session, provider_id)
         target_row = _find_target_row(session, provider_id, target)
         if target_row is not None and target_row.archived:
@@ -228,6 +228,9 @@ class ConfigDefaultKeyedCheck(Check):
             "gauge_series_merged": rekey_plan.gauge_series.merged,
             "gauge_series_retagged": rekey_plan.gauge_series.retagged,
             "usage_events_to_move": event_plan.count,
+            # Deprecated response key retained for data-health API consumers.
+            # These events are now moved by the repair, so none remain under default.
+            "usage_events_retained_on_default": 0,
         }
         return FixPlan(
             check_id=self.id,

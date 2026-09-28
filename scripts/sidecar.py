@@ -1987,7 +1987,7 @@ _CREDENTIAL_CACHE: Any = None
 # provider has never produced usage events. Keep this scan independent from
 # the normal collection schedule and throttle it to avoid repeatedly walking
 # credential files on every heartbeat.
-_CREDENTIAL_DISCOVERY_STATE = {"last_scan": 0.0}
+_CREDENTIAL_DISCOVERY_STATE: dict[str, dict[str, float]] = {"last_scanned_at": {}}
 
 
 def _get_credential_cache() -> Any:
@@ -3499,9 +3499,15 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
 
     now = time.monotonic()
-    last_credential_scan = _CREDENTIAL_DISCOVERY_STATE["last_scan"]
-    if credential_scan_only and (last_credential_scan == 0 or now - last_credential_scan >= 600):
+    if credential_scan_only:
+        last_scanned_at = _CREDENTIAL_DISCOVERY_STATE["last_scanned_at"]
+        # This pass intentionally scans all registry providers, even when
+        # quota polling is disabled for them: Fleet must surface detected
+        # credentials before an account has usage events or a config row.
         for discover_pid, discover_config in registry_providers.items():
+            last_scan = last_scanned_at.get(discover_pid)
+            if last_scan is not None and now - last_scan < 600:
+                continue
             try:
                 _discovered, blocked = GenericCollector.collect_provider(
                     discover_pid,
@@ -3519,10 +3525,13 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                     and card.get("unit") in ("oauth", "api_key", "cookie")
                 )
                 blocked_origins_this_cycle.extend(blocked)
+                # This provider's local credential scan completed. Reporting
+                # it lets the server prune origins that are no longer present;
+                # providers skipped by the throttle are deliberately omitted.
                 completed_providers_this_cycle.append(discover_pid)
+                last_scanned_at[discover_pid] = now
             except Exception as exc:
                 logging.debug("credential discovery failed for %s: %s", discover_pid, exc)
-        _CREDENTIAL_DISCOVERY_STATE["last_scan"] = now
 
     for provider_id, provider_config in registry_providers.items():
         if credential_scan_only or (

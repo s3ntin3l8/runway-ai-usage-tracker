@@ -1255,32 +1255,57 @@ def test_run_collection_heartbeat_discovers_credentials_without_polling(monkeypa
         def provider_tag_hints(self):
             return {}
 
-    token = {
-        "service_name": "OpenRouter",
-        "remaining": "Token",
-        "unit": "api_key",
-        "metadata": {"provider_id": "openrouter", "api_key": "sk-test"},
-    }
     quota = {"service_name": "OpenRouter local quota", "remaining": "$2", "unit": "USD"}
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", Cache())
-    monkeypatch.setitem(sc._CREDENTIAL_DISCOVERY_STATE, "last_scan", 0)
+    monkeypatch.setitem(sc._CREDENTIAL_DISCOVERY_STATE, "last_scanned_at", {})
     monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
     # Fresh GitHub runners can have a monotonic clock below the ten-minute
     # interval, so zero must be treated as "never scanned" explicitly.
-    monkeypatch.setattr(sc.time, "monotonic", lambda: 42)
-    monkeypatch.setattr(sc, "__REGISTRY__", {"providers": {"openrouter": {"name": "OpenRouter"}}})
+    now = [42.0]
+    monkeypatch.setattr(sc.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(
+        sc,
+        "__REGISTRY__",
+        {"providers": {"openrouter": {"name": "OpenRouter"}, "openai": {"name": "OpenAI"}}},
+    )
+    calls: list[str] = []
+
+    def collect_provider(provider_id, *args, **kwargs):
+        calls.append(provider_id)
+        card = {
+            "service_name": provider_id,
+            "remaining": "Token",
+            "unit": "api_key",
+            "metadata": {"provider_id": provider_id, "api_key": "sk-test"},
+        }
+        return [card, quota], []
+
     monkeypatch.setattr(
         sc.GenericCollector,
         "collect_provider",
-        staticmethod(lambda *args, **kwargs: ([token, quota], [])),
+        staticmethod(collect_provider),
     )
     monkeypatch.setattr(sc, "_post_credential_manifest", lambda **kwargs: None)
 
-    metrics, events, errors = sc.run_collection(config={}, providers=[])
+    result = sc.run_collection(config={}, providers=[])
 
-    assert metrics == [token]
-    assert events == []
-    assert errors == 0
+    assert [card["metadata"]["provider_id"] for card in result.metrics] == [
+        "openrouter",
+        "openai",
+    ]
+    assert result.events == []
+    assert result.error_count == 0
+    assert calls == ["openrouter", "openai"]
+
+    now[0] = 43.0
+    # A newly surfaced provider should be scanned without rescanning the
+    # providers whose credential files were just checked.
+    sc._CREDENTIAL_DISCOVERY_STATE["last_scanned_at"].pop("openai")
+    result = sc.run_collection(config={}, providers=[])
+    assert [card["metadata"]["provider_id"] for card in result.metrics] == ["openai"]
+    assert result.events == []
+    assert result.error_count == 0
+    assert calls == ["openrouter", "openai", "openai"]
 
 
 def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch, tmp_path):
