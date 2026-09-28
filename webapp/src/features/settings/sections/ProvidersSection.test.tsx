@@ -125,6 +125,31 @@ describe('ProvidersSection', () => {
     expect(screen.getByText((_, node) => node?.textContent?.startsWith('3 accounts · ') ?? false)).toBeInTheDocument();
   });
 
+  it('shows archived accounts separately and restores the existing row', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        archived_count: 1,
+        accounts: [
+          { account_id: 'live@example.com', account_label: 'Live', enabled: true, archived: false },
+          { account_id: 'old@example.com', account_label: 'Old', enabled: false, archived: true },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' } as never);
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Archived accounts (1)')).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent?.startsWith('1 account · ') ?? false)).toBeInTheDocument();
+    expect(screen.getByText('enabled')).toBeInTheDocument();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'claude', 'old@example.com', { archived: false },
+    ));
+  });
+
   it('opens the detail dialog when a provider card is clicked', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });

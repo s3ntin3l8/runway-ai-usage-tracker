@@ -971,6 +971,15 @@ class _AccountPreviewRequest(BaseModel):
     session_cookie: str | None = None
 
 
+def _supported_saved_strategies(
+    saved: list[dict] | None, supported: list[dict]
+) -> list[dict] | None:
+    if saved is None:
+        return None
+    allowed = {entry.get("id") for entry in supported}
+    return [entry for entry in saved if entry.get("id") in allowed]
+
+
 @router.get("/provider-configs")
 @limiter.limit("30/minute")
 async def list_provider_configs(request: Request, session: Session = Depends(get_session)) -> dict:
@@ -1011,6 +1020,37 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     cache_accounts: dict[str, list[tuple[str, str | None]]] = {}
     for c_pid, c_aid, c_name in await token_cache.get_all_active_accounts():
         cache_accounts.setdefault(c_pid, []).append((c_aid, c_name))
+
+    cache_details: dict[tuple[str, str], dict[str, Any]] = {}
+    for cached_pid in manager.collector_registry:
+        for cached in await token_cache.get_accounts(cached_pid):
+            cache_details[(cached_pid, cached["account_id"])] = cached
+
+    def _discovery_labels(provider_id: str, account_id: str) -> list[str]:
+        cached = cache_details.get((provider_id, account_id))
+        if not cached or cached.get("source") in (None, "config", "manual_config", "server"):
+            return []
+        provider_rules = (registry.get_provider(provider_id) or {}).get("rules", [])
+        token_names = set((cached.get("tokens") or {}).keys())
+        labels: set[str] = set()
+        for rule in provider_rules:
+            rule_type = rule.get("type")
+            if rule_type not in ("env", "file", "keychain", "cookie"):
+                continue
+            mapping = rule.get("mapping", {})
+            if not token_names.intersection(mapping.values()):
+                continue
+            kind = "Cookie" if rule_type == "cookie" else "API key"
+            paths = rule.get("paths", [])
+            if rule_type == "file" and paths:
+                import os
+
+                labels.add(f"{os.path.basename(paths[0])} · {kind}")
+            elif rule_type == "env":
+                labels.add(f"{rule.get('variable', 'Environment')} · {kind}")
+            else:
+                labels.add(f"Sidecar · {kind}")
+        return sorted(labels)
 
     def _canonical_row(rows: list[ProviderConfig]) -> ProviderConfig | None:
         for r in rows:
@@ -1082,7 +1122,9 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "session_cookie_set": bool(r.session_cookie_encrypted),
                 "account_label": r.account_label,
                 "poll_interval_seconds": r.poll_interval_seconds,
-                "collection_strategies": r.strategies,
+                "collection_strategies": _supported_saved_strategies(
+                    r.strategies, manager.get_supported_strategies(p_id)
+                ),
                 "opencode_workspace_id": r.opencode_workspace_id,
                 "billing_type": r.billing_type,
                 # `is_orphaned` surfaces the orphaned-bookkeeping-row
@@ -1106,6 +1148,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     and provider_has_live_sibling
                 ),
                 "source": "config",
+                "credential_source_labels": _discovery_labels(p_id, r.account_id),
             }
             for r in provider_rows
         ]
@@ -1127,6 +1170,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "opencode_workspace_id": None,
                     "is_orphaned": False,
                     "source": "discovered",
+                    "credential_source_labels": _discovery_labels(p_id, c_aid),
                 }
             )
         # Durable fallback for passive providers only (no config rows ever):
@@ -1152,6 +1196,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "opencode_workspace_id": None,
                         "is_orphaned": False,
                         "source": "discovered",
+                        "credential_source_labels": [],
                     }
                 )
 
@@ -1177,14 +1222,17 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "session_cookie_help": provider_def.get("session_cookie_help"),
                 # Strategy configuration
                 "supported_strategies": manager.get_supported_strategies(p_id),
-                "collection_strategies": db.strategies if db else None,
+                "collection_strategies": _supported_saved_strategies(
+                    db.strategies if db else None, manager.get_supported_strategies(p_id)
+                ),
                 "opencode_workspace_id": db.opencode_workspace_id if db else None,
                 # Per-account breakdown: DB rows first (config-backed), then
                 # cache/latest_usage-only identities (discovered). The
                 # canonical row above is the first entry whose account_id is
                 # "default", or the first entry overall when no default exists.
                 "accounts": accounts_out,
-                "account_count": len(accounts_out),
+                "account_count": sum(not a.get("archived", False) for a in accounts_out),
+                "archived_count": sum(bool(a.get("archived", False)) for a in accounts_out),
             }
         )
 
@@ -1563,7 +1611,9 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         )
     if body.collection_strategies is not None:
         # None list = reset to defaults; empty list = no strategies (disabled all)
-        row.strategies = body.collection_strategies if body.collection_strategies else None
+        supported = {entry.get("id") for entry in manager.get_supported_strategies(provider_id)}
+        normalized = [entry for entry in body.collection_strategies if entry.get("id") in supported]
+        row.strategies = normalized if normalized else None
     if body.opencode_workspace_id is not None and provider_id == "opencode":
         row.opencode_workspace_id = body.opencode_workspace_id.strip() or None
     if body.billing_type is not None:
@@ -1620,6 +1670,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             "gemini",
             "ollama",
             "kimi_coding",
+            "opencode",
         ):
             tokens = {"oauth_token": row.api_key}
 
@@ -1648,6 +1699,9 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             if provider_id == "kimi_coding":
                 tokens["api_key"] = row.api_key
 
+            if provider_id == "opencode":
+                tokens["api_key"] = row.api_key
+
             await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
         elif row.api_key and provider_id == "xai":
             # A dashboard paste is an access bearer, not a refresh token.
@@ -1663,20 +1717,18 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # and the oai-sc companion (ChatGPT-only) and invalidate cache.
         row.session_cookie = None
         row.oai_sc_cookie = None
-        if provider_id in ("opencode", "ollama"):
-            await token_cache.remove_tokens(
-                provider_id,
-                account_id,
-                {
-                    "session_cookie",
-                    "cookie_session",
-                    "cookie_sessionKey",
-                    "cookie___Secure-next-auth.session-token",
-                    "console_session",
-                },
-            )
-        else:
-            await token_cache.remove(provider_id, account_id)
+        await token_cache.remove_tokens(
+            provider_id,
+            account_id,
+            {
+                "session_cookie",
+                "cookie_session",
+                "cookie_sessionKey",
+                "cookie___Secure-next-auth.session-token",
+                "console_session",
+                "cookie_oai-sc",
+            },
+        )
     if body.session_cookie is not None and body.clear_session_cookie is not True:
         val = body.session_cookie
         if val and (";" in val or "=" in val):

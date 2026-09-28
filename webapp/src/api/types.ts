@@ -687,6 +687,8 @@ export interface ProviderAccount {
   // or local discovery — passive providers like antigravity never get a
   // config row). Optional for backward compatibility with older servers.
   source?: 'config' | 'discovered';
+  /** Non-secret source descriptions backed by matching sidecar token metadata. */
+  credential_source_labels?: string[];
 }
 
 // Provider envelope returned by GET /api/v1/system/provider-configs. The
@@ -722,6 +724,7 @@ export interface ProviderConfig {
   accounts: ProviderAccount[];
   // Total entries in `accounts` (config-backed + discovered).
   account_count: number;
+  archived_count?: number;
 }
 
 // Wizard (#287) preview-endpoint types — keep in sync with

@@ -22,7 +22,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { putDashboardLayout } from '@/api/endpoints';
+import { putDashboardLayout, putProviderConfig } from '@/api/endpoints';
 import type { DashboardLayout, ProviderConfig } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -195,6 +195,9 @@ function ProvidersSectionV2({
   }
 
   const hasAnyConfig = providers.some((p) => p.account_count > 0);
+  const archivedAccounts = providers.flatMap((p) =>
+    p.accounts.filter((a) => a.archived).map((account) => ({ provider: p, account })),
+  );
 
   return (
     <>
@@ -267,6 +270,38 @@ function ProvidersSectionV2({
         )}
       </div>
 
+      {archivedAccounts.length > 0 ? (
+        <section className="mt-6 max-w-2xl" aria-label="Archived provider accounts">
+          <h3 className="mb-2 text-sm font-semibold">Archived accounts ({archivedAccounts.length})</h3>
+          <div className="flex flex-col gap-2">
+            {archivedAccounts.map(({ provider, account }) => (
+              <Card key={`${provider.provider_id}/${account.account_id}`} className="flex items-center gap-3 px-4 py-3">
+                <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{provider.name}</p>
+                  <p className="truncate text-[11px] text-fg-subtle">{account.account_label || account.account_id}</p>
+                </div>
+                <Badge variant="neutral">Archived</Badge>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await putProviderConfig(provider.provider_id, account.account_id, { archived: false });
+                      await configs.refetch();
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : 'Could not restore account');
+                    }
+                  }}
+                >
+                  Restore
+                </Button>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {/* Add provider CTA — sticky on mobile (above bottom nav), inline
           top-right on desktop. Gated on `hasAnyConfig` so the fresh-install
           path (EmptyState at :307) only shows one Add button; once at least
@@ -322,16 +357,17 @@ function SortableProviderCard({
     id: provider.provider_id,
   });
 
-  const hasKey = provider.api_key_set;
-  const hasCookie = provider.session_cookie_set;
-  const allEnabled = provider.accounts.every((a: ProviderConfig['accounts'][number]) => a.enabled);
-  const anyEnabled = provider.accounts.some((a: ProviderConfig['accounts'][number]) => a.enabled);
+  const activeAccounts = provider.accounts.filter((a) => !a.archived);
+  const hasKey = activeAccounts.some((a) => a.api_key_set);
+  const hasCookie = activeAccounts.some((a) => a.session_cookie_set);
+  const allEnabled = activeAccounts.length > 0 && activeAccounts.every((a) => a.enabled);
+  const anyEnabled = activeAccounts.some((a) => a.enabled);
   // Discovered-only = every account came from token_cache / latest_usage
   // (no provider_configs row). Passive providers (antigravity, …) never get
   // a config row — show "auto" instead of "unconfigured" / "enabled".
   const onlyDiscovered =
-    provider.accounts.length > 0 &&
-    provider.accounts.every((a) => a.source === 'discovered');
+    activeAccounts.length > 0 &&
+    activeAccounts.every((a) => a.source === 'discovered');
 
   return (
     <Card
@@ -376,7 +412,7 @@ function SortableProviderCard({
               ? 'Not configured'
               : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
                   provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
-                }s`}
+                }s${provider.archived_count ? ` · ${provider.archived_count} archived` : ''}`}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -387,7 +423,7 @@ function SortableProviderCard({
           ) : (
             <Badge
               variant={
-                provider.accounts.length === 0
+                activeAccounts.length === 0
                   ? 'neutral'
                   : allEnabled
                     ? 'accent'
@@ -396,7 +432,7 @@ function SortableProviderCard({
                       : 'neutral'
               }
             >
-              {provider.accounts.length === 0
+              {activeAccounts.length === 0
                 ? 'unconfigured'
                 : allEnabled
                   ? 'enabled'

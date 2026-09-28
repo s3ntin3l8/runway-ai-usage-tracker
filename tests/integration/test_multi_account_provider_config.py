@@ -563,6 +563,108 @@ def test_clear_session_cookie_wipes_and_clears_oai_sc_companion(client: TestClie
     assert default["session_cookie_set"] is False
 
 
+def test_setting_api_key_while_clearing_cookie_keeps_same_account_key(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    """The cookie clear must not evict an API key written in the same PUT."""
+
+    async def no_sync(*args, **kwargs):
+        return None
+
+    async def no_collect(*args, **kwargs):
+        return []
+
+    from app.services.collector_manager import manager
+    from app.services.token_cache import token_cache
+
+    monkeypatch.setattr(manager, "_sync_collectors", no_sync)
+    monkeypatch.setattr(manager, "collect_one", no_collect)
+
+    r = client.put(
+        "/api/v1/system/provider-config/opencode/alice@example.com",
+        json={"api_key": "oc_sk_test", "clear_session_cookie": True},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["account_id"] == "alice@example.com"
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    opencode = next(p for p in listing if p["provider_id"] == "opencode")
+    assert [a["account_id"] for a in opencode["accounts"]] == ["alice@example.com"]
+    account = opencode["accounts"][0]
+    assert account["api_key_set"] is True
+    assert account["session_cookie_set"] is False
+    cached_types = token_cache._cache["opencode"]["alice@example.com"][0]
+    assert any(token_type.endswith("_key") for token_type in cached_types)
+
+
+def test_archived_account_does_not_inflate_active_account_count(client: TestClient):
+    client.put(
+        "/api/v1/system/provider-config/openrouter/old@example.com",
+        json={"archived": True},
+        headers=_admin_headers(),
+    )
+    client.put(
+        "/api/v1/system/provider-config/openrouter/live@example.com",
+        json={},
+        headers=_admin_headers(),
+    )
+    provider = next(
+        p
+        for p in client.get("/api/v1/system/provider-configs").json()["providers"]
+        if p["provider_id"] == "openrouter"
+    )
+    assert provider["account_count"] == 1
+    assert provider["archived_count"] == 1
+    assert {a["account_id"] for a in provider["accounts"]} == {
+        "old@example.com",
+        "live@example.com",
+    }
+
+
+def test_opencode_saved_strategy_ids_are_normalized(client: TestClient):
+    r = client.put(
+        "/api/v1/system/provider-config/opencode/default",
+        json={
+            "collection_strategies": [
+                {"id": "sidecar", "enabled": True},
+                {"id": "api", "enabled": False},
+                {"id": "web", "enabled": True},
+            ]
+        },
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    opencode = next(
+        p
+        for p in client.get("/api/v1/system/provider-configs").json()["providers"]
+        if p["provider_id"] == "opencode"
+    )
+    assert {s["id"] for s in opencode["supported_strategies"]} == {"api", "web"}
+    assert {s["id"] for s in opencode["collection_strategies"]} == {"api", "web"}
+
+
+def test_sidecar_source_label_uses_rule_and_token_metadata(client: TestClient):
+    import time
+
+    from app.services.token_cache import token_cache
+
+    token_cache.seed_sync(
+        "opencode",
+        "oc-account",
+        {"api_key": "secret-opencode-key"},  # pragma: allowlist secret
+        {"source": "sidecar-host"},
+        time.time(),
+    )
+    opencode = next(
+        p
+        for p in client.get("/api/v1/system/provider-configs").json()["providers"]
+        if p["provider_id"] == "opencode"
+    )
+    account = next(a for a in opencode["accounts"] if a["account_id"] == "oc-account")
+    assert "auth.json · API key" in account["credential_source_labels"]
+    assert "secret-opencode-key" not in str(account)
+
+
 # ---------------------------------------------------------------------------
 # preview_account_identity — edge cases (#287)
 # ---------------------------------------------------------------------------
