@@ -6,9 +6,11 @@ queries, mirroring the `_session()`/`_event()` convention used throughout
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -22,6 +24,19 @@ from app.models.db import (
 )
 
 
+@dataclass
+class QueryCounter:
+    """Counts SQL statements issued through a given engine, via
+    `before_cursor_execute`. Reset per test by the `query_counter` fixture."""
+
+    count: int = 0
+    statements: list[str] = field(default_factory=list)
+
+    def reset(self) -> None:
+        self.count = 0
+        self.statements.clear()
+
+
 @pytest.fixture
 def session() -> Session:
     engine = create_engine(
@@ -29,6 +44,24 @@ def session() -> Session:
     )
     SQLModel.metadata.create_all(engine)
     return Session(engine)
+
+
+@pytest.fixture
+def query_counter(session: Session) -> QueryCounter:
+    """A SQL query counter hooked onto `session`'s own engine — use to
+    assert a check's `detect()` issues a constant number of queries
+    regardless of how many pairs/groups are in the DB."""
+    counter = QueryCounter()
+    engine = session.get_bind()
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _count(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        counter.count += 1
+        counter.statements.append(statement)
+
+    yield counter
+
+    event.remove(engine, "before_cursor_execute", _count)
 
 
 def make_event(session: Session, *, event_id: str = "x", **overrides) -> UsageEvent:

@@ -47,20 +47,6 @@ def _parse_key(group_key: str) -> tuple[str, str]:
     return provider_id, account_id
 
 
-def _pairs_with_gauge_series(session: Session) -> set[tuple[str, str]]:
-    latest = {
-        (r[0], r[1])
-        for r in session.execute(select(LatestUsage.provider_id, LatestUsage.account_id).distinct())
-    }
-    snaps = {
-        (r[0], r[1])
-        for r in session.execute(
-            select(QuotaSnapshot.provider_id, QuotaSnapshot.account_id).distinct()
-        )
-    }
-    return latest | snaps
-
-
 def _has_config(session: Session, provider_id: str, account_id: str) -> bool:
     return (
         session.exec(
@@ -108,19 +94,66 @@ class OrphanGaugeSeriesCheck(Check):
 
     def detect(self, session: Session, *, stale_days: int = _STALE_DAYS_DEFAULT) -> CheckReport:
         cutoff = datetime.now(UTC) - timedelta(days=stale_days)
+
+        # Grouped counts replace the per-pair _count_latest/_count_snapshots
+        # queries; the union of their keys replaces _pairs_with_gauge_series.
+        latest_counts: dict[tuple[str, str], int] = {
+            (row[0], row[1]): row[2]
+            for row in session.execute(
+                select(  # type: ignore[call-overload]
+                    LatestUsage.provider_id, LatestUsage.account_id, func.count()
+                ).group_by(LatestUsage.provider_id, LatestUsage.account_id)
+            )
+        }
+        snap_counts: dict[tuple[str, str], int] = {
+            (row[0], row[1]): row[2]
+            for row in session.execute(
+                select(  # type: ignore[call-overload]
+                    QuotaSnapshot.provider_id, QuotaSnapshot.account_id, func.count()
+                ).group_by(QuotaSnapshot.provider_id, QuotaSnapshot.account_id)
+            )
+        }
+        pairs = set(latest_counts) | set(snap_counts)
+
+        # One query for every configured (provider, account) pair — no
+        # `archived` filter, matching _has_config's semantics exactly.
+        configured_pairs: set[tuple[str, str]] = {
+            (row[0], row[1])
+            for row in session.execute(
+                select(ProviderConfig.provider_id, ProviderConfig.account_id)
+            )
+        }
+
+        # One grouped max(ts) query — no `kind` filter, matching
+        # _last_event_ts today (error events count as activity there too).
+        last_ts_by_pair: dict[tuple[str, str], datetime] = {
+            (row[0], row[1]): row[2]
+            for row in session.execute(
+                select(
+                    UsageEvent.provider_id, UsageEvent.account_id, func.max(UsageEvent.ts)
+                ).group_by(UsageEvent.provider_id, UsageEvent.account_id)
+            )
+        }
+
+        # candidate_targets only varies per provider_id, not per pair —
+        # memoize it locally instead of re-querying for every orphan.
+        candidates_by_provider: dict[str, list[str]] = {}
+
         groups: list[FindingGroup] = []
-        for provider_id, account_id in sorted(_pairs_with_gauge_series(session)):
-            if _has_config(session, provider_id, account_id):
+        for provider_id, account_id in sorted(pairs):
+            if (provider_id, account_id) in configured_pairs:
                 continue
-            last_ts = _last_event_ts(session, provider_id, account_id)
+            last_ts = last_ts_by_pair.get((provider_id, account_id))
             last_ts_naive = (
                 last_ts.replace(tzinfo=UTC) if last_ts and last_ts.tzinfo is None else last_ts
             )
             if last_ts_naive is not None and last_ts_naive >= cutoff:
                 continue  # still posting events — not configured yet, not orphaned
-            candidates = [a for a in candidate_targets(session, provider_id) if a != account_id]
-            latest_count = _count_latest(session, provider_id, account_id)
-            snap_count = _count_snapshots(session, provider_id, account_id)
+            if provider_id not in candidates_by_provider:
+                candidates_by_provider[provider_id] = candidate_targets(session, provider_id)
+            candidates = [a for a in candidates_by_provider[provider_id] if a != account_id]
+            latest_count = latest_counts.get((provider_id, account_id), 0)
+            snap_count = snap_counts.get((provider_id, account_id), 0)
             groups.append(
                 FindingGroup(
                     key=_key(provider_id, account_id),
