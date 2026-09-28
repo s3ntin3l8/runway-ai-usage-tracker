@@ -2467,3 +2467,59 @@ def test_grok_account_extractor_uses_xai_watermark_and_bootstrap_window(tmp_path
 
     replay = extractor("alice@example.com", ReplayingWatermark(), 0)
     assert [event.event_id for event in replay] == ["xai|grok|sess1|recent|unknown"]
+
+
+# ---------------------------------------------------------------------------
+# Hermes Agent session extraction wiring and canonical hints
+# ---------------------------------------------------------------------------
+
+
+def test_hermes_account_identity_defaults_and_env(monkeypatch):
+    monkeypatch.delenv("HERMES_ACCOUNT_LABEL", raising=False)
+    assert sidecar._hermes_account_identity() == "default"
+    monkeypatch.setenv("HERMES_ACCOUNT_LABEL", "bot-team")
+    assert sidecar._hermes_account_identity() == "bot-team"
+
+
+def test_hermes_build_canonical_hints():
+    hints = {
+        "minimax": {"s3ntin3l8@gmail.com": "MiniMax Admin"},
+        "unrelated": {"foo": "bar"},
+    }
+    extracted = sidecar._build_canonical_hints_for_provider("hermes", hints)
+    assert extracted is not None
+    assert "minimax" in extracted
+    assert extracted["minimax"] == {"s3ntin3l8@gmail.com": "MiniMax Admin"}
+    assert "unrelated" not in extracted
+
+    assert sidecar._build_canonical_hints_for_provider("hermes", None) is None
+    assert sidecar._build_canonical_hints_for_provider("unknown", hints) is None
+
+
+def test_hermes_account_extractor_wiring(monkeypatch, tmp_path):
+    mock_parser = MagicMock(return_value=["mock_event"])
+    extractor = sidecar._make_account_extractor_hermes(mock_parser)
+
+    class MockWatermark:
+        def last_pushed(self, provider_id, account_id):
+            assert provider_id == "hermes"
+            assert account_id == "default"
+            return
+
+    # When no DBs exist, returns empty without calling parser
+    monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [])
+    assert extractor("default", MockWatermark(), 30) == []
+    assert not mock_parser.called
+
+    # When DBs exist, calls parser with paths and since
+    mock_db = tmp_path / "state.db"
+    mock_db.touch()
+    monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [mock_db])
+    events = extractor("default", MockWatermark(), 30, canonical_hints={"minimax": {}})
+    assert events == ["mock_event"]
+    assert mock_parser.called
+    args, kwargs = mock_parser.call_args
+    assert args[0] == [mock_db]
+    assert kwargs["account_id"] == "default"
+    assert kwargs["canonical_hints"] == {"minimax": {}}
+    assert kwargs["since"] is not None

@@ -585,6 +585,19 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
+        "hermes": {
+            "name": "Hermes Agent",
+            "icon": "☤",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.hermes/state.db",
+                        "~/.hermes/config.yaml",
+                    ],
+                }
+            ],
+        },
     }
 }
 # -------------------------
@@ -2001,7 +2014,7 @@ _IDENTITY_REPORT: dict[str, dict[str, str]] = {}
 # Provider IDs that have event extractors. Per-account iteration loops over
 # each of these and stamps events with the resolved ``account_id``.
 _EVENT_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "chatgpt", "gemini", "opencode", "antigravity", "xai"}
+    {"anthropic", "chatgpt", "gemini", "opencode", "antigravity", "xai", "hermes"}
 )
 
 # Legacy single-account identity discovery, used when the server has no
@@ -2018,6 +2031,7 @@ _LEGACY_EVENT_ACCOUNT_DISCOVERY: dict[str, Any] = {
     "antigravity": lambda: globals()["_ag_account_email"]() or "default",
     # Grok cards and usage events share email-first, user-ID-second identity.
     "xai": lambda: globals()["_grok_account_identity"]() or "default",
+    "hermes": lambda: globals()["_hermes_account_identity"]() or "default",
 }
 
 
@@ -2057,6 +2071,7 @@ def _extract_events_for_provider(
     from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
     from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
     from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
+    from scripts.sidecar_pkg.event_extractors.hermes import parse_hermes_events
     from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
     from scripts.sidecar_pkg.event_extractors.xai import parse_xai_events
 
@@ -2068,6 +2083,7 @@ def _extract_events_for_provider(
         "antigravity": _make_account_extractor_antigravity(parse_antigravity_events),
         # Completed Grok CLI turns in updates.jsonl carry per-turn usage.
         "xai": _make_account_extractor(parse_xai_events, _discover_grok_updates_paths),
+        "hermes": _make_account_extractor_hermes(parse_hermes_events),
     }
 
     extractor = dispatch.get(provider_id)
@@ -2109,16 +2125,16 @@ def _build_canonical_hints_for_provider(
     provider_id: str,
     server_account_tag_hints: dict[str, dict[str, str]] | None,
 ) -> dict[str, dict[str, str]] | None:
-    """Forward the canonical-provider hints so the opencode extractor
+    """Forward the canonical-provider hints so the opencode and hermes extractors
     can retarget events onto the operator's chosen account_id when
-    their ``_OC_CANONICAL_MAP`` entry maps to a canonical provider
+    their canonical map entry maps to a canonical provider
     (e.g. ``minimax``, ``kimi_coding``, ``ollama``).
 
     The server emits auto-hints under the canonical key
     (``provider:minimax``), but the events branch iterates under the
-    iterating provider (``provider:opencode``). Without this forward,
-    an event retagged to ``minimax`` would land at ``(minimax,
-    "default")`` even when the operator has a configured
+    iterating provider (``provider:opencode`` or ``provider:hermes``).
+    Without this forward, an event retagged to ``minimax`` would land at
+    ``(minimax, "default")`` even when the operator has a configured
     ``s3ntin318@gmail.com`` row.
 
     PR #318 round-2 review (Hermes warning #1): this forwarding is
@@ -2129,16 +2145,22 @@ def _build_canonical_hints_for_provider(
     ``scoped_accounts`` at the local identity and lets THIS forward
     (per-event inside the extractor) do the retag.
 
-    Returns ``None`` for non-opencode providers — they don't have a
-    canonical retag concept, so the extractor gets nothing to look up.
+    Returns ``None`` for providers without canonical retag concept.
     """
-    if provider_id != "opencode":
+    if provider_id == "opencode":
+        # Lazy import: only loaded on the events branch, not on the token-card branch.
+        from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP
+
+        canonical_map = _OC_CANONICAL_MAP
+    elif provider_id == "hermes":
+        from scripts.sidecar_pkg.event_extractors.hermes import _HERMES_CANONICAL_MAP
+
+        canonical_map = _HERMES_CANONICAL_MAP
+    else:
         return None
-    # Lazy import: only loaded on the events branch, not on the token-card branch.
-    from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP
 
     canonical_hints: dict[str, dict[str, str]] = {}
-    for canonical_provider_id, _ in _OC_CANONICAL_MAP.values():
+    for canonical_provider_id, _ in canonical_map.values():
         canonical_hint_map = (server_account_tag_hints or {}).get(canonical_provider_id, {})
         if canonical_hint_map:
             canonical_hints[canonical_provider_id] = dict(canonical_hint_map)
@@ -2221,6 +2243,30 @@ def _make_account_extractor_antigravity(parser: Any) -> Any:
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
         return parser(db_paths, account_id=account_id, since=since)
+
+    return _extract
+
+
+def _make_account_extractor_hermes(parser: Any) -> Any:
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,
+    ) -> list:
+        db_paths = _discover_hermes_db_paths()
+        if not db_paths:
+            return []
+        since = watermark.last_pushed("hermes", account_id) or (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+        )
+        return parser(
+            db_paths,
+            account_id=account_id,
+            since=since,
+            canonical_hints=canonical_hints,
+        )
 
     return _extract
 
@@ -3194,6 +3240,20 @@ def _discover_grok_updates_paths() -> list[Path]:
     if not sessions_dir.is_dir():
         return []
     return list(sessions_dir.rglob("updates.jsonl"))
+
+
+def _discover_hermes_db_paths() -> list[Path]:
+    """Return Hermes Agent state.db SQLite paths (default and named profiles)."""
+    from scripts.sidecar_pkg.event_extractors.hermes import (
+        _discover_hermes_db_paths as _disc,
+    )
+
+    return _disc()
+
+
+def _hermes_account_identity() -> str:
+    """Return Hermes account identity label (defaults to 'default')."""
+    return os.getenv("HERMES_ACCOUNT_LABEL") or "default"
 
 
 def _post_credential_manifest(
