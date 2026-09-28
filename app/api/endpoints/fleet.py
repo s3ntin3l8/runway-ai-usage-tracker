@@ -880,6 +880,8 @@ async def list_pending_usage_events(
             payload = json.loads(row.payload_json)
         except (json.JSONDecodeError, TypeError):
             payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
         items.append(
             {
                 "id": row.id,
@@ -900,6 +902,77 @@ async def list_pending_usage_events(
     }
 
 
+@router.get("/events/pending/sessions")
+async def list_pending_usage_sessions(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Group pending usage by provider, sidecar, and session for review."""
+    rows = list(
+        session.exec(
+            select(PendingUsageEvent).order_by(cast(Any, PendingUsageEvent.ts).desc())
+        ).all()
+    )
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        try:
+            payload = json.loads(row.payload_json)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            # Missing session IDs cannot safely identify related events.
+            key = (row.provider_id, row.sidecar_id, f"event:{row.id}")
+            visible_session_id = None
+        else:
+            key = (row.provider_id, row.sidecar_id, f"session:{session_id}")
+            visible_session_id = session_id
+
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "provider_id": row.provider_id,
+                "sidecar_id": row.sidecar_id,
+                "session_id": visible_session_id,
+                "event_ids": [],
+                "event_count": 0,
+                "first_ts": row.ts,
+                "last_ts": row.ts,
+                "model_ids": set(),
+            }
+            groups[key] = group
+        group["event_ids"].append(row.id)
+        group["event_count"] += 1
+        group["first_ts"] = min(group["first_ts"], row.ts)
+        group["last_ts"] = max(group["last_ts"], row.ts)
+        model_id = payload.get("model_id")
+        if isinstance(model_id, str) and model_id:
+            group["model_ids"].add(model_id)
+
+    ordered = sorted(groups.values(), key=lambda group: group["last_ts"], reverse=True)
+    page = ordered[offset : offset + limit]
+    items = [
+        {
+            **group,
+            "first_ts": group["first_ts"].isoformat(),
+            "last_ts": group["last_ts"].isoformat(),
+            "model_ids": sorted(group["model_ids"]),
+        }
+        for group in page
+    ]
+    return {
+        "items": items,
+        "total_events": len(rows),
+        "total_groups": len(ordered),
+        "offset": offset,
+        "limit": limit,
+    }
+
+
 @router.post("/events/pending/assign")
 async def assign_pending_usage_events(
     request: Request,
@@ -910,9 +983,21 @@ async def assign_pending_usage_events(
     if not body.event_ids or len(body.event_ids) > 1000:
         raise HTTPException(status_code=422, detail="Select between 1 and 1000 events.")
     account_id = resolve_account_id("", body.account_id, None)
-    # Pending event provider ids may include OpenCode backend siblings. The
-    # configured account must match the exact provider to prevent cross-provider
-    # assignment.
+    # Discovered identities can be valid assignment targets even without a
+    # provider_configs row (for example sidecar-managed Antigravity accounts).
+    # Only accept those that are still known from the cache or latest_usage.
+    active_account_keys = {
+        (provider_id, resolve_account_id("", account_id, None))
+        for provider_id, account_id, _label in await token_cache.get_all_active_accounts()
+    }
+    latest_account_keys = {
+        (provider_id, resolve_account_id("", active_id, None))
+        for provider_id, active_id in session.exec(
+            select(LatestUsage.provider_id, LatestUsage.account_id).distinct()
+        ).all()
+        if active_id
+    }
+    providers_with_config = set(session.exec(select(ProviderConfig.provider_id).distinct()).all())
     rows = list(
         session.exec(
             select(PendingUsageEvent).where(cast(Any, PendingUsageEvent.id).in_(body.event_ids))
@@ -927,10 +1012,17 @@ async def assign_pending_usage_events(
                 ProviderConfig.account_id == account_id,
             )
         ).first()
-        if configured is None:
+        if configured is not None:
+            assignable = configured.enabled and not configured.archived
+        else:
+            key = (row.provider_id, account_id)
+            assignable = key in active_account_keys or (
+                row.provider_id not in providers_with_config and key in latest_account_keys
+            )
+        if not assignable:
             raise HTTPException(
                 status_code=404,
-                detail=f"No account {account_id!r} configured for {row.provider_id!r}.",
+                detail=f"No active account {account_id!r} known for {row.provider_id!r}.",
             )
 
     # Ingest is idempotent. Keep pending rows until every promotion succeeds;
