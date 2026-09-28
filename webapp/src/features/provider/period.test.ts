@@ -37,6 +37,14 @@ describe('resolveScope', () => {
     expect(live.label).toBe('June 2026');
   });
 
+  it('routes a partial-month span to the range scope', () => {
+    const s = resolveScope(parseRangeParam('2026-06-01_2026-06-15'));
+    expect(s.periodKey).toBeUndefined();
+    expect(s.isLiveMonth).toBe(false);
+    expect(s.key).toBe('2026-06-01_2026-06-15');
+    expect(s.label).toBe('Jun 1 – Jun 15');
+  });
+
   it('defaults to the last 7 days for omitted / malformed input', () => {
     const d = resolveScope(null);
     expect(d.value).toEqual({ days: 7 });

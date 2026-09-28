@@ -21,6 +21,8 @@ import {
   forecastResponse,
   historyChart,
   limitCard,
+  pastPeriod,
+  rollingScope,
   session,
 } from './test-fixtures';
 
@@ -70,6 +72,57 @@ describe('ProviderKpis', () => {
     );
     expect(await screen.findByText(`Estimated usage value · ${past.label}`)).toBeInTheDocument();
     expect(screen.getByText('current month only')).toBeInTheDocument();
+  });
+
+  // Pins the three-way enable gates in ProviderKpis.tsx: per scope exactly one
+  // of the month / range query paths may fetch, alongside the always-on live
+  // lifetime bucket. Flipping any `enabled` flag fails these.
+  describe('cumulative query gating', () => {
+    it('requests only the live bucket for the live-month scope', async () => {
+      renderWithProviders(
+        <ProviderKpis entry={fleetEntry({ billing_type: 'subscription' })} scope={currentPeriod()} />,
+      );
+      expect(await screen.findByText('Current')).toBeInTheDocument();
+      expect(api.fetchCumulative).toHaveBeenCalledWith({
+        provider_id: 'anthropic',
+        account_id: 'me@example.com',
+      });
+      expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+        expect.objectContaining({ period_type: expect.anything() }),
+      );
+      expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+        expect.objectContaining({ since: expect.anything() }),
+      );
+    });
+
+    it('requests only the month bucket for a past-month scope', async () => {
+      renderWithProviders(
+        <ProviderKpis
+          entry={fleetEntry({ billing_type: 'subscription' })}
+          scope={pastPeriod('2026-01')}
+        />,
+      );
+      expect(await screen.findByText('Current')).toBeInTheDocument();
+      expect(api.fetchCumulative).toHaveBeenCalledWith(
+        expect.objectContaining({ period_type: 'month', period_key: '2026-01' }),
+      );
+      expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+        expect.objectContaining({ since: expect.anything() }),
+      );
+    });
+
+    it('requests only the range bucket for a rolling scope', async () => {
+      renderWithProviders(
+        <ProviderKpis entry={fleetEntry({ billing_type: 'subscription' })} scope={rollingScope(30)} />,
+      );
+      expect(await screen.findByText('Current')).toBeInTheDocument();
+      expect(api.fetchCumulative).toHaveBeenCalledWith(
+        expect.objectContaining({ since: expect.any(String), until: expect.any(String) }),
+      );
+      expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+        expect.objectContaining({ period_type: expect.anything() }),
+      );
+    });
   });
 
   describe('tokens kind (unlimited / passive provider)', () => {

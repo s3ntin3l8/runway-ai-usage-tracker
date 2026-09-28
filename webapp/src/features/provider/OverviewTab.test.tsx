@@ -14,6 +14,7 @@ import {
   forecastResponse,
   historyChart,
   limitCard,
+  pastPeriod,
   session,
 } from './test-fixtures';
 
@@ -60,6 +61,31 @@ describe('OverviewTab', () => {
     // KPI labels
     expect(screen.getByText('Current')).toBeInTheDocument();
     expect(screen.getByText('Cache hit · Last 7 days')).toBeInTheDocument();
+  });
+
+  // Pins OverviewTab's own copy of the three-way cumulative enable gates: the
+  // default rolling scope must fetch only the range bucket, a past-month scope
+  // only the month bucket — never both, never the wrong one.
+  it('requests only the range bucket for the default rolling scope', async () => {
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText('Cache hit · Last 7 days')).toBeInTheDocument();
+    expect(api.fetchCumulative).toHaveBeenCalledWith(
+      expect.objectContaining({ since: expect.any(String), until: expect.any(String) }),
+    );
+    expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+      expect.objectContaining({ period_type: expect.anything() }),
+    );
+  });
+
+  it('requests only the month bucket for a past-month scope', async () => {
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={pastPeriod('2026-01')} />);
+    expect(await screen.findByText('Cache hit · January 2026')).toBeInTheDocument();
+    expect(api.fetchCumulative).toHaveBeenCalledWith(
+      expect.objectContaining({ period_type: 'month', period_key: '2026-01' }),
+    );
+    expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+      expect.objectContaining({ since: expect.anything() }),
+    );
   });
 
   it('shows the trajectory chart once a forecast resolves', async () => {

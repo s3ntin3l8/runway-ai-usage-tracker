@@ -167,6 +167,14 @@ describe('monthAligned / isLiveMonth', () => {
     expect(isLiveMonth({ since: '2026-05-01', until: '2026-05-31' })).toBe(false);
     expect(isLiveMonth({ days: 7 })).toBe(false);
   });
+
+  it('treats a partial span of the live month as a custom range', () => {
+    const parsed = parseRangeParam('2026-06-01_2026-06-15');
+    expect(parsed).toEqual({ since: '2026-06-01', until: '2026-06-15' });
+    expect(monthAligned(parsed)).toBeNull();
+    expect(isLiveMonth(parsed)).toBe(false);
+    expect(formatRangeLabel(parsed)).toBe('Jun 1 – Jun 15');
+  });
 });
 
 describe('formatRangeLabel', () => {

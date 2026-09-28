@@ -2,7 +2,7 @@ import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { TimeRangePicker } from './TimeRangePicker';
-import type { DateRangeValue } from '@/lib/timeRange';
+import { todayISODate, type DateRangeValue } from '@/lib/timeRange';
 
 let value: DateRangeValue = { days: 7 };
 let onChange = vi.fn((v: DateRangeValue) => {
@@ -88,5 +88,25 @@ describe('TimeRangePicker', () => {
     await screen.findByText('Absolute time range');
     const [fromInput] = document.querySelectorAll('input[type="date"]');
     expect(fromInput).toHaveAttribute('min', '2026-03-15');
+  });
+
+  it('caps both date inputs at today', async () => {
+    renderWithProviders(<TimeRangePicker value={value} onChange={onChange} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    await screen.findByText('Absolute time range');
+    const [fromInput, toInput] = document.querySelectorAll('input[type="date"]');
+    expect(fromInput).toHaveAttribute('max', todayISODate());
+    expect(toInput).toHaveAttribute('max', todayISODate());
+  });
+
+  it('clamps a future end date to today on Apply', async () => {
+    renderWithProviders(<TimeRangePicker value={value} onChange={onChange} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    await screen.findByText('Absolute time range');
+    const [fromInput, toInput] = document.querySelectorAll('input[type="date"]');
+    fireEvent.change(fromInput, { target: { value: '2026-01-01' } });
+    fireEvent.change(toInput, { target: { value: '2099-01-15' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(onChange).toHaveBeenCalledWith({ since: '2026-01-01', until: todayISODate() });
   });
 });

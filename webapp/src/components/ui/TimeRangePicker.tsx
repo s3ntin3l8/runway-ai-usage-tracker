@@ -67,7 +67,10 @@ export function TimeRangePicker({ value, onChange, earliest, className }: TimeRa
   const applyAbsolute = () => {
     if (!from || !to) return;
     const [start, end] = from <= to ? [from, to] : [to, from];
-    onChange({ since: start, until: end });
+    // Clamp to today: a future window has no data yet and the backend would
+    // happily return an empty bucket (a silently blank stats page).
+    const today = todayISODate();
+    onChange({ since: start > today ? today : start, until: end > today ? today : end });
     setOpen(false);
   };
 
@@ -94,6 +97,12 @@ export function TimeRangePicker({ value, onChange, earliest, className }: TimeRa
             Quick ranges
           </p>
           {ranges.map((r) => {
+            // Quick ranges re-derive their bounds from "now" on every render,
+            // so the active state matches serialized spans rather than stable
+            // ids: a stored month span re-labels itself at a rollover ("This
+            // month" → "Last month") or shows no highlight once it matches no
+            // quick range. The trigger label formats the stored value and
+            // therefore never drifts.
             const active = serializeRangeParam(r.value) === serialized;
             return (
               <button
@@ -127,6 +136,7 @@ export function TimeRangePicker({ value, onChange, earliest, className }: TimeRa
               type="date"
               value={from}
               min={earliestDate}
+              max={todayISODate()}
               onChange={(e) => setFrom(e.target.value)}
               className="h-8 rounded border border-edge bg-surface-1 px-2 text-xs text-fg"
             />
@@ -137,6 +147,7 @@ export function TimeRangePicker({ value, onChange, earliest, className }: TimeRa
               type="date"
               value={to}
               min={from || earliestDate}
+              max={todayISODate()}
               onChange={(e) => setTo(e.target.value)}
               className="h-8 rounded border border-edge bg-surface-1 px-2 text-xs text-fg"
             />
