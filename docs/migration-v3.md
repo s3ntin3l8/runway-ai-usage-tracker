@@ -151,9 +151,10 @@ silently produced a dead published port rather than a visible failure.
 
 Since the container is now genuinely reachable off-loopback from the app's
 own point of view, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`,
-and (per the gate above) `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` become
-mandatory in `.env` before the container will start at all — see the
-updated quick-start comment in `docker-compose.yml`. If you were already
+and (per the multi-host startup gate — see
+[SECURITY.md → Multi-Host Startup Gates](SECURITY.md)) `ADMIN_API_KEY` or
+`TRUSTED_PROXY_IPS` become mandatory in `.env` before the container will
+start at all — see the updated quick-start comment in `docker-compose.yml`. If you were already
 setting these (e.g. following `docs/deployment.md`), nothing changes for
 you; if you were relying on the old dead-port behavior for some reason,
 the container will now refuse to start until you set them.
