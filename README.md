@@ -17,11 +17,11 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 <table>
 <tr>
 <td width="50%"><a href="assets/screenshots/provider.png"><img src="assets/screenshots/provider.png" alt="Per-provider detail page — Overview tab" /></a></td>
-<td width="50%"><a href="assets/screenshots/provider-activity.png"><img src="assets/screenshots/provider-activity.png" alt="Provider Activity tab scoped to a past month via the month selector" /></a></td>
+<td width="50%"><a href="assets/screenshots/provider-activity.png"><img src="assets/screenshots/provider-activity.png" alt="Provider Activity tab scoped to a past month via the time-range picker" /></a></td>
 </tr>
 <tr>
 <td align="center"><sub><b>Provider detail page</b> — gauges, current-window forecast, per-model & per-window donuts, recent sessions <br/><a href="assets/screenshots/provider-light.png">(light)</a></sub></td>
-<td align="center"><sub><b>Month selector</b> — Activity / Cost / Events scope to any past month (token trend, composition, heatmap, sessions) <br/><a href="assets/screenshots/provider-activity-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Time range picker</b> — Overview / Activity / Cost / Events / Sessions scope to a rolling window, a calendar month, or a custom span (token trend, composition, heatmap, sessions) <br/><a href="assets/screenshots/provider-activity-light.png">(light)</a></sub></td>
 </tr>
 <tr>
 <td width="50%"><a href="assets/screenshots/history.png"><img src="assets/screenshots/history.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
@@ -51,7 +51,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 - **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider detail page
 - **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling, hourly resolution on ≤7-day windows
 - **Provider Detail Page**: A deep-linked per-provider view with Overview, Activity (token trend, composition, heatmap, sessions), Events (per-message stream), Forecast, and Cost tabs
-- **Month ⟷ Rolling Scope**: A per-tab time-scope toggle — browse a calendar month (deep-linkable via `?period=YYYY-MM`, boundaries on your local timezone) or a rolling 7/14/30/90-day window (`?period=Nd`); Activity, Cost, Sessions, and Events all honor the same scope
+- **Unified Time Range**: One time-range picker (quick ranges for the last 7/14/30/90 days, this/last month, plus a custom From/To span) shared by History, Insights, and every provider-detail tab — deep-linkable via `?range=Nd` or `?range=YYYY-MM-DD_YYYY-MM-DD` (legacy `?period=` values still resolve), with all boundaries on your local timezone; Forecast stays fixed and the Home page keeps its own anchor
 - **Global Insights**: A top-level `/insights` page with cross-provider lifetime totals, cache-hit ratio, busiest day/hour, and Top Models / Projects / Tools rankings
 - **Project & Tool Tracking**: Events capture working directory, project, git branch, and tool names — surfaced as a Sessions project column, sortable session columns (duration / messages / tokens / cost), and the Insights rankings
 - **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)

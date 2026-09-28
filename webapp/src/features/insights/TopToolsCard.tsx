@@ -6,21 +6,22 @@ import type { TopToolEntry } from '@/api/types';
 import { RankBar, type RankRow } from '@/components/charts/RankBar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useTopTools } from './queries';
 
 function toolRow(t: TopToolEntry): RankRow {
   return { label: t.tool, value: t.calls, sub: `${t.msgs.toLocaleString()} msgs` };
 }
 
-export function TopToolsCard({ days }: { days: number }) {
-  const top = useTopTools(days);
+export function TopToolsCard({ range }: { range: DateRangeValue }) {
+  const top = useTopTools(range);
   const rows = (top.data?.tools ?? []).map(toolRow);
   const hasData = rows.some((r) => r.value > 0);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top tools · {days}d</CardTitle>
+        <CardTitle>Top tools · {formatRangeLabel(range)}</CardTitle>
         <span className="text-[11px] text-fg-subtle">Claude tool use</span>
       </CardHeader>
       <CardContent className="pt-2">

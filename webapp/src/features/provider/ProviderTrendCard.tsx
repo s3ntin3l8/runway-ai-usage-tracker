@@ -1,23 +1,19 @@
-// Per-day token or cost bars for one account, with a range selector.
-// Reuses the History page's chart option-building (HistoryChart) and the
-// shared Tabs segmented control.
+// Per-day token or cost bars for one account. The window follows the shared
+// time-range picker (`range`, resolved instants); callers without a picker
+// (Forecast) fall back to a fixed last-7-days window. Reuses the History
+// page's chart option-building (HistoryChart).
 
-import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { HistoryChart } from '@/features/history/HistoryChart';
 import { useProviderHistoryChart, type DateRange } from './queries';
 import type { Metric } from '@/features/history/queries';
-
-const RANGES = [7, 14, 30, 90];
 
 export function ProviderTrendCard({
   providerId,
   accountId,
   metric,
   title,
-  defaultDays = 30,
   compact = false,
   range,
   excludeCache = false,
@@ -26,33 +22,20 @@ export function ProviderTrendCard({
   accountId: string;
   metric: Exclude<Metric, 'percent'>;
   title: string;
-  defaultDays?: number;
   compact?: boolean;
-  // When set, the bars are scoped to this closed period and the day-range tabs
-  // are hidden (the period is fixed by the shared month selector instead).
+  // When set, the bars are scoped to this closed period; otherwise a fixed
+  // last-7-days window is used.
   range?: DateRange;
   // Drop cache tokens from the bars (token metric only — see HistoryChart).
   excludeCache?: boolean;
 }) {
-  const [days, setDays] = useState(defaultDays);
-  const chart = useProviderHistoryChart(providerId, accountId, days, metric, range);
+  const chart = useProviderHistoryChart(providerId, accountId, 7, metric, range);
   const hasData = (chart.data?.bars?.length ?? 0) > 0;
 
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <CardTitle>{title}</CardTitle>
-        {range ? null : (
-          <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))}>
-            <TabsList className="border-0">
-              {RANGES.map((d) => (
-                <TabsTrigger key={d} value={String(d)} className="h-8 px-2">
-                  {d}d
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        )}
       </CardHeader>
       <CardContent>
         {chart.isPending ? (

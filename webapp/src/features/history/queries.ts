@@ -6,35 +6,18 @@ import {
   fetchHistoryWindows,
 } from '@/api/endpoints';
 import type { HistoryWindowRow } from '@/api/types';
-import type { DateRangeValue } from '@/components/ui/DateRangeTabs';
-import { getUserTz, localDateStartISO, nextCalendarDate } from '@/lib/tz';
+import { getUserTz } from '@/lib/tz';
+import { rangeQueryParams, type DateRangeValue } from '@/lib/timeRange';
 
 export type Metric = 'percent' | 'tokens' | 'cost';
-
-type RangeInput = DateRangeValue | number;
-
-function toDateRange(v: RangeInput): DateRangeValue {
-  return typeof v === 'number' ? { days: v } : v;
-}
-
-export function dateRangeParams(range: DateRangeValue): Record<string, unknown> {
-  if (range.since && range.until) {
-    return {
-      since: localDateStartISO(range.since),
-      until: localDateStartISO(nextCalendarDate(range.until)),
-    };
-  }
-  return { days: range.days ?? 7 };
-}
 
 export const useHistoryChart = (
   providerId: string | null,
   accountId: string | null,
-  range: RangeInput,
+  range: DateRangeValue,
   metric: Metric,
 ) => {
-  const dr = toDateRange(range);
-  const params = dateRangeParams(dr);
+  const params = rangeQueryParams(range);
   return useQuery({
     queryKey: ['usage', 'history-chart', providerId, accountId, params, getUserTz(), metric],
     queryFn: () =>
@@ -50,12 +33,11 @@ export const useHistoryChart = (
 };
 
 export const useHistoryDeltas = (
-  range: RangeInput,
+  range: DateRangeValue,
   providerId?: string | null,
   accountId?: string | null,
 ) => {
-  const dr = toDateRange(range);
-  const params = dateRangeParams(dr);
+  const params = rangeQueryParams(range);
   return useQuery({
     queryKey: ['usage', 'history-deltas', params, getUserTz(), providerId, accountId],
     queryFn: () =>
@@ -71,10 +53,9 @@ export const useHistoryDeltas = (
 export const useHistoryWindows = (
   providerId: string | null,
   accountId: string | null,
-  range: RangeInput,
+  range: DateRangeValue,
 ) => {
-  const dr = toDateRange(range);
-  const params = dateRangeParams(dr);
+  const params = rangeQueryParams(range);
   return useQuery({
     queryKey: ['usage', 'history-windows', providerId, accountId, params, getUserTz()],
     queryFn: () =>

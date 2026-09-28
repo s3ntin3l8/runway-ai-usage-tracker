@@ -1,5 +1,6 @@
 // Shared test fixtures for provider-feature tests.
-import { resolveScope, rollingKey, type TabScope } from './period';
+import { monthSpan, monthSpanForKey } from '@/lib/timeRange';
+import { resolveScope, type TabScope } from './period';
 import type {
   AnomaliesResponse,
   CostForecastResponse,
@@ -15,12 +16,13 @@ import type {
   SessionEntry,
 } from '@/api/types';
 
-// The current-month scope (default the tabs receive). Pass a 'YYYY-MM' key for
-// a past month, or use `rollingScope` for a rolling window, to exercise the
-// scoped-range code paths.
-export const currentPeriod = (): TabScope => resolveScope(null);
-export const pastPeriod = (key = '2026-01'): TabScope => resolveScope(key);
-export const rollingScope = (days = 30): TabScope => resolveScope(rollingKey(days));
+// The scope fixtures map onto the shared picker model: `currentPeriod` is the
+// live calendar month ("This month" quick range), `pastPeriod` a month span,
+// `rollingScope` a rolling window. The ProviderPage default (last 7 days) is
+// `resolveScope({ days: 7 })`.
+export const currentPeriod = (): TabScope => resolveScope(monthSpan(0));
+export const pastPeriod = (key = '2026-01'): TabScope => resolveScope(monthSpanForKey(key));
+export const rollingScope = (days = 30): TabScope => resolveScope({ days });
 
 export const limitCard = (o: Partial<LimitCard> = {}): LimitCard => ({
   service_name: 'Claude',

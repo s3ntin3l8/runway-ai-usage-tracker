@@ -39,9 +39,9 @@ export function CostTab({
   const { excludeCache } = useExcludeCache();
   const range = scope.range;
   // EOM / daily-burn projections are forward-looking, so they only apply to the
-  // live calendar month — a past month or a rolling window shows recorded spend.
-  const isLiveMonth = scope.mode === 'month' && scope.isCurrentMonth;
-  const isRolling = scope.mode === 'rolling';
+  // live calendar month — any other range shows recorded spend for that range.
+  const isLiveMonth = scope.isLiveMonth;
+  const isRange = !scope.isLiveMonth && !scope.periodKey;
   const cost = useProviderCostForecast(providerId, accountId);
   // `liveCumulative` is always fetched for the scope-independent Lifetime tile
   // (the month/range-scoped responses carry no lifetime bucket).
@@ -49,11 +49,15 @@ export function CostTab({
   const monthCumulative = useProviderCumulativeMonth(
     providerId,
     accountId,
-    scope.key,
-    scope.mode === 'month' && !scope.isCurrentMonth,
+    scope.periodKey ?? '',
+    !!scope.periodKey && !scope.isLiveMonth,
   );
-  const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRolling);
-  const cumulative = isRolling ? rangeCumulative : isLiveMonth ? liveCumulative : monthCumulative;
+  const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRange);
+  const cumulative = isLiveMonth
+    ? liveCumulative
+    : scope.periodKey
+      ? monthCumulative
+      : rangeCumulative;
   const scopeLabel = scope.label;
   const moneyLabel = billingType === 'pay_as_you_go'
     ? 'Cost'
