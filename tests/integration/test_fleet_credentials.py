@@ -1046,12 +1046,12 @@ def test_fingerprint_hint_only_fires_for_keyed_providers(
     client: TestClient, session: Session
 ) -> None:
     """#349 widens fingerprinting to the OpenCode-file siblings (openrouter,
-    minimax, kimi_coding, ollama, xai) — `kimi` is deliberately outside that
-    set, so its row keeps the plain descriptor and gains no
+    minimax, kimi_coding, ollama, xai) — `kimi_api` is deliberately outside
+    that set, so its row keeps the plain descriptor and gains no
     ``#<fingerprint>`` hint."""
     _add_provider_config(
         session,
-        provider_id="kimi",
+        provider_id="kimi_api",
         account_id="alice@example.com",
         api_key="sk-kimi-plain-origin",  # pragma: allowlist secret
     )
@@ -1061,7 +1061,7 @@ def test_fingerprint_hint_only_fires_for_keyed_providers(
     hints = r.json()["account_tag_hints"]
     assert "opencode" not in hints
     # A configured account without a credential-specific match is ambiguous.
-    assert "kimi" not in hints
+    assert "kimi_api" not in hints
 
 
 def test_operator_tag_wins_over_fingerprint_hint(client: TestClient, session: Session) -> None:

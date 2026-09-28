@@ -274,30 +274,6 @@
         }
       ]
     },
-    "kimi": {
-      "name": "Kimi API",
-      "icon": "🌙",
-      "api_key_label": "API Key (api)",
-      "api_key_help": "Moonshot official API key (sk-...)",
-      "rules": [
-        {
-          "type": "env",
-          "variable": "KIMI_AUTH_TOKEN",
-          "mapping": { "value": "cookie_kimi-auth" }
-        },
-        {
-          "type": "env",
-          "variable": "KIMI_API_KEY",
-          "mapping": { "value": "api_key" }
-        },
-        {
-          "type": "cookie",
-          "domains": ["kimi.moonshot.cn", "kimi.com"],
-          "name": "kimi-auth",
-          "mapping": { "value": "cookie_kimi-auth" }
-        }
-      ]
-    },
     "zai": {
       "name": "zAI API",
       "icon": "🌐",

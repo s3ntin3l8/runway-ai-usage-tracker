@@ -90,9 +90,19 @@ def parse_pair_url(url: str) -> PairTarget:
     return PairTarget(server=normalize_server(server), code=normalize_code(code))
 
 
-def redeem(target: PairTarget, *, hostname: str | None = None) -> dict[str, str]:
-    """Exchange the code for ``{"api_url", "api_key"}``. Raises ``PairingError``."""
-    from scripts.sidecar_pkg.tls import build_context
+def redeem(
+    target: PairTarget, *, hostname: str | None = None, config: dict | None = None
+) -> dict[str, str]:
+    """Exchange the code for ``{"api_url", "api_key"}``. Raises ``PairingError``.
+
+    ``config`` carries the ``ca_bundle`` / ``tls_insecure`` sidecar config
+    keys, same as everywhere else that talks to the server — see
+    ``scripts.sidecar_pkg.tls.build_context_from_config``. Pairing runs
+    before the normal ``load_config()`` path (there's no server to fetch a
+    config *from* yet), so a CLI caller best-effort reads these two keys
+    out of any existing config file before calling this.
+    """
+    from scripts.sidecar_pkg.tls import build_context_from_config
 
     url = f"{target.server}/api/v1/fleet/pair"
     body = json.dumps({"code": target.code, "hostname": hostname}).encode()
@@ -103,7 +113,9 @@ def redeem(target: PairTarget, *, hostname: str | None = None) -> dict[str, str]
         headers={"Content-Type": "application/json", "User-Agent": "Runway-Sidecar-Pairing"},
     )
     try:
-        with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=build_context(url)) as resp:  # noqa: S310
+        with request.urlopen(  # noqa: S310
+            req, timeout=_TIMEOUT_SECONDS, context=build_context_from_config(url, config)
+        ) as resp:
             data = json.loads(resp.read().decode())
     except error.HTTPError as exc:
         if exc.code == 400:
