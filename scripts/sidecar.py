@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import platform
 import re
@@ -1014,6 +1015,16 @@ def _unlink_queue_file(dir_fd: int, name: str) -> None:
         os.close(fd)
 
 
+def _queue_limit_mb(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        limit = float(value)
+    except OverflowError:
+        return None
+    return limit if math.isfinite(limit) and limit > 0 else None
+
+
 def queue_push(payload: dict[str, Any], max_size_mb: float | None = None) -> bool:
     """Add payload to the bounded offline queue; return False when full.
 
@@ -1024,8 +1035,7 @@ def queue_push(payload: dict[str, Any], max_size_mb: float | None = None) -> boo
     if os.name == "nt":
         ensure_dirs()
 
-    if not isinstance(max_size_mb, (int, float)) or max_size_mb <= 0:
-        max_size_mb = 10
+    max_size_mb = _queue_limit_mb(max_size_mb) or 10.0
 
     # Create queue file for today
     today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
@@ -1089,9 +1099,11 @@ def queue_rotate(max_size_mb: float | None = None, config: dict[str, Any] | None
     if os.name == "nt" and not queue_dir.exists():
         return
 
-    if not isinstance(max_size_mb, (int, float)) or max_size_mb <= 0:
-        cfg_value = (config or {}).get("queue_max_size_mb")
-        max_size_mb = cfg_value if isinstance(cfg_value, (int, float)) and cfg_value > 0 else 10
+    max_size_mb = (
+        _queue_limit_mb(max_size_mb)
+        or _queue_limit_mb((config or {}).get("queue_max_size_mb"))
+        or 10.0
+    )
 
     max_size_bytes = max_size_mb * 1024 * 1024
 

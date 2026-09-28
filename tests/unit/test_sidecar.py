@@ -517,6 +517,17 @@ class TestQueueRotate:
                 assert sidecar.queue_push({"a": 1}, max_size_mb=-5) is True
                 assert sidecar.queue_push({"a": 1}, max_size_mb="bogus") is True
 
+    @pytest.mark.parametrize("bad_limit", [float("nan"), float("inf"), True, 10**1000])
+    def test_queue_push_invalid_numeric_limit_keeps_default_cap(self, tmp_path, bad_limit):
+        existing = tmp_path / "2026-01-01.jsonl"
+        existing.write_bytes(b"x" * (10 * 1024 * 1024))
+
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
+            with patch.object(sidecar, "ensure_dirs"):
+                assert sidecar.queue_push({"events": ["new"]}, max_size_mb=bad_limit) is False
+
+        assert existing.stat().st_size == 10 * 1024 * 1024
+
 
 class TestQueueFlush:
     def test_event_ingest_error_is_retained_and_retried(self, tmp_path, monkeypatch):
