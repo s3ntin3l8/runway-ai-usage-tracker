@@ -387,6 +387,9 @@ def _build_window_stats_for_rows(
                 UsageWindow.sidecar_id == "",
             )
         ).all():
+            window_end = _parse_sqlite_dt(w.window_end)
+            if window_end is None:
+                continue
             tokens = (
                 (w.tokens_input or 0)
                 + (w.tokens_output or 0)
@@ -399,7 +402,7 @@ def _build_window_stats_for_rows(
                 w.account_id,
                 w.window_type,
                 w.model_id,
-                _min_bucket(w.window_end),
+                _min_bucket(window_end),
             )
             if key not in window_stats:
                 window_stats[key] = {
@@ -454,14 +457,17 @@ def _build_window_stats_for_rows(
             )
         ).all()
         for ev in events:
+            event_ts = _parse_sqlite_dt(ev.ts)
+            if event_ts is None:
+                continue
             for key, window_start, mid in series_by_account.get(
                 (ev.provider_id, ev.account_id), ()
             ):
                 if mid and ev.model_id != mid:
                     continue
-                if ev.ts < window_start:
-                    continue
                 acc = accumulators[key]
+                if event_ts < window_start:
+                    continue
                 acc["tokens"] += (
                     (ev.tokens_input or 0)
                     + (ev.tokens_output or 0)
