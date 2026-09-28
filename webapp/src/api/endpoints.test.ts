@@ -4,6 +4,7 @@ import {
   fetchFleetUsage,
   fetchLimits,
   fetchPendingUsageEvents,
+  fetchPendingUsageSessions,
   fetchProviderConfigs,
   fetchSidecars,
   fetchStatus,
@@ -68,6 +69,13 @@ describe('endpoints', () => {
     mockFetch().mockResolvedValue(jsonResponse(payload));
     await expect(fetchPendingUsageEvents(100)).resolves.toEqual(payload);
     expect(lastCall()[0]).toBe('/api/v1/fleet/events/pending?offset=100&limit=100');
+  });
+
+  it('fetchPendingUsageSessions requests grouped pending usage', async () => {
+    const payload = { items: [], total_events: 0, total_groups: 0, offset: 100, limit: 100 };
+    mockFetch().mockResolvedValue(jsonResponse(payload));
+    await expect(fetchPendingUsageSessions(100)).resolves.toEqual(payload);
+    expect(lastCall()[0]).toBe('/api/v1/fleet/events/pending/sessions?offset=100&limit=100');
   });
 
   it('fetchSidecars hits the sidecars path', async () => {
