@@ -1265,6 +1265,9 @@ def test_run_collection_heartbeat_discovers_credentials_without_polling(monkeypa
     monkeypatch.setattr(sc, "_CREDENTIAL_CACHE", Cache())
     monkeypatch.setitem(sc._CREDENTIAL_DISCOVERY_STATE, "last_scan", 0)
     monkeypatch.setattr(sc, "_EVENT_PROVIDERS", frozenset())
+    # Fresh GitHub runners can have a monotonic clock below the ten-minute
+    # interval, so zero must be treated as "never scanned" explicitly.
+    monkeypatch.setattr(sc.time, "monotonic", lambda: 42)
     monkeypatch.setattr(sc, "__REGISTRY__", {"providers": {"openrouter": {"name": "OpenRouter"}}})
     monkeypatch.setattr(
         sc.GenericCollector,

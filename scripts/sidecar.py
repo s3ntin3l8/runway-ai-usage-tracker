@@ -3499,7 +3499,8 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
 
     now = time.monotonic()
-    if credential_scan_only and now - _CREDENTIAL_DISCOVERY_STATE["last_scan"] >= 600:
+    last_credential_scan = _CREDENTIAL_DISCOVERY_STATE["last_scan"]
+    if credential_scan_only and (last_credential_scan == 0 or now - last_credential_scan >= 600):
         for discover_pid, discover_config in registry_providers.items():
             try:
                 _discovered, blocked = GenericCollector.collect_provider(
