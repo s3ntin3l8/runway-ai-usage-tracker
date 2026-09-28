@@ -236,7 +236,9 @@ def main() -> int:
             n_updated = n_unchanged = 0
         else:
             print(f"{prefix}Phase C — re-costing events for '{_PROVIDER}'…", flush=True)
-            n_updated, n_unchanged, n_zeroed = phase_b_recost(session, [_PROVIDER], None, dry_run)
+            n_updated, n_unchanged, n_zeroed, _affected_pairs = phase_b_recost(
+                session, [_PROVIDER], None, dry_run
+            )
             print(
                 f"{prefix}Phase C-events: {n_updated + n_unchanged + n_zeroed:,} total — "
                 f"{n_updated} updated, {n_unchanged} unchanged, {n_zeroed} newly-zeroed.",
