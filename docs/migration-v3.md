@@ -124,10 +124,11 @@ header name, switch to sending the configured header instead.
 
 `POST /api/v1/usage/reset/{provider}`, `POST /api/v1/usage/collect/{provider}`,
 and the GitHub device-flow endpoints (`/api/v1/auth/github/{init,poll,logout}`)
-now require the admin gate too — they were unauthenticated before. The
-dashboard is unaffected (it always sends credentials); a script or
-integration calling these directly needs to add `X-Admin-Key` or run from
-loopback.
+already used the admin-key dependency, but on a network bind without
+`ADMIN_API_KEY` the old bypass granted admin access to every caller. They now
+require a real admin gate. The dashboard is unaffected (it sends credentials);
+scripts calling these routes need `X-Admin-Key`, a trusted forward-auth identity,
+or a loopback connection.
 
 ## Provider setup and configuration
 
