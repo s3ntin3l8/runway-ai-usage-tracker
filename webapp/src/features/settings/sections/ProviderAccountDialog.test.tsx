@@ -88,6 +88,62 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
     );
   });
 
+  it('lists credential sources and saves their enabled preferences', async () => {
+    vi.mocked(api.patchCredentialSources).mockResolvedValue({ status: 'saved' });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    const provider: ProviderConfig = {
+      ...anthropic,
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          credential_sources: [
+            {
+              source_id: 'sidecar:browser',
+              source_type: 'sidecar',
+              source_label: 'Browser cookie',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 0,
+              last_seen: null,
+              health: 'healthy',
+              available: true,
+            },
+            {
+              source_id: 'sidecar:cli',
+              source_type: 'sidecar',
+              source_label: 'CLI credentials',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 1,
+              last_seen: null,
+              health: 'unavailable',
+              available: false,
+            },
+          ],
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog provider={provider} accountId="alice@example.com" onClose={() => {}} />,
+    );
+
+    expect(screen.getByText('Browser cookie')).toBeInTheDocument();
+    expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('Unavailable · awaiting refresh')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch', { name: 'Enable Browser cookie' }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(api.patchCredentialSources).toHaveBeenCalledWith(
+      'anthropic',
+      'alice@example.com',
+      [
+        { source_id: 'sidecar:browser', enabled: false, priority: 0 },
+        { source_id: 'sidecar:cli', enabled: true, priority: 1 },
+      ],
+      false,
+    ));
+  });
+
   it('pre-fills the form fields from the existing account', async () => {
     renderDialog();
     const dialog = await screen.findByRole('dialog');
